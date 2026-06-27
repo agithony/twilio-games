@@ -8,7 +8,13 @@
 
 **Tech Stack:** Node 20+, TypeScript 5+ strict, three.js (`GLTFLoader` + `DRACOLoader`, browser), `@gltf-transform/core` (headless GLB inspection + fixture authoring) + `@gltf-transform/cli` (compression), Vitest, the existing `ws`/`http` server.
 
-**Real models in `assets/` (12 CC-BY, already supplied; raw totals ~366MB pre-compression):** bronco_car_animation_red, drunk_monster_truck, lotus_elise, jurassic_park_1930_-_park_rover, impala_1964_lowrider, dirty_car_061220, batmobile-the_dark_knight_tumbler, forklift, pig_farm_car_trailer, monowheel_bot__vgdc, buggy__free_3d, climber. (A 13th, the CC-BY-**NC** jeep, is quarantined in `assets/_quarantine_noncommercial/` — excluded from the game for license reasons.) Several have **baked animation clips** (e.g. bronco's "Take 001") and **no wheel-named nodes** — animation handling must prefer the built-in clip.
+**Real models in `assets/` (19 CC-BY, already supplied; raw totals ~590MB pre-compression):** bronco_car_animation_red, drunk_monster_truck, lotus_elise, jurassic_park_1930_-_park_rover, impala_1964_lowrider, dirty_car_061220, batmobile-the_dark_knight_tumbler, forklift, pig_farm_car_trailer, monowheel_bot__vgdc, buggy__free_3d, climber, squadra_corse_lamborghini_huracan_-_sdc, 1955_american_sedan_packard_based_free, car, mazda_rx-7_car, hover_car, 18_mclaren_senna_crxw_widebody_kit_animated, animated_chevrolet_c8_model. (Quarantined in `assets/_quarantine_noncommercial/`, excluded for license reasons: the CC-BY-**NC** jeep, and vehicle_blue_train_bentley which arrived with **no attribution/license** — verify before any use.)
+
+**Inspection of the real models (verified — these facts drive the design):**
+- **ALL 19 have ≥1 baked animation clip.** The animation-first priority (clip > wheel-spin > static) is correct for every model, not just some. Many also have wheel-named nodes, but the clip typically drives them — play the clip.
+- **Scale variance is ~2000×** (Lotus ≈ 5146 units = modeled in mm; Mclaren ≈ 2.5 units). Auto-fit normalization is MANDATORY, not optional.
+- **Orientation varies** — longest axis is Z for some, X/Y for others; per-model rotation overrides + the editor matter.
+- **`drunk_monster_truck.glb` needs `KHR_materials_specular`** — a Node-reader-only warning (the inspector should tolerate/skip it); the browser GLTFLoader handles it fine.
 
 ## Global Constraints
 
@@ -196,10 +202,15 @@ Expected: FAIL — cannot find module `../tools/glb-read`.
 
 ```ts
 import { NodeIO } from '@gltf-transform/core';
+import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
 
-/** Read GLB structure headlessly (no GL context): node names + bbox size + animation clip names. */
+/** Read GLB structure headlessly (no GL context): node names + bbox size + animation clip names.
+ *  Registers ALL_EXTENSIONS so real-world models (e.g. KHR_materials_specular, EXT_texture_webp)
+ *  don't fail the read. Compressed (Draco) files additionally need a decoder; the inspector runs
+ *  on PRE-compression originals, so plain ALL_EXTENSIONS registration is sufficient here. */
 export async function readGlb(path: string): Promise<{ nodeNames: string[]; size: [number,number,number]; animationNames: string[] }> {
-  const doc = await new NodeIO().read(path);
+  const io = new NodeIO().registerExtensions(ALL_EXTENSIONS);
+  const doc = await io.read(path);
   const root = doc.getRoot();
   const nodeNames = root.listNodes().map(n => n.getName()).filter(Boolean);
   const animationNames = root.listAnimations().map(a => a.getName()).filter(Boolean);
