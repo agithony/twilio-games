@@ -17,7 +17,7 @@ export class HttpServer {
   private readonly authToken?: string;
   private readonly publicBaseUrl: string;
   private readonly validateSignatures: boolean;
-  private manifestStore = new ManifestStore('assets/manifest.json');
+  private manifestStore: ManifestStore;
 
   constructor(opts: {
     port: number;
@@ -25,11 +25,13 @@ export class HttpServer {
     publicBaseUrl: string;
     broadcastHz?: number;
     validateSignatures?: boolean;
+    manifestPath?: string;   // injectable so tests don't clobber the real assets/manifest.json
   }) {
     this.port = opts.port;
     this.authToken = opts.authToken;
     this.publicBaseUrl = opts.publicBaseUrl.replace(/\/$/, '');
     this.validateSignatures = opts.validateSignatures ?? true;
+    this.manifestStore = new ManifestStore(opts.manifestPath ?? 'assets/manifest.json');
     this.server = http.createServer((req, res) => {
       this.onRequest(req, res).catch((err) => {
         console.error('request handler error:', err);
