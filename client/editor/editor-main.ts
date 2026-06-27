@@ -92,6 +92,8 @@ let working: Manifest = { cars: [], barrier: null, boostPad: null, props: [] };
 let availableGlbs: string[] = [];
 const placements: Placement[] = [];
 let selected: Placement | null = null;
+/** True only after boot() has successfully loaded + populated the scene. Gates Save. */
+let loaded = false;
 
 const loader = new GLTFLoader();
 const draco = new DRACOLoader();
@@ -387,7 +389,25 @@ function toast(msg: string): void {
   setTimeout(() => toastEl.classList.remove('show'), 1800);
 }
 
-document.getElementById('save')!.addEventListener('click', async () => {
+const saveBtn = document.getElementById('save') as HTMLButtonElement;
+// Stay disabled until boot() succeeds, so a failed load can't POST the empty literal.
+saveBtn.disabled = true;
+
+/** True when the manifest has nothing in any role (the wipe we must never save). */
+function isEmptyManifest(m: Manifest): boolean {
+  return m.cars.length === 0 && !m.barrier && !m.boostPad && m.props.length === 0;
+}
+
+saveBtn.addEventListener('click', async () => {
+  if (!loaded) {
+    toast('Cannot save: manifest not loaded');
+    return;
+  }
+  // Belt-and-suspenders: never overwrite the real manifest with nothing.
+  if (isEmptyManifest(working)) {
+    toast('Refusing to save an empty manifest');
+    return;
+  }
   try {
     working = await saveManifest(working);
     toast('Saved to manifest ✓');
@@ -422,6 +442,9 @@ async function boot(): Promise<void> {
   await buildPlacement({ kind: 'boostPad' }, new THREE.Vector3(laneX(2), 0.13, 40));
 
   renderInspector();
+  // Load + scene population succeeded: it's now safe to allow Save.
+  loaded = true;
+  saveBtn.disabled = false;
 }
 
 function frame(): void {
@@ -430,5 +453,10 @@ function frame(): void {
   renderer.render(scene, camera);
 }
 
-void boot();
+boot().catch((err) => {
+  loaded = false;
+  saveBtn.disabled = true;
+  toast('Failed to load manifest — Save disabled');
+  console.error(err);
+});
 requestAnimationFrame(frame);

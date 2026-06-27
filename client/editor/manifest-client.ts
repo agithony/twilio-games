@@ -1,9 +1,11 @@
+import { parseManifest, EMPTY_MANIFEST } from '../../shared/asset-manifest';
 import type { Manifest } from '../../shared/asset-manifest';
 
-/** GET the working manifest from the server. */
+/** GET the working manifest from the server, parsed/validated like the game loader. */
 export async function fetchManifest(): Promise<Manifest> {
   const res = await fetch('/api/manifest');
-  return res.json();
+  if (!res.ok) return { ...EMPTY_MANIFEST };
+  return parseManifest(await res.text());
 }
 
 /** POST the manifest back to the server; returns the stored (re-validated) copy. */
