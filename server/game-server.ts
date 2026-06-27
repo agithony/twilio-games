@@ -1,4 +1,6 @@
 import { WebSocketServer, WebSocket } from 'ws';
+import type { IncomingMessage, Server as HttpServer } from 'http';
+import type { Duplex } from 'stream';
 import { RoomManager } from './room-manager';
 import { Room } from './room';
 import { STEP } from '../shared/constants';
@@ -39,19 +41,37 @@ export class GameServer {
   private loop: ReturnType<typeof setInterval> | null = null;
   private broadcastAccum = 0;
   private roomAccum = new Map<Room, number>();
-  private readonly port: number;
+  private readonly port: number | undefined;
   private readonly broadcastEvery: number;
 
-  constructor(opts: { port: number; broadcastHz?: number }) {
+  constructor(opts: { port?: number; server?: HttpServer; broadcastHz?: number }) {
     this.port = opts.port;
     this.broadcastEvery = 1 / (opts.broadcastHz ?? 20);
+    if (opts.server) this.attach(opts.server);
+  }
+
+  /**
+   * Mounted mode: attach to an externally-owned http.Server. The WebSocketServer
+   * runs in noServer mode; the http layer routes upgrades via handleUpgrade().
+   * The game loop starts immediately so mounted rooms tick without a separate start().
+   */
+  attach(_server: HttpServer): void {
+    this.wss = new WebSocketServer({ noServer: true });
+    this.startLoop();
+  }
+
+  /** Route a /game upgrade from the owning http server into this game's WebSocketServer. */
+  handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer): void {
+    const path = (req.url ?? '').split('?')[0];
+    if (path !== '/game') { socket.destroy(); return; }
+    this.wss!.handleUpgrade(req, socket, head, (ws) => this.onConnection(ws));
   }
 
   start(): Promise<number> {
     return new Promise((resolve) => {
       this.wss = new WebSocketServer({ port: this.port }, () => {
         const addr = this.wss!.address();
-        const boundPort = typeof addr === 'object' && addr ? addr.port : this.port;
+        const boundPort = typeof addr === 'object' && addr ? addr.port : this.port!;
         this.startLoop();
         resolve(boundPort);
       });
@@ -145,9 +165,24 @@ export class GameServer {
     if (conn.ws.readyState === conn.ws.OPEN) conn.ws.send(JSON.stringify(msg));
   }
 
+  /** Clear the game loop. Used in standalone stop() and by the http server in mounted mode. */
+  clearLoop(): void {
+    if (this.loop) { clearInterval(this.loop); this.loop = null; }
+  }
+
+  /**
+   * Mounted-mode shutdown: stop the loop and close client connections without
+   * closing a port the game server no longer owns (the http server owns shutdown).
+   */
+  stopLoopOnly(): void {
+    this.clearLoop();
+    for (const c of this.conns) c.ws.close();
+    this.conns.clear();
+  }
+
   stop(): Promise<void> {
     return new Promise((resolve) => {
-      if (this.loop) clearInterval(this.loop);
+      this.clearLoop();
       for (const c of this.conns) c.ws.close();
       this.conns.clear();
       if (this.wss) this.wss.close(() => resolve()); else resolve();
