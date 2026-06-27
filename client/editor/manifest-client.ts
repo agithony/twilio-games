@@ -1,0 +1,29 @@
+import type { Manifest } from '../../shared/asset-manifest';
+
+/** GET the working manifest from the server. */
+export async function fetchManifest(): Promise<Manifest> {
+  const res = await fetch('/api/manifest');
+  return res.json();
+}
+
+/** POST the manifest back to the server; returns the stored (re-validated) copy. */
+export async function saveManifest(m: Manifest): Promise<Manifest> {
+  const res = await fetch('/api/manifest', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(m),
+  });
+  return res.json();
+}
+
+/** List the GLB files available to assign to a role. Falls back to []. */
+export async function fetchAssets(): Promise<string[]> {
+  try {
+    const res = await fetch('/api/assets');
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data) ? data.filter((f): f is string => typeof f === 'string') : [];
+  } catch {
+    return [];
+  }
+}

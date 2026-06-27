@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Voice Racer — Model Editor</title>
+  <link rel="icon" href="data:," />
+  <style>
+    html,body{margin:0;height:100%;background:#0b1020;color:#e8ecf6;font-family:system-ui,sans-serif;overflow:hidden}
+    #app{position:fixed;inset:0}
+    #panel{position:absolute;top:14px;right:14px;width:280px;background:rgba(16,22,40,.92);
+      border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:14px;font-size:13px}
+    #panel h4{margin:0 0 8px;text-transform:uppercase;letter-spacing:.06em;color:#93a0c0;font-size:11px}
+    label{display:grid;grid-template-columns:70px 1fr;gap:6px;align-items:center;margin:5px 0;color:#93a0c0;font-size:12px}
+    input,select{background:#0e1530;color:#e8ecf6;border:1px solid rgba(255,255,255,.12);border-radius:6px;padding:4px 6px;width:100%}
+    button{font:inherit;color:#fff;background:#f22f46;border:0;border-radius:8px;padding:8px 12px;cursor:pointer;width:100%;margin-top:10px;font-weight:600}
+    .hint{color:#93a0c0;font-size:11px;line-height:1.5;margin-top:8px}
+    #toast{position:absolute;bottom:18px;left:50%;transform:translateX(-50%);background:#131a30;border:1px solid rgba(255,255,255,.12);padding:8px 16px;border-radius:10px;opacity:0;transition:.25s}
+    #toast.show{opacity:1}
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <div id="panel">
+    <h4>Model Editor</h4>
+    <div class="hint">Click a model to select it. Drag the gizmo or edit fields, then Save.
+      Keys: <b>W</b> move · <b>E</b> rotate · <b>R</b> scale.</div>
+    <div id="inspector"></div>
+    <button id="save">💾 Save to manifest</button>
+  </div>
+  <div id="toast"></div>
+  <script type="module" src="./editor-main.ts"></script>
+</body>
+</html>

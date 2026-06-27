@@ -1,6 +1,6 @@
 import http from 'http';
 import path from 'node:path';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { WebSocketServer, WebSocket } from 'ws';
 import { GameServer } from './game-server';
 import { ConversationRelayAdapter } from './conversation-relay';
@@ -111,6 +111,20 @@ export class HttpServer {
       await this.manifestStore.write(m);
       res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
       res.end(JSON.stringify(m));
+      return;
+    }
+    // ---- list available top-level GLB files (for the editor's role dropdowns) ----
+    if (path === '/api/assets' && req.method === 'GET') {
+      let files: string[] = [];
+      try {
+        const entries = await readdir('assets', { withFileTypes: true });
+        files = entries
+          .filter((e) => e.isFile() && e.name.toLowerCase().endsWith('.glb'))
+          .map((e) => e.name)
+          .sort();
+      } catch { files = []; }
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify(files));
       return;
     }
     // ---- static assets (GLB etc.) ----
