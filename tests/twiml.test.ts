@@ -10,6 +10,10 @@ describe('twimlGatherRoomCode', () => {
     expect(xml).toContain('numDigits="4"');
     expect(xml).toContain('action="https://x.test/voice/join"');
   });
+  it('escapes the action URL in the gather', () => {
+    const xml = twimlGatherRoomCode({ actionUrl: 'https://x.test/join?a=1&b=2' });
+    expect(xml).toContain('https://x.test/join?a=1&amp;b=2');
+  });
 });
 
 describe('twimlConnectRelay', () => {
@@ -28,6 +32,9 @@ describe('twimlConnectRelay', () => {
     expect(xml).toContain('partialPrompts="true"');
     expect(xml).toContain('hints="left, right, boost, brake, use power"');
   });
+  it('sets the required transcription provider', () => {
+    expect(xml).toContain('transcriptionProvider="Deepgram"');
+  });
   it('stays silent (no welcome greeting, not interruptible)', () => {
     expect(xml).toContain('welcomeGreeting=""');
     expect(xml).toContain('interruptible="none"');
@@ -39,5 +46,15 @@ describe('twimlConnectRelay', () => {
     const x = twimlConnectRelay({ wsUrl: 'wss://x.test/voice',
       sessionEndedUrl: 'https://x.test/e', roomCode: 'A&B' });
     expect(x).toContain('value="A&amp;B"');
+  });
+  it('escapes XML-special characters in all interpolated URLs', () => {
+    const x = twimlConnectRelay({
+      wsUrl: 'wss://x.test/voice?a=1&b=2',
+      sessionEndedUrl: 'https://x.test/end?x=1&y=2',
+      roomCode: 'ABCD',
+    });
+    expect(x).toContain('wss://x.test/voice?a=1&amp;b=2');
+    expect(x).toContain('https://x.test/end?x=1&amp;y=2');
+    expect(x).not.toContain('&b=2');   // raw unescaped ampersand must not appear
   });
 });
