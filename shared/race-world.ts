@@ -1,6 +1,6 @@
 import { Rng } from './rng';
 import {
-  LANES, LAP_TARGET, TRACK_LEN, BASE_SPEED, STEP,
+  LANES, LAP_TARGET, TRACK_LEN, BASE_SPEED,
   ITEM_SPACING, ITEM_START, laneX,
 } from './constants';
 import type { Intent, Item, CarState, WorldSnapshot, Phase, GameEvent } from './types';
@@ -109,12 +109,16 @@ export class RaceWorld {
   private resolveItems(): void {
     for (const c of this.cars) {
       if (c.finished) continue;
-      const carHits = this.hits.get(c.id)!;
+      let set = this.hits.get(c.id);
+      if (!set) {
+        set = new Set<number>();
+        this.hits.set(c.id, set);
+      }
       for (const it of this.items) {
         if (Math.abs(it.z - c.z) < 2.2 && it.lane === c.lane) {
           // edge-trigger: only fire once per car per item
-          if (carHits.has(it.id)) continue;
-          carHits.add(it.id);
+          if (set.has(it.id)) continue;
+          set.add(it.id);
           if (it.kind === 'barrier') {
             c.stunned = 0.8; c.boost = -0.6;
             this.events.push({ kind: 'hit', playerId: c.id });
