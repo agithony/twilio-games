@@ -4,6 +4,7 @@ import type { WorldSnapshot, Item } from '../shared/types';
 import { clone as skeletonClone } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { AssetLoader } from './asset-loader';
 import { buildCar } from './car-factory';
+import { themeAtZ } from '../shared/zones';
 
 export class Renderer {
   private renderer: THREE.WebGLRenderer;
@@ -15,6 +16,9 @@ export class Renderer {
   private itemMeshes: { mesh: THREE.Object3D; item: Item }[] = [];
   private myId: string | null = null;
   private lastFrame = performance.now();
+  private sun: THREE.DirectionalLight;
+  private ambient: THREE.AmbientLight;
+  private ground: THREE.Mesh;
 
   constructor(mount: HTMLElement, private assets?: AssetLoader) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -23,15 +27,16 @@ export class Renderer {
     this.renderer.shadowMap.enabled = true;
     mount.appendChild(this.renderer.domElement);
     this.scene.background = new THREE.Color(0x0b1020);
+    this.scene.fog = new THREE.FogExp2(0x0b1020, 0.01);
     this.camera = new THREE.PerspectiveCamera(52, innerWidth / innerHeight, 0.1, 2000);
 
-    const sun = new THREE.DirectionalLight(0xfff6e6, 1.2);
-    sun.position.set(40, 80, -20); sun.castShadow = true; this.scene.add(sun);
-    this.scene.add(new THREE.AmbientLight(0x5566aa, 0.6));
+    this.sun = new THREE.DirectionalLight(0xfff6e6, 1.2);
+    this.sun.position.set(40, 80, -20); this.sun.castShadow = true; this.scene.add(this.sun);
+    this.ambient = new THREE.AmbientLight(0x5566aa, 0.6); this.scene.add(this.ambient);
 
-    const track = new THREE.Mesh(new THREE.PlaneGeometry(TRACK_W, TRACK_LEN * 3),
+    this.ground = new THREE.Mesh(new THREE.PlaneGeometry(TRACK_W, TRACK_LEN * 3),
       new THREE.MeshStandardMaterial({ color: 0x1a2238 }));
-    track.rotation.x = -Math.PI / 2; track.position.z = TRACK_LEN; this.scene.add(track);
+    this.ground.rotation.x = -Math.PI / 2; this.ground.position.z = TRACK_LEN; this.scene.add(this.ground);
 
     addEventListener('resize', () => {
       this.camera.aspect = innerWidth / innerHeight; this.camera.updateProjectionMatrix();
@@ -117,6 +122,15 @@ export class Renderer {
     }
     const me = snap.cars.find(c => c.id === this.myId) ?? snap.cars[0];
     const z = me ? me.z : 0;
+
+    const theme = themeAtZ(z);
+    (this.scene.background as THREE.Color).set(theme.sky);
+    const fog = this.scene.fog as THREE.FogExp2;
+    fog.color.set(theme.fog); fog.density = theme.fogDensity;
+    (this.ground.material as THREE.MeshStandardMaterial).color.set(theme.ground);
+    this.sun.color.set(theme.sun); this.sun.intensity = theme.sunIntensity;
+    this.ambient.color.set(theme.ambient);
+
     this.camera.position.set(13, 15, z - 30);
     this.camera.lookAt(me ? me.x * 0.4 : 0, 1.5, z + 26);
     this.renderer.render(this.scene, this.camera);
