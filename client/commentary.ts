@@ -2,7 +2,7 @@ import type { GameEvent } from '../shared/types';
 
 const pick = (arr: string[], seq: number): string => arr[Math.abs(seq) % arr.length]!;
 
-const GO = ['Greeen light — GO GO GO!', 'And they\'re off!', 'Hammer down — GO!', 'Here we go, racers!'];
+const GO = ['Green light — GO GO GO!', 'And they\'re off!', 'Hammer down — GO!', 'Here we go, racers!'];
 const HIT = ['Ooh, that\'s gotta hurt!', 'Into the barrier!', 'Crunch! Someone\'s feeling that.',
   'Bumper cars out there!', 'That\'s a costly tap!'];
 const LEAD = ['takes the lead!', 'surges to the front!', 'is out in front now!', 'grabs P1!'];
