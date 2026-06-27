@@ -5,3 +5,5 @@ dist/
 /tmp/
 .playwright-mcp/
 prototype/.playwright-mcp/
+assets/_raw/
+assets/_quarantine_noncommercial/
