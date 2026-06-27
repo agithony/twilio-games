@@ -44,36 +44,54 @@ export class Renderer {
   buildItems(items: Item[]) {
     for (const { mesh } of this.itemMeshes) this.scene.remove(mesh);
     this.itemMeshes = items.map(item => {
-      let mesh: THREE.Object3D;
+      // NOTE: keep in sync with editor-main.ts placement: world/lane position goes on an
+      // OUTER wrapper group; the inner model keeps its baked grounding (-min.y) + offset
+      // from AssetLoader.normalize so manifest offset survives and models sit on y=0.
+      let model: THREE.Object3D;
+      let usingTemplate: boolean;
       if (item.kind === 'barrier') {
         const template = this.assets?.barrierTemplate() ?? null;
-        mesh = template
+        usingTemplate = !!template;
+        model = template
           ? skeletonClone(template)
           : new THREE.Mesh(new THREE.BoxGeometry(TRACK_W / LANES - 1.5, 1.6, 1.2),
               new THREE.MeshStandardMaterial({ color: 0xff3b3b, emissive: 0x550000 }));
       } else {
         const template = this.assets?.boostTemplate() ?? null;
-        mesh = template
+        usingTemplate = !!template;
+        model = template
           ? skeletonClone(template)
           : new THREE.Mesh(new THREE.CylinderGeometry(1.3, 1.3, 0.25, 20),
               new THREE.MeshStandardMaterial({ color: 0x36e08a, emissive: 0x0a5a32 }));
       }
-      mesh.position.set(laneX(item.lane), item.kind === 'barrier' ? 0.8 : 0.13, item.z);
+      const mesh = new THREE.Group();
+      mesh.add(model);
+      // Real models self-ground via baked -min.y, so wrapper y=0. Primitives have no baked
+      // grounding (box centered, pad thin), so keep their original y (0.8 / 0.13).
+      const y = usingTemplate ? 0 : (item.kind === 'barrier' ? 0.8 : 0.13);
+      mesh.position.set(laneX(item.lane), y, item.z);
       this.scene.add(mesh);
       return { mesh, item };
     });
   }
 
   private ensureCar(id: string, color: string): THREE.Group {
-    let g = this.carMeshes.get(id);
-    if (!g) {
+    let wrapper = this.carMeshes.get(id);
+    if (!wrapper) {
       let idx = this.carIndex.get(id);
       if (idx === undefined) { idx = this.nextCarIndex++; this.carIndex.set(id, idx); }
       const template = this.assets?.carTemplate(idx) ?? null;
-      g = buildCar(template, color, id === this.myId);
-      this.scene.add(g); this.carMeshes.set(id, g);
+      // NOTE: keep in sync with editor-main.ts placement. buildCar returns a model that may
+      // carry baked grounding/offset on its own .position (template path) or be self-grounded
+      // (primitive body at y=0.75). Wrap it so we set world position on the OUTER group and
+      // never clobber the inner model's grounding. mixer/wheels live on the inner model.
+      const model = buildCar(template, color, id === this.myId);
+      wrapper = new THREE.Group();
+      wrapper.add(model);
+      wrapper.userData.model = model;
+      this.scene.add(wrapper); this.carMeshes.set(id, wrapper);
     }
-    return g;
+    return wrapper;
   }
 
   render(snap: WorldSnapshot) {
@@ -82,14 +100,16 @@ export class Renderer {
     this.lastFrame = now;
 
     for (const c of snap.cars) {
-      const g = this.ensureCar(c.id, c.color);
-      g.position.set(c.x, 0, c.z);
+      const wrapper = this.ensureCar(c.id, c.color);
+      wrapper.position.set(c.x, 0, c.z);
+      // Animation lives on the inner model (mixer/wheels set by buildCar).
+      const model = wrapper.userData.model as THREE.Object3D;
       // Animation priority: baked clip (mixer) > wheel-spin > static.
-      const mixer = g.userData.mixer as THREE.AnimationMixer | undefined;
+      const mixer = model.userData.mixer as THREE.AnimationMixer | undefined;
       if (mixer) {
         mixer.update(dt);
       } else {
-        const wheels = g.userData.wheels as THREE.Object3D[] | undefined;
+        const wheels = model.userData.wheels as THREE.Object3D[] | undefined;
         if (wheels && wheels.length) {
           for (const w of wheels) w.rotation.x += dt * 14;
         }
