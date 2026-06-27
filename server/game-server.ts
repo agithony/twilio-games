@@ -35,6 +35,7 @@ export class GameServer {
   private conns = new Set<Conn>();
   private loop: ReturnType<typeof setInterval> | null = null;
   private broadcastAccum = 0;
+  private roomAccum = new Map<Room, number>();
   private readonly port: number;
   private readonly broadcastEvery: number;
 
@@ -112,9 +113,9 @@ export class GameServer {
   }
 
   private stepRoom(room: Room, dt: number): void {
-    let acc = (room as any)._acc ?? 0; acc += dt;
+    let acc = (this.roomAccum.get(room) ?? 0) + dt;
     while (acc >= STEP) { room.tick(STEP); acc -= STEP; }
-    (room as any)._acc = acc;
+    this.roomAccum.set(room, acc);
   }
 
   private broadcastAll(): void {

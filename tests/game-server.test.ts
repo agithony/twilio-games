@@ -52,4 +52,18 @@ describe('GameServer integration', () => {
     const snap = [...a.inbox].reverse().find(m => m.type === 'snapshot') as any;
     expect(snap.snapshot.cars).toHaveLength(2);
   });
+
+  it('events reach all clients in a room, not just the first', async () => {
+    server = new GameServer({ port: 0, broadcastHz: 30 });
+    const port = await server.start();
+    const a = connect(port); await a.open();
+    const b = connect(port); await b.open();
+    a.ws.send(JSON.stringify({ type: 'join', roomCode: '9090', name: 'You' }));
+    b.ws.send(JSON.stringify({ type: 'join', roomCode: '9090', name: 'Ada' }));
+    await wait(50);
+    a.ws.send(JSON.stringify({ type: 'ready' }));
+    await wait(700);
+    expect(a.inbox.some(m => m.type === 'event')).toBe(true);
+    expect(b.inbox.some(m => m.type === 'event')).toBe(true);
+  });
 });
