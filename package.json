@@ -5,10 +5,10 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p client/tsconfig.json",
     "dev:server": "tsx watch server/index.ts",
     "dev:client": "vite client",
-    "build": "tsc --noEmit && vite build client"
+    "build": "tsc --noEmit && tsc --noEmit -p client/tsconfig.json && vite build client"
   },
   "devDependencies": {
     "@types/node": "^20.12.0",
