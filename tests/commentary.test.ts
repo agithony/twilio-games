@@ -1,0 +1,36 @@
+import { describe, it, expect } from 'vitest';
+import { commentaryFor } from '../client/commentary';
+import type { GameEvent } from '../shared/types';
+
+describe('commentaryFor', () => {
+  it('go is an energetic non-empty line', () => {
+    const s = commentaryFor({ kind: 'go' }, 0);
+    expect(s).toBeTruthy();
+    expect(typeof s).toBe('string');
+  });
+  it('lead_change names the new leader', () => {
+    const s = commentaryFor({ kind: 'lead_change', playerId: 'p2', name: 'Ada' }, 0)!;
+    expect(s).toContain('Ada');
+  });
+  it('finish includes name and place', () => {
+    const s = commentaryFor({ kind: 'finish', playerId: 'p1', name: 'Rex', place: 1 }, 0)!;
+    expect(s).toContain('Rex');
+    expect(s).toMatch(/1|first|1st/i);
+  });
+  it('hit produces a reaction line', () => {
+    expect(commentaryFor({ kind: 'hit', playerId: 'p3' }, 0)).toBeTruthy();
+  });
+  it('race_over produces a wrap-up line', () => {
+    expect(commentaryFor({ kind: 'race_over' }, 0)).toBeTruthy();
+  });
+  it('varies phrasing by seq for the same kind', () => {
+    const a = commentaryFor({ kind: 'go' }, 0);
+    const b = commentaryFor({ kind: 'go' }, 1);
+    const c = commentaryFor({ kind: 'go' }, 2);
+    // at least two of three differ (phrase bank has variety)
+    expect(new Set([a, b, c]).size).toBeGreaterThan(1);
+  });
+  it('per-countdown-tick returns null (big-text already shows the number)', () => {
+    expect(commentaryFor({ kind: 'countdown', n: 3 }, 0)).toBeNull();
+  });
+});
