@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Voice Racer</title>
+  <link rel="icon" href="data:," />
+  <style>
+    html,body{margin:0;height:100%;background:#0b1020;color:#e8ecf6;
+      font-family:ui-sans-serif,system-ui,sans-serif;overflow:hidden}
+    #app{position:fixed;inset:0}
+    #hud{position:absolute;top:14px;left:14px;background:rgba(16,22,40,.86);
+      border:1px solid rgba(255,255,255,.1);border-radius:12px;padding:12px 16px}
+    #hint{position:absolute;top:14px;right:14px;background:rgba(16,22,40,.86);
+      border:1px solid rgba(255,255,255,.1);border-radius:12px;padding:12px 16px;font-size:12px}
+    .kbd{background:#0e1530;border:1px solid rgba(255,255,255,.1);border-radius:5px;padding:1px 6px}
+    #big{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+      font-size:120px;font-weight:900;pointer-events:none}
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <div id="hud">Voice Racer — keyboard test</div>
+  <div id="hint">You = cyan car. <span class="kbd">←</span><span class="kbd">→</span> lanes ·
+    <span class="kbd">↑</span> boost · <span class="kbd">↓</span> brake · <span class="kbd">Space</span> power</div>
+  <div id="big"></div>
+  <script type="module" src="./main.ts"></script>
+</body>
+</html>
