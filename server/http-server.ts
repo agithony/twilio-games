@@ -60,7 +60,11 @@ export class HttpServer {
       const body = await readBody(req);
       const params = Object.fromEntries(new URLSearchParams(body));
       const fullUrl = `${this.publicBaseUrl}${path}`;
-      if (this.validateSignatures && this.authToken) {
+      if (this.validateSignatures) {
+        if (!this.authToken) {
+          res.writeHead(500).end('signature validation enabled but TWILIO_AUTH_TOKEN not configured');
+          return;
+        }
         const sig = req.headers['x-twilio-signature'];
         const ok = validateTwilioSignature({
           authToken: this.authToken,

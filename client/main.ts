@@ -3,7 +3,7 @@ import { KeyboardAdapter } from './input-keyboard';
 import { Renderer } from './renderer';
 import { InterpolationBuffer } from './interpolation';
 
-const url = `ws://${location.hostname}:8080`;
+const url = `ws://${location.hostname}:8080/game`;
 const conn = new GameConnection(url);
 const input = new KeyboardAdapter();
 const renderer = new Renderer(document.getElementById('app')!);
