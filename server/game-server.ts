@@ -84,11 +84,15 @@ export class GameServer {
     const conn: Conn = { ws };
     this.conns.add(conn);
     ws.on('message', (data) => this.onMessage(conn, data.toString()));
+    ws.on('error', () => { /* a socket error shouldn't crash the process; close handler cleans up */ });
     ws.on('close', () => {
       const roomCode = conn.roomCode;
       if (roomCode && conn.playerId) this.rooms.find(roomCode)?.removePlayer(conn.playerId);
       this.conns.delete(conn);
-      if (roomCode) this.pushLobby(roomCode);   // refresh roster after a disconnect
+      if (roomCode) {
+        this.pushLobby(roomCode);     // refresh roster after a disconnect
+        this.reapRoomIfEmpty(roomCode);
+      }
     });
   }
 
@@ -116,7 +120,12 @@ export class GameServer {
         break;
       case 'restart': {
         const room = conn.roomCode ? this.rooms.find(conn.roomCode) : undefined;
-        if (room) { room.start(); this.send(conn, anyItems(room)); }
+        // Only restart from a settled phase (lobby or a finished race) — never interrupt a
+        // race in progress, so one client can't grief everyone mid-race.
+        if (room && (room.phase === 'lobby' || room.phase === 'finished')) {
+          room.start();
+          this.send(conn, anyItems(room));
+        }
         break;
       }
       case 'spectate': {
@@ -129,6 +138,21 @@ export class GameServer {
 
   getOrCreateRoom(code: string): Room { return this.rooms.getOrCreate(code); }
   findRoom(code: string): Room | undefined { return this.rooms.find(code); }
+  /** Number of live rooms (test/diagnostic hook for the room-leak fix). */
+  get roomCount(): number { return this.rooms.count; }
+
+  /**
+   * Drop a room once nothing references it — no players AND no connections (spectators included)
+   * still pointing at it. Prevents the room + its accumulator from leaking for the life of the
+   * process after an event's worth of one-off room codes.
+   */
+  private reapRoomIfEmpty(roomCode: string): void {
+    const room = this.rooms.find(roomCode);
+    if (!room || !room.isEmpty) return;
+    for (const c of this.conns) if (c.roomCode === roomCode) return;   // a spectator is still watching
+    this.roomAccum.delete(room);
+    this.rooms.remove(roomCode);
+  }
 
   private startLoop(): void {
     let last = process.hrtime.bigint();
@@ -148,6 +172,9 @@ export class GameServer {
   }
 
   private stepRoom(room: Room, dt: number): void {
+    // Only an active race (countdown/racing) needs simulating. A lobby or a finished race has
+    // no world to advance — stepping it just burns CPU and grows the accumulator pointlessly.
+    if (room.phase !== 'countdown' && room.phase !== 'racing') { this.roomAccum.delete(room); return; }
     let acc = (this.roomAccum.get(room) ?? 0) + dt;
     while (acc >= STEP) { room.tick(STEP); acc -= STEP; }
     this.roomAccum.set(room, acc);

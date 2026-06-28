@@ -66,6 +66,24 @@ describe('Room', () => {
     expect(second).not.toEqual(first);
   });
 
+  it('removePlayer mid-race removes the car from the live world (no wedge)', () => {
+    const a = room.addPlayer('You') as any;
+    const b = room.addPlayer('Ada') as any;
+    room.start();
+    for (let i = 0; i < 4 * 60; i++) { room.tick(STEP); if (room.phase === 'racing') break; }
+    expect(room.snapshot()!.cars.map(c => c.id).sort()).toEqual([a.playerId, b.playerId].sort());
+    room.removePlayer(b.playerId);
+    expect(room.snapshot()!.cars.map(c => c.id)).toEqual([a.playerId]);
+  });
+
+  it('isEmpty reflects whether any players remain', () => {
+    expect(room.isEmpty).toBe(true);
+    const a = room.addPlayer('You') as any;
+    expect(room.isEmpty).toBe(false);
+    room.removePlayer(a.playerId);
+    expect(room.isEmpty).toBe(true);
+  });
+
   it('drains the countdown/go events', () => {
     room.addPlayer('You'); room.start();
     let sawGo = false;

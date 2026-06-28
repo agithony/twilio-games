@@ -82,6 +82,38 @@ describe('GameServer integration', () => {
     expect(lob.phase).toBe('lobby');
   });
 
+  it('reclaims a room once its last player disconnects (no leak)', async () => {
+    server = new GameServer({ port: 0, broadcastHz: 30 });
+    const port = await server.start();
+    const c = connect(port); await c.open();
+    c.ws.send(JSON.stringify({ type: 'join', roomCode: '3030', name: 'You' }));
+    await wait(80);
+    expect(server.roomCount).toBe(1);
+    c.ws.close();
+    await wait(120);
+    expect(server.roomCount).toBe(0);
+  });
+
+  it('restart is ignored while a race is in progress (no griefing)', async () => {
+    server = new GameServer({ port: 0, broadcastHz: 30 });
+    const port = await server.start();
+    const c = connect(port); await c.open();
+    c.ws.send(JSON.stringify({ type: 'join', roomCode: '3131', name: 'You' }));
+    await wait(50);
+    c.ws.send(JSON.stringify({ type: 'ready' }));
+    await wait(3800);   // past the ~3.2s countdown, into racing + advancing
+    const before = [...c.inbox].reverse().find(m => m.type === 'snapshot') as any;
+    expect(before.snapshot.phase).toBe('racing');
+    const tBefore = before.snapshot.t;
+    c.ws.send(JSON.stringify({ type: 'restart' }));
+    await wait(150);
+    const after = [...c.inbox].reverse().find(m => m.type === 'snapshot') as any;
+    // Restart was blocked: still racing, and sim time kept advancing (a reset would drop to
+    // countdown with t≈0).
+    expect(after.snapshot.phase).toBe('racing');
+    expect(after.snapshot.t).toBeGreaterThan(tBefore);
+  });
+
   it('a spectator receives snapshots without occupying a player slot', async () => {
     server = new GameServer({ port: 0, broadcastHz: 30 });
     const port = await server.start();

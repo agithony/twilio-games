@@ -124,10 +124,26 @@ export class RaceWorld {
     this.resolveCollisions(dt);
     this.updatePlaces();
     this.detectLeadChange();
+    // Race ends when every remaining car has finished. An EMPTY world (all players left
+    // mid-race) also ends — `every` is true for [] — so a fully-abandoned race transitions
+    // to finished instead of ticking forever, letting the server reset/clean up the room.
     if (this.cars.every(c => c.finished)) {
       this._phase = 'finished';
       this.events.push({ kind: 'race_over' });
     }
+  }
+
+  /**
+   * Remove a car from the live race (a player who left / a phone caller who hung up). Without this
+   * a disconnected racer's unfinished car would keep `cars.every(finished)` false forever, so the
+   * race could never end and the room would wedge. No-op if the id isn't present.
+   */
+  removeCar(id: string): void {
+    const i = this.cars.findIndex(c => c.id === id);
+    if (i === -1) return;
+    this.cars.splice(i, 1);
+    this.hits.delete(id);
+    if (this.leadId === id) this.leadId = null;   // re-detect the leader next step
   }
 
   private resolveItems(): void {

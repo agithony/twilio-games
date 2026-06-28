@@ -19,6 +19,8 @@ export class Room {
 
   get phase(): Phase { return this._phase; }
   get playerCount(): number { return this.players.length; }
+  /** True when no players remain — the RoomManager uses this to reclaim abandoned rooms. */
+  get isEmpty(): boolean { return this.players.length === 0; }
 
   /** Snapshot of the joined players for the shared-display lobby roster. */
   lobbyPlayers(): LobbyPlayer[] {
@@ -44,6 +46,9 @@ export class Room {
 
   removePlayer(playerId: string): void {
     this.players = this.players.filter(p => p.id !== playerId);
+    // Pull their car out of the LIVE race too — otherwise an unfinished ghost car keeps
+    // `cars.every(finished)` false forever and the race never ends (wedged room).
+    this.world?.removeCar(playerId);
     // An abandoned race (everyone disconnected) must not lock the room forever —
     // reset it to a fresh lobby so the code is immediately reusable.
     if (this.players.length === 0 && this._phase !== 'lobby') this.reset();

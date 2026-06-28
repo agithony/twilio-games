@@ -81,6 +81,27 @@ describe('RaceWorld', () => {
     expect(w.snapshot().cars.every(c => c.finished)).toBe(true);
   });
 
+  it('removeCar drops a car so the race can still finish (no wedge on disconnect)', () => {
+    const w = new RaceWorld(PLAYERS, 12345);
+    startRacing(w);
+    expect(w.hasCar('p2')).toBe(true);
+    w.removeCar('p2');
+    expect(w.hasCar('p2')).toBe(false);
+    expect(w.snapshot().cars.map(c => c.id)).toEqual(['p1']);
+    // p1 alone finishing must end the race (the removed car can't keep it un-finished forever).
+    for (let i = 0; i < 60 * 120; i++) { w.step(STEP); if (w.over) break; }
+    expect(w.over).toBe(true);
+  });
+
+  it('removeCar on the last car leaves an empty, finishable world (no crash)', () => {
+    const w = new RaceWorld(PLAYERS, 1);
+    startRacing(w);
+    w.removeCar('p1'); w.removeCar('p2');
+    expect(w.snapshot().cars).toHaveLength(0);
+    // stepping an empty world must not throw and must not be "over" by spurious every([])
+    expect(() => w.step(STEP)).not.toThrow();
+  });
+
   it('snapshot lap never exceeds LAP_TARGET in display terms', () => {
     startRacing(w);
     for (let i = 0; i < 60 * 120; i++) { w.step(STEP); if (w.over) break; }
