@@ -3,6 +3,7 @@ import { TRACK_W, TRACK_LEN, RACE_LEN, LANES, laneX } from '../shared/constants'
 import { TRACK_CENTER } from './map-world';
 import { CurvedTrack } from './track-path';
 import { buildTrackSurface, type SurfaceOpts } from './track-surface';
+import { makeSkyDome, setSkyColors } from './sky-dome';
 import { autoFitScale } from '../shared/asset-fit';
 import { stripDisplayBases } from './asset-loader';
 import type { WorldSnapshot, Item } from '../shared/types';
@@ -30,6 +31,7 @@ export class Renderer {
   private itemMeshes: { mesh: THREE.Object3D; item: Item }[] = [];
   private myId: string | null = null;
   private lastFrame = performance.now();
+  private clock = 0;   // accumulated seconds, drives the track-emissive pulse
   private sun: THREE.DirectionalLight;
   private ambient: THREE.HemisphereLight;
   private ground!: THREE.Mesh;         // surrounding terrain (theme-tinted); set in buildWorld()
@@ -159,11 +161,28 @@ export class Renderer {
   /** (Re)build the curved 3-lane surface from the current path + width + track-glow. */
   private rebuildSurface(): void {
     if (this.trackSurface) { this.trackContent.remove(this.trackSurface); this.trackSurface = null; }
+    this.pulseMats = [];
     if (!this.path) return;
     this.generatedWorld.visible = false;   // the curved surface replaces our straight asphalt
     this.trackSurface = buildTrackSurface(this.path, { ...this.surfaceOpts, glow: this.trackEmissive });
-    this.trackSurface.traverse(o => { (o as THREE.Mesh).receiveShadow = true; });
+    this.trackSurface.traverse(o => {
+      (o as THREE.Mesh).receiveShadow = true;
+      // Remember each emissive lane material + its base intensity so the pulse modulates from it.
+      const m = (o as THREE.Mesh).material as THREE.MeshStandardMaterial | undefined;
+      if (m && m.emissive && m.emissiveIntensity > 0) this.pulseMats.push({ m, base: m.emissiveIntensity });
+    });
     this.trackContent.add(this.trackSurface);
+  }
+  // Emissive lane materials (+ their base intensity) that the pulse modulates each frame.
+  private pulseMats: { m: THREE.MeshStandardMaterial; base: number }[] = [];
+
+  /** Animate the track-glow pulse the level authored (effects.pulse). amount 0 = steady (no-op). */
+  private applyPulse(): void {
+    if (this.pulse.amount <= 0 || this.pulse.speed <= 0 || this.pulseMats.length === 0) return;
+    // Sine 0..1; scale each material between base and base*(1+amount).
+    const wave = (Math.sin(this.clock * this.pulse.speed * Math.PI * 2) + 1) / 2;
+    const factor = 1 + this.pulse.amount * wave;
+    for (const { m, base } of this.pulseMats) m.emissiveIntensity = base * factor;
   }
 
   /** Apply a level's lighting; null reverts to zone-cycling. The sun direction is taken from
@@ -179,8 +198,9 @@ export class Renderer {
     this.ambient.color.set(l.skyColor);
     this.ambient.groundColor.set(l.groundColor);
     this.renderer.toneMappingExposure = l.exposure;
-    const skyU = (this.sky.material as THREE.ShaderMaterial).uniforms;
-    (skyU.top!.value as THREE.Color).set(l.skyColor);
+    // Tint only the dome top to the sky color; keep the current bottom (effects own the gradient).
+    const curBottom = ((this.sky.material as THREE.ShaderMaterial).uniforms.bottom!.value as THREE.Color);
+    setSkyColors(this.sky, l.skyColor, curBottom.clone());
     // A wide shadow frustum so the locked sun casts real ground shadows across the play area.
     const sc = this.sun.shadow.camera as THREE.OrthographicCamera;
     sc.left = -90; sc.right = 90; sc.top = 160; sc.bottom = -160; sc.near = 1; sc.far = 1200;
@@ -198,9 +218,7 @@ export class Renderer {
     this.trackEmissive = e.trackEmissive;
     this.pulse = { ...e.pulse };
     this.rebuildSurface();   // track glow changed → rebuild the lane materials with the new value
-    const skyU = (this.sky.material as THREE.ShaderMaterial).uniforms;
-    (skyU.top!.value as THREE.Color).set(e.skyTop);
-    (skyU.bottom!.value as THREE.Color).set(e.skyBottom);
+    setSkyColors(this.sky, e.skyTop, e.skyBottom);
   }
 
   /** Load + place decoration props (visual-only) in the track content group. */
@@ -248,15 +266,9 @@ export class Renderer {
     this.trackGroup.add(this.trackContent);
     this.trackContent.add(this.generatedWorld);
 
-    // Big inside-out gradient sky dome so the world never reads as a black void.
-    const skyMat = new THREE.ShaderMaterial({
-      side: THREE.BackSide, depthWrite: false,
-      uniforms: { top: { value: new THREE.Color(0x2a6cff) }, bottom: { value: new THREE.Color(0xbfe0ff) } },
-      vertexShader: `varying vec3 vP; void main(){ vP = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
-      fragmentShader: `uniform vec3 top; uniform vec3 bottom; varying vec3 vP;
-        void main(){ float h = clamp((normalize(vP).y*0.5)+0.5, 0.0, 1.0); gl_FragColor = vec4(mix(bottom, top, h), 1.0); }`,
-    });
-    this.sky = new THREE.Mesh(new THREE.SphereGeometry(2500, 32, 16), skyMat);
+    // Big inside-out gradient sky dome (shared with the editor via sky-dome.ts — one source of
+    // truth so the game + editor preview can't drift) so the world never reads as a black void.
+    this.sky = makeSkyDome();
     this.scene.add(this.sky);
 
     // Surrounding terrain (wide; theme-tinted each frame via this.ground.material).
@@ -478,6 +490,8 @@ export class Renderer {
     const now = performance.now();
     const dt = Math.min((now - this.lastFrame) / 1000, 0.1);
     this.lastFrame = now;
+    this.clock += dt;
+    this.applyPulse();
 
     for (const c of snap.cars) {
       const wrapper = this.ensureCar(c.id, c.color);
@@ -525,9 +539,7 @@ export class Renderer {
       this.ambient.color.set(theme.sky);          // sky tint drives hemisphere fill
       this.ambient.groundColor.set(theme.ground);
       // Sky dome follows the camera and tints to the zone (top = sky, bottom = lighter haze).
-      const skyU = (this.sky.material as THREE.ShaderMaterial).uniforms;
-      (skyU.top!.value as THREE.Color).set(theme.sky);
-      (skyU.bottom!.value as THREE.Color).set(theme.fog);
+      setSkyColors(this.sky, theme.sky, theme.fog);
     }
     // Sun follows the action: aim its target at the car, and place the light a fixed distance away
     // ALONG sunDir so the golden-hour rake angle stays consistent and its shadow frustum tracks the

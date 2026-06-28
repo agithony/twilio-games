@@ -240,10 +240,29 @@ export class LevelScene {
       const wrap = new THREE.Group(); wrap.add(model);
       const s = resolveCarScale(this.level, String(lane));
       wrap.scale.setScalar(s);
-      wrap.position.set(laneX(lane), 0.6, 20);
+      wrap.userData.lane = lane;   // remembered so placePreviewCars() can re-place on curve edits
       this.previewCars.add(wrap);
     }
+    this.placePreviewCars();
     this.changeCb();
+  }
+
+  /** Position the preview cars onto the live curve (sample z=20 with the lane offset, like the
+   *  game) so they stay ON a curved track as its points are dragged. Cheap; called per-frame. */
+  private placePreviewCars(): void {
+    const SAMPLE_Z = 20;
+    const curve = this.curve?.curve();
+    const laneScale = this.curve?.laneScale ?? 1;
+    for (const wrap of this.previewCars.children) {
+      const lane = (wrap.userData.lane as number) ?? 0;
+      if (curve) {
+        const p = curve.sample(SAMPLE_Z, laneX(lane) * laneScale);
+        wrap.position.set(p.pos.x, p.pos.y + 0.6, p.pos.z);
+        wrap.rotation.y = p.headingY;
+      } else {
+        wrap.position.set(laneX(lane), 0.6, SAMPLE_Z); wrap.rotation.y = 0;
+      }
+    }
   }
 
   async loadLevel(level: LevelConfig, opts?: { keepHistory?: boolean }): Promise<void> {
@@ -598,11 +617,18 @@ export class LevelScene {
              ...(startLine ? { startLine } : {}), ...(finishLine ? { finishLine } : {}) };
   }
 
+  private loopClock = 0;
+  private loopLast = performance.now();
   private loop(): void {
     requestAnimationFrame(() => this.loop());
+    const now = performance.now();
+    this.loopClock += Math.min((now - this.loopLast) / 1000, 0.1); this.loopLast = now;
     this.orbit.update();
-    // Keep the gantries glued to the live curve (so dragging a track point moves them too).
+    // Keep the gantries + preview cars glued to the live curve (so dragging a track point moves
+    // them too — WYSIWYG with the game).
     this.placeGantries();
+    this.placePreviewCars();
+    this.applyPulse();
     // Far plane must contain the WHOLE level (scene radius) AND whatever's beyond the camera at the
     // current zoom — so distant terrain never clips, whether zoomed in on the track or way out.
     const dist = this.camera.position.distanceTo(this.orbit.target);
@@ -617,5 +643,22 @@ export class LevelScene {
     // Sky dome rides the camera so the gradient is always the backdrop.
     this.sky.position.copy(this.camera.position);
     this.composer.render();   // post-FX (bloom) so the preview matches the game exactly
+  }
+
+  /** Animate the level's track-glow pulse on the curve ribbon, mirroring the game renderer so the
+   *  preview is WYSIWYG. amount 0 (default) = steady, so this is a no-op until the author enables it. */
+  private applyPulse(): void {
+    const p = this.level?.effects?.pulse;
+    if (!this.curve || !p || p.amount <= 0 || p.speed <= 0) return;
+    const wave = (Math.sin(this.loopClock * p.speed * Math.PI * 2) + 1) / 2;
+    const factor = 1 + p.amount * wave;
+    this.curve.group.traverse(o => {
+      const m = (o as THREE.Mesh).material as (THREE.MeshStandardMaterial & { _baseEmissive?: number }) | undefined;
+      if (!m || !m.emissive || m.emissiveIntensity === undefined) return;
+      // Capture the rebuilt base once per material so the pulse modulates from it (setGlow rebuilds
+      // materials, which resets this capture — correct, since the base changed).
+      if (m._baseEmissive === undefined) m._baseEmissive = m.emissiveIntensity;
+      if (m._baseEmissive > 0) m.emissiveIntensity = m._baseEmissive * factor;
+    });
   }
 }
