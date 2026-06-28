@@ -54,11 +54,12 @@ export class HttpServer {
   }
 
   private onVoiceConnection(ws: WebSocket): void {
+    console.log('[CR] voice WebSocket connected (Conversation Relay)');
     const adapter = new ConversationRelayAdapter({
       findOrCreateRoom: (code) => this.game.getOrCreateRoom(code),
     });
     ws.on('message', (d) => adapter.handleMessage(d.toString()));
-    ws.on('close', () => adapter.handleClose());
+    ws.on('close', () => { console.log('[CR] voice WebSocket closed'); adapter.handleClose(); });
   }
 
   private async onRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {

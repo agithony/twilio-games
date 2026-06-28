@@ -25,3 +25,20 @@ export function mapTranscriptToIntent(transcript: string): Intent | null {
   }
   return null;
 }
+
+/**
+ * Extract the ordered list of command intents from a transcript, one entry per
+ * matching token. e.g. "left right boost" → [MOVE_LEFT, MOVE_RIGHT, BOOST].
+ * Used to handle Conversation Relay's ACCUMULATING partial transcripts: we look
+ * at how many commands a growing partial contains and only act on newly-added ones.
+ */
+export function intentsFromTranscript(transcript: string): Intent[] {
+  const norm = transcript.toLowerCase().replace(/[^a-z\s]/g, ' ');
+  const tokens = norm.split(/\s+/).filter(Boolean);
+  const out: Intent[] = [];
+  for (const tok of tokens) {
+    const hit = WORD_TO_INTENT.find(w => w.word === tok);
+    if (hit) out.push(hit.intent);
+  }
+  return out;
+}

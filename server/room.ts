@@ -25,15 +25,23 @@ export class Room {
     // (the previous result is over, and rooms are long-lived across an event).
     if (this._phase === 'finished') this.reset();
     if (this.players.length >= MAX_PLAYERS) return { error: 'room_full' };
-    if (this._phase !== 'lobby') return { error: 'race_in_progress' };
     const lane = this.players.length % LANES;
     const id = `p${this.nextId++}`;
-    this.players.push({ id, name, color: color ?? COLORS[this.players.length % COLORS.length]!, lane });
+    const color2 = color ?? COLORS[this.players.length % COLORS.length]!;
+    this.players.push({ id, name, color: color2, lane });
+    // If a race is already running (countdown/racing), slot this player into the live
+    // world so they get a visible, controllable car — no need to wait for a lobby.
+    if (this.world && this._phase !== 'lobby') {
+      this.world.addCar({ id, name, color: color2 });
+    }
     return { playerId: id, lane };
   }
 
   removePlayer(playerId: string): void {
     this.players = this.players.filter(p => p.id !== playerId);
+    // An abandoned race (everyone disconnected) must not lock the room forever —
+    // reset it to a fresh lobby so the code is immediately reusable.
+    if (this.players.length === 0 && this._phase !== 'lobby') this.reset();
   }
 
   /** Return the room to a fresh lobby (keeps the joined players, drops the world). */

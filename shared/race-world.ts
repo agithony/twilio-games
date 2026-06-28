@@ -47,6 +47,28 @@ export class RaceWorld {
   get phase(): Phase { return this._phase; }
   get over(): boolean { return this._phase === 'finished'; }
 
+  /** True if a car with this id already exists in the sim. */
+  hasCar(id: string): boolean { return this.cars.some(c => c.id === id); }
+
+  /**
+   * Add a car to an already-running race (a player who joined after start — e.g. a
+   * phone caller). The car spawns near the current pack so it's immediately visible
+   * and in play. No-op if the id already exists.
+   */
+  addCar(p: PlayerInit): void {
+    if (this.hasCar(p.id)) return;
+    const lane = this.cars.length % LANES;
+    // Spawn at the rear of the current pack so it appears on-screen, not at z=0.
+    const rearZ = this.cars.length ? Math.min(...this.cars.map(c => c.z)) - 4 : 0;
+    this.cars.push({
+      id: p.id, name: p.name, color: p.color,
+      lane, targetLane: lane, x: laneX(lane), z: rearZ,
+      speed: BASE_SPEED, boost: 0, power: 1, powerActive: 0, stunned: 0,
+      lap: 1, finished: false, finishT: 0, place: this.cars.length + 1,
+    });
+    this.hits.set(p.id, new Set<number>());
+  }
+
   /** Drain queued announcer events (server polls this each broadcast). */
   drainEvents(): GameEvent[] { const e = this.events; this.events = []; return e; }
 

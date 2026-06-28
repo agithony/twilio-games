@@ -17,31 +17,115 @@ export class Renderer {
   private myId: string | null = null;
   private lastFrame = performance.now();
   private sun: THREE.DirectionalLight;
-  private ambient: THREE.AmbientLight;
-  private ground: THREE.Mesh;
+  private ambient: THREE.HemisphereLight;
+  private ground!: THREE.Mesh;         // surrounding terrain (theme-tinted); set in buildWorld()
 
   constructor(mount: HTMLElement, private assets?: AssetLoader) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     this.renderer.setSize(innerWidth, innerHeight);
     this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // Filmic tone mapping + sRGB output for a far less "flat" look.
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.15;
+    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     mount.appendChild(this.renderer.domElement);
     this.scene.background = new THREE.Color(0x0b1020);
-    this.scene.fog = new THREE.FogExp2(0x0b1020, 0.01);
-    this.camera = new THREE.PerspectiveCamera(52, innerWidth / innerHeight, 0.1, 2000);
+    this.scene.fog = new THREE.FogExp2(0x0b1020, 0.0016);   // gentle depth haze, far horizon
 
-    this.sun = new THREE.DirectionalLight(0xfff6e6, 1.2);
-    this.sun.position.set(40, 80, -20); this.sun.castShadow = true; this.scene.add(this.sun);
-    this.ambient = new THREE.AmbientLight(0x5566aa, 0.6); this.scene.add(this.ambient);
+    this.camera = new THREE.PerspectiveCamera(46, innerWidth / innerHeight, 0.1, 4000);
 
-    this.ground = new THREE.Mesh(new THREE.PlaneGeometry(TRACK_W, TRACK_LEN * 3),
-      new THREE.MeshStandardMaterial({ color: 0x1a2238 }));
-    this.ground.rotation.x = -Math.PI / 2; this.ground.position.z = TRACK_LEN; this.scene.add(this.ground);
+    // Key light (sun) with a real shadow frustum covering the play area.
+    this.sun = new THREE.DirectionalLight(0xfff4e2, 2.1);
+    this.sun.position.set(60, 110, 40);
+    this.sun.castShadow = true;
+    this.sun.shadow.mapSize.set(2048, 2048);
+    const sc = this.sun.shadow.camera as THREE.OrthographicCamera;
+    sc.left = -60; sc.right = 60; sc.top = 120; sc.bottom = -120; sc.near = 1; sc.far = 400;
+    this.sun.shadow.bias = -0.0004;
+    this.scene.add(this.sun, this.sun.target);
+    // Sky/ground hemisphere fill gives natural ambient instead of flat grey.
+    this.ambient = new THREE.HemisphereLight(0xbfd4ff, 0x202840, 0.7);
+    this.scene.add(this.ambient);
+
+    this.buildWorld();
 
     addEventListener('resize', () => {
       this.camera.aspect = innerWidth / innerHeight; this.camera.updateProjectionMatrix();
       this.renderer.setSize(innerWidth, innerHeight);
     });
+  }
+
+  private sky!: THREE.Mesh;            // gradient sky dome; tinted each frame
+
+  /** Build the static world: sky dome, terrain, asphalt track, markings, curbs, start gantry. */
+  private buildWorld(): void {
+    const FULL_LEN = TRACK_LEN * 3;          // covers all laps of travel
+    const midZ = TRACK_LEN;
+
+    // Big inside-out gradient sky dome so the world never reads as a black void.
+    const skyMat = new THREE.ShaderMaterial({
+      side: THREE.BackSide, depthWrite: false,
+      uniforms: { top: { value: new THREE.Color(0x2a6cff) }, bottom: { value: new THREE.Color(0xbfe0ff) } },
+      vertexShader: `varying vec3 vP; void main(){ vP = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+      fragmentShader: `uniform vec3 top; uniform vec3 bottom; varying vec3 vP;
+        void main(){ float h = clamp((normalize(vP).y*0.5)+0.5, 0.0, 1.0); gl_FragColor = vec4(mix(bottom, top, h), 1.0); }`,
+    });
+    this.sky = new THREE.Mesh(new THREE.SphereGeometry(2500, 32, 16), skyMat);
+    this.scene.add(this.sky);
+
+    // Surrounding terrain (wide; theme-tinted each frame via this.ground.material).
+    this.ground = new THREE.Mesh(
+      new THREE.PlaneGeometry(4000, FULL_LEN + 4000),
+      new THREE.MeshStandardMaterial({ color: 0x3a4a63, roughness: 1 }));
+    this.ground.rotation.x = -Math.PI / 2; this.ground.position.set(0, -0.05, midZ);
+    this.ground.receiveShadow = true; this.scene.add(this.ground);
+
+    // Asphalt track surface.
+    const asphalt = new THREE.Mesh(
+      new THREE.PlaneGeometry(TRACK_W, FULL_LEN),
+      new THREE.MeshStandardMaterial({ color: 0x23262e, roughness: 0.95, metalness: 0.0 }));
+    asphalt.rotation.x = -Math.PI / 2; asphalt.position.set(0, 0, midZ);
+    asphalt.receiveShadow = true; this.scene.add(asphalt);
+
+    // Dashed white lane dividers (between the lanes).
+    const dashMat = new THREE.MeshStandardMaterial({ color: 0xeef2ff, roughness: 0.6 });
+    for (let lane = 1; lane < LANES; lane++) {
+      const x = TRACK_W / 2 - (TRACK_W / LANES) * lane;   // divider between lane-1 and lane
+      for (let z = -TRACK_LEN; z < FULL_LEN; z += 14) {
+        const dash = new THREE.Mesh(new THREE.PlaneGeometry(0.4, 6), dashMat);
+        dash.rotation.x = -Math.PI / 2; dash.position.set(x, 0.02, z);
+        this.scene.add(dash);
+      }
+    }
+
+    // Solid edge lines + raised curbs on both sides.
+    const edgeMat = new THREE.MeshStandardMaterial({ color: 0xeef2ff, roughness: 0.6 });
+    const curbMat = new THREE.MeshStandardMaterial({ color: 0xef223a, roughness: 0.7, emissive: 0x300008 });
+    for (const side of [-1, 1]) {
+      const ex = side * (TRACK_W / 2 - 0.3);
+      const edge = new THREE.Mesh(new THREE.PlaneGeometry(0.5, FULL_LEN), edgeMat);
+      edge.rotation.x = -Math.PI / 2; edge.position.set(ex, 0.02, midZ); this.scene.add(edge);
+      const curb = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.5, FULL_LEN),
+        curbMat);
+      curb.position.set(side * (TRACK_W / 2 + 0.4), 0.25, midZ);
+      curb.castShadow = true; curb.receiveShadow = true; this.scene.add(curb);
+    }
+
+    // Start/finish gantry at z=0.
+    const postMat = new THREE.MeshStandardMaterial({ color: 0x10141c, roughness: 0.6, metalness: 0.3 });
+    for (const side of [-1, 1]) {
+      const post = new THREE.Mesh(new THREE.BoxGeometry(1.2, 12, 1.2), postMat);
+      post.position.set(side * (TRACK_W / 2 + 1.5), 6, 0); post.castShadow = true; this.scene.add(post);
+    }
+    const beam = new THREE.Mesh(new THREE.BoxGeometry(TRACK_W + 6, 2.4, 1.4), postMat);
+    beam.position.set(0, 11, 0); beam.castShadow = true; this.scene.add(beam);
+    // "FINISH" banner on the beam — emissive so it's bright and readable in any zone.
+    const banner = new THREE.Mesh(new THREE.PlaneGeometry(TRACK_W + 5, 2),
+      new THREE.MeshStandardMaterial({ color: 0xef223a, emissive: 0xef223a, emissiveIntensity: 0.6,
+        side: THREE.DoubleSide }));
+    banner.position.set(0, 11, 0.8); this.scene.add(banner);
   }
 
   setMyId(id: string) { this.myId = id; }
@@ -124,15 +208,26 @@ export class Renderer {
     const z = me ? me.z : 0;
 
     const theme = themeAtZ(z);
-    (this.scene.background as THREE.Color).set(theme.sky);
     const fog = this.scene.fog as THREE.FogExp2;
-    fog.color.set(theme.fog); fog.density = theme.fogDensity;
+    fog.color.set(theme.fog);   // keep our gentle far-horizon density (don't pull from theme)
     (this.ground.material as THREE.MeshStandardMaterial).color.set(theme.ground);
-    this.sun.color.set(theme.sun); this.sun.intensity = theme.sunIntensity;
-    this.ambient.color.set(theme.ambient);
+    this.sun.color.set(theme.sun); this.sun.intensity = Math.max(1.4, theme.sunIntensity * 1.6);
+    this.ambient.color.set(theme.sky);          // sky tint drives hemisphere fill
+    this.ambient.groundColor.set(theme.ground);
+    // Sky dome follows the camera and tints to the zone (top = sky, bottom = lighter haze).
+    const skyU = (this.sky.material as THREE.ShaderMaterial).uniforms;
+    (skyU.top!.value as THREE.Color).set(theme.sky);
+    (skyU.bottom!.value as THREE.Color).set(theme.fog);
+    // Keep the shadow frustum + sky following the action.
+    this.sun.position.set(60, 110, z + 40);
+    this.sun.target.position.set(0, 0, z + 20); this.sun.target.updateMatrixWorld();
 
-    this.camera.position.set(13, 15, z - 30);
-    this.camera.lookAt(me ? me.x * 0.4 : 0, 1.5, z + 26);
+    // Cinematic 3/4 chase: behind + above + slightly offset, looking down-track past the pack.
+    const mx = me ? me.x : 0;
+    this.camera.position.set(mx * 0.3 + 10, 9, z - 24);
+    this.camera.lookAt(mx * 0.4, 2.2, z + 45);
+    // Sky dome rides with the camera so the horizon is always far away.
+    this.sky.position.copy(this.camera.position);
     this.renderer.render(this.scene, this.camera);
   }
 }

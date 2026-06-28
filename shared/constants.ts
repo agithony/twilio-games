@@ -1,8 +1,8 @@
 export const LANES = 3;
 export const LAP_TARGET = 3;
 export const MAX_PLAYERS = 8;
-export const TRACK_W = 18;           // world units wide
-export const TRACK_LEN = 320;        // z-distance per lap
+export const TRACK_W = 24;           // world units wide (3 roomy lanes)
+export const TRACK_LEN = 900;        // z-distance per lap (long, open straight)
 export const STEP = 1 / 60;          // fixed sim timestep (seconds)
 export const BASE_SPEED = 38;        // cruise speed (units/s)
 export const ITEM_SPACING = 24;      // gap between obstacle rows
