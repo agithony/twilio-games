@@ -45,6 +45,15 @@ export class LevelScene {
   private loaded: LevelConfig | null = null;
   private sceneRadius = RACE_LEN;   // world extent (map bbox) — sizes the camera far plane so the
                                     // whole level stays visible at any zoom (recomputed on load).
+  // Track point-editing (active only while the Track is selected): drag the green/red handles to
+  // bend the curve, click empty ground (armed) to add a point, axis-lock to constrain a drag.
+  private ray = new THREE.Raycaster();
+  private dragPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+  private draggingHandle = -1;
+  private dragMoved = false;
+  private downPx = { x: 0, y: 0 };
+  private addArmed = false;
+  private axisLock: 'none' | 'x' | 'z' = 'none';
 
   constructor(mount: HTMLElement) {
     // kick off car-template loading non-blocking; preview cars fall back to primitives until ready
@@ -84,6 +93,15 @@ export class LevelScene {
       if (dragging) this.beginEdit();   // snapshot once at the start of a gizmo drag
     });
     this.gizmo.addEventListener('objectChange', () => this.changeCb());
+
+    // Track point-editing pointer handlers — active only when the Track is selected (otherwise the
+    // gizmo + orbit handle the canvas). Ported from the align tool: screen-space handle picking +
+    // ground-plane drag, so you can grab/move/add/delete curve points directly in the viewport.
+    const el = this.renderer.domElement;
+    el.addEventListener('pointerdown', (ev) => this.onTrackPointerDown(ev));
+    el.addEventListener('pointermove', (ev) => this.onTrackPointerMove(ev));
+    el.addEventListener('pointerup', () => this.onTrackPointerUp());
+    el.addEventListener('pointerleave', () => this.onTrackPointerUp());
 
     addEventListener('resize', () => {
       this.camera.aspect = innerWidth / innerHeight; this.camera.updateProjectionMatrix();
@@ -268,10 +286,99 @@ export class LevelScene {
 
   select(key: 'map' | 'track' | string): void {
     this.selKey = key;
-    if (key === 'map') this.gizmo.attach(this.mapGroup);
-    else if (key === 'track') this.gizmo.attach(this.trackGroup);
-    else { const g = this.propGroups.get(key); if (g) this.gizmo.attach(g); }
+    // Map / props use the gizmo (move/rotate/scale the whole object). The TRACK is edited by its
+    // curve POINTS (drag handles in the viewport), so the gizmo is detached while Track is selected
+    // — otherwise its handles would intercept the clicks meant for the control-point dots.
+    if (key === 'track') this.gizmo.detach();
+    else if (key === 'map') this.gizmo.attach(this.mapGroup);
+    else { const g = this.propGroups.get(key); if (g) this.gizmo.attach(g); else this.gizmo.detach(); }
+    this.addArmed = false;   // dropping selection cancels any pending add
     this.changeCb();
+  }
+
+  // ── Track point-editing public API (Track inspector wires buttons to these) ───────────────────
+  /** Arm "add point": the next click on empty ground drops a control point there. */
+  armAddPoint(on: boolean): void { this.addArmed = on; this.changeCb(); }
+  isAddArmed(): boolean { return this.addArmed; }
+  /** Delete the selected control point (false if none/endpoint selected — caller shows a hint). */
+  deleteSelectedPoint(): boolean {
+    if (!this.curve) return false;
+    this.beginEdit();
+    const ok = this.curve.removeSelected();
+    if (!ok) { this.undoStack.pop(); }   // nothing removed → don't keep the snapshot
+    this.changeCb();
+    return ok;
+  }
+  /** Extend/trim an end of the track along its direction (dist>0 extend, <0 trim). */
+  extendTrackEnd(which: 'start' | 'end', dist: number): void {
+    if (!this.curve) return;
+    this.beginEdit(); this.curve.extendEnd(which, dist); this.changeCb();
+  }
+  /** Constrain handle drags / arrow nudges to one ground axis ('none' frees both). */
+  setAxisLock(a: 'none' | 'x' | 'z'): void { this.axisLock = a; this.changeCb(); }
+  axisLockMode(): 'none' | 'x' | 'z' { return this.axisLock; }
+
+  // ── Track pointer interaction (only when the Track is selected) ───────────────────────────────
+  private ndc(ev: PointerEvent): THREE.Vector2 {
+    const r = this.renderer.domElement.getBoundingClientRect();
+    return new THREE.Vector2(((ev.clientX - r.left) / r.width) * 2 - 1,
+                             -((ev.clientY - r.top) / r.height) * 2 + 1);
+  }
+  /** Ground-plane (y=0) hit for a pointer, converted into the curve's local (trackGroup) space. */
+  private groundLocal(ev: PointerEvent): THREE.Vector3 | null {
+    this.ray.setFromCamera(this.ndc(ev), this.camera);
+    const hit = new THREE.Vector3();
+    if (!this.ray.ray.intersectPlane(this.dragPlane, hit)) return null;
+    return this.trackGroup.worldToLocal(hit);
+  }
+  /** Screen-space proximity pick of the nearest control-point handle (forgiving for tiny dots). */
+  private pickHandle(ev: PointerEvent): THREE.Object3D | null {
+    if (!this.curve) return null;
+    const r = this.renderer.domElement.getBoundingClientRect();
+    const px = ev.clientX - r.left, py = ev.clientY - r.top;
+    let best: THREE.Object3D | null = null, bestD = 26, v = new THREE.Vector3();
+    for (const h of this.curve.handleMeshes()) {
+      h.getWorldPosition(v).project(this.camera);
+      if (v.z > 1) continue;
+      const sx = (v.x * 0.5 + 0.5) * r.width, sy = (-v.y * 0.5 + 0.5) * r.height;
+      const d = Math.hypot(sx - px, sy - py);
+      if (d < bestD) { bestD = d; best = h; }
+    }
+    return best;
+  }
+  private onTrackPointerDown(ev: PointerEvent): void {
+    if (this.selKey !== 'track' || !this.curve || this.gizmo.dragging) return;
+    // Armed add: drop a point exactly where you clicked on the ground.
+    if (this.addArmed) {
+      const local = this.groundLocal(ev);
+      if (local) { this.beginEdit(); this.curve.addPointAt(local.x, local.z); this.addArmed = false; this.changeCb(); }
+      return;
+    }
+    // Grab a handle (or near one) → start a potential drag; snapshot now, discard if it's a pure click.
+    const handle = this.pickHandle(ev);
+    if (handle) {
+      this.beginEdit();
+      this.draggingHandle = this.curve.beginDrag(handle);
+      this.dragMoved = false; this.downPx = { x: ev.clientX, y: ev.clientY };
+      this.orbit.enabled = false; this.changeCb();
+    }
+  }
+  private onTrackPointerMove(ev: PointerEvent): void {
+    if (this.draggingHandle < 0 || !this.curve) return;
+    if (!this.dragMoved && Math.hypot(ev.clientX - this.downPx.x, ev.clientY - this.downPx.y) < 3) return;
+    const local = this.groundLocal(ev); if (!local) return;
+    this.dragMoved = true;
+    const cur = this.curve.pointAt(this.draggingHandle);
+    let x = local.x, z = local.z;
+    if (this.axisLock === 'x' && cur) z = cur.z;
+    if (this.axisLock === 'z' && cur) x = cur.x;
+    this.curve.dragTo(this.draggingHandle, x, z);
+    this.changeCb();
+  }
+  private onTrackPointerUp(): void {
+    if (this.draggingHandle < 0) return;
+    if (!this.dragMoved) this.undoStack.pop();   // pure click (select), not an edit → drop snapshot
+    this.draggingHandle = -1; this.orbit.enabled = true; this.changeCb();
   }
 
   /** Read the live scene transforms back into a LevelConfig for saving. */

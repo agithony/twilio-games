@@ -127,12 +127,38 @@ function renderTrackSection(host: HTMLElement): void {
   heading(host, 'Track');
   const note = document.createElement('p');
   note.style.cssText = 'font-size:12px;opacity:.7;margin:4px 0';
-  note.textContent = 'Move/rotate the whole track with the gizmo. Drag the green handles to bend it. Buttons below tune it.';
+  note.innerHTML = scene.isAddArmed()
+    ? '<b>Click empty ground</b> in the viewport to drop a new control point.'
+    : '<b>Drag the green/red dots</b> in the viewport to bend the track (red = start/finish). Buttons below add/remove points, lock an axis, and tune corners & width.';
   host.append(note);
+
   // Each curve tweak snapshots first (beginEdit) so it's individually undoable.
   const curveEdit = (fn: (c: NonNullable<ReturnType<typeof scene.getCurve>>) => void) => () => {
     const c = scene.getCurve(); if (!c) return; scene.beginEdit(); fn(c); afterEdit();
   };
+
+  // Point editing (drag in the viewport + these helpers).
+  heading(host, 'Points');
+  button(host, scene.isAddArmed() ? '✓ Click to place…' : '＋ Add point',
+    () => { scene.armAddPoint(!scene.isAddArmed()); afterEdit(); });
+  button(host, '🗑 Delete selected', () => {
+    if (!scene.deleteSelectedPoint()) { status.textContent = 'Click a non-endpoint dot first, then Delete'; setTimeout(() => (status.textContent = ''), 2500); }
+    afterEdit();
+  });
+  const lock = scene.axisLockMode();
+  button(host, (lock === 'none' ? '● ' : '') + 'Free move', () => { scene.setAxisLock('none'); afterEdit(); });
+  button(host, (lock === 'x' ? '● ' : '') + 'Lock Z (move X)', () => { scene.setAxisLock('x'); afterEdit(); });
+  button(host, (lock === 'z' ? '● ' : '') + 'Lock X (move Z)', () => { scene.setAxisLock('z'); afterEdit(); });
+
+  // Extend / trim the two ends along the track direction.
+  heading(host, 'Ends');
+  button(host, '⟸ Extend start', () => { scene.extendTrackEnd('start', 80); afterEdit(); });
+  button(host, 'Trim start ⟹', () => { scene.extendTrackEnd('start', -80); afterEdit(); });
+  button(host, 'Extend end ⟹', () => { scene.extendTrackEnd('end', 80); afterEdit(); });
+  button(host, '⟸ Trim end', () => { scene.extendTrackEnd('end', -80); afterEdit(); });
+
+  // Shape + width.
+  heading(host, 'Shape & width');
   button(host, 'Straighten', curveEdit(c => c.reset()));
   button(host, 'Sharper corners', curveEdit(c => c.setSmoothing(c.cornerSmoothing - 0.1)));
   button(host, 'Smoother corners', curveEdit(c => c.setSmoothing(c.cornerSmoothing + 0.1)));
