@@ -128,7 +128,9 @@ export class Renderer {
     banner.position.set(0, 11, 0.8); this.scene.add(banner);
   }
 
+  private spectator = false;
   setMyId(id: string) { this.myId = id; }
+  setSpectator(on: boolean) { this.spectator = on; }
 
   buildItems(items: Item[]) {
     for (const { mesh } of this.itemMeshes) this.scene.remove(mesh);
@@ -204,7 +206,17 @@ export class Renderer {
         }
       }
     }
-    const me = snap.cars.find(c => c.id === this.myId) ?? snap.cars[0];
+    // Camera focus: in spectator mode, follow the LEADING car (front of the pack) so
+    // the action is always on screen no matter which car is whose. Otherwise follow "my" car.
+    let focus: typeof snap.cars[number] | undefined;
+    if (this.spectator || !this.myId) {
+      focus = snap.cars.length
+        ? snap.cars.reduce((a, b) => (b.z > a.z ? b : a))   // furthest-ahead car
+        : undefined;
+    } else {
+      focus = snap.cars.find(c => c.id === this.myId) ?? snap.cars[0];
+    }
+    const me = focus;
     const z = me ? me.z : 0;
 
     const theme = themeAtZ(z);

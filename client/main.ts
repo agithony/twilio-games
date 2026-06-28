@@ -60,16 +60,15 @@ async function boot() {
   try { await assets.loadManifest(); } catch { /* primitives */ }
 
   if (isDisplay) {
-    // Operator console that also seats a drivable car, so a solo host can start
-    // AND race (phone players join the same room as additional cars). Joining as
-    // a player guarantees the room is non-empty, so Enter actually starts a race.
-    conn.onJoined((playerId) => { renderer.setMyId(playerId); });
-    input.onIntent((i) => conn.sendIntent(i));
+    // Shared screen: a pure SPECTATOR that renders every player's car and frames the
+    // whole pack (no "my car", so the camera doesn't lock onto the wrong one). The
+    // operator presses Enter to start. Phone callers are the players.
+    conn.spectate(roomCode);
+    renderer.setSpectator(true);
     addEventListener('keydown', (e) => {
       if (e.key === 'r') conn.restart();
       else if (e.key === 'Enter') { enableHost(); conn.ready(); }
     });
-    conn.join(roomCode, name === 'You' ? 'Host' : name);
   } else {
     // Dev keyboard-player path: join as a player and drive with the keyboard.
     conn.onJoined((playerId) => { renderer.setMyId(playerId); });
@@ -85,7 +84,9 @@ async function boot() {
     requestAnimationFrame(frame);
     const snap = buffer.sample(performance.now());
     if (snap) renderer.render(snap);
-    else if (!started) big.textContent = 'Waiting for players… press ENTER to start';
+    else if (!started) big.textContent = isDisplay
+      ? `Call in + enter room ${roomCode}, then press ENTER`
+      : 'Waiting… press ENTER to start';
   }
   requestAnimationFrame(frame);
 }
