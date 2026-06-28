@@ -36,8 +36,50 @@
     "path": {
       "points": [
         [
-          2.309,
-          687.791
+          922.263,
+          -14,
+          647.45
+        ],
+        [
+          865.305,
+          -18,
+          657.364
+        ],
+        [
+          669.897,
+          -24,
+          667.779
+        ],
+        [
+          548.753,
+          -18,
+          652.544
+        ],
+        [
+          448.975,
+          -16,
+          617.505
+        ],
+        [
+          339.713,
+          -8,
+          578.614
+        ],
+        [
+          135.035,
+          581.375
+        ],
+        [
+          28.808,
+          613.759
+        ],
+        [
+          2.142,
+          722.659
+        ],
+        [
+          1.207,
+          839.25
         ],
         [
           -1.404,
@@ -61,8 +103,12 @@
       "smoothing": 0.1
     },
     "lighting": {
-      "sunPos": [-180, 70, -120],
-      "sunIntensity": 3.0,
+      "sunPos": [
+        -180,
+        70,
+        -120
+      ],
+      "sunIntensity": 3,
       "sunColor": "#ffd9a0",
       "ambientIntensity": 0.45,
       "skyColor": "#9ec3ff",
@@ -70,10 +116,20 @@
       "exposure": 1.2
     },
     "effects": {
-      "bloom": { "strength": 0.35, "radius": 0.5, "threshold": 0.95 },
-      "fog": { "density": 0.0004, "color": "#e8c9a0" },
+      "bloom": {
+        "strength": 0.35,
+        "radius": 0.5,
+        "threshold": 0.95
+      },
+      "fog": {
+        "density": 0,
+        "color": "#e8c9a0"
+      },
       "trackEmissive": 0.35,
-      "pulse": { "speed": 0, "amount": 0 },
+      "pulse": {
+        "speed": 0,
+        "amount": 0
+      },
       "skyTop": "#3b6fb0",
       "skyBottom": "#ffcf9e"
     }
