@@ -67,6 +67,21 @@ describe('GameServer integration', () => {
     expect(b.inbox.some(m => m.type === 'event')).toBe(true);
   });
 
+  it('two players in lobby both receive a lobby roster with both names', async () => {
+    server = new GameServer({ port: 0, broadcastHz: 30 });
+    const port = await server.start();
+    const a = connect(port); await a.open();
+    const b = connect(port); await b.open();
+    a.ws.send(JSON.stringify({ type: 'join', roomCode: '8200', name: 'Ada' }));
+    b.ws.send(JSON.stringify({ type: 'join', roomCode: '8200', name: 'Rex' }));
+    await wait(250);
+    const lob = [...b.inbox].reverse().find((m: any) => m.type === 'lobby') as any;
+    expect(lob).toBeDefined();
+    const names = lob.players.map((p: any) => p.name).sort();
+    expect(names).toEqual(['Ada', 'Rex']);
+    expect(lob.phase).toBe('lobby');
+  });
+
   it('a spectator receives snapshots without occupying a player slot', async () => {
     server = new GameServer({ port: 0, broadcastHz: 30 });
     const port = await server.start();

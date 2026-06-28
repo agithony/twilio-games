@@ -46,6 +46,17 @@ describe('Room', () => {
     expect(after).not.toBe(before);
   });
 
+  it('lobbyPlayers returns the roster with id/name/color/lane', () => {
+    const room = new Room('4821', 1);
+    const a = room.addPlayer('Ada', '#f22f46') as { playerId: string; lane: number };
+    room.addPlayer('Rex');
+    const roster = room.lobbyPlayers();
+    expect(roster).toHaveLength(2);
+    expect(roster[0]).toMatchObject({ playerId: a.playerId, name: 'Ada', color: '#f22f46', lane: 0 });
+    expect(roster[1]!.name).toBe('Rex');
+    expect(typeof roster[1]!.color).toBe('string');
+  });
+
   it('drains the countdown/go events', () => {
     room.addPlayer('You'); room.start();
     let sawGo = false;

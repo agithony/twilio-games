@@ -41,6 +41,7 @@ export class GameServer {
   private loop: ReturnType<typeof setInterval> | null = null;
   private broadcastAccum = 0;
   private roomAccum = new Map<Room, number>();
+  private lobbyTick = 0;
   private readonly port: number | undefined;
   private readonly broadcastEvery: number;
 
@@ -84,8 +85,10 @@ export class GameServer {
     this.conns.add(conn);
     ws.on('message', (data) => this.onMessage(conn, data.toString()));
     ws.on('close', () => {
-      if (conn.roomCode && conn.playerId) this.rooms.find(conn.roomCode)?.removePlayer(conn.playerId);
+      const roomCode = conn.roomCode;
+      if (roomCode && conn.playerId) this.rooms.find(roomCode)?.removePlayer(conn.playerId);
       this.conns.delete(conn);
+      if (roomCode) this.pushLobby(roomCode);   // refresh roster after a disconnect
     });
   }
 
@@ -99,6 +102,7 @@ export class GameServer {
         if ('error' in res) return this.send(conn, { type: 'error', code: res.error, message: res.error });
         conn.roomCode = msg.roomCode; conn.playerId = res.playerId;
         this.send(conn, { type: 'joined', playerId: res.playerId, lane: res.lane, roomCode: msg.roomCode });
+        this.pushLobby(msg.roomCode);   // update every conn's roster instantly
         break;
       }
       case 'ready': {
@@ -150,15 +154,31 @@ export class GameServer {
   }
 
   private broadcastAll(): void {
+    const tick = this.lobbyTick++;   // once per broadcast call, not per connection
     const cached = new Set<Room>();
     for (const c of this.conns) {
       if (!c.roomCode) continue;
       const room = this.rooms.find(c.roomCode); if (!room) continue;
+      // A room is EITHER in lobby OR racing per tick — send exactly one kind.
+      if (room.phase === 'lobby') {
+        // Throttle the roster to ~2/s (every 10th broadcast ≈ 2/s at 20Hz). No snapshot/events in lobby.
+        if (tick % 10 === 0)
+          this.send(c, { type: 'lobby', roomCode: room.code, players: room.lobbyPlayers(), phase: room.phase });
+        continue;
+      }
       if (!cached.has(room)) { room.cacheEventsForBroadcast(); cached.add(room); }
       const snap = room.snapshot(); if (!snap) continue;
       this.send(c, { type: 'snapshot', snapshot: snap });
       for (const event of room.drainEventsOnce()) this.send(c, { type: 'event', event });
     }
+  }
+
+  /** Immediately send the current lobby roster to every connection in a room (join/disconnect). */
+  private pushLobby(roomCode: string): void {
+    const room = this.rooms.find(roomCode);
+    if (!room || room.phase !== 'lobby') return;
+    const msg: ServerMessage = { type: 'lobby', roomCode: room.code, players: room.lobbyPlayers(), phase: room.phase };
+    for (const c of this.conns) if (c.roomCode === roomCode) this.send(c, msg);
   }
 
   private send(conn: Conn, msg: ServerMessage): void {

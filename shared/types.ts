@@ -42,13 +42,16 @@ export type ClientMessage =
   | { type: 'restart' }
   | { type: 'spectate'; roomCode: string };
 
+export interface LobbyPlayer { playerId: string; name: string; color: string; lane: number }
+
 // ---- Protocol: server -> client ----
 export type ServerMessage =
   | { type: 'joined'; playerId: string; lane: number; roomCode: string }
   | { type: 'error'; code: string; message: string }
   | { type: 'items'; items: Item[] }              // sent once when a race starts
   | { type: 'snapshot'; snapshot: WorldSnapshot } // sent ~20-30/s during a race
-  | { type: 'event'; event: GameEvent };          // announcer cues (lead change, finish, ...)
+  | { type: 'event'; event: GameEvent }           // announcer cues (lead change, finish, ...)
+  | { type: 'lobby'; roomCode: string; players: LobbyPlayer[]; phase: Phase }; // lobby roster (~2/s while in lobby)
 
 export type GameEvent =
   | { kind: 'countdown'; n: number }

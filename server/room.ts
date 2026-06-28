@@ -1,6 +1,6 @@
 import { RaceWorld } from '../shared/race-world';
 import { MAX_PLAYERS, LANES } from '../shared/constants';
-import type { Intent, WorldSnapshot, Phase, GameEvent } from '../shared/types';
+import type { Intent, WorldSnapshot, Phase, GameEvent, LobbyPlayer } from '../shared/types';
 
 interface RoomPlayer { id: string; name: string; color: string; lane: number; }
 
@@ -19,6 +19,11 @@ export class Room {
 
   get phase(): Phase { return this._phase; }
   get playerCount(): number { return this.players.length; }
+
+  /** Snapshot of the joined players for the shared-display lobby roster. */
+  lobbyPlayers(): LobbyPlayer[] {
+    return this.players.map(p => ({ playerId: p.id, name: p.name, color: p.color, lane: p.lane }));
+  }
 
   addPlayer(name: string, color?: string): { playerId: string; lane: number } | { error: string } {
     // A finished race is reusable: a new joiner reopens the room to a fresh lobby
