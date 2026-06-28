@@ -9,6 +9,7 @@ import {
   BARRIER_TARGET,
   BOOST_TARGET,
 } from '../../shared/asset-fit';
+import { stripDisplayBases } from '../asset-loader';
 import { fetchManifest, saveManifest, fetchAssets } from './manifest-client';
 import { TRACK_W, TRACK_LEN, LANES, laneX } from '../../shared/constants';
 import type { Manifest, AssetRef } from '../../shared/asset-manifest';
@@ -113,6 +114,7 @@ function loadModel(file: string, target: number): Promise<{ model: THREE.Object3
       (gltf) => {
         try {
           const g = gltf.scene;
+          stripDisplayBases(g);   // drop showroom bases/floors/backdrops (match game loader)
           const box = new THREE.Box3().setFromObject(g);
           const size = new THREE.Vector3();
           box.getSize(size);
@@ -232,15 +234,49 @@ renderer.domElement.addEventListener('pointerdown', (e) => {
   raycaster.setFromCamera(ptr, camera);
   const hits = raycaster.intersectObjects(placements.map((p) => p.group), true);
   const hit = hits[0];
-  if (!hit) return;
+  if (!hit) { deselect(); return; }     // click empty space → deselect
   const p = findPlacement(hit.object);
-  if (p) select(p);
+  if (p) select(p); else deselect();
 });
 
 function select(p: Placement): void {
   selected = p;
   gizmo.attach(p.group);
+  focusOn(p);            // auto-focus the camera on the selected model
   renderInspector();
+}
+
+function deselect(): void {
+  selected = null;
+  gizmo.detach();
+  renderInspector();
+}
+
+// --- Smooth camera focus: orbit the camera to frame a placement's bounding sphere. ---
+let camTween: { fromPos: THREE.Vector3; toPos: THREE.Vector3; fromTgt: THREE.Vector3; toTgt: THREE.Vector3; t: number } | null = null;
+
+function frameBox(box: THREE.Box3, pad = 1.6): void {
+  if (box.isEmpty()) return;
+  const center = new THREE.Vector3(); box.getCenter(center);
+  const size = new THREE.Vector3(); box.getSize(size);
+  const radius = Math.max(size.x, size.y, size.z) * 0.5 || 2;
+  const dist = (radius / Math.sin((camera.fov * Math.PI) / 360)) * pad;
+  // Keep the existing 3/4 view direction; place the camera back along it from the center.
+  const dir = new THREE.Vector3(0.5, 0.6, -1).normalize();
+  camTween = {
+    fromPos: camera.position.clone(), toPos: center.clone().add(dir.multiplyScalar(dist)),
+    fromTgt: orbit.target.clone(), toTgt: center.clone(), t: 0,
+  };
+}
+
+function focusOn(p: Placement): void {
+  frameBox(new THREE.Box3().setFromObject(p.group));
+}
+
+function frameAll(): void {
+  const box = new THREE.Box3();
+  for (const p of placements) box.expandByObject(p.group);
+  frameBox(box, 1.3);
 }
 
 // ---------------------------------------------------------------------------
@@ -372,12 +408,31 @@ async function swapModel(p: Placement, ref: AssetRef): Promise<void> {
 // ---------------------------------------------------------------------------
 // Keyboard: switch gizmo mode.
 // ---------------------------------------------------------------------------
+/** Reset the selected model's scale/rotation/offset back to auto-fit defaults. */
+function resetTransform(): void {
+  if (!selected) return;
+  const ref = refOf(selected.binding);
+  if (!ref) return;
+  ref.scale = 1; ref.rotation = [0, 0, 0]; ref.offset = [0, 0, 0];
+  selected.group.rotation.set(0, 0, 0);
+  selected.group.scale.setScalar(1);
+  applyRef(selected, ref);
+  renderInspector();
+  toast('Transform reset');
+}
+
 addEventListener('keydown', (e) => {
   if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
   if (e.key === 'w' || e.key === 'g') gizmo.setMode('translate');
   else if (e.key === 'e') gizmo.setMode('rotate');
   else if (e.key === 'r') gizmo.setMode('scale');
+  else if (e.key === 'f') { if (selected) focusOn(selected); else frameAll(); }
+  else if (e.key === 'Escape') deselect();
+  else if (e.key === 'Backspace' || e.key === 'Delete') { e.preventDefault(); resetTransform(); }
 });
+
+document.getElementById('reset')!.addEventListener('click', resetTransform);
+document.getElementById('frameAll')!.addEventListener('click', frameAll);
 
 // ---------------------------------------------------------------------------
 // Save.
@@ -449,6 +504,13 @@ async function boot(): Promise<void> {
 
 function frame(): void {
   requestAnimationFrame(frame);
+  if (camTween) {
+    camTween.t = Math.min(1, camTween.t + 0.08);
+    const e = 1 - Math.pow(1 - camTween.t, 3);   // ease-out cubic
+    camera.position.lerpVectors(camTween.fromPos, camTween.toPos, e);
+    orbit.target.lerpVectors(camTween.fromTgt, camTween.toTgt, e);
+    if (camTween.t >= 1) camTween = null;
+  }
   orbit.update();
   renderer.render(scene, camera);
 }

@@ -26,3 +26,25 @@ describe('isWheelNode', () => {
       expect(isWheelNode(n)).toBe(false);
   });
 });
+
+import { isDisplayBaseNode } from '../shared/asset-fit';
+
+describe('isDisplayBaseNode', () => {
+  it('flags real showroom-base node names from our models', () => {
+    for (const n of [
+      'LamborghiniHuracanGT3_CarBase_11', 'Circle_25', 'Plane_26', 'Circle.001_56',
+      'JP1930_ParkRover:Floor', 'pPlane18', 'PlaneShape', 'Base_Lowpoly',
+      'Camera_Bokeh_Plane_Plane.008_11', 'Camera_Optical_Vignetting_Plane.007_12',
+      'Sphere_1',   // chrome reflection dome on the Squadra Lamborghini
+    ]) expect(isDisplayBaseNode(n)).toBe(true);
+  });
+  it('does NOT flag real car parts (incl. wing mirrors + license plate background)', () => {
+    for (const n of [
+      'body', 'chassis', 'wheel_FL', 'door_left', 'Windshield', 'Bumper',
+      'Seat', 'Engine', 'Headlight', 'Mirror', 'embase_mesh',
+      'LamborghiniHuracanGT3_WingMirrors_19',
+      'License Plate_License Plate Background_0_167_55',
+      'JP1930_ParkRover:Mirrors',
+    ]) expect(isDisplayBaseNode(n)).toBe(false);
+  });
+});

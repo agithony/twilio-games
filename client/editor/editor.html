@@ -22,9 +22,14 @@
   <div id="app"></div>
   <div id="panel">
     <h4>Model Editor</h4>
-    <div class="hint">Click a model to select it. Drag the gizmo or edit fields, then Save.
-      Keys: <b>W</b> move · <b>E</b> rotate · <b>R</b> scale.</div>
+    <div class="hint">Click a model to select &amp; focus it. Drag the gizmo or edit fields.
+      <b>Click empty space</b> or <b>Esc</b> to deselect.<br>
+      Keys: <b>W</b> move · <b>E</b> rotate · <b>R</b> scale · <b>F</b> frame · <b>Backspace</b> reset transform.</div>
     <div id="inspector"></div>
+    <div style="display:flex;gap:6px;margin-top:10px">
+      <button id="reset" style="margin:0;background:#2a3350">↺ Reset</button>
+      <button id="frameAll" style="margin:0;background:#2a3350">⤢ Frame all</button>
+    </div>
     <button id="save">💾 Save to manifest</button>
   </div>
   <div id="toast"></div>

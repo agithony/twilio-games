@@ -1,11 +1,23 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
-import { autoFitScale, isWheelNode, CAR_TARGET, BARRIER_TARGET, BOOST_TARGET } from '../shared/asset-fit';
+import { autoFitScale, isWheelNode, isDisplayBaseNode, CAR_TARGET, BARRIER_TARGET, BOOST_TARGET } from '../shared/asset-fit';
 import { parseManifest } from '../shared/asset-manifest';
 import type { Manifest, AssetRef } from '../shared/asset-manifest';
 
 const deg = (d: number) => (d * Math.PI) / 180;
+
+/**
+ * Remove showroom display props (bases, floors, turntable discs, photo backdrops) from a
+ * loaded GLB so only the actual vehicle remains. Shared by the game loader and the editor
+ * so both see identical geometry. Collects matches first, then detaches (mutating during
+ * traverse is unsafe).
+ */
+export function stripDisplayBases(root: THREE.Object3D): void {
+  const remove: THREE.Object3D[] = [];
+  root.traverse(o => { if (o !== root && o.name && isDisplayBaseNode(o.name)) remove.push(o); });
+  for (const o of remove) o.parent?.remove(o);
+}
 
 export class AssetLoader {
   private loader: GLTFLoader;
@@ -41,9 +53,12 @@ export class AssetLoader {
       this.loader.load(`/assets/${ref.file}`, (gltf) => {
         try {
           const g = this.normalize(gltf.scene, ref, target);
-          // Preserve any baked animation clips on the template for the factory/renderer.
-          // (Real Sketchfab cars often animate via a clip, not wheel nodes — see Global Constraints.)
-          g.userData.clips = gltf.animations ?? [];
+          // NOTE: we deliberately do NOT auto-play the GLB's baked clips. On free
+          // Sketchfab models these are usually SHOWCASE animations (doors opening,
+          // suspension "air out", turntable spins) that look broken while driving.
+          // Cars animate via wheel-spin (or stay static); a clean static car beats a
+          // car driving with its doors flapping open.
+          g.userData.clips = [];
           resolve(g);
         }
         catch { resolve(null); }
@@ -53,7 +68,11 @@ export class AssetLoader {
 
   private normalize(scene: THREE.Group, ref: AssetRef, target: number): THREE.Group {
     const g = scene;
-    // measure, auto-fit to target longest dimension
+    // REMOVE showroom display props (turntable bases, floors, photo backdrops, camera
+    // bokeh planes) entirely — so they don't render AND don't skew the measurements that
+    // drive auto-fit and grounding. Done before any Box3 so the car alone defines the size.
+    stripDisplayBases(g);
+    // measure, auto-fit to target longest dimension (car geometry only now)
     const box = new THREE.Box3().setFromObject(g);
     const size = new THREE.Vector3(); box.getSize(size);
     const fit = autoFitScale([size.x, size.y, size.z], target);

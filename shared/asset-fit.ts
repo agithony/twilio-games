@@ -14,3 +14,29 @@ export function autoFitScale(size: [number, number, number], targetLongest: numb
 export function isWheelNode(name: string): boolean {
   return /wheel|tire|rim/i.test(name);
 }
+
+/**
+ * Many free Sketchfab vehicles ship sitting on a SHOWROOM display prop — a base,
+ * floor, turntable disc, plinth, or photo backdrop — which we must hide so the car
+ * (not the prop) fills the frame and auto-fit measures the car alone. Matches the
+ * common naming for these props. Word-ish boundaries avoid false hits like "embase".
+ */
+export function isDisplayBaseNode(name: string): boolean {
+  // Showroom-prop keywords. Most match anywhere (handles "pPlane18", "PlaneShape",
+  // "Circle.001_56"); "base" is gated to a word-start (^/_/-/space or a capital B, as in
+  // "CarBase") so it doesn't false-hit parts like "embase". Real car parts
+  // (body/door/wheel/seat/...) contain none of these tokens.
+  if (/(turntable|cyclorama|vignetting|bokeh|plinth|pedestal|podium)/i.test(name)) return true;
+  // Geometry-primitive display props (Maya/Blender names like "pPlane18", "PlaneShape",
+  // "Circle.001"). Match plane/circle/disc as a substring — these tokens don't appear in
+  // real car-part names.
+  if (/(plane|circle|disc|disk)/i.test(name)) return true;
+  // "floor/ground/backdrop/platform/stand/riser/dais/stage" as a word (NOT inside another
+  // word like "License Plate Background" — a real part). Anchored to separators.
+  if (/(^|[_\-. :])(floor|ground|backdrop|platform|stand|riser|dais|stage)([_\-. :0-9]|$)/i.test(name)) return true;
+  // Reflection/sky domes used as showroom environments (e.g. "Sphere_1"). Anchored so it
+  // won't hit car parts; NOTE we deliberately do NOT match "mirror" (real wing-mirrors) or
+  // "ball" (could be a joint) without a clearer base context.
+  if (/^sphere([._]\d+)?$|sky.?dome|reflection.?(sphere|dome)|env.?(sphere|dome|map)/i.test(name)) return true;
+  return /(^|[_\- ]|[a-z])Base/.test(name) || /^base/i.test(name);
+}
