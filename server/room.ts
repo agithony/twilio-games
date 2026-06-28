@@ -21,6 +21,9 @@ export class Room {
   get playerCount(): number { return this.players.length; }
 
   addPlayer(name: string, color?: string): { playerId: string; lane: number } | { error: string } {
+    // A finished race is reusable: a new joiner reopens the room to a fresh lobby
+    // (the previous result is over, and rooms are long-lived across an event).
+    if (this._phase === 'finished') this.reset();
     if (this.players.length >= MAX_PLAYERS) return { error: 'room_full' };
     if (this._phase !== 'lobby') return { error: 'race_in_progress' };
     const lane = this.players.length % LANES;
@@ -33,8 +36,15 @@ export class Room {
     this.players = this.players.filter(p => p.id !== playerId);
   }
 
+  /** Return the room to a fresh lobby (keeps the joined players, drops the world). */
+  reset(): void {
+    this.world = null;
+    this._phase = 'lobby';
+  }
+
   start(): void {
     if (this.players.length === 0) return;
+    // Restartable: starting from any phase rebuilds a fresh race for the current players.
     this.world = new RaceWorld(
       this.players.map(p => ({ id: p.id, name: p.name, color: p.color })),
       this.seed,

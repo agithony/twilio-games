@@ -60,13 +60,16 @@ async function boot() {
   try { await assets.loadManifest(); } catch { /* primitives */ }
 
   if (isDisplay) {
-    // Spectator + operator console: watch the room (occupy no player slot),
-    // render all phone players' cars, and start the race on Enter.
-    conn.spectate(roomCode);
+    // Operator console that also seats a drivable car, so a solo host can start
+    // AND race (phone players join the same room as additional cars). Joining as
+    // a player guarantees the room is non-empty, so Enter actually starts a race.
+    conn.onJoined((playerId) => { renderer.setMyId(playerId); });
+    input.onIntent((i) => conn.sendIntent(i));
     addEventListener('keydown', (e) => {
       if (e.key === 'r') conn.restart();
       else if (e.key === 'Enter') { enableHost(); conn.ready(); }
     });
+    conn.join(roomCode, name === 'You' ? 'Host' : name);
   } else {
     // Dev keyboard-player path: join as a player and drive with the keyboard.
     conn.onJoined((playerId) => { renderer.setMyId(playerId); });
