@@ -59,6 +59,23 @@
       "laneScale": 1,
       "shoulder": 18,
       "smoothing": 0.1
+    },
+    "lighting": {
+      "sunPos": [-180, 70, -120],
+      "sunIntensity": 3.0,
+      "sunColor": "#ffd9a0",
+      "ambientIntensity": 0.45,
+      "skyColor": "#9ec3ff",
+      "groundColor": "#3a2c22",
+      "exposure": 1.2
+    },
+    "effects": {
+      "bloom": { "strength": 0.35, "radius": 0.5, "threshold": 0.95 },
+      "fog": { "density": 0.0004, "color": "#e8c9a0" },
+      "trackEmissive": 0.35,
+      "pulse": { "speed": 0, "amount": 0 },
+      "skyTop": "#3b6fb0",
+      "skyBottom": "#ffcf9e"
     }
   }
 }

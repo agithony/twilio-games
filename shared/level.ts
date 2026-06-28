@@ -25,16 +25,18 @@ export interface LevelConfig {
   lighting?: LevelLighting; effects?: LevelEffects;
 }
 
-// Default look mirrors the renderer's current hardcoded values so an explicit level matches today.
+// Default look: GOLDEN HOUR — a warm, low-angle sun (long shadows), cool sky fill for contrast,
+// gentle warm fog, and tasteful bloom on highlights. A low sun.y vs a far +x/-z gives raking light
+// that models the terrain instead of flat top-down fill.
 export const DEFAULT_LIGHTING: LevelLighting = {
-  sunPos: [60, 110, 40], sunIntensity: 2.1, sunColor: '#fff4e2',
-  ambientIntensity: 0.7, skyColor: '#bfd4ff', groundColor: '#202840', exposure: 1.15,
+  sunPos: [-180, 70, -120], sunIntensity: 3.0, sunColor: '#ffd9a0',   // warm, low, raking
+  ambientIntensity: 0.45, skyColor: '#9ec3ff', groundColor: '#3a2c22', exposure: 1.2,
 };
 export const DEFAULT_EFFECTS: LevelEffects = {
-  bloom: { strength: 0.45, radius: 0.7, threshold: 0.85 },
-  fog: { density: 0.0016, color: '#0b1020' },
+  bloom: { strength: 0.5, radius: 0.6, threshold: 0.9 },   // only genuine highlights bloom
+  fog: { density: 0.0016, color: '#e8c9a0' },              // warm haze, not near-black
   trackEmissive: 1, pulse: { speed: 0, amount: 0 },
-  skyTop: '#2a6cff', skyBottom: '#bfe0ff',
+  skyTop: '#3b6fb0', skyBottom: '#ffcf9e',   // warm horizon under a cool sky = golden hour
 };
 
 const RACE_LEN = 2100;   // mirrors shared/constants RACE_LEN (TRACK_LEN*LAP_TARGET); avoids import cycle

@@ -110,6 +110,7 @@ export class Renderer {
   private lightingLocked = false;
   private trackEmissive = 1;
   private pulse = { speed: 0, amount: 0 };
+  private sunDir = new THREE.Vector3(-180, 70, -120).normalize();   // golden-hour rake direction
   // Per-level car sizing: the game-side half of the editor's car scale. Keyed by the per-car INDEX
   // (the SAME key the editor writes), so main.ts wires (i) => resolveCarScale(level, String(i)).
   private carScale: (i: number) => number = () => 1;
@@ -142,24 +143,30 @@ export class Renderer {
   setPath(path: CurvedTrack | null, opts: SurfaceOpts = { laneScale: 1, shoulder: 0 }): void {
     this.path = path;
     this.surfaceOpts = opts;
-    // Rebuild the shared track surface mesh.
-    if (this.trackSurface) { this.trackContent.remove(this.trackSurface); this.trackSurface = null; }
-    if (path) {
-      this.generatedWorld.visible = false;   // our straight asphalt is replaced by the curved surface
-      this.trackSurface = buildTrackSurface(path, opts);
-      this.trackContent.add(this.trackSurface);
-    }
+    this.rebuildSurface();
     // Re-place any already-built items onto the new path (cars re-place every frame in render()).
     for (const { mesh, item } of this.itemMeshes) {
       this.placeItem(mesh, item, (mesh.userData.groundY as number) ?? 0);
     }
   }
 
-  /** Apply a level's lighting; null reverts to zone-cycling. */
+  /** (Re)build the curved 3-lane surface from the current path + width + track-glow. */
+  private rebuildSurface(): void {
+    if (this.trackSurface) { this.trackContent.remove(this.trackSurface); this.trackSurface = null; }
+    if (!this.path) return;
+    this.generatedWorld.visible = false;   // the curved surface replaces our straight asphalt
+    this.trackSurface = buildTrackSurface(this.path, { ...this.surfaceOpts, glow: this.trackEmissive });
+    this.trackSurface.traverse(o => { (o as THREE.Mesh).receiveShadow = true; });
+    this.trackContent.add(this.trackSurface);
+  }
+
+  /** Apply a level's lighting; null reverts to zone-cycling. The sun direction is taken from
+   *  sunPos as a DIRECTION (the light is placed far away along it each frame so it rakes the whole
+   *  scene), and the shadow frustum is widened to cover the track length so shadows actually land. */
   setLighting(l: LevelLighting | null): void {
     this.lightingLocked = !!l;
     if (!l) return;
-    this.sun.position.set(l.sunPos[0]!, l.sunPos[1]!, l.sunPos[2]!);
+    this.sunDir.set(l.sunPos[0]!, l.sunPos[1]!, l.sunPos[2]!).normalize();
     this.sun.intensity = l.sunIntensity;
     this.sun.color.set(l.sunColor);
     this.ambient.intensity = l.ambientIntensity;
@@ -168,6 +175,10 @@ export class Renderer {
     this.renderer.toneMappingExposure = l.exposure;
     const skyU = (this.sky.material as THREE.ShaderMaterial).uniforms;
     (skyU.top!.value as THREE.Color).set(l.skyColor);
+    // A wide shadow frustum so the locked sun casts real ground shadows across the play area.
+    const sc = this.sun.shadow.camera as THREE.OrthographicCamera;
+    sc.left = -90; sc.right = 90; sc.top = 160; sc.bottom = -160; sc.near = 1; sc.far = 1200;
+    sc.updateProjectionMatrix();
   }
 
   /** Apply a level's effects (bloom/fog/track-glow/sky); null leaves current values. */
@@ -180,6 +191,7 @@ export class Renderer {
     fog.density = e.fog.density; fog.color.set(e.fog.color);
     this.trackEmissive = e.trackEmissive;
     this.pulse = { ...e.pulse };
+    this.rebuildSurface();   // track glow changed → rebuild the lane materials with the new value
     const skyU = (this.sky.material as THREE.ShaderMaterial).uniforms;
     (skyU.top!.value as THREE.Color).set(e.skyTop);
     (skyU.bottom!.value as THREE.Color).set(e.skyBottom);
@@ -358,6 +370,7 @@ export class Renderer {
       // (primitive body at y=0.75). Wrap it so we set world position on the OUTER group and
       // never clobber the inner model's grounding. mixer/wheels live on the inner model.
       const model = buildCar(template, color, id === this.myId);
+      model.traverse(o => { const m = o as THREE.Mesh; if (m.isMesh) m.castShadow = true; });
       wrapper = new THREE.Group();
       wrapper.add(model);
       wrapper.userData.model = model;
@@ -424,11 +437,12 @@ export class Renderer {
       (skyU.top!.value as THREE.Color).set(theme.sky);
       (skyU.bottom!.value as THREE.Color).set(theme.fog);
     }
-    // Shadow frustum + sky always follow the action (independent of zones vs locked lighting). When
-    // lighting is locked we keep the sun's AUTHORED x/y (set in setLighting) but still track z so
-    // shadows follow the cars down the track.
-    this.sun.position.set(this.sun.position.x, this.sun.position.y, z + 40);
-    this.sun.target.position.set(0, 0, z + 20); this.sun.target.updateMatrixWorld();
+    // Sun follows the action: aim its target at the car, and place the light a fixed distance away
+    // ALONG sunDir so the golden-hour rake angle stays consistent and its shadow frustum tracks the
+    // pack. (When zones cycle, sunDir is the default rake; when locked, setLighting set it.)
+    const tgt = new THREE.Vector3(0, 0, z + 20);
+    this.sun.target.position.copy(tgt); this.sun.target.updateMatrixWorld();
+    this.sun.position.copy(tgt).addScaledVector(this.sunDir, 260);
 
     // Cinematic 3/4 chase: behind + above + slightly offset, looking down-track past the pack.
     const mx = me ? me.x : 0;

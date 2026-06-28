@@ -133,7 +133,8 @@ export function loadMapWorld(cfg: MapConfig): Promise<THREE.Group | null> {
       try {
         const wrap = wrapMapScene(gltf.scene);
         applyTrackTransform(wrap, cfg.model ?? IDENTITY_TRANSFORM);
-        wrap.traverse(o => { (o as THREE.Mesh).receiveShadow = true; });
+        // Map terrain both casts AND receives shadows so the raking sun models its hills/buildings.
+        wrap.traverse(o => { const m = o as THREE.Mesh; if (m.isMesh) { m.castShadow = true; m.receiveShadow = true; } });
         resolve(wrap);
       } catch { resolve(null); }
     }, undefined, () => resolve(null));

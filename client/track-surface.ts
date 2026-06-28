@@ -12,7 +12,7 @@ const SEGMENTS = 200;          // smoothness along the curve
 const Y_ROAD = 0.6;            // lift the whole track above the map road so it never z-fights
 const Y_PAINT = 0.05;          // paint sits just above the road surface
 
-export interface SurfaceOpts { laneScale: number; shoulder: number; }
+export interface SurfaceOpts { laneScale: number; shoulder: number; glow?: number; }
 
 export function surfaceOptsFromPath(path?: TrackPath): SurfaceOpts {
   return { laneScale: path?.laneScale ?? 1, shoulder: path?.shoulder ?? 0 };
@@ -40,37 +40,38 @@ export function buildTrackSurface(curve: CurvedTrack, opts: SurfaceOpts): THREE.
     perp.push(new THREE.Vector3(tan.z, 0, -tan.x));   // right-hand perpendicular on the ground
   }
 
-  // --- Opaque road ribbon (asphalt + shoulders), full roadHalf width. Slightly emissive so it
-  // never reads as black against dark terrain. ---
-  group.add(ribbon(center, perp, roadHalf, Y_ROAD,
-    new THREE.MeshStandardMaterial({ color: 0x3b4250, emissive: 0x1a1e26, roughness: 0.9, metalness: 0 })));
+  // `glow` (from the level's trackEmissive) scales how self-lit the lane paint is: 1 = neon night,
+  // ~0.3 = real lit asphalt (the sun does the lighting). Default 0.35 reads as golden-hour tarmac.
+  const glow = opts.glow ?? 0.35;
 
-  // --- Shoulder apron: a lighter band on the outer shoulders so the 3 drivable lanes read as
-  // clearly distinct from the covering apron. Only drawn if there's a shoulder. ---
+  // --- Opaque road ribbon (dark asphalt). Low emissive so the SUN models it, not self-illumination. ---
+  group.add(ribbon(center, perp, roadHalf, Y_ROAD,
+    new THREE.MeshStandardMaterial({ color: 0x2b2f37, roughness: 0.95, metalness: 0 })));
+
+  // --- Shoulder apron: a slightly lighter asphalt band so the 3 drivable lanes read distinct. ---
   if (opts.shoulder > 0.5) {
     group.add(edgeBand(center, perp, laneHalf, roadHalf, Y_ROAD + 0.02,
-      new THREE.MeshStandardMaterial({ color: 0x4b5366, emissive: 0x20242e, roughness: 1 })));
+      new THREE.MeshStandardMaterial({ color: 0x33373f, roughness: 1 })));
   }
 
-  // --- Lane fills: BRIGHT, high-contrast alternating shades (emissive) so each of the 3 lanes
-  // pops against any map terrain. ---
+  // --- Lane fills: subtle alternating asphalt shades (NOT emissive) so lanes read without blowing
+  // out — the sun lights them. ---
   const laneW = (laneHalf * 2) / LANES;
   for (let lane = 0; lane < LANES; lane++) {
     const inner = -laneHalf + lane * laneW;
     const outer = inner + laneW;
     const lit = lane % 2 === 0;
     const mat = new THREE.MeshStandardMaterial({
-      color: lit ? 0x6b7488 : 0x2a3040, emissive: lit ? 0x2a3242 : 0x12161e, roughness: 0.85 });
+      color: lit ? 0x3a3f49 : 0x2f343d, roughness: 0.92 });
     group.add(edgeBand(center, perp, inner, outer, Y_ROAD + 0.03, mat));
   }
 
-  // --- Bold lane dividers + edge lines, drawn as THICK emissive ribbons (real width, so they read
-  // at any distance — unlike 1px THREE.Line). Dividers are bright white; the two track edges are
-  // glowing cyan so the 3-lane boundary is unmistakable. ---
-  const DIV_W = Math.max(0.6, laneW * 0.05);    // divider half-handled inside band()
+  // --- Bold lane dividers + edge lines (real-width ribbons). Emissive scaled by `glow` so they
+  // read as bright paint in daylight, or full neon when glow is high. ---
+  const DIV_W = Math.max(0.6, laneW * 0.05);
   const EDGE_W = Math.max(1.2, laneW * 0.09);
-  const white = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 0.5, roughness: 0.5 });
-  const cyan = new THREE.MeshStandardMaterial({ color: 0x36d1dc, emissive: 0x36d1dc, emissiveIntensity: 0.9, roughness: 0.4 });
+  const white = new THREE.MeshStandardMaterial({ color: 0xf2f4f8, emissive: 0xffffff, emissiveIntensity: 0.5 * glow, roughness: 0.6 });
+  const cyan = new THREE.MeshStandardMaterial({ color: 0x36d1dc, emissive: 0x36d1dc, emissiveIntensity: 1.2 * glow, roughness: 0.5 });
   const stripe = (off: number, w: number, mat: THREE.Material) =>
     group.add(edgeBand(center, perp, off - w / 2, off + w / 2, Y_PAINT + Y_ROAD, mat));
   for (let d = 1; d < LANES; d++) stripe(-laneHalf + d * laneW, DIV_W, white);   // dashed-look dividers
