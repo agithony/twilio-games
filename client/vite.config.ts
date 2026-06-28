@@ -23,6 +23,7 @@ export default defineConfig({
         home: resolve(__dirname, 'index.html'),       // branded landing/lobby
         play: resolve(__dirname, 'play.html'),         // the racer (was index.html)
         editor: resolve(__dirname, 'editor/editor.html'),
+        maptest: resolve(__dirname, 'maptest.html'),   // map/track GLB inspector
       },
     },
   },

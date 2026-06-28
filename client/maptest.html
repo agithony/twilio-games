@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Map Test — Voice Racer</title>
+<link rel="icon" href="data:," />
+<style>
+  html,body{margin:0;height:100%;background:#0b1020;color:#e8ecf6;font-family:system-ui,sans-serif;overflow:hidden}
+  #app{position:fixed;inset:0}
+  #info{position:absolute;top:12px;left:12px;background:rgba(16,22,40,.92);border:1px solid rgba(255,255,255,.12);
+    border-radius:10px;padding:12px 14px;font-size:12px;line-height:1.6;max-width:320px}
+  #info h4{margin:0 0 6px;font-size:13px}
+  #info code{color:#8ad}
+  .hint{color:#93a0c0;margin-top:8px}
+</style>
+</head>
+<body>
+  <div id="app"></div>
+  <div id="info">
+    <h4>🗺️ Map editor — overlay the race on a straight</h4>
+    <div id="stats">loading…</div>
+    <div style="display:flex;gap:6px;margin:8px 0">
+      <button id="sel-strip" style="margin:0;background:#155">1 · Race strip</button>
+      <button id="sel-track" style="margin:0;background:#2a3350">2 · Track model</button>
+    </div>
+    <div style="display:flex;gap:6px;margin:0 0 8px">
+      <button id="m-move" style="margin:0;background:#2a3350">Move (W)</button>
+      <button id="m-rot" style="margin:0;background:#2a3350">Rotate (E)</button>
+      <button id="m-scale" style="margin:0;background:#2a3350">Scale (R)</button>
+    </div>
+    <label style="display:flex;align-items:center;gap:8px;margin:0 0 8px;font-size:12px;color:#cdd3e0;cursor:pointer">
+      <input id="uniform" type="checkbox" checked style="width:auto"> Uniform scale (no stretching · key U)
+    </label>
+    <div class="hint">Starts <b>top-down</b>. Pick what to edit (<b>1</b> strip / <b>2</b> track),
+      then Move/Rotate/Scale with the gizmo to lay the cyan 3-lane strip onto a straight
+      (red arrow = forward/driving direction). Drag empty space to orbit.</div>
+    <button id="save">💾 Save map layout (⌘S)</button>
+  </div>
+  <script type="module" src="./maptest.ts"></script>
+</body>
+</html>
