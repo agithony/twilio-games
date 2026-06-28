@@ -107,7 +107,10 @@ export class LevelScene {
     this.loader.setDRACOLoader(d);
 
     this.orbit = new OrbitControls(this.camera, this.renderer.domElement);
-    this.orbit.enableDamping = true; this.orbit.minDistance = 0.2; this.orbit.maxDistance = Infinity;
+    // Effectively infinite zoom: no min dolly distance (tiny epsilon avoids a divide-by-zero in
+    // OrbitControls' math), no max. The per-frame near-plane (see loop) shrinks with distance so
+    // geometry never clips as you push right up to a surface.
+    this.orbit.enableDamping = true; this.orbit.minDistance = 1e-4; this.orbit.maxDistance = Infinity;
     // Scroll-zoom toward the cursor (not just the orbit target), so you can zoom into a model that's
     // far from the current pivot — the common case on a huge 200x-scaled map.
     this.orbit.zoomToCursor = true;
@@ -188,6 +191,8 @@ export class LevelScene {
   getScene(): THREE.Scene { return this.scene; }
   /** The editor camera (for in-browser debugging / headless smoke introspection). */
   getCamera(): THREE.PerspectiveCamera { return this.camera; }
+  /** Current camera→orbit-target distance (zoom level) — debug/smoke introspection. */
+  getOrbitDistance(): number { return this.camera.position.distanceTo(this.orbit.target); }
 
   /**
    * Mirror the level's lighting onto the editor scene — using the SAME pipeline as the game (sun as
@@ -681,7 +686,10 @@ export class LevelScene {
     // current zoom — so distant terrain never clips, whether zoomed in on the track or way out.
     const dist = this.camera.position.distanceTo(this.orbit.target);
     this.camera.far = Math.max(2000, dist + this.sceneRadius * 2.5);
-    this.camera.near = Math.max(0.05, dist / 5000);
+    // Near shrinks with how close we are so you can push right up to a surface without it clipping;
+    // floored at a tiny value (not 0.05) so extreme close-ups stay visible. Capped vs far to keep a
+    // sane depth-buffer ratio when zoomed way out.
+    this.camera.near = Math.max(0.002, Math.min(dist / 5000, dist * 0.5));
     this.camera.updateProjectionMatrix();
     // Sun rakes from sunDir, aimed at the track center; place it relative to the scene so shadows
     // land across the play area (matches the game's raking-sun model).
