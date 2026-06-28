@@ -7,13 +7,14 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { wrapMapScene, applyTrackTransform } from './map-world';
 import { CurveEditor } from './align-curve';
 import { AssetLoader } from './asset-loader';
 import { buildCar } from './car-factory';
 import { RACE_LEN, laneX, LANES } from '../shared/constants';
 import { addProp as addPropPure, duplicateProp as dupPropPure, removeProp as rmPropPure,
-         resolveCarScale, DEFAULT_LIGHTING, DEFAULT_EFFECTS, type PlacedProp } from '../shared/level';
+         resolveCarScale, DEFAULT_LIGHTING, type PlacedProp } from '../shared/level';
 import type { LevelConfig, LevelTransform } from '../shared/level';
 
 export class LevelScene {
@@ -43,11 +44,20 @@ export class LevelScene {
     this.assets.loadManifest().catch(() => {});
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     this.renderer.setSize(innerWidth, innerHeight);
+    // Match the GAME renderer's material pipeline so "what you edit is what you play": ACES tone
+    // mapping + sRGB output + an image-based environment map. Without these the GLB's PBR materials
+    // render flat/washed-out (the textures appear to vanish).
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.15;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     mount.appendChild(this.renderer.domElement);
     this.scene.background = new THREE.Color(0x223047);
-    this.ambient = new THREE.HemisphereLight(0xbfd4ff, 0x303040, 1.3); this.scene.add(this.ambient);
-    this.sun = new THREE.DirectionalLight(0xffffff, 2); this.sun.position.set(300, 800, 200); this.scene.add(this.sun);
+    // Generated room environment so metalness/roughness PBR surfaces on the map GLB actually pick up
+    // reflections instead of reading as flat plastic (same trick the game renderer uses).
+    const pmrem = new THREE.PMREMGenerator(this.renderer);
+    this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    this.ambient = new THREE.HemisphereLight(0xbfd4ff, 0x303040, 1.0); this.scene.add(this.ambient);
+    this.sun = new THREE.DirectionalLight(0xfff4e2, 2.1); this.sun.position.set(60, 110, 40); this.scene.add(this.sun);
     this.scene.add(new THREE.GridHelper(RACE_LEN * 2, 60, 0x44597f, 0x2c3a55));
     this.scene.add(this.mapGroup, this.trackGroup);
 
@@ -97,7 +107,9 @@ export class LevelScene {
     this.ambient.color.set(l.skyColor);
     this.ambient.groundColor.set(l.groundColor);
     this.renderer.toneMappingExposure = l.exposure;
-    (this.scene.background as THREE.Color).set(l.skyColor);
+    // NOTE: do NOT paint the scene background with skyColor — that floods the viewport and washes
+    // the map's textures out to flat color. The editor keeps a neutral dark backdrop; the sky color
+    // drives the hemisphere fill only (the game previews the real sky dome).
     this.changeCb();
   }
 
@@ -109,10 +121,10 @@ export class LevelScene {
    */
   applyEffects(): void {
     if (!this.level) return;
-    const e = this.level.effects ?? DEFAULT_EFFECTS;
-    const fog = this.scene.fog instanceof THREE.FogExp2 ? this.scene.fog
-      : (this.scene.fog = new THREE.FogExp2(e.fog.color, e.fog.density));
-    fog.density = e.fog.density; fog.color.set(e.fog.color);
+    // The editor deliberately does NOT apply fog. The game's fog density is tuned for SIM scale
+    // (small coords), but the editor views the whole map — often scaled 100×+ — from far away, where
+    // that density would fog the entire map to near-black and hide all textures. Fog (like bloom and
+    // the sky dome) is previewed in-game; here we keep the map crisp for authoring.
     this.changeCb();
   }
 
