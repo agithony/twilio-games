@@ -82,13 +82,14 @@ export class LevelScene {
 
   /**
    * Mirror the level's lighting onto the EDITOR preview scene (sun pos/intensity/color, hemisphere
-   * ambient + sky/ground tint, exposure, sky background). Defaults are filled into this.level so
-   * current() persists them. Full bloom/sky-dome preview is verified by launching the game.
+   * ambient + sky/ground tint, exposure, sky background). Reads from a LOCAL fallback default and
+   * NEVER writes back to this.level — per-level lighting is opt-in, gained only when the user edits a
+   * lighting control (see level.ts onInput callbacks). Full bloom/sky-dome preview is verified by
+   * launching the game.
    */
   applyLighting(): void {
     if (!this.level) return;
-    this.level.lighting = this.level.lighting ?? structuredClone(DEFAULT_LIGHTING);
-    const l = this.level.lighting;
+    const l = this.level.lighting ?? DEFAULT_LIGHTING;
     this.sun.position.set(l.sunPos[0]!, l.sunPos[1]!, l.sunPos[2]!);
     this.sun.intensity = l.sunIntensity;
     this.sun.color.set(l.sunColor);
@@ -103,12 +104,12 @@ export class LevelScene {
   /**
    * Mirror the level's effects onto the EDITOR preview scene. The editor scene has no composer/sky
    * dome, so we can only preview fog here (color + density via FogExp2); bloom/track-glow/pulse/sky
-   * are previewed in-game. Defaults are filled into this.level so current() persists them.
+   * are previewed in-game. Reads from a LOCAL fallback default and NEVER writes back to this.level —
+   * per-level effects are opt-in, gained only when the user edits an effects control.
    */
   applyEffects(): void {
     if (!this.level) return;
-    this.level.effects = this.level.effects ?? structuredClone(DEFAULT_EFFECTS);
-    const e = this.level.effects;
+    const e = this.level.effects ?? DEFAULT_EFFECTS;
     const fog = this.scene.fog instanceof THREE.FogExp2 ? this.scene.fog
       : (this.scene.fog = new THREE.FogExp2(e.fog.color, e.fog.density));
     fog.density = e.fog.density; fog.color.set(e.fog.color);
@@ -228,8 +229,9 @@ export class LevelScene {
       const g = this.propGroups.get(p.id);
       return g ? { ...p, ...t(g) } : p;
     });
-    // Persist the live curve as the level path; lighting/effects live on this.level (panels write
-    // them there + applyLighting/applyEffects fill defaults), so they save with the level.
+    // Persist the live curve as the level path; lighting/effects are spread from this.level and are
+    // present ONLY if the user edited a lighting/effects control (opt-in), so an untouched level
+    // saves without them and keeps in-game zone cycling.
     return { ...this.level, model: t(this.mapGroup), track: t(this.trackGroup),
              path: this.curve ? this.curve.toPath() : this.level.path, props };
   }

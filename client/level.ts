@@ -105,34 +105,41 @@ function renderPanel(): void {
     });
   }
 
-  // Lighting section (always shown — level-wide; replaces zone cycling in-game). Defaults match the
-  // renderer's hardcoded look so an explicit level renders identically to today.
-  lvl.lighting = lvl.lighting ?? structuredClone(DEFAULT_LIGHTING);
+  // Lighting section (always shown — level-wide; replaces zone cycling in-game). Per-level lighting
+  // is OPT-IN: slider initial VALUES read from a local read-only default (no persist on render), and
+  // a level gains its own `lighting` object ONLY when the user moves a lighting control below.
+  // Defaults match the renderer's hardcoded look so an explicit level renders identically to today.
+  const lgt = lvl.lighting ?? DEFAULT_LIGHTING;
+  const ensureLgt = (): NonNullable<LevelConfig['lighting']> =>
+    (lvl.lighting ??= structuredClone(DEFAULT_LIGHTING));
   heading(panel, 'Lighting (replaces zones)');
-  numberRow(panel, 'Sun intensity', lvl.lighting.sunIntensity, 0, 6, 0.05, v => { lvl.lighting!.sunIntensity = v; scene.applyLighting(); });
-  numberRow(panel, 'Sun X', lvl.lighting.sunPos[0]!, -500, 500, 5, v => { lvl.lighting!.sunPos[0] = v; scene.applyLighting(); });
-  numberRow(panel, 'Sun Y', lvl.lighting.sunPos[1]!, 0, 1000, 5, v => { lvl.lighting!.sunPos[1] = v; scene.applyLighting(); });
-  numberRow(panel, 'Sun Z', lvl.lighting.sunPos[2]!, -500, 500, 5, v => { lvl.lighting!.sunPos[2] = v; scene.applyLighting(); });
-  colorRow(panel, 'Sun color', lvl.lighting.sunColor, h => { lvl.lighting!.sunColor = h; scene.applyLighting(); });
-  numberRow(panel, 'Ambient', lvl.lighting.ambientIntensity, 0, 3, 0.05, v => { lvl.lighting!.ambientIntensity = v; scene.applyLighting(); });
-  colorRow(panel, 'Sky color', lvl.lighting.skyColor, h => { lvl.lighting!.skyColor = h; scene.applyLighting(); });
-  colorRow(panel, 'Ground color', lvl.lighting.groundColor, h => { lvl.lighting!.groundColor = h; scene.applyLighting(); });
-  numberRow(panel, 'Exposure', lvl.lighting.exposure, 0.2, 3, 0.05, v => { lvl.lighting!.exposure = v; scene.applyLighting(); });
+  numberRow(panel, 'Sun intensity', lgt.sunIntensity, 0, 6, 0.05, v => { ensureLgt().sunIntensity = v; scene.applyLighting(); });
+  numberRow(panel, 'Sun X', lgt.sunPos[0]!, -500, 500, 5, v => { ensureLgt().sunPos[0] = v; scene.applyLighting(); });
+  numberRow(panel, 'Sun Y', lgt.sunPos[1]!, 0, 1000, 5, v => { ensureLgt().sunPos[1] = v; scene.applyLighting(); });
+  numberRow(panel, 'Sun Z', lgt.sunPos[2]!, -500, 500, 5, v => { ensureLgt().sunPos[2] = v; scene.applyLighting(); });
+  colorRow(panel, 'Sun color', lgt.sunColor, h => { ensureLgt().sunColor = h; scene.applyLighting(); });
+  numberRow(panel, 'Ambient', lgt.ambientIntensity, 0, 3, 0.05, v => { ensureLgt().ambientIntensity = v; scene.applyLighting(); });
+  colorRow(panel, 'Sky color', lgt.skyColor, h => { ensureLgt().skyColor = h; scene.applyLighting(); });
+  colorRow(panel, 'Ground color', lgt.groundColor, h => { ensureLgt().groundColor = h; scene.applyLighting(); });
+  numberRow(panel, 'Exposure', lgt.exposure, 0.2, 3, 0.05, v => { ensureLgt().exposure = v; scene.applyLighting(); });
 
-  // Effects section (always shown — level-wide). Editor previews fog here; full bloom/sky/glow is
-  // verified by launching the game.
-  lvl.effects = lvl.effects ?? structuredClone(DEFAULT_EFFECTS);
+  // Effects section (always shown — level-wide). Same OPT-IN rule as Lighting: read initial VALUES
+  // from a local read-only default, persist `effects` onto the level only on an actual edit. Editor
+  // previews fog here; full bloom/sky/glow is verified by launching the game.
+  const fx = lvl.effects ?? DEFAULT_EFFECTS;
+  const ensureFx = (): NonNullable<LevelConfig['effects']> =>
+    (lvl.effects ??= structuredClone(DEFAULT_EFFECTS));
   heading(panel, 'Effects');
-  numberRow(panel, 'Bloom strength', lvl.effects.bloom.strength, 0, 3, 0.05, v => { lvl.effects!.bloom.strength = v; scene.applyEffects(); });
-  numberRow(panel, 'Bloom radius', lvl.effects.bloom.radius, 0, 2, 0.05, v => { lvl.effects!.bloom.radius = v; scene.applyEffects(); });
-  numberRow(panel, 'Bloom threshold', lvl.effects.bloom.threshold, 0, 1, 0.01, v => { lvl.effects!.bloom.threshold = v; scene.applyEffects(); });
-  numberRow(panel, 'Fog density', lvl.effects.fog.density, 0, 0.02, 0.0005, v => { lvl.effects!.fog.density = v; scene.applyEffects(); });
-  colorRow(panel, 'Fog color', lvl.effects.fog.color, h => { lvl.effects!.fog.color = h; scene.applyEffects(); });
-  numberRow(panel, 'Track glow', lvl.effects.trackEmissive, 0, 4, 0.05, v => { lvl.effects!.trackEmissive = v; scene.applyEffects(); });
-  numberRow(panel, 'Pulse speed', lvl.effects.pulse.speed, 0, 6, 0.1, v => { lvl.effects!.pulse.speed = v; scene.applyEffects(); });
-  numberRow(panel, 'Pulse amount', lvl.effects.pulse.amount, 0, 1, 0.02, v => { lvl.effects!.pulse.amount = v; scene.applyEffects(); });
-  colorRow(panel, 'Sky top', lvl.effects.skyTop, h => { lvl.effects!.skyTop = h; scene.applyEffects(); });
-  colorRow(panel, 'Sky bottom', lvl.effects.skyBottom, h => { lvl.effects!.skyBottom = h; scene.applyEffects(); });
+  numberRow(panel, 'Bloom strength', fx.bloom.strength, 0, 3, 0.05, v => { ensureFx().bloom.strength = v; scene.applyEffects(); });
+  numberRow(panel, 'Bloom radius', fx.bloom.radius, 0, 2, 0.05, v => { ensureFx().bloom.radius = v; scene.applyEffects(); });
+  numberRow(panel, 'Bloom threshold', fx.bloom.threshold, 0, 1, 0.01, v => { ensureFx().bloom.threshold = v; scene.applyEffects(); });
+  numberRow(panel, 'Fog density', fx.fog.density, 0, 0.02, 0.0005, v => { ensureFx().fog.density = v; scene.applyEffects(); });
+  colorRow(panel, 'Fog color', fx.fog.color, h => { ensureFx().fog.color = h; scene.applyEffects(); });
+  numberRow(panel, 'Track glow', fx.trackEmissive, 0, 4, 0.05, v => { ensureFx().trackEmissive = v; scene.applyEffects(); });
+  numberRow(panel, 'Pulse speed', fx.pulse.speed, 0, 6, 0.1, v => { ensureFx().pulse.speed = v; scene.applyEffects(); });
+  numberRow(panel, 'Pulse amount', fx.pulse.amount, 0, 1, 0.02, v => { ensureFx().pulse.amount = v; scene.applyEffects(); });
+  colorRow(panel, 'Sky top', fx.skyTop, h => { ensureFx().skyTop = h; scene.applyEffects(); });
+  colorRow(panel, 'Sky bottom', fx.skyBottom, h => { ensureFx().skyBottom = h; scene.applyEffects(); });
 }
 
 scene.onChange(() => { renderTree(); renderPanel(); });
