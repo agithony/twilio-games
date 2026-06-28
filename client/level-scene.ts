@@ -14,10 +14,11 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { wrapMapScene, applyTrackTransform } from './map-world';
 import { CurveEditor } from './align-curve';
-import { AssetLoader } from './asset-loader';
+import { AssetLoader, stripDisplayBases } from './asset-loader';
+import { autoFitScale } from '../shared/asset-fit';
 import { buildCar } from './car-factory';
 import { makeSkyDome, setSkyColors } from './sky-dome';
-import { RACE_LEN, laneX, LANES } from '../shared/constants';
+import { RACE_LEN, TRACK_W, laneX, LANES } from '../shared/constants';
 import { addProp as addPropPure, duplicateProp as dupPropPure, removeProp as rmPropPure,
          resolveCarScale, DEFAULT_LIGHTING, DEFAULT_EFFECTS, type PlacedProp } from '../shared/level';
 import type { LevelConfig, LevelTransform } from '../shared/level';
@@ -63,6 +64,11 @@ export class LevelScene {
   private downPx = { x: 0, y: 0 };
   private addArmed = false;
   private axisLock: 'none' | 'x' | 'z' = 'none';
+  // Start/finish gantry models — ALWAYS shown (matching the game), so the editor preview includes
+  // them. They ride trackGroup and are re-placed onto the live curve each frame (handles dragging).
+  private lineGroup = new THREE.Group();
+  private startGantry: THREE.Object3D | null = null;
+  private finishGantry: THREE.Object3D | null = null;
 
   constructor(mount: HTMLElement) {
     // kick off car-template loading non-blocking; preview cars fall back to primitives until ready
@@ -169,6 +175,9 @@ export class LevelScene {
   /** The editable track curve (Track inspector buttons drive its setters), or null pre-load. */
   getCurve(): CurveEditor | null { return this.curve; }
 
+  /** The live three.js scene (for in-browser debugging / headless smoke introspection). */
+  getScene(): THREE.Scene { return this.scene; }
+
   /**
    * Mirror the level's lighting onto the editor scene — using the SAME pipeline as the game (sun as
    * a raking direction, hemisphere fill, sky-dome top color, exposure), so the preview matches what
@@ -258,6 +267,9 @@ export class LevelScene {
     applyTrackTransform(this.trackGroup, level.track);
     this.curve = new CurveEditor(level.path);
     this.trackGroup.add(this.curve.group);
+    // Start/finish gantry models bookend the track (same as the game). They ride trackGroup and
+    // are placed onto the curve at z=0 / z=RACE_LEN, re-placed each frame so they track edits.
+    this.buildGantries();
     // props ride the track transform like the surface
     this.propGroups.clear();
     for (const p of level.props) this.spawnProp(p);
@@ -268,6 +280,52 @@ export class LevelScene {
     this.applyLighting();
     this.applyEffects();
     this.select('track');
+  }
+
+  // ── Start / Finish gantries (editor preview mirror of the game's setStartFinishLines) ──────────
+  /** (Re)build the start (z=0) + finish (z=RACE_LEN) gantry models into lineGroup on trackGroup. */
+  private buildGantries(): void {
+    this.lineGroup.clear();
+    this.startGantry = null; this.finishGantry = null;
+    this.trackGroup.add(this.lineGroup);
+    this.loadGantry('starting_line.glb', 0, (g) => { this.startGantry = g; });
+    this.loadGantry('finish_line.glb', RACE_LEN, (g) => { this.finishGantry = g; });
+  }
+
+  private loadGantry(file: string, z: number, assign: (g: THREE.Object3D) => void): void {
+    this.loader.load(`/assets/${file}`, (gltf) => {
+      const model = gltf.scene;
+      stripDisplayBases(model);
+      // Auto-fit so its widest axis spans a little past the track, then ground + center it.
+      const target = TRACK_W + 8;
+      const box = new THREE.Box3().setFromObject(model);
+      const size = new THREE.Vector3(); box.getSize(size);
+      model.scale.setScalar(autoFitScale([size.x, size.y, size.z], target));
+      const box2 = new THREE.Box3().setFromObject(model);
+      const c = new THREE.Vector3(); box2.getCenter(c);
+      model.position.x += -c.x; model.position.z += -c.z; model.position.y += -box2.min.y;
+      model.traverse(o => { (o as THREE.Mesh).castShadow = true; });
+      const wrapper = new THREE.Group(); wrapper.add(model); wrapper.userData.lineZ = z;
+      this.lineGroup.add(wrapper);
+      assign(wrapper);
+      this.placeGantries();
+    }, undefined, () => { /* missing model: no gantry, no crash */ });
+  }
+
+  /** Position both gantries onto the live curve (z=0 start, z=RACE_LEN finish). Cheap; per-frame. */
+  private placeGantries(): void {
+    const curve = this.curve?.curve();
+    for (const w of [this.startGantry, this.finishGantry]) {
+      if (!w) continue;
+      const z = (w.userData.lineZ as number) ?? 0;
+      if (curve) {
+        const p = curve.sample(z, 0);
+        w.position.set(p.pos.x, p.pos.y + 0.6, p.pos.z);
+        w.rotation.y = p.headingY;
+      } else {
+        w.position.set(0, 0, z); w.rotation.y = 0;
+      }
+    }
   }
 
   // helper to instantiate one prop group
@@ -429,6 +487,8 @@ export class LevelScene {
   private loop(): void {
     requestAnimationFrame(() => this.loop());
     this.orbit.update();
+    // Keep the gantries glued to the live curve (so dragging a track point moves them too).
+    this.placeGantries();
     // Far plane must contain the WHOLE level (scene radius) AND whatever's beyond the camera at the
     // current zoom — so distant terrain never clips, whether zoomed in on the track or way out.
     const dist = this.camera.position.distanceTo(this.orbit.target);

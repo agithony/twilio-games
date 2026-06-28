@@ -12,6 +12,7 @@
     "inspect-assets": "tsx tools/inspect-assets.ts",
     "optimize-assets": "tsx tools/optimize-assets.ts",
     "smoke": "node tools/smoke-render.mjs",
+    "smoke:editor": "node tools/smoke-editor.mjs",
     "build": "tsc --noEmit && tsc --noEmit -p client/tsconfig.json && vite build client"
   },
   "devDependencies": {

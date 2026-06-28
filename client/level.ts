@@ -9,6 +9,10 @@ import { mergeLevel, levelDefaults, DEFAULT_LIGHTING, DEFAULT_EFFECTS,
 const LANES_PREVIEW = 3;
 
 const scene = new LevelScene(document.getElementById('app')!);
+// Dev-only (localhost): expose the scene for in-browser debugging / headless smoke introspection.
+if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
+  (window as unknown as { __levelScene?: unknown }).__levelScene = scene;
+}
 const sel = document.getElementById('levelSelect') as HTMLSelectElement;
 const status = document.getElementById('status')!;
 let levels: Record<string, LevelConfig> = {};
