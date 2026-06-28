@@ -145,10 +145,32 @@ function renderTrackSection(host: HTMLElement): void {
     if (!scene.deleteSelectedPoint()) { status.textContent = 'Click a non-endpoint dot first, then Delete'; setTimeout(() => (status.textContent = ''), 2500); }
     afterEdit();
   });
+  // Drag axis lock: constrain a viewport handle-drag to one ground axis.
   const lock = scene.axisLockMode();
   button(host, (lock === 'none' ? '● ' : '') + 'Free move', () => { scene.setAxisLock('none'); afterEdit(); });
   button(host, (lock === 'x' ? '● ' : '') + 'Lock Z (move X)', () => { scene.setAxisLock('x'); afterEdit(); });
   button(host, (lock === 'z' ? '● ' : '') + 'Lock X (move Z)', () => { scene.setAxisLock('z'); afterEdit(); });
+
+  // Per-point HEIGHT (Y) — raise/lower the SELECTED point so the track follows the map's hills.
+  // (Y isn't drag-edited; ground-drag handles X/Z, these buttons handle the point's elevation.)
+  heading(host, 'Selected point height (Y)');
+  const curve = scene.getCurve();
+  const hasSel = !!curve && curve.selectedIndex >= 0;
+  const hInfo = document.createElement('div');
+  hInfo.style.cssText = 'font-size:12px;opacity:.7;margin:2px 0 4px';
+  hInfo.textContent = hasSel
+    ? `selected point Y: ${Math.round(curve!.selectedHeight())}u`
+    : 'Click a dot in the viewport to select it, then raise/lower it.';
+  host.append(hInfo);
+  const raise = (dy: number) => () => {
+    scene.beginEdit();
+    if (!scene.getCurve()?.raiseSelected(dy)) { status.textContent = 'Select a point first'; setTimeout(() => (status.textContent = ''), 2000); }
+    afterEdit();
+  };
+  button(host, '▲ Up (big)', raise(20));
+  button(host, '△ Up (fine)', raise(2));
+  button(host, '▽ Down (fine)', raise(-2));
+  button(host, '▼ Down (big)', raise(-20));
 
   // Extend / trim the two ends along the track direction.
   heading(host, 'Ends');
@@ -156,19 +178,6 @@ function renderTrackSection(host: HTMLElement): void {
   button(host, 'Trim start ⟹', () => { scene.extendTrackEnd('start', -80); afterEdit(); });
   button(host, 'Extend end ⟹', () => { scene.extendTrackEnd('end', 80); afterEdit(); });
   button(host, '⟸ Trim end', () => { scene.extendTrackEnd('end', -80); afterEdit(); });
-
-  // Height — raise/lower the whole track on Y to sit on the map's road surface.
-  heading(host, 'Height');
-  const curve = scene.getCurve();
-  const hInfo = document.createElement('div');
-  hInfo.style.cssText = 'font-size:12px;opacity:.7;margin:2px 0 4px';
-  hInfo.textContent = `track height: ${curve ? Math.round(curve.trackHeight) : 0}u`;
-  host.append(hInfo);
-  button(host, '▲ Raise (big)', curveEdit(c => c.setHeight(c.trackHeight + 20)));
-  button(host, '△ Raise (fine)', curveEdit(c => c.setHeight(c.trackHeight + 2)));
-  button(host, '▽ Lower (fine)', curveEdit(c => c.setHeight(c.trackHeight - 2)));
-  button(host, '▼ Lower (big)', curveEdit(c => c.setHeight(c.trackHeight - 20)));
-  button(host, 'Reset height', curveEdit(c => c.setHeight(0)));
 
   // Shape + width.
   heading(host, 'Shape & width');

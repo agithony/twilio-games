@@ -82,9 +82,10 @@ export function buildTrackSurface(curve: CurvedTrack, opts: SurfaceOpts): THREE.
     const m = curve.sample(TRACK_LEN * lap, 0);
     const tan = curve.sample(Math.min(TRACK_LEN * lap + 1, RACE_LEN), 0).pos.sub(m.pos.clone()).setY(0).normalize();
     const pr = new THREE.Vector3(tan.z, 0, -tan.x);
+    const ly = m.pos.y + Y_PAINT + Y_ROAD + 0.02;   // ride the point's hill height
     const corners = [
-      m.pos.clone().addScaledVector(pr, laneHalf).setY(Y_PAINT + Y_ROAD + 0.02),
-      m.pos.clone().addScaledVector(pr, -laneHalf).setY(Y_PAINT + Y_ROAD + 0.02),
+      m.pos.clone().addScaledVector(pr, laneHalf).setY(ly),
+      m.pos.clone().addScaledVector(pr, -laneHalf).setY(ly),
     ];
     group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(corners),
       new THREE.LineBasicMaterial({ color: 0xffffff })));
@@ -98,12 +99,14 @@ function ribbon(center: THREE.Vector3[], perp: THREE.Vector3[], half: number, y:
                 mat: THREE.Material): THREE.Mesh {
   const pos: number[] = [];
   for (let i = 0; i < center.length - 1; i++) {
-    const rA = center[i]!.clone().addScaledVector(perp[i]!, half).setY(y);
-    const lA = center[i]!.clone().addScaledVector(perp[i]!, -half).setY(y);
-    const rB = center[i + 1]!.clone().addScaledVector(perp[i + 1]!, half).setY(y);
-    const lB = center[i + 1]!.clone().addScaledVector(perp[i + 1]!, -half).setY(y);
-    pos.push(lA.x, y, lA.z, rA.x, y, rA.z, lB.x, y, lB.z);
-    pos.push(rA.x, y, rA.z, rB.x, y, rB.z, lB.x, y, lB.z);
+    // Each vertex keeps its centerline Y (the track's per-point hill) PLUS the lift `y`, so the
+    // road follows elevation changes instead of flattening to a constant height.
+    const rA = center[i]!.clone().addScaledVector(perp[i]!, half); rA.y += y;
+    const lA = center[i]!.clone().addScaledVector(perp[i]!, -half); lA.y += y;
+    const rB = center[i + 1]!.clone().addScaledVector(perp[i + 1]!, half); rB.y += y;
+    const lB = center[i + 1]!.clone().addScaledVector(perp[i + 1]!, -half); lB.y += y;
+    pos.push(lA.x, lA.y, lA.z, rA.x, rA.y, rA.z, lB.x, lB.y, lB.z);
+    pos.push(rA.x, rA.y, rA.z, rB.x, rB.y, rB.z, lB.x, lB.y, lB.z);
   }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
@@ -117,12 +120,12 @@ function edgeBand(center: THREE.Vector3[], perp: THREE.Vector3[], inner: number,
                   y: number, mat: THREE.Material): THREE.Mesh {
   const pos: number[] = [];
   for (let i = 0; i < center.length - 1; i++) {
-    const oA = center[i]!.clone().addScaledVector(perp[i]!, outer).setY(y);
-    const iA = center[i]!.clone().addScaledVector(perp[i]!, inner).setY(y);
-    const oB = center[i + 1]!.clone().addScaledVector(perp[i + 1]!, outer).setY(y);
-    const iB = center[i + 1]!.clone().addScaledVector(perp[i + 1]!, inner).setY(y);
-    pos.push(iA.x, y, iA.z, oA.x, y, oA.z, iB.x, y, iB.z);
-    pos.push(oA.x, y, oA.z, oB.x, y, oB.z, iB.x, y, iB.z);
+    const oA = center[i]!.clone().addScaledVector(perp[i]!, outer); oA.y += y;
+    const iA = center[i]!.clone().addScaledVector(perp[i]!, inner); iA.y += y;
+    const oB = center[i + 1]!.clone().addScaledVector(perp[i + 1]!, outer); oB.y += y;
+    const iB = center[i + 1]!.clone().addScaledVector(perp[i + 1]!, inner); iB.y += y;
+    pos.push(iA.x, iA.y, iA.z, oA.x, oA.y, oA.z, iB.x, iB.y, iB.z);
+    pos.push(oA.x, oA.y, oA.z, oB.x, oB.y, oB.z, iB.x, iB.y, iB.z);
   }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));

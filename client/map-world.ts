@@ -25,7 +25,9 @@ export interface MapConfig { map: string; file: string; track: MapTransform; mod
  * straight lane-runner — no sim/lap/collision changes. `points` in sim-z order (start → finish).
  */
 export interface TrackPath {
-  points: [number, number][];   // [x, z] control points
+  // Control points: [x, z] (ground level, legacy) or [x, y, z] (per-point HEIGHT, so the track can
+  // follow the map's hills). The curve interpolates Y between points. In sim-z order (start→finish).
+  points: number[][];
   // Visual width controls (render-only; the sim's lane logic is unchanged):
   //  - laneScale: multiplier on the 3-lane spacing (1 = default TRACK_W). Cars' sideways offset is
   //    scaled by this too, so they stay centered in the widened lanes.
@@ -36,9 +38,6 @@ export interface TrackPath {
   //  - smoothing: 0 = STRAIGHT segments between points (sharp corners, exact placement); higher
   //    rounds the corners into a flowing curve (1 = max). Default 0 so adding a point doesn't bend.
   smoothing?: number;
-  //  - height: world-units to raise (+) / lower (−) the WHOLE track on Y, so it sits on the map's
-  //    road surface instead of the y=0 ground. Default 0. Cars/items ride this height in-game.
-  height?: number;
 }
 
 /** Identity transform (no move/rotate, scale 1) — the sensible default for either object. */

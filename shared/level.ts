@@ -3,7 +3,8 @@
 // A "level" extends the old per-map config with optional cars/props/lighting/effects (back-compat).
 
 export interface LevelTransform { pos: number[]; rotDeg: number[]; scale: number }
-export interface LevelPath { points: [number, number][]; laneScale?: number; shoulder?: number; smoothing?: number }
+// Control points are [x, z] (ground) or [x, y, z] (per-point height, so the track follows hills).
+export interface LevelPath { points: number[][]; laneScale?: number; shoulder?: number; smoothing?: number }
 export interface PlacedProp { id: string; file: string; pos: number[]; rotDeg: number[]; scale: number }
 export interface LevelLighting {
   sunPos: number[]; sunIntensity: number; sunColor: string;
@@ -85,7 +86,10 @@ export function mergeLevel(saved: unknown): LevelConfig {
   if (isObj(s.path) && Array.isArray((s.path as Record<string, unknown>).points)) {
     const p = s.path as Record<string, unknown>;
     out.path = {
-      points: (p.points as [number, number][]).map(pt => [Number(pt[0]), Number(pt[1])] as [number, number]),
+      // Preserve 2-element [x,z] OR 3-element [x,y,z] points (per-point height); don't truncate Y.
+      points: (p.points as number[][]).map(pt => pt.length > 2
+        ? [Number(pt[0]), Number(pt[1]), Number(pt[2])]
+        : [Number(pt[0]), Number(pt[1])]),
       laneScale: num(p.laneScale, 1), shoulder: num(p.shoulder, 0), smoothing: num(p.smoothing, 0),
     };
   }

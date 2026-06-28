@@ -18,27 +18,42 @@ export class CurveEditor {
   private selectedHandle = -1;
   private opts: SurfaceOpts;                 // lane width + shoulder (saved into the path)
   private smoothing: number;                 // 0 = straight segments, higher = rounded corners
-  private height: number;                    // world-units the whole track is raised/lowered on Y
 
   constructor(path?: TrackPath) {
-    this.points = (path?.points ?? [[0, 0], [0, RACE_LEN]]).map(([x, z]) => new THREE.Vector3(x, 0, z));
+    // Points are [x,z] (ground) or [x,y,z] (per-point height). Keep the full Vector3 so each point
+    // carries its own elevation — the track can follow the map's hills.
+    this.points = (path?.points ?? [[0, 0], [0, RACE_LEN]]).map(pt => pt.length > 2
+      ? new THREE.Vector3(pt[0]!, pt[1]!, pt[2]!)
+      : new THREE.Vector3(pt[0]!, 0, pt[1]!));
     this.opts = { laneScale: path?.laneScale ?? 1, shoulder: path?.shoulder ?? 0 };
     this.smoothing = path?.smoothing ?? 0;
-    this.height = path?.height ?? 0;
     this.group.add(this.ribbon, this.handles, this.markers);
     this.rebuild();
   }
 
-  /** The current authored path + width + smoothing + height (saved to maps.json). */
+  /** The current authored path + width + smoothing (saved to maps.json). Points serialize as
+   *  [x,z] when flat (y≈0) or [x,y,z] when raised, so legacy flat tracks stay compact. */
   toPath(): TrackPath {
-    return { points: this.points.map(p => [round(p.x), round(p.z)]),
-             laneScale: round(this.opts.laneScale), shoulder: round(this.opts.shoulder),
-             smoothing: round(this.smoothing), height: round(this.height) };
+    return {
+      points: this.points.map(p => Math.abs(p.y) < 0.001
+        ? [round(p.x), round(p.z)]
+        : [round(p.x), round(p.y), round(p.z)]),
+      laneScale: round(this.opts.laneScale), shoulder: round(this.opts.shoulder),
+      smoothing: round(this.smoothing),
+    };
   }
 
-  /** Raise (+) / lower (−) the whole track on Y so it sits on the map's road. */
-  setHeight(v: number): void { this.height = THREE.MathUtils.clamp(v, -2000, 2000); this.rebuild(); }
-  get trackHeight(): number { return this.height; }
+  /** Raise (+) / lower (−) the SELECTED control point on Y (the track follows the map's hills).
+   *  Returns false if no point is selected. */
+  raiseSelected(dy: number): boolean {
+    const p = this.points[this.selectedHandle];
+    if (!p) return false;
+    p.y = THREE.MathUtils.clamp(p.y + dy, -2000, 2000);
+    this.rebuild();
+    return true;
+  }
+  /** The selected point's current height (for the panel readout), or 0 if none selected. */
+  selectedHeight(): number { return this.points[this.selectedHandle]?.y ?? 0; }
 
   /** Adjust lane width (multiplier) or side shoulder (world units), clamped to sane ranges. The
    *  shoulder range is large because maps can be scaled huge — you may need a wide apron to cover
@@ -65,11 +80,12 @@ export class CurveEditor {
     return idx;
   }
 
-  /** Move the dragged control point to a new ground position, then rebuild live. */
+  /** Move the dragged control point to a new ground position (X/Z), PRESERVING its Y height (height
+   *  is edited separately via raiseSelected so a ground-drag never flattens a hill). */
   dragTo(idx: number, x: number, z: number): void {
     const p = this.points[idx];
     if (!p) return;
-    p.set(x, 0, z);
+    p.x = x; p.z = z;
     this.rebuild();
   }
 
@@ -85,9 +101,13 @@ export class CurveEditor {
     const np = new THREE.Vector3(x, 0, z);
     let bi = 0, best = Infinity;
     for (let i = 0; i < this.points.length - 1; i++) {
-      const d = distToSegment(np, this.points[i]!, this.points[i + 1]!);
+      // Compare in the ground plane (ignore Y) so insertion order follows the layout, not elevation.
+      const a = this.points[i]!.clone().setY(0), b = this.points[i + 1]!.clone().setY(0);
+      const d = distToSegment(np, a, b);
       if (d < best) { best = d; bi = i; }
     }
+    // Inherit the average height of the segment it splits, so a new point on a hill isn't flattened.
+    np.y = (this.points[bi]!.y + this.points[bi + 1]!.y) / 2;
     this.points.splice(bi + 1, 0, np);
     this.selectedHandle = bi + 1;
     this.rebuild();
@@ -147,10 +167,11 @@ export class CurveEditor {
 
   /** Restore the editor to a saved path + width opts (used by undo/redo). Clears the selection. */
   setPath(path: TrackPath): void {
-    this.points = path.points.map(([x, z]) => new THREE.Vector3(x, 0, z));
+    this.points = path.points.map(pt => pt.length > 2
+      ? new THREE.Vector3(pt[0]!, pt[1]!, pt[2]!)
+      : new THREE.Vector3(pt[0]!, 0, pt[1]!));
     this.opts = { laneScale: path.laneScale ?? 1, shoulder: path.shoulder ?? 0 };
     this.smoothing = path.smoothing ?? 0;
-    this.height = path.height ?? 0;
     this.selectedHandle = -1;
     this.rebuild();
   }
@@ -194,7 +215,7 @@ export class CurveEditor {
         new THREE.MeshBasicMaterial({ color: sel ? 0xffcf33 : (isEnd ? 0xff3b3b : 0x36e08a),
           depthTest: false, transparent: true }));
       mesh.renderOrder = 999;   // draw on top of the track surface
-      mesh.position.set(p.x, this.height + 3, p.z);   // sit on the raised track, not the ground
+      mesh.position.set(p.x, p.y + 3, p.z);   // sit on the point's own height (follows hills)
       this.handles.add(mesh);
     });
   }

@@ -19,11 +19,13 @@ export interface Placement { pos: THREE.Vector3; headingY: number; }
 export class CurvedTrack {
   private curve: THREE.Curve<THREE.Vector3>;
   private totalLen: number;
-  private height: number;          // world-units the whole track is raised/lowered on Y
 
   constructor(path: TrackPath) {
-    this.height = path.height ?? 0;
-    const pts = path.points.map(([x, z]) => new THREE.Vector3(x, 0, z));
+    // Each control point is [x, z] (legacy, ground level) OR [x, y, z] (per-point height, so the
+    // track can follow the map's hills). The curve interpolates Y between points naturally.
+    const pts = path.points.map(pt => pt.length > 2
+      ? new THREE.Vector3(pt[0]!, pt[1]!, pt[2]!)
+      : new THREE.Vector3(pt[0]!, 0, pt[1]!));
     // Need at least two points; fall back to a straight line if degenerate.
     if (pts.length < 2) {
       pts.length = 0;
@@ -54,19 +56,17 @@ export class CurvedTrack {
     const tan = this.curve.getTangentAt(t);            // unit tangent (curve forward dir)
     const headingY = Math.atan2(tan.x, tan.z);          // yaw so +Z local aligns with tangent
     // Perpendicular in the ground plane (rotate tangent -90° about Y): right-hand side of travel.
+    // Perpendicular offset stays horizontal so lane width doesn't tilt; the centerline carries the
+    // per-point Y (the track follows the map's hills).
     const perp = new THREE.Vector3(tan.z, 0, -tan.x);
     const pos = center.clone().addScaledVector(perp, x);
-    pos.y += this.height;   // raise/lower the whole track onto the map's road surface
     return { pos, headingY };
   }
 
-  /** The track's Y height offset (so callers can place the surface ribbon at the same height). */
-  get heightOffset(): number { return this.height; }
-
   /** Sample N evenly-spaced world points along the centerline (for drawing the road ribbon).
-   *  Includes the track's Y height offset so the ribbon rises/lowers with the cars. */
+   *  Carries each point's interpolated Y so the ribbon follows the track's hills. */
   centerline(segments: number): THREE.Vector3[] {
-    return this.curve.getSpacedPoints(segments).map(p => p.setY(p.y + this.height));
+    return this.curve.getSpacedPoints(segments);
   }
 
   get length(): number { return this.totalLen; }
