@@ -12,6 +12,8 @@ const GAMES: GameCard[] = [
     blurb: 'Call your attacks out loud in a side-view brawler. Coming soon.' },
   { id: 'battler', title: 'Monster Battler', emoji: '🐉', status: 'soon',
     blurb: 'Turn-based, Pokémon-style battles driven entirely by voice. Coming soon.' },
+  { id: 'karaoke', title: 'Voice Karaoke Rhythm', emoji: '🎤', status: 'soon',
+    blurb: 'Karaoke meets Guitar Hero — sing into the call and nail the timing of each word for points. Coming soon.' },
 ];
 
 function renderGames(): void {

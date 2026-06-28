@@ -186,11 +186,18 @@ gizmo.addEventListener('objectChange', () => {
   render();
 });
 
-function save(): void {
+async function save(): Promise<void> {
   const c = currentConfig();
-  localStorage.setItem(KEY, JSON.stringify(c));
-  console.log('MAP CONFIG (copy this):\n' + JSON.stringify(c, null, 2));
-  flash('Saved ✓ (config logged to console)');
+  const full = { ...c, file: `${mapName}.glb` };   // include GLB so the game loads from config alone
+  localStorage.setItem(KEY, JSON.stringify(full)); // local backup
+  console.log('MAP CONFIG:\n' + JSON.stringify(full, null, 2));
+  try {
+    const res = await fetch('/api/maps', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(full),
+    });
+    flash(res.ok ? `Saved to server ✓ — drive it at /play.html?display=1&map=${mapName}`
+                 : 'Saved locally (server save failed)');
+  } catch { flash('Saved locally (server unreachable)'); }
 }
 document.getElementById('save')?.addEventListener('click', save);
 document.getElementById('sel-strip')?.addEventListener('click', () => selectTarget('strip'));

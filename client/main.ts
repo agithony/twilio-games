@@ -4,6 +4,9 @@ import { Renderer } from './renderer';
 import { InterpolationBuffer } from './interpolation';
 import { AssetLoader } from './asset-loader';
 import { Announcer, browserSpeechSink } from './announcer';
+import { fetchMaps, loadMapWorld, applyTrackTransform, CANONICAL_TRACK } from './map-world';
+import { CurvedTrack } from './track-path';
+import { surfaceOptsFromPath } from './track-surface';
 
 const url = `ws://${location.hostname}:8080/game`;
 const conn = new GameConnection(url);
@@ -82,16 +85,42 @@ async function boot() {
   // always starts.
   try { await assets.loadManifest(); } catch { /* primitives */ }
 
+  // Optional track-model "map": ?map=silver_lake loads the layout authored in /maptest.html
+  // and renders that model as the world (instead of the generated track). Falls back silently.
+  const mapName = new URLSearchParams(location.search).get('map');
+  if (mapName) {
+    try {
+      const maps = await fetchMaps();
+      const cfg = maps[mapName];
+      if (cfg) {
+        const world = await loadMapWorld(cfg);
+        if (world) renderer.setMapWorld(world);
+        // The race STAYS in canonical sim space (cars at z 0..TRACK_LEN, scale 1) so the camera,
+        // fog, shadows, and physics — all of which assume sim coords — keep working. The map's
+        // saved `model` transform (applied in loadMapWorld) already places the scenery relative to
+        // this canonical race. We do NOT move the car/track group.
+        applyTrackTransform(renderer.getTrackGroup(), CANONICAL_TRACK);
+        // Render-only curved path (Option B): cars/items/camera follow the curve visually while
+        // the sim stays straight. No path saved → straight track (setPath(null)). Width opts make
+        // the in-game track match the editor.
+        renderer.setPath(cfg.path ? new CurvedTrack(cfg.path) : null, surfaceOptsFromPath(cfg.path));
+      }
+    } catch { /* keep the generated track */ }
+  }
+
   if (isDisplay) {
-    // Shared screen: a pure SPECTATOR that renders every player's car and frames the
-    // whole pack (no "my car", so the camera doesn't lock onto the wrong one). The
-    // operator presses Enter to start. Phone callers are the players.
-    conn.spectate(roomCode);
+    // Shared screen: frames the whole pack (spectator camera) AND drives its own
+    // keyboard car. Joining as a player means (a) the keyboard works even when phone
+    // callers are connected, and (b) the game is playable with ZERO callers — Enter
+    // starts it because the screen itself is always a player.
+    conn.onJoined((playerId) => { renderer.setMyId(playerId); });
+    input.onIntent((i) => conn.sendIntent(i));
     renderer.setSpectator(true);
     addEventListener('keydown', (e) => {
       if (e.key === 'r') conn.restart();
       else if (e.key === 'Enter') { enableHost(); conn.ready(); }
     });
+    conn.join(roomCode, 'Screen');
   } else {
     // Dev keyboard-player path: join as a player and drive with the keyboard.
     conn.onJoined((playerId) => { renderer.setMyId(playerId); });

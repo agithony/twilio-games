@@ -1,6 +1,6 @@
 import http from 'http';
 import path from 'node:path';
-import { readFile, readdir } from 'node:fs/promises';
+import { readFile, writeFile, readdir } from 'node:fs/promises';
 import { WebSocketServer, WebSocket } from 'ws';
 import { GameServer } from './game-server';
 import { ConversationRelayAdapter } from './conversation-relay';
@@ -126,6 +126,29 @@ export class HttpServer {
       } catch { files = []; }
       res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
       res.end(JSON.stringify(files));
+      return;
+    }
+    // ---- map configs (track-overlay layouts authored in /maptest.html) ----
+    if (path === '/api/maps' && req.method === 'GET') {
+      let body = '{}';
+      try { body = await readFile('assets/maps/maps.json', 'utf8'); } catch { body = '{}'; }
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(body);
+      return;
+    }
+    if (path === '/api/maps' && req.method === 'POST') {
+      const raw = await readBody(req);
+      let cfg: unknown;
+      try { cfg = JSON.parse(raw); } catch { res.writeHead(400).end('bad json'); return; }
+      // Merge the single posted map config into maps.json under its key.
+      let all: Record<string, unknown> = {};
+      try { all = JSON.parse(await readFile('assets/maps/maps.json', 'utf8')); } catch { /* new file */ }
+      const c = cfg as { map?: string };
+      if (!c.map) { res.writeHead(400).end('missing map name'); return; }
+      all[c.map] = cfg;
+      await writeFile('assets/maps/maps.json', JSON.stringify(all, null, 2));
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify(all));
       return;
     }
     // ---- static assets (GLB etc.) ----

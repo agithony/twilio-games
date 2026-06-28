@@ -1,5 +1,8 @@
 import * as THREE from 'three';
 import { TRACK_W, TRACK_LEN, LANES, laneX } from '../shared/constants';
+import { TRACK_CENTER } from './map-world';
+import { CurvedTrack } from './track-path';
+import { buildTrackSurface, type SurfaceOpts } from './track-surface';
 import type { WorldSnapshot, Item } from '../shared/types';
 import { clone as skeletonClone } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
@@ -84,11 +87,78 @@ export class Renderer {
   private composer!: EffectComposer;
   private bloom!: UnrealBloomPass;
   private sky!: THREE.Mesh;            // gradient sky dome; tinted each frame
+  private generatedWorld = new THREE.Group();   // our built track (hidden when a map model is used)
+  private mapWorld: THREE.Object3D | null = null;
+  // The TRACK. `trackGroup` is the transform handle the saved `track` config drives; its ORIGIN
+  // sits at the race CENTER (see TRACK_CENTER) so rotation pivots about the middle. The actual
+  // cars/items/markings live in `trackContent`, an inner group shifted by -TRACK_CENTER so they
+  // keep their normal sim coords (cars drive +Z from z=0) while the parent's pivot is centered.
+  // Moving trackGroup moves the whole race together (onto a map's road when one is loaded).
+  private trackGroup = new THREE.Group();
+  private trackContent = new THREE.Group();
+  // Render-only curved path (Option B). When set, cars/items are placed by mapping their straight
+  // sim (z, x) onto this curve; null = the classic straight track. The sim never changes.
+  private path: CurvedTrack | null = null;
+  private surfaceOpts: SurfaceOpts = { laneScale: 1, shoulder: 0 };
+  private trackSurface: THREE.Group | null = null;   // the shared 3-lane surface (when a path is set)
+
+  /**
+   * Replace the generated track with a loaded track-model "map" (from /maptest layout).
+   * Pass null to revert to the generated track. The sky dome stays (backdrop either way).
+   */
+  setMapWorld(world: THREE.Object3D | null): void {
+    if (this.mapWorld) { this.scene.remove(this.mapWorld); this.mapWorld = null; }
+    if (world) {
+      this.mapWorld = world;
+      this.scene.add(world);
+      this.generatedWorld.visible = false;   // hide our asphalt/curbs/gantry; map is the world
+    } else {
+      this.generatedWorld.visible = true;
+    }
+  }
+
+  /**
+   * Set the render-only curved path + its width opts (cars/items follow it visually). Pass null for
+   * the classic straight track. Builds the shared 3-lane surface so the game looks like the editor.
+   */
+  setPath(path: CurvedTrack | null, opts: SurfaceOpts = { laneScale: 1, shoulder: 0 }): void {
+    this.path = path;
+    this.surfaceOpts = opts;
+    // Rebuild the shared track surface mesh.
+    if (this.trackSurface) { this.trackContent.remove(this.trackSurface); this.trackSurface = null; }
+    if (path) {
+      this.generatedWorld.visible = false;   // our straight asphalt is replaced by the curved surface
+      this.trackSurface = buildTrackSurface(path, opts);
+      this.trackContent.add(this.trackSurface);
+    }
+    // Re-place any already-built items onto the new path (cars re-place every frame in render()).
+    for (const { mesh, item } of this.itemMeshes) {
+      this.placeItem(mesh, item, (mesh.userData.groundY as number) ?? 0);
+    }
+  }
+
+  /** Accessors for the in-game align mode (attach a gizmo to the live map world / track). */
+  getMapWorld(): THREE.Object3D | null { return this.mapWorld; }
+  getTrackGroup(): THREE.Group { return this.trackGroup; }
+  getScene(): THREE.Scene { return this.scene; }
+  getCamera(): THREE.PerspectiveCamera { return this.camera; }
+  getDomElement(): HTMLCanvasElement { return this.renderer.domElement; }
 
   /** Build the static world: sky dome, terrain, asphalt track, markings, curbs, start gantry. */
   private buildWorld(): void {
     const FULL_LEN = TRACK_LEN * 3;          // covers all laps of travel
     const midZ = TRACK_LEN;
+    // The track group rides in the scene; its inner content group is shifted by -TRACK_CENTER so
+    // the group's ORIGIN (where the gizmo attaches + rotation pivots) sits at the race center,
+    // while cars/items/markings inside keep normal sim coords. Moving trackGroup moves it all.
+    this.scene.add(this.trackGroup);
+    // Outer origin defaults to the race center; inner content shifts back by -TRACK_CENTER. Net:
+    // content sits at normal sim coords (cars at z 0..TRACK_LEN) while the pivot is centered. A
+    // loaded map overrides trackGroup's transform via applyTrackTransform(getTrackGroup(), ...).
+    this.trackGroup.position.set(TRACK_CENTER[0], TRACK_CENTER[1], TRACK_CENTER[2]);
+    this.trackContent.position.set(-TRACK_CENTER[0], -TRACK_CENTER[1], -TRACK_CENTER[2]);
+    this.trackGroup.add(this.trackContent);
+    this.trackContent.add(this.generatedWorld);
 
     // Big inside-out gradient sky dome so the world never reads as a black void.
     const skyMat = new THREE.ShaderMaterial({
@@ -106,14 +176,14 @@ export class Renderer {
       new THREE.PlaneGeometry(4000, FULL_LEN + 4000),
       new THREE.MeshStandardMaterial({ color: 0x3a4a63, roughness: 1 }));
     this.ground.rotation.x = -Math.PI / 2; this.ground.position.set(0, -0.05, midZ);
-    this.ground.receiveShadow = true; this.scene.add(this.ground);
+    this.ground.receiveShadow = true; this.generatedWorld.add(this.ground);
 
     // Asphalt track surface.
     const asphalt = new THREE.Mesh(
       new THREE.PlaneGeometry(TRACK_W, FULL_LEN),
       new THREE.MeshStandardMaterial({ color: 0x23262e, roughness: 0.95, metalness: 0.0 }));
     asphalt.rotation.x = -Math.PI / 2; asphalt.position.set(0, 0, midZ);
-    asphalt.receiveShadow = true; this.scene.add(asphalt);
+    asphalt.receiveShadow = true; this.generatedWorld.add(asphalt);
 
     // Dashed white lane dividers (between the lanes).
     const dashMat = new THREE.MeshStandardMaterial({ color: 0xeef2ff, roughness: 0.6 });
@@ -122,7 +192,7 @@ export class Renderer {
       for (let z = -TRACK_LEN; z < FULL_LEN; z += 14) {
         const dash = new THREE.Mesh(new THREE.PlaneGeometry(0.4, 6), dashMat);
         dash.rotation.x = -Math.PI / 2; dash.position.set(x, 0.02, z);
-        this.scene.add(dash);
+        this.generatedWorld.add(dash);
       }
     }
 
@@ -132,26 +202,26 @@ export class Renderer {
     for (const side of [-1, 1]) {
       const ex = side * (TRACK_W / 2 - 0.3);
       const edge = new THREE.Mesh(new THREE.PlaneGeometry(0.5, FULL_LEN), edgeMat);
-      edge.rotation.x = -Math.PI / 2; edge.position.set(ex, 0.02, midZ); this.scene.add(edge);
+      edge.rotation.x = -Math.PI / 2; edge.position.set(ex, 0.02, midZ); this.generatedWorld.add(edge);
       const curb = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.5, FULL_LEN),
         curbMat);
       curb.position.set(side * (TRACK_W / 2 + 0.4), 0.25, midZ);
-      curb.castShadow = true; curb.receiveShadow = true; this.scene.add(curb);
+      curb.castShadow = true; curb.receiveShadow = true; this.generatedWorld.add(curb);
     }
 
     // Start/finish gantry at z=0.
     const postMat = new THREE.MeshStandardMaterial({ color: 0x10141c, roughness: 0.6, metalness: 0.3 });
     for (const side of [-1, 1]) {
       const post = new THREE.Mesh(new THREE.BoxGeometry(1.2, 12, 1.2), postMat);
-      post.position.set(side * (TRACK_W / 2 + 1.5), 6, 0); post.castShadow = true; this.scene.add(post);
+      post.position.set(side * (TRACK_W / 2 + 1.5), 6, 0); post.castShadow = true; this.generatedWorld.add(post);
     }
     const beam = new THREE.Mesh(new THREE.BoxGeometry(TRACK_W + 6, 2.4, 1.4), postMat);
-    beam.position.set(0, 11, 0); beam.castShadow = true; this.scene.add(beam);
+    beam.position.set(0, 11, 0); beam.castShadow = true; this.generatedWorld.add(beam);
     // "FINISH" banner on the beam — emissive so it's bright and readable in any zone.
     const banner = new THREE.Mesh(new THREE.PlaneGeometry(TRACK_W + 5, 2),
       new THREE.MeshStandardMaterial({ color: 0xef223a, emissive: 0xef223a, emissiveIntensity: 0.6,
         side: THREE.DoubleSide }));
-    banner.position.set(0, 11, 0.8); this.scene.add(banner);
+    banner.position.set(0, 11, 0.8); this.generatedWorld.add(banner);
   }
 
   private spectator = false;
@@ -159,7 +229,7 @@ export class Renderer {
   setSpectator(on: boolean) { this.spectator = on; }
 
   buildItems(items: Item[]) {
-    for (const { mesh } of this.itemMeshes) this.scene.remove(mesh);
+    for (const { mesh } of this.itemMeshes) this.trackContent.remove(mesh);
     this.itemMeshes = items.map(item => {
       // NOTE: keep in sync with editor-main.ts placement: world/lane position goes on an
       // OUTER wrapper group; the inner model keeps its baked grounding (-min.y) + offset
@@ -186,10 +256,25 @@ export class Renderer {
       // Real models self-ground via baked -min.y, so wrapper y=0. Primitives have no baked
       // grounding (box centered, pad thin), so keep their original y (0.8 / 0.13).
       const y = usingTemplate ? 0 : (item.kind === 'barrier' ? 0.8 : 0.13);
-      mesh.position.set(laneX(item.lane), y, item.z);
-      this.scene.add(mesh);
+      this.placeItem(mesh, item, y);
+      mesh.userData.groundY = y;     // remembered so setPath() can re-place onto the curve
+      this.trackContent.add(mesh);   // ride the track transform so items align with the race line
       return { mesh, item };
     });
+  }
+
+  /** Position one item mesh: straight sim coords, or mapped onto the curve when a path is set. */
+  private placeItem(mesh: THREE.Object3D, item: Item, y: number): void {
+    if (this.path) {
+      // Scale the lane offset by laneScale so items sit in the (possibly widened) lanes, and lift
+      // onto the track surface (Y_ROAD ≈ 0.6).
+      const p = this.path.sample(item.z, laneX(item.lane) * this.surfaceOpts.laneScale);
+      mesh.position.set(p.pos.x, y + 0.6, p.pos.z);
+      mesh.rotation.y = p.headingY;
+    } else {
+      mesh.position.set(laneX(item.lane), y, item.z);
+      mesh.rotation.y = 0;
+    }
   }
 
   private ensureCar(id: string, color: string): THREE.Group {
@@ -206,7 +291,7 @@ export class Renderer {
       wrapper = new THREE.Group();
       wrapper.add(model);
       wrapper.userData.model = model;
-      this.scene.add(wrapper); this.carMeshes.set(id, wrapper);
+      this.trackContent.add(wrapper); this.carMeshes.set(id, wrapper);   // cars ride the track transform
     }
     return wrapper;
   }
@@ -218,7 +303,15 @@ export class Renderer {
 
     for (const c of snap.cars) {
       const wrapper = this.ensureCar(c.id, c.color);
-      wrapper.position.set(c.x, 0, c.z);
+      if (this.path) {
+        // Map straight sim (z=distance, x=lane offset) onto the curve. Scale x by laneScale so cars
+        // stay centered in widened lanes, and lift onto the track surface.
+        const p = this.path.sample(c.z, c.x * this.surfaceOpts.laneScale);
+        wrapper.position.set(p.pos.x, 0.6, p.pos.z);
+        wrapper.rotation.y = p.headingY;   // face along the curve
+      } else {
+        wrapper.position.set(c.x, 0, c.z);
+      }
       // Animation lives on the inner model (mixer/wheels set by buildCar).
       const model = wrapper.userData.model as THREE.Object3D;
       // Animation priority: baked clip (mixer) > wheel-spin > static.
@@ -262,8 +355,18 @@ export class Renderer {
 
     // Cinematic 3/4 chase: behind + above + slightly offset, looking down-track past the pack.
     const mx = me ? me.x : 0;
-    this.camera.position.set(mx * 0.3 + 10, 9, z - 24);
-    this.camera.lookAt(mx * 0.4, 2.2, z + 45);
+    if (this.path) {
+      // Curve-aware chase: sample the curve behind the car and ahead of it, so the camera swings
+      // through bends instead of pointing off the track. Same offsets as straight (24 back / 45
+      // ahead / +10 lateral / height 9), just measured ALONG the curve.
+      const eye = this.path.sample(z - 24, mx * 0.3 + 10);
+      const look = this.path.sample(z + 45, mx * 0.4);
+      this.camera.position.set(eye.pos.x, 9, eye.pos.z);
+      this.camera.lookAt(look.pos.x, 2.2, look.pos.z);
+    } else {
+      this.camera.position.set(mx * 0.3 + 10, 9, z - 24);
+      this.camera.lookAt(mx * 0.4, 2.2, z + 45);
+    }
     // Sky dome rides with the camera so the horizon is always far away.
     this.sky.position.copy(this.camera.position);
     this.composer.render();

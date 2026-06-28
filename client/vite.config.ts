@@ -24,6 +24,7 @@ export default defineConfig({
         play: resolve(__dirname, 'play.html'),         // the racer (was index.html)
         editor: resolve(__dirname, 'editor/editor.html'),
         maptest: resolve(__dirname, 'maptest.html'),   // map/track GLB inspector
+        align: resolve(__dirname, 'align.html'),        // in-game-space map align tool
       },
     },
   },
