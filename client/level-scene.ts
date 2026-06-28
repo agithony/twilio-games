@@ -10,9 +10,11 @@ import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { wrapMapScene, applyTrackTransform } from './map-world';
 import { CurvedTrack } from './track-path';
 import { buildTrackSurface, surfaceOptsFromPath } from './track-surface';
-import { RACE_LEN } from '../shared/constants';
+import { AssetLoader } from './asset-loader';
+import { buildCar } from './car-factory';
+import { RACE_LEN, laneX, LANES } from '../shared/constants';
 import { addProp as addPropPure, duplicateProp as dupPropPure, removeProp as rmPropPure,
-         type PlacedProp } from '../shared/level';
+         resolveCarScale, type PlacedProp } from '../shared/level';
 import type { LevelConfig, LevelTransform } from '../shared/level';
 
 export class LevelScene {
@@ -29,8 +31,13 @@ export class LevelScene {
   private changeCb: () => void = () => {};
   private propGroups = new Map<string, THREE.Group>();
   private selKey: 'map' | 'track' | string = 'track';
+  private assets = new AssetLoader();
+  private previewCars = new THREE.Group();
+  private carPreviewOn = false;
 
   constructor(mount: HTMLElement) {
+    // kick off car-template loading non-blocking; preview cars fall back to primitives until ready
+    this.assets.loadManifest().catch(() => {});
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     this.renderer.setSize(innerWidth, innerHeight);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -64,6 +71,34 @@ export class LevelScene {
 
   onChange(cb: () => void): void { this.changeCb = cb; }
 
+  /** Mutable live level ref, so the inspector panels can read/write car scale etc. in place. */
+  getLevel(): LevelConfig { return this.level; }
+
+  setCarPreview(on: boolean): void { this.carPreviewOn = on; this.applyCars(); }
+
+  /** Whether sample-car preview is on — so a panel re-render can reflect the live toggle state. */
+  carPreviewEnabled(): boolean { return this.carPreviewOn; }
+
+  /**
+   * (Re)build sample cars at the start of each lane, scaled by the level's resolved car scale.
+   * CONTRACT: overrides are keyed by the car INDEX STRING ("0","1","2", …) — the same key the game
+   * uses (cars are assigned by index), NOT a GLB filename. Keep this in lockstep with the cars panel.
+   */
+  applyCars(): void {
+    this.previewCars.clear();
+    if (!this.carPreviewOn) return;
+    for (let lane = 0; lane < LANES; lane++) {
+      const tmpl = this.assets.carTemplate(lane);
+      const model = buildCar(tmpl ?? null, '#36d1dc', false);
+      const wrap = new THREE.Group(); wrap.add(model);
+      const s = resolveCarScale(this.level, String(lane));
+      wrap.scale.setScalar(s);
+      wrap.position.set(laneX(lane), 0.6, 20);
+      this.previewCars.add(wrap);
+    }
+    this.changeCb();
+  }
+
   async loadLevel(level: LevelConfig): Promise<void> {
     this.level = level;
     // reset groups
@@ -83,6 +118,9 @@ export class LevelScene {
     // props ride the track transform like the surface
     this.propGroups.clear();
     for (const p of level.props) this.spawnProp(p);
+    // sample cars (editor-only preview) ride the track transform like the surface/props
+    this.trackGroup.add(this.previewCars);
+    this.applyCars();
     this.select('track');
   }
 

@@ -2,7 +2,10 @@
 import { LevelScene } from './level-scene';
 import { fetchMaps } from './map-world';
 import { fetchAssets } from './editor/manifest-client';
+import { numberRow, heading } from './level-panels';
 import { mergeLevel, levelDefaults, type LevelConfig } from '../shared/level';
+
+const LANES_PREVIEW = 3;
 
 const scene = new LevelScene(document.getElementById('app')!);
 const sel = document.getElementById('levelSelect') as HTMLSelectElement;
@@ -38,7 +41,35 @@ function renderTree(): void {
   tree.append(document.createElement('br'), add, dup, del);
 }
 
-scene.onChange(() => renderTree());
+const panel = document.getElementById('panel')!;
+function renderPanel(): void {
+  panel.replaceChildren();
+  const key = scene.selectedKey();
+  heading(panel, key === 'map' ? 'Map' : key === 'track' ? 'Track' : `Prop ${key}`);
+  // Transform fine-tune rows per object are edited via the gizmo for now; the Cars section below is
+  // level-wide and always shown.
+
+  // Cars section (always shown — it's level-wide). Overrides are keyed by car INDEX string
+  // ("0","1","2", …) — the same key the game uses — NOT a GLB filename. The labels read "Car 1…"
+  // (1-based for humans) while the override key stays the 0-based index string.
+  heading(panel, 'Cars');
+  const lvl = scene.getLevel();
+  numberRow(panel, 'All cars size', lvl.cars.masterScale, 0.1, 10, 0.05, (v) => {
+    lvl.cars.masterScale = v; scene.applyCars();
+  });
+  const toggle = document.createElement('label');
+  const cb = document.createElement('input'); cb.type = 'checkbox';
+  cb.checked = scene.carPreviewEnabled();   // survive the panel re-render that setCarPreview triggers
+  cb.onchange = () => scene.setCarPreview(cb.checked);
+  toggle.append(cb, document.createTextNode(' Show sample cars')); panel.append(toggle);
+  for (let i = 0; i < LANES_PREVIEW; i++) {
+    numberRow(panel, `Car ${i + 1} tweak`, lvl.cars.overrides[String(i)] ?? 1, 0.2, 5, 0.05, (v) => {
+      lvl.cars.overrides[String(i)] = v; scene.applyCars();
+    });
+  }
+}
+
+scene.onChange(() => { renderTree(); renderPanel(); });
 
 async function refresh(selectKey?: string): Promise<void> {
   const raw = await fetchMaps();
