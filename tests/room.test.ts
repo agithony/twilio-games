@@ -57,6 +57,15 @@ describe('Room', () => {
     expect(typeof roster[1]!.color).toBe('string');
   });
 
+  it('generates a different course layout on each start() (no two identical races)', () => {
+    room.addPlayer('You'); room.addPlayer('Ada');
+    room.start();
+    const first = JSON.stringify(room.snapshot()!.items);
+    room.start();
+    const second = JSON.stringify(room.snapshot()!.items);
+    expect(second).not.toEqual(first);
+  });
+
   it('drains the countdown/go events', () => {
     room.addPlayer('You'); room.start();
     let sawGo = false;

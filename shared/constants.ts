@@ -6,8 +6,7 @@ export const TRACK_LEN = 700;        // z-distance per lap
 export const RACE_LEN = TRACK_LEN * LAP_TARGET;   // full distance cars actually drive (no looping)
 export const STEP = 1 / 60;          // fixed sim timestep (seconds)
 export const BASE_SPEED = 38;        // cruise speed (units/s)
-export const ITEM_SPACING = 24;      // gap between obstacle rows
-export const ITEM_START = 55;        // z of first obstacle row
+export const ITEM_START = 55;        // z of first obstacle row (course-gen.ts owns spacing/ramp)
 
 /**
  * Lane center x for a given lane index (0..LANES-1).

@@ -58,6 +58,10 @@ export class Room {
   start(): void {
     if (this.players.length === 0) return;
     // Restartable: starting from any phase rebuilds a fresh race for the current players.
+    // Evolve the seed each start so every race gets a NEW (still deterministic-per-race,
+    // so all clients agree on the layout they're shown) procedural course — no two races
+    // replay the same gauntlet. Mulberry32-style mix keeps successive seeds well-spread.
+    this.seed = (Math.imul(this.seed ^ (this.seed >>> 15), 0x2c1b3c6d) + 0x9e3779b9) >>> 0;
     this.world = new RaceWorld(
       this.players.map(p => ({ id: p.id, name: p.name, color: p.color })),
       this.seed,

@@ -1,8 +1,9 @@
 import { Rng } from './rng';
 import {
   LANES, LAP_TARGET, TRACK_LEN, BASE_SPEED,
-  ITEM_SPACING, ITEM_START, laneX,
+  ITEM_START, laneX,
 } from './constants';
+import { generateCourse } from './course-gen';
 import type { Intent, Item, CarState, WorldSnapshot, Phase, GameEvent } from './types';
 
 interface PlayerInit { id: string; name: string; color: string; }
@@ -35,13 +36,14 @@ export class RaceWorld {
     for (const p of players) {
       this.hits.set(p.id, new Set<number>());
     }
-    // pre-generate the fixed gauntlet (deterministic via rng)
-    let oid = 1;
-    for (let z = ITEM_START; z < TRACK_LEN * LAP_TARGET; z += ITEM_SPACING) {
-      const lane = this.rng.int(LANES);
-      const kind = this.rng.next() < 0.62 ? 'barrier' : 'boost';
-      this.items.push({ id: oid++, kind, lane, z });
-    }
+    // Pre-generate a smart, fair gauntlet (deterministic via rng, so all clients agree;
+    // VARIETY comes from the per-race seed chosen at Room.start()). See course-gen.ts:
+    // every row is solvable, barriers are spaced for voice-reaction time, difficulty ramps.
+    this.items.push(...generateCourse(this.rng, {
+      lanes: LANES,
+      startZ: ITEM_START,
+      endZ: TRACK_LEN * LAP_TARGET,
+    }));
   }
 
   get phase(): Phase { return this._phase; }
