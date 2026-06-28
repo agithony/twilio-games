@@ -61,7 +61,10 @@ function renderTree(): void {
   const mk = (label: string, key: string) => {
     const d = document.createElement('div');
     d.className = 'row' + (scene.selectedKey() === key ? ' sel' : '');
-    d.textContent = label; d.onclick = () => { scene.select(key); renderTree(); };
+    // Clicking a tree row selects AND flies the camera to that object (frame-on-select). Viewport
+    // selection uses plain select() and leaves the camera where it is — per the "only from the
+    // left panel" requirement.
+    d.textContent = label; d.onclick = () => { scene.selectAndFrame(key); renderTree(); };
     return d;
   };
   tree.append(mk('Level (cars · lighting · effects)', 'level'), mk('Map', 'map'), mk('Track', 'track'));

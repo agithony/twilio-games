@@ -107,7 +107,10 @@ export class LevelScene {
     this.loader.setDRACOLoader(d);
 
     this.orbit = new OrbitControls(this.camera, this.renderer.domElement);
-    this.orbit.enableDamping = true; this.orbit.minDistance = 0; this.orbit.maxDistance = Infinity;
+    this.orbit.enableDamping = true; this.orbit.minDistance = 0.2; this.orbit.maxDistance = Infinity;
+    // Scroll-zoom toward the cursor (not just the orbit target), so you can zoom into a model that's
+    // far from the current pivot — the common case on a huge 200x-scaled map.
+    this.orbit.zoomToCursor = true;
     this.camera.position.set(RACE_LEN * 0.6, RACE_LEN * 0.5, -RACE_LEN * 0.3);
     this.orbit.target.set(0, 0, RACE_LEN / 2); this.orbit.update();
 
@@ -183,6 +186,8 @@ export class LevelScene {
 
   /** The live three.js scene (for in-browser debugging / headless smoke introspection). */
   getScene(): THREE.Scene { return this.scene; }
+  /** The editor camera (for in-browser debugging / headless smoke introspection). */
+  getCamera(): THREE.PerspectiveCamera { return this.camera; }
 
   /**
    * Mirror the level's lighting onto the editor scene — using the SAME pipeline as the game (sun as
@@ -437,6 +442,49 @@ export class LevelScene {
     else { const g = this.propGroups.get(key); if (g) this.gizmo.attach(g); else this.gizmo.detach(); }
     this.addArmed = false;   // dropping selection cancels any pending add
     this.changeCb();
+  }
+
+  /**
+   * Select AND frame: like select(), but also flies the orbit camera to the chosen object so it
+   * fills the view (and becomes zoomable — OrbitControls orbits/zooms around its target, so an
+   * object far from the old target was effectively un-zoomable). ONLY the left-panel tree calls
+   * this; viewport/programmatic selection uses plain select() and leaves the camera alone.
+   */
+  selectAndFrame(key: 'map' | 'track' | string): void {
+    this.select(key);
+    this.frameObject(key);
+  }
+
+  /** Move the orbit target onto the selected object's center and dolly in to fit its radius. */
+  private frameObject(key: string): void {
+    const obj = key === 'map' ? this.mapGroup
+      : key === 'startLine' ? this.startGantry
+      : key === 'finishLine' ? this.finishGantry
+      : (key === 'track' || key === 'level') ? null
+      : this.propGroups.get(key) ?? null;
+
+    const box = new THREE.Box3();
+    if (obj) {
+      box.setFromObject(obj);
+    } else {
+      // Track/Level: frame the whole drivable track (its curve), in trackGroup world space.
+      const c = this.curve?.curve();
+      if (c) for (const z of [0, RACE_LEN / 2, RACE_LEN]) {
+        box.expandByPoint(this.trackGroup.localToWorld(c.sample(z, 0).pos.clone()));
+      } else {
+        box.setFromCenterAndSize(new THREE.Vector3(0, 0, RACE_LEN / 2), new THREE.Vector3(60, 20, RACE_LEN));
+      }
+    }
+    if (box.isEmpty()) return;
+    const sphere = box.getBoundingSphere(new THREE.Sphere());
+    const radius = Math.max(sphere.radius, 1);
+    // Distance so the sphere fits the vertical FOV with a little margin.
+    const fitDist = (radius / Math.sin((this.camera.fov * Math.PI / 180) / 2)) * 1.25;
+    const dir = this.camera.position.clone().sub(this.orbit.target).normalize();
+    if (dir.lengthSq() < 1e-6) dir.set(0.5, 0.6, -0.3).normalize();   // fallback if degenerate
+    this.orbit.target.copy(sphere.center);
+    this.camera.position.copy(sphere.center).addScaledVector(dir, fitDist);
+    this.orbit.update();
   }
 
   // ── Selected-object transform API (Map / Prop / Start / Finish inspector wires to these) ───────
