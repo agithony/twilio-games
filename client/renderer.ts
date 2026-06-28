@@ -1,8 +1,10 @@
 import * as THREE from 'three';
-import { TRACK_W, TRACK_LEN, LANES, laneX } from '../shared/constants';
+import { TRACK_W, TRACK_LEN, RACE_LEN, LANES, laneX } from '../shared/constants';
 import { TRACK_CENTER } from './map-world';
 import { CurvedTrack } from './track-path';
 import { buildTrackSurface, type SurfaceOpts } from './track-surface';
+import { autoFitScale } from '../shared/asset-fit';
+import { stripDisplayBases } from './asset-loader';
 import type { WorldSnapshot, Item } from '../shared/types';
 import { clone as skeletonClone } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
@@ -148,6 +150,10 @@ export class Renderer {
     for (const { mesh, item } of this.itemMeshes) {
       this.placeItem(mesh, item, (mesh.userData.groundY as number) ?? 0);
     }
+    // Re-place the start/finish gantries onto the new curve (each remembers its sim-z).
+    for (const wrapper of this.lineGroup.children) {
+      this.placeLine(wrapper, (wrapper.userData.lineZ as number) ?? 0);
+    }
   }
 
   /** (Re)build the curved 3-lane surface from the current path + width + track-glow. */
@@ -291,19 +297,93 @@ export class Renderer {
       curb.castShadow = true; curb.receiveShadow = true; this.generatedWorld.add(curb);
     }
 
-    // Start/finish gantry at z=0.
-    const postMat = new THREE.MeshStandardMaterial({ color: 0x10141c, roughness: 0.6, metalness: 0.3 });
+    // Start (z=0) and finish (z=RACE_LEN) line MODELS are loaded + placed by
+    // setStartFinishLines(), into the lineGroup which rides trackContent — so they follow
+    // BOTH the straight track and a curved map path (and any track transform/hills). A
+    // lightweight primitive gantry is drawn here as a fallback until/unless the models load.
+    this.trackContent.add(this.lineGroup);
+    this.buildFallbackGantry(0x10141c, 'finish');
+  }
+
+  // ── Start / Finish line models ──────────────────────────────────────────────────────────────
+  // Real GLB gantries that ALWAYS bookend the track. Placed in lineGroup (rides trackContent), so
+  // they sit on the curve at z=0 / z=RACE_LEN in both straight and curved-map modes.
+  private lineGroup = new THREE.Group();
+  private lineLoader = (() => {
+    const l = new GLTFLoader(); const d = new DRACOLoader();
+    d.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/'); l.setDRACOLoader(d);
+    return l;
+  })();
+  /** Remembered files so setPath() can re-place the gantries onto a freshly-set curve. */
+  private lineFiles: { start?: string; finish?: string } = {};
+
+  /**
+   * Load + place the start and finish gantry models so they bookend the track. Each is auto-fit so
+   * its widest dimension spans a bit beyond the track, grounded on the surface, and turned to face
+   * across the track. Pass either/both files; missing ones keep the primitive fallback gantry.
+   */
+  setStartFinishLines(files: { start?: string; finish?: string }): void {
+    this.lineFiles = files;
+    // clear any previously-built gantries (models + fallback) and rebuild
+    this.lineGroup.clear();
+    if (!files.start && !files.finish) { this.buildFallbackGantry(0x10141c, 'finish'); return; }
+    if (files.start) this.loadLine(files.start, 0);
+    if (files.finish) this.loadLine(files.finish, RACE_LEN);
+    // keep a fallback finish gantry only if no finish model was supplied
+    if (!files.finish) this.buildFallbackGantry(0x10141c, 'finish');
+  }
+
+  private loadLine(file: string, z: number): void {
+    this.lineLoader.load(`/assets/${file}`, (gltf) => {
+      const model = gltf.scene;
+      stripDisplayBases(model);
+      // Auto-fit so the gantry's longest axis spans a little wider than the full track width.
+      const target = (TRACK_W * this.surfaceOpts.laneScale) + 2 * this.surfaceOpts.shoulder + 8;
+      const box = new THREE.Box3().setFromObject(model);
+      const size = new THREE.Vector3(); box.getSize(size);
+      const s = autoFitScale([size.x, size.y, size.z], target);
+      model.scale.setScalar(s);
+      // ground it: recompute, sit min.y on 0, center x/z so the wrapper controls placement
+      const box2 = new THREE.Box3().setFromObject(model);
+      const c = new THREE.Vector3(); box2.getCenter(c);
+      model.position.x += -c.x; model.position.z += -c.z; model.position.y += -box2.min.y;
+      model.traverse(o => { (o as THREE.Mesh).castShadow = true; });
+      const wrapper = new THREE.Group();
+      wrapper.add(model);
+      wrapper.userData.lineZ = z;
+      this.lineGroup.add(wrapper);
+      this.placeLine(wrapper, z);
+    }, undefined, () => { /* model failed: keep whatever fallback exists */ });
+  }
+
+  /** Position one gantry wrapper at sim-z (lane center x=0), onto the curve when a path is set. */
+  private placeLine(wrapper: THREE.Object3D, z: number): void {
+    if (this.path) {
+      const p = this.path.sample(z, 0);
+      wrapper.position.set(p.pos.x, p.pos.y + 0.6, p.pos.z);   // +0.6 = track surface lift (Y_ROAD)
+      wrapper.rotation.y = p.headingY;
+    } else {
+      wrapper.position.set(0, 0, z);
+      wrapper.rotation.y = 0;
+    }
+  }
+
+  /** Simple primitive gantry (posts + emissive banner) used when no model is supplied/loaded. */
+  private buildFallbackGantry(color: number, _label: string): void {
+    const g = new THREE.Group(); g.userData.lineZ = 0; g.userData.fallback = true;
+    const postMat = new THREE.MeshStandardMaterial({ color, roughness: 0.6, metalness: 0.3 });
     for (const side of [-1, 1]) {
       const post = new THREE.Mesh(new THREE.BoxGeometry(1.2, 12, 1.2), postMat);
-      post.position.set(side * (TRACK_W / 2 + 1.5), 6, 0); post.castShadow = true; this.generatedWorld.add(post);
+      post.position.set(side * (TRACK_W / 2 + 1.5), 6, 0); post.castShadow = true; g.add(post);
     }
     const beam = new THREE.Mesh(new THREE.BoxGeometry(TRACK_W + 6, 2.4, 1.4), postMat);
-    beam.position.set(0, 11, 0); beam.castShadow = true; this.generatedWorld.add(beam);
-    // "FINISH" banner on the beam — emissive so it's bright and readable in any zone.
+    beam.position.set(0, 11, 0); beam.castShadow = true; g.add(beam);
     const banner = new THREE.Mesh(new THREE.PlaneGeometry(TRACK_W + 5, 2),
       new THREE.MeshStandardMaterial({ color: 0xef223a, emissive: 0xef223a, emissiveIntensity: 0.6,
         side: THREE.DoubleSide }));
-    banner.position.set(0, 11, 0.8); this.generatedWorld.add(banner);
+    banner.position.set(0, 11, 0.8); g.add(banner);
+    this.lineGroup.add(g);
+    this.placeLine(g, 0);
   }
 
   private spectator = false;

@@ -14,6 +14,11 @@ const conn = new GameConnection(url);
 const input = new KeyboardAdapter();
 const assets = new AssetLoader();
 const renderer = new Renderer(document.getElementById('app')!, assets);
+// Dev-only: expose the renderer for in-browser debugging / headless smoke introspection.
+// Guarded to localhost so it never leaks onto a deployed display.
+if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
+  (window as unknown as { __renderer?: unknown }).__renderer = renderer;
+}
 const buffer = new InterpolationBuffer(100);
 const big = document.getElementById('big')!;
 const lobbyEl = document.getElementById('lobby')!;
@@ -85,6 +90,11 @@ async function boot() {
   // missing or any model fails (loadManifest swallows errors), so the game
   // always starts.
   try { await assets.loadManifest(); } catch { /* primitives */ }
+
+  // Always bookend the track with real start/finish gantry models. They ride the track content,
+  // so a map's curved path (set below) re-places them onto the curve at z=0 / z=RACE_LEN. Missing
+  // models fall back to the primitive gantry inside the renderer.
+  renderer.setStartFinishLines({ start: 'starting_line.glb', finish: 'finish_line.glb' });
 
   // Optional track-model "map": ?map=silver_lake loads the layout authored in /maptest.html
   // and renders that model as the world (instead of the generated track). Falls back silently.

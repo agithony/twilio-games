@@ -33,11 +33,13 @@ the original authors is preserved below.
 | `18_mclaren_senna_crxw_widebody_kit_animated.glb` | 18' McLaren Senna Crxw Widebody Kit (Animated) | crxw.cgi | https://skfb.ly/oyYv9 |
 | `animated_chevrolet_c8_model.glb` | Animated Chevrolet C8 Model | TechFusion | https://skfb.ly/p6Znv |
 
-## Obstacle models (CC-BY 4.0)
+## Obstacle + track models (CC-BY 4.0)
 
 | Model file | Title | Author | Sketchfab | In-game role |
 |---|---|---|---|---|
 | `danger_barrier_proops.glb` | Danger Barrier (Proops) | ALTEREGO (v.a.c.u.u.m.) | https://skfb.ly/p9ZBq | Barrier (hazard to dodge) |
+| `starting_line.glb` | Starting Line | Yanez Designs | https://skfb.ly/6RYrD | Start gantry (track z=0) |
+| `finish_line.glb` | Finish Line | Kemal Çolak | https://skfb.ly/oDuZz | Finish gantry (track end) |
 
 ## Excluded models (NOT used in-game)
 
