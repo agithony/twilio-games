@@ -1,6 +1,6 @@
 import http from 'http';
 import path from 'node:path';
-import { readFile, writeFile, readdir } from 'node:fs/promises';
+import { readFile, writeFile, readdir, rename } from 'node:fs/promises';
 import { WebSocketServer, WebSocket } from 'ws';
 import { GameServer } from './game-server';
 import { ConversationRelayAdapter } from './conversation-relay';
@@ -8,6 +8,7 @@ import { twimlGatherRoomCode, twimlConnectRelay } from './twiml';
 import { validateTwilioSignature } from './twilio-signature';
 import { ManifestStore } from './manifest-store';
 import { parseManifest } from '../shared/asset-manifest';
+import { mergeMapConfig } from '../shared/maps-store';
 
 export class HttpServer {
   private server: http.Server;
@@ -18,6 +19,8 @@ export class HttpServer {
   private readonly publicBaseUrl: string;
   private readonly validateSignatures: boolean;
   private manifestStore: ManifestStore;
+  private readonly mapsPath: string;
+  private readonly editorToken?: string;
 
   constructor(opts: {
     port: number;
@@ -26,12 +29,16 @@ export class HttpServer {
     broadcastHz?: number;
     validateSignatures?: boolean;
     manifestPath?: string;   // injectable so tests don't clobber the real assets/manifest.json
+    mapsPath?: string;       // injectable so tests don't clobber the real assets/maps/maps.json
+    editorToken?: string;    // when set, /api writes require ?token= or x-editor-token; open if unset
   }) {
     this.port = opts.port;
     this.authToken = opts.authToken;
     this.publicBaseUrl = opts.publicBaseUrl.replace(/\/$/, '');
     this.validateSignatures = opts.validateSignatures ?? true;
     this.manifestStore = new ManifestStore(opts.manifestPath ?? 'assets/manifest.json');
+    this.mapsPath = opts.mapsPath ?? 'assets/maps/maps.json';
+    this.editorToken = opts.editorToken;
     this.server = http.createServer((req, res) => {
       this.onRequest(req, res).catch((err) => {
         console.error('request handler error:', err);
@@ -107,6 +114,7 @@ export class HttpServer {
       return;
     }
     if (path === '/api/manifest' && req.method === 'POST') {
+      if (!this.authorizeWrite(req, res)) return;
       const body = await readBody(req);
       const m = parseManifest(body);            // tolerant: validates + drops bad parts
       await this.manifestStore.write(m);
@@ -128,27 +136,28 @@ export class HttpServer {
       res.end(JSON.stringify(files));
       return;
     }
-    // ---- map configs (track-overlay layouts authored in /maptest.html) ----
+    // ---- map configs (level layouts authored in /editor) ----
     if (path === '/api/maps' && req.method === 'GET') {
       let body = '{}';
-      try { body = await readFile('assets/maps/maps.json', 'utf8'); } catch { body = '{}'; }
+      try { body = await readFile(this.mapsPath, 'utf8'); } catch { body = '{}'; }
       res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
       res.end(body);
       return;
     }
     if (path === '/api/maps' && req.method === 'POST') {
+      if (!this.authorizeWrite(req, res)) return;
       const raw = await readBody(req);
       let cfg: unknown;
       try { cfg = JSON.parse(raw); } catch { res.writeHead(400).end('bad json'); return; }
-      // Merge the single posted map config into maps.json under its key.
-      let all: Record<string, unknown> = {};
-      try { all = JSON.parse(await readFile('assets/maps/maps.json', 'utf8')); } catch { /* new file */ }
-      const c = cfg as { map?: string };
-      if (!c.map) { res.writeHead(400).end('missing map name'); return; }
-      all[c.map] = cfg;
-      await writeFile('assets/maps/maps.json', JSON.stringify(all, null, 2));
+      // Read the CURRENT file and merge SAFELY: validate the posted config, refuse to proceed if
+      // the existing file is corrupt (so we never silently wipe other levels), reject unsafe keys.
+      let existing = '';
+      try { existing = await readFile(this.mapsPath, 'utf8'); } catch { /* first save → empty */ }
+      const merged = mergeMapConfig(existing, cfg);
+      if (!merged.ok) { res.writeHead(400).end(merged.error); return; }
+      await this.writeFileAtomic(this.mapsPath, JSON.stringify(merged.maps, null, 2));
       res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-      res.end(JSON.stringify(all));
+      res.end(JSON.stringify(merged.maps));
       return;
     }
     // ---- static assets (GLB etc.) ----
@@ -156,6 +165,30 @@ export class HttpServer {
       return this.serveAsset(path, res);
     }
     res.writeHead(404).end('not found');
+  }
+
+  /**
+   * Gate a disk-writing /api endpoint. When editorToken is set (production/public deploy) the
+   * request must present it via ?token= or the x-editor-token header; on mismatch we 401 and
+   * return false. When no token is configured (local dev) writes are open. Sends the response on
+   * failure so callers can early-return.
+   */
+  private authorizeWrite(req: http.IncomingMessage, res: http.ServerResponse): boolean {
+    if (!this.editorToken) return true;   // dev: no token configured → open
+    const header = req.headers['x-editor-token'];
+    const headerTok = Array.isArray(header) ? header[0] : header;
+    const url = new URL(req.url ?? '', 'http://localhost');
+    const tok = headerTok ?? url.searchParams.get('token') ?? '';
+    if (tok === this.editorToken) return true;
+    res.writeHead(401, { 'Content-Type': 'text/plain', 'Access-Control-Allow-Origin': '*' }).end('unauthorized');
+    return false;
+  }
+
+  /** Write a file atomically (temp file + rename) so a crash mid-write can't truncate/corrupt it. */
+  private async writeFileAtomic(file: string, contents: string): Promise<void> {
+    const tmp = `${file}.tmp-${process.pid}`;
+    await writeFile(tmp, contents);
+    await rename(tmp, file);   // rename is atomic on the same filesystem
   }
 
   private async serveAsset(urlPath: string, res: http.ServerResponse): Promise<void> {

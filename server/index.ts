@@ -14,7 +14,10 @@ if (validateSignatures && !authToken) {
   console.warn('[security] signature validation is ON but TWILIO_AUTH_TOKEN is unset — webhooks will 500 until it is configured.');
 }
 
-const srv = new HttpServer({ port, publicBaseUrl, authToken, validateSignatures });
+// When EDITOR_TOKEN is set, /api writes (manifest + maps) require it — gate the editor on a public
+// deploy. Unset (local dev) leaves writes open so the editor works with zero setup.
+const editorToken = process.env.EDITOR_TOKEN;
+const srv = new HttpServer({ port, publicBaseUrl, authToken, validateSignatures, editorToken });
 srv.start().then((p) => {
   console.log(`Voice Racer listening on http://localhost:${p}`);
   console.log(`  game WS: ws://localhost:${p}/game   voice WS: ws://localhost:${p}/voice`);
