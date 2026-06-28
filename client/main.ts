@@ -10,7 +10,16 @@ import { surfaceOptsFromPath } from './track-surface';
 import { mergeLevel, resolveCarScale } from '../shared/level';
 import type { GantryOffset } from '../shared/level';
 
-const url = `ws://${location.hostname}:8080/game`;
+// Game WebSocket URL. In production the page is served by the same origin as the game server
+// (behind one HTTPS tunnel), so use the page's protocol+host — wss:// over https avoids a
+// mixed-content block. In local dev the page is on Vite (5173/5174) while the server is on 8080,
+// so fall back to :8080 only for localhost. An explicit ?ws= override wins for edge setups.
+const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
+const wsOverride = new URLSearchParams(location.search).get('ws');
+const isLocalDev = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+const url = wsOverride
+  ?? (isLocalDev ? `${wsProto}://${location.hostname}:8080/game`
+                 : `${wsProto}://${location.host}/game`);
 const conn = new GameConnection(url);
 const input = new KeyboardAdapter();
 const assets = new AssetLoader();

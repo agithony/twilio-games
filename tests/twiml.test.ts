@@ -30,7 +30,11 @@ describe('twimlConnectRelay', () => {
   it('enables partial transcripts and biases the vocabulary', () => {
     expect(xml).toContain('speechModel="flux"');
     expect(xml).toContain('partialPrompts="true"');
-    expect(xml).toContain('hints="left, right, boost, brake, use power"');
+    // Hints must cover every command word the intent parser accepts (voice-intent.ts),
+    // so Twilio's STT is primed for the full vocabulary — not just a subset.
+    const hints = /hints="([^"]*)"/.exec(xml)?.[1] ?? '';
+    for (const word of ['left', 'right', 'boost', 'go', 'brake', 'slow', 'stop', 'power'])
+      expect(hints).toContain(word);
   });
   it('sets the required transcription provider', () => {
     expect(xml).toContain('transcriptionProvider="Deepgram"');

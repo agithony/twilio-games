@@ -19,7 +19,7 @@ export function twimlConnectRelay(opts: {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Connect action="${esc(opts.sessionEndedUrl)}">
-    <ConversationRelay url="${esc(opts.wsUrl)}" transcriptionProvider="Deepgram" speechModel="flux" partialPrompts="true" transcriptionLanguage="en-US" interruptible="none" dtmfDetection="true" hints="left, right, boost, brake, use power" speechTimeout="600" eotThreshold="0.5" welcomeGreeting="">
+    <ConversationRelay url="${esc(opts.wsUrl)}" transcriptionProvider="Deepgram" speechModel="flux" partialPrompts="true" transcriptionLanguage="en-US" interruptible="none" dtmfDetection="true" hints="left, right, boost, go, brake, slow, stop, use power, power" speechTimeout="600" eotThreshold="0.5" welcomeGreeting="">
       <Parameter name="roomCode" value="${esc(opts.roomCode)}" />
     </ConversationRelay>
   </Connect>
