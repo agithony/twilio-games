@@ -2,6 +2,11 @@ import * as THREE from 'three';
 import { TRACK_W, TRACK_LEN, LANES, laneX } from '../shared/constants';
 import type { WorldSnapshot, Item } from '../shared/types';
 import { clone as skeletonClone } from 'three/examples/jsm/utils/SkeletonUtils.js';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { AssetLoader } from './asset-loader';
 import { buildCar } from './car-factory';
 import { themeAtZ } from '../shared/zones';
@@ -34,6 +39,11 @@ export class Renderer {
     this.scene.background = new THREE.Color(0x0b1020);
     this.scene.fog = new THREE.FogExp2(0x0b1020, 0.0016);   // gentle depth haze, far horizon
 
+    // Image-based lighting: a generated room environment so metal/paint on the GLB
+    // cars actually REFLECTS the world (turns flat-plastic look into real material).
+    const pmrem = new THREE.PMREMGenerator(this.renderer);
+    this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+
     this.camera = new THREE.PerspectiveCamera(46, innerWidth / innerHeight, 0.1, 4000);
 
     // Key light (sun) with a real shadow frustum covering the play area.
@@ -51,12 +61,28 @@ export class Renderer {
 
     this.buildWorld();
 
+    // Post-processing: bloom makes the sun, boost pads, neon edges, and bright
+    // surfaces GLOW — the "AAA sheen" that reads great on a big screen.
+    this.composer = new EffectComposer(this.renderer);
+    this.composer.addPass(new RenderPass(this.scene, this.camera));
+    this.bloom = new UnrealBloomPass(
+      new THREE.Vector2(innerWidth, innerHeight),
+      0.45,   // strength — subtle, not blown out
+      0.7,    // radius
+      0.85,   // threshold — only genuinely bright things bloom
+    );
+    this.composer.addPass(this.bloom);
+    this.composer.addPass(new OutputPass());
+
     addEventListener('resize', () => {
       this.camera.aspect = innerWidth / innerHeight; this.camera.updateProjectionMatrix();
       this.renderer.setSize(innerWidth, innerHeight);
+      this.composer.setSize(innerWidth, innerHeight);
     });
   }
 
+  private composer!: EffectComposer;
+  private bloom!: UnrealBloomPass;
   private sky!: THREE.Mesh;            // gradient sky dome; tinted each frame
 
   /** Build the static world: sky dome, terrain, asphalt track, markings, curbs, start gantry. */
@@ -240,6 +266,6 @@ export class Renderer {
     this.camera.lookAt(mx * 0.4, 2.2, z + 45);
     // Sky dome rides with the camera so the horizon is always far away.
     this.sky.position.copy(this.camera.position);
-    this.renderer.render(this.scene, this.camera);
+    this.composer.render();
   }
 }
