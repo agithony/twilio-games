@@ -89,8 +89,17 @@ export class Room {
   selectCar(playerId: string, carIndex: number): void { this.lobby.selectCar(playerId, carIndex); }
   selectMap(map: string): void { this.lobby.selectMap(map); }
 
-  /** Host advances the flow. lobby→car_select→map_select, then map_select→start the race. */
+  /** Host advances the flow. lobby→car_select→map_select, then map_select→start the race.
+   *  From a finished race (results/finished), "advance" means PLAY AGAIN: keep the roster, clear
+   *  their picks, and jump straight to car-select so they just re-choose. */
   advance(): void {
+    if (this._phase === 'results' || this._phase === 'finished') {
+      this.world = null; this.lastResults = []; this.raceMap = null;
+      this.lobby.reset();           // back to lobby with cleared cars/map, same players
+      this.lobby.advance();         // → car_select (roster is non-empty)
+      this._phase = this.lobby.phase;
+      return;
+    }
     if (this._phase === 'map_select' && this.lobby.canStart()) { this.start(); return; }
     if (this.inPreRace) { this.lobby.advance(); this._phase = this.lobby.phase; }
   }

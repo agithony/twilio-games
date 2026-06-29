@@ -145,6 +145,17 @@ describe('Room — Smash-style pre-race flow', () => {
     expect(r[0]!.finishT).toBeGreaterThan(0);
   });
 
+  it('advance() from results plays again — fresh car_select with the same players, cleared picks', () => {
+    room.addPlayer('Ada'); room.advance(); const pid = room.lobbyPlayers()[0]!.playerId;
+    room.selectCar(pid, 9); room.advance(); room.selectMap('Silver Lake'); room.advance();
+    for (let i = 0; i < 60 * 120 && room.phase !== 'results'; i++) room.tick(STEP);
+    expect(room.phase).toBe('results');
+    room.advance();   // "play again"
+    expect(room.phase).toBe('car_select');                       // straight back to picking cars
+    expect(room.lobbyPlayers().map(p => p.name)).toEqual(['Ada']); // same roster
+    expect(room.lobbyPlayers()[0]!.carIndex).toBe(null);          // picks cleared
+  });
+
   it('a new joiner after results resets the room to a fresh lobby', () => {
     room.addPlayer('Ada'); room.advance(); room.selectCar(room.lobbyPlayers()[0]!.playerId, 1);
     room.advance(); room.selectMap('Silver Lake'); room.advance();
