@@ -3,6 +3,8 @@ import { KeyboardAdapter } from './input-keyboard';
 import { Renderer } from './renderer';
 import { InterpolationBuffer } from './interpolation';
 import { AssetLoader } from './asset-loader';
+import { Screens } from './screens';
+import { renderCarThumbnails } from './thumbnails';
 import { Announcer, browserSpeechSink } from './announcer';
 import { fetchMaps, loadMapWorld, applyTrackTransform, CANONICAL_TRACK } from './map-world';
 import { CurvedTrack } from './track-path';
@@ -32,9 +34,12 @@ if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
 const buffer = new InterpolationBuffer(100);
 const big = document.getElementById('big')!;
 const lobbyEl = document.getElementById('lobby')!;
-const lobbyCodeEl = document.getElementById('lobbyCode')!;
-const lobbyCountEl = document.getElementById('lobbyCount')!;
-const lobbyPlayersEl = document.getElementById('lobbyPlayers')!;
+lobbyEl.style.display = 'none';   // legacy overlay retired; the Screens overlay handles pre/post-race
+// SSB-style front-end (lobby → car grid → map select → results). Host actions go back to the server.
+const screens = new Screens(document.getElementById('app')!, {
+  onAdvance: () => { enableHost(); conn.advance(); },
+  onBack: () => conn.back(),
+});
 
 const roomCode = new URLSearchParams(location.search).get('room') ?? '4821';
 const name = new URLSearchParams(location.search).get('name') ?? 'You';
@@ -45,6 +50,32 @@ const isGarage = new URLSearchParams(location.search).get('garage') === '1';
 
 let started = false;
 let raceLive = false;
+// Current pre-race phase + map choices, tracked from server messages so number-key input knows
+// whether a typed digit means "pick car N" or "pick map N".
+let flowPhase: 'lobby' | 'car_select' | 'map_select' | 'other' = 'lobby';
+let flowMaps: string[] = [];
+let typedDigits = '';
+let typedTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Keyboard digit input → select_car / select_map by number (stands in for SMS car/map picks).
+ *  Multi-digit aware (e.g. "15"): accumulates briefly, then commits on a short pause or Enter. */
+function bindFlowDigits(): void {
+  addEventListener('keydown', (e) => {
+    if (flowPhase !== 'car_select' && flowPhase !== 'map_select') return;
+    if (!/^[0-9]$/.test(e.key)) return;
+    typedDigits += e.key;
+    if (typedTimer) clearTimeout(typedTimer);
+    typedTimer = setTimeout(commitTypedDigits, 450);
+  });
+}
+function commitTypedDigits(): void {
+  const n = parseInt(typedDigits, 10); typedDigits = '';
+  if (!Number.isFinite(n) || n < 1) return;
+  if (flowPhase === 'car_select') conn.selectCar(n - 1);          // tiles are 1-based on screen
+  else if (flowPhase === 'map_select') {
+    const m = flowMaps[n - 1]; if (m) conn.selectMap(m);
+  }
+}
 
 // AI announcer: speaks commentary (host audio) and feeds the ticker HUD.
 const tickerEl = document.getElementById('ticker')!;
@@ -68,24 +99,20 @@ muteBtn.addEventListener('click', () => {
 });
 
 conn.onItems((items) => renderer.buildItems(items));
-conn.onSnapshot((s) => { raceLive = true; lobbyEl.style.display = 'none'; started = true; buffer.push(s, performance.now()); });
+conn.onSnapshot((s) => { raceLive = true; flowPhase = 'other'; screens.hide(); big.textContent = ''; started = true; buffer.push(s, performance.now()); });
 conn.onLobby((m) => {
   if (raceLive) return;                       // race already running; ignore stale lobby
-  lobbyEl.style.display = 'flex';
-  big.textContent = '';                       // lobby overlay replaces the "waiting" text
-  lobbyCodeEl.textContent = m.roomCode;
-  const n = m.players.length;
-  lobbyCountEl.textContent = n === 0 ? `Call ${m.roomCode} to join`
-    : `${n} racer${n === 1 ? '' : 's'} in — call ${m.roomCode} to join more`;
-  lobbyPlayersEl.innerHTML = '';
-  for (const p of m.players) {
-    const chip = document.createElement('div');
-    chip.style.cssText = 'display:flex;align-items:center;gap:8px;background:rgba(35,43,69,.9);border:1px solid #38425e;border-radius:999px;padding:8px 14px;font-size:15px';
-    const dot = document.createElement('span');
-    dot.style.cssText = `width:14px;height:14px;border-radius:50%;background:${p.color};display:inline-block`;
-    const nm = document.createElement('span'); nm.textContent = p.name;
-    chip.append(dot, nm); lobbyPlayersEl.appendChild(chip);
-  }
+  flowPhase = 'lobby'; big.textContent = '';
+  screens.renderLobby(m.roomCode, m.players);
+});
+conn.onSelectState((m) => {
+  raceLive = false; big.textContent = '';
+  if (m.phase === 'car_select') { flowPhase = 'car_select'; screens.renderCarSelect(m.players); }
+  else if (m.phase === 'map_select') { flowPhase = 'map_select'; flowMaps = m.maps; screens.renderMapSelect(m.maps, m.selectedMap, m.players); }
+});
+conn.onResults((m) => {
+  raceLive = false; flowPhase = 'other'; big.textContent = '';
+  screens.renderResults(m.results, (i) => assets.carName(i));
 });
 conn.onEvent((e) => {
   announcer.handle(e);
@@ -105,6 +132,12 @@ async function boot() {
   // missing or any model fails (loadManifest swallows errors), so the game
   // always starts.
   try { await assets.loadManifest(); } catch { /* primitives */ }
+
+  // Build the car-select grid catalog: friendly names + rendered portrait thumbnails (best-effort).
+  const carNames = assets.carNames();
+  let carThumbs: string[] = [];
+  try { carThumbs = renderCarThumbnails(assets); } catch { carThumbs = []; }
+  screens.setCarCatalog(carNames, carThumbs);
 
   const GANTRY_FILES = { start: 'starting_line.glb', finish: 'finish_line.glb' };
   // Per-level gantry offsets (filled when a map level loads); empty = auto-place at the track ends.
@@ -160,23 +193,29 @@ async function boot() {
   }
 
   if (isDisplay) {
-    // Shared screen: frames the whole pack (spectator camera) AND drives its own
-    // keyboard car. Joining as a player means (a) the keyboard works even when phone
-    // callers are connected, and (b) the game is playable with ZERO callers — Enter
-    // starts it because the screen itself is always a player.
+    // Shared screen: frames the whole pack (spectator camera) AND drives its own keyboard car.
+    // The host navigates the SSB-style flow with ← (back) and → / Enter (advance / start / play
+    // again). During selection those keys move the flow; during a race the keyboard drives the car.
     conn.onJoined((playerId) => { renderer.setMyId(playerId); });
-    input.onIntent((i) => conn.sendIntent(i));
+    input.onIntent((i) => { if (!screens.isVisible) conn.sendIntent(i); });
     renderer.setSpectator(true);
+    screens.bindHostKeys();   // ← back · → / Enter advance (only while a screen is visible)
     addEventListener('keydown', (e) => {
+      if (screens.isVisible) return;             // flow keys handled by screens.bindHostKeys
       if (e.key === 'r') conn.restart();
       else if (e.key === 'Enter') { enableHost(); conn.ready(); }
     });
+    bindFlowDigits();   // 1-9 select a car/map by number on the keyboard (stands in for SMS)
     conn.join(roomCode, 'Screen');
   } else {
-    // Dev keyboard-player path: join as a player and drive with the keyboard.
+    // Dev keyboard-player path: join as a player and drive with the keyboard. The same flow keys
+    // work so a solo tester can pick a car/map by number and advance with Enter.
     conn.onJoined((playerId) => { renderer.setMyId(playerId); });
-    input.onIntent((i) => conn.sendIntent(i));
+    input.onIntent((i) => { if (!screens.isVisible) conn.sendIntent(i); });
+    screens.bindHostKeys();
+    bindFlowDigits();
     addEventListener('keydown', (e) => {
+      if (screens.isVisible) return;
       if (e.key === 'r') conn.restart();
       else if (e.key === 'Enter') { enableHost(); conn.ready(); }
     });
@@ -187,9 +226,10 @@ async function boot() {
     requestAnimationFrame(frame);
     const snap = buffer.sample(performance.now());
     if (snap) renderer.render(snap);
-    else if (!started) big.textContent = isDisplay
-      ? `Call in + enter room ${roomCode}, then press ENTER`
-      : 'Waiting… press ENTER to start';
+    // The Screens overlay (lobby/car/map/results) is the front-end now; only show the bare
+    // "waiting" text when NO screen is up (e.g. before the first server message arrives).
+    else if (!started && !screens.isVisible) big.textContent = 'Connecting…';
+    else if (screens.isVisible) big.textContent = '';
   }
   requestAnimationFrame(frame);
 }

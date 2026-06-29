@@ -131,4 +131,14 @@ export class AssetLoader {
     const i = this.manifest.cars.findIndex(r => r.file === file);
     return i >= 0 ? this.cars[i] ?? null : null;
   }
+  /** Number of cars in the manifest (the selectable roster size). */
+  carCount(): number { return this.manifest.cars.length; }
+  /** Friendly display name for car i: the manifest `name`, else a prettified filename. */
+  carName(i: number): string {
+    const r = this.manifest.cars[i];
+    if (!r) return `Car ${i + 1}`;
+    return r.name?.trim() || r.file.replace(/\.glb$/i, '').replace(/[_-]+/g, ' ').trim();
+  }
+  /** All car display names in manifest order (for the car-select grid). */
+  carNames(): string[] { return this.manifest.cars.map((_, i) => this.carName(i)); }
 }
