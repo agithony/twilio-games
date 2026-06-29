@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
-import { autoFitScale, isWheelNode, isDisplayBaseNode, CAR_TARGET, BARRIER_TARGET, BOOST_TARGET } from '../shared/asset-fit';
+import { autoFitScale, isWheelNode, isDisplayBaseNode, groundPlaneIndices, CAR_TARGET, BARRIER_TARGET, BOOST_TARGET } from '../shared/asset-fit';
+import type { MeshSize } from '../shared/asset-fit';
 import { parseManifest } from '../shared/asset-manifest';
 import type { Manifest, AssetRef } from '../shared/asset-manifest';
 
@@ -32,6 +33,26 @@ export function stripDisplayBases(root: THREE.Object3D): void {
     remove.push(o);
   });
   for (const o of remove) o.parent?.remove(o);
+  stripGroundPlanes(root);
+}
+
+/**
+ * Remove giant flat "environment" meshes (embedded floors/tracks/stadiums) that name-based
+ * stripping can't catch because they're named generically (e.g. the Squadra Lamborghini ships a
+ * whole oval circuit as Object_99…). Uses size, not name: measures each MESH's local bbox and drops
+ * the flat huge outliers (see groundPlaneIndices). Conservative — does nothing unless there's a
+ * clear small-vehicle-vs-huge-ground split.
+ */
+export function stripGroundPlanes(root: THREE.Object3D): void {
+  const meshes: THREE.Mesh[] = [];
+  root.traverse(o => { if ((o as THREE.Mesh).isMesh) meshes.push(o as THREE.Mesh); });
+  if (meshes.length < 3) return;
+  const box = new THREE.Box3(); const size = new THREE.Vector3();
+  const sizes: MeshSize[] = meshes.map(m => {
+    box.setFromObject(m); box.getSize(size);
+    return { w: size.x, h: size.y, d: size.z };
+  });
+  for (const i of groundPlaneIndices(sizes)) meshes[i]!.parent?.remove(meshes[i]!);
 }
 
 export class AssetLoader {

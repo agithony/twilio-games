@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { autoFitScale, isWheelNode, CAR_TARGET } from '../shared/asset-fit';
+import { autoFitScale, isWheelNode, CAR_TARGET, groundPlaneIndices } from '../shared/asset-fit';
 
 describe('autoFitScale', () => {
   it('scales the longest dimension to the target', () => {
@@ -14,6 +14,41 @@ describe('autoFitScale', () => {
     expect(autoFitScale([0, 0, 0], 4)).toBe(1);
   });
   it('CAR_TARGET is 4.0', () => { expect(CAR_TARGET).toBe(4.0); });
+});
+
+describe('groundPlaneIndices', () => {
+  it('strips a small car sitting on huge flat stadium slabs (the Lambo case)', () => {
+    // 6 small car parts (~6 footprint) + 2 giant flat slabs (~350 wide, 6 tall).
+    const sizes = [
+      { w: 6, h: 2, d: 4 }, { w: 5, h: 2, d: 3 }, { w: 4, h: 1, d: 2 },
+      { w: 6, h: 2, d: 4 }, { w: 3, h: 1, d: 2 }, { w: 5, h: 2, d: 3 },
+      { w: 350, h: 6, d: 350 }, { w: 357, h: 6, d: 357 },
+    ];
+    expect(groundPlaneIndices(sizes)).toEqual([6, 7]);
+  });
+  it('leaves a normal car alone (no giant flat outlier)', () => {
+    const sizes = [
+      { w: 4, h: 1.5, d: 2 }, { w: 3.8, h: 1.4, d: 1.9 }, { w: 1, h: 1, d: 1 },
+      { w: 0.8, h: 0.8, d: 0.8 }, { w: 4, h: 1.2, d: 2 },
+    ];
+    expect(groundPlaneIndices(sizes)).toEqual([]);
+  });
+  it('does NOT strip a tall large mesh (a big car body, not a flat ground)', () => {
+    const sizes = [
+      { w: 4, h: 1, d: 2 }, { w: 3, h: 1, d: 2 }, { w: 5, h: 1, d: 2 },
+      { w: 40, h: 30, d: 40 },   // big but TALL → a chunky vehicle/structure, not a floor
+    ];
+    expect(groundPlaneIndices(sizes)).toEqual([]);   // not flat → kept
+  });
+  it('refuses to strip when outliers would be the majority (bad car guess)', () => {
+    const sizes = [
+      { w: 4, h: 1, d: 2 }, { w: 200, h: 4, d: 200 }, { w: 220, h: 4, d: 220 }, { w: 210, h: 4, d: 210 },
+    ];
+    expect(groundPlaneIndices(sizes)).toEqual([]);   // 3 of 4 flat-huge → don't trust it
+  });
+  it('returns [] for too-few meshes', () => {
+    expect(groundPlaneIndices([{ w: 300, h: 4, d: 300 }, { w: 4, h: 2, d: 2 }])).toEqual([]);
+  });
 });
 
 describe('isWheelNode', () => {

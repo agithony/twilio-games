@@ -184,8 +184,19 @@ function isStrictWheel(name: string): boolean {
   return isWheelNode(name) && /(^|[^a-z])(wheel|tire|tyre|rim)([^a-z]|$)/i.test(name);
 }
 function frameCamera(): void {
-  const r = Math.max((entries[idx]?.target ?? 4) * (current?.fit ?? 1), 2);
-  camera.position.set(r * 0.9, r * 0.7, -r * 1.4); orbit.target.set(0, r * 0.3, 0); orbit.update();
+  if (!current) return;
+  // Frame on the model's ACTUAL rendered size (post auto-fit + scale), not target×fit (fit is the
+  // tiny scale FACTOR, which made huge raw models frame from ~origin and look like a speck).
+  const box = new THREE.Box3().setFromObject(current.model); const size = new THREE.Vector3();
+  box.getSize(size); const center = new THREE.Vector3(); box.getCenter(center);
+  const r = Math.max(size.x, size.y, size.z, 1);
+  camera.position.set(center.x + r * 0.9, center.y + r * 0.7, center.z - r * 1.4);
+  orbit.target.copy(center); orbit.update();
+  // Size the ground disc to the model so it reads as a stage, not a giant plain (radius ~1.6× the
+  // footprint, min 3). Lift it to the model's base.
+  const groundR = Math.max(Math.max(size.x, size.z) * 0.9, 3);
+  ground.scale.setScalar(groundR / 20);   // base geometry radius is 20
+  ground.position.y = box.min.y - 0.01;
 }
 
 function applyMode(): void {

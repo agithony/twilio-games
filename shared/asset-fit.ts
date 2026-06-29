@@ -11,6 +11,42 @@ export function autoFitScale(size: [number, number, number], targetLongest: numb
   return targetLongest / longest;
 }
 
+/** One mesh's axis-aligned size, for ground-plane detection. */
+export interface MeshSize { w: number; h: number; d: number; }
+
+/**
+ * Identify "environment" meshes to strip from a vehicle GLB — giant flat floors/tracks/stadiums
+ * that some Sketchfab cars ship embedded (e.g. the Squadra Lamborghini's whole oval circuit).
+ * Returns the INDICES of meshes that are BOTH:
+ *   - a flat horizontal slab (height << footprint), and
+ *   - a large outlier vs the model's MEDIAN footprint (>= `factor`× bigger).
+ * Footprint = max(width, depth). Returns [] unless there's a clear small-car-vs-huge-ground split,
+ * so a model that's ALL one big mesh (or genuinely large everywhere) is left untouched.
+ */
+export function groundPlaneIndices(sizes: MeshSize[], factor = 8): number[] {
+  if (sizes.length < 3) return [];                       // too few meshes to judge an outlier
+  const foot = (m: MeshSize) => Math.max(m.w, m.d);
+  const footprints = sizes.map(foot).slice().sort((a, b) => a - b);
+  const median = footprints[Math.floor(footprints.length / 2)] || 0;
+  if (median <= 0) return [];
+  const out: number[] = [];
+  for (let i = 0; i < sizes.length; i++) {
+    const m = sizes[i]!;
+    const fp = foot(m);
+    if (fp <= 0) continue;
+    const flatness = m.h / fp;                           // 0 = paper-thin slab, →1 = cube/tall
+    if (flatness >= 0.25) continue;                      // not flat enough → real part, keep
+    // A paper-thin slab (a floor/track) needs only a moderate size lead to be an env plane; a
+    // thicker-but-still-flat slab must be a much bigger outlier. Scale the required factor by
+    // flatness so big flat discs (h≈0) are caught at ~4× while borderline slabs need the full 8×.
+    const required = factor * (0.5 + flatness * 2);      // flatness 0→4×, 0.25→8×
+    if (fp >= median * required) out.push(i);
+  }
+  // Safety: never strip so much that we'd remove most of the model (would mean our "car" guess
+  // was wrong). Only strip when the outliers are a minority of meshes.
+  return out.length <= sizes.length / 2 ? out : [];
+}
+
 export function isWheelNode(name: string): boolean {
   return /wheel|tire|rim/i.test(name);
 }
