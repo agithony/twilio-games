@@ -4,13 +4,12 @@
       "file": "batmobile-the_dark_knight_tumbler.glb"
     },
     {
-      "file": "18_mclaren_senna_crxw_widebody_kit_animated.glb"
+      "file": "18_mclaren_senna_crxw_widebody_kit_animated.glb",
+      "rotation": [0, 180, 0]
     },
     {
-      "file": "lotus_elise.glb"
-    },
-    {
-      "file": "mazda_rx-7_car.glb"
+      "file": "lotus_elise.glb",
+      "rotation": [0, 180, 0]
     },
     {
       "file": "bronco_car_animation_red.glb"
@@ -19,31 +18,63 @@
       "file": "1955_american_sedan_packard_based_free.glb"
     },
     {
-      "file": "hover_car.glb"
+      "file": "buggy__free_3d.glb",
+      "rotation": [0, 180, 0]
     },
     {
-      "file": "buggy__free_3d.glb"
+      "file": "jurassic_park_1930_-_park_rover.glb",
+      "rotation": [0, -90, 0]
     },
     {
-      "file": "jurassic_park_1930_-_park_rover.glb"
-    },
-    {
-      "file": "drunk_monster_truck.glb"
+      "file": "drunk_monster_truck.glb",
+      "rotation": [0, -90, 0]
     },
     {
       "file": "monowheel_bot__vgdc.glb"
     },
     {
-      "file": "climber.glb"
+      "file": "climber.glb",
+      "rotation": [0, 90, 0]
     },
     {
-      "file": "forklift.glb"
+      "file": "forklift.glb",
+      "rotation": [0, 90, 0]
     },
     {
       "file": "car.glb"
     },
     {
-      "file": "pig_farm_car_trailer.glb"
+      "file": "pig_farm_car_trailer.glb",
+      "rotation": [0, 90, 0]
+    },
+    {
+      "file": "airtsel_valor_proiettile.glb",
+      "name": "Airtsel Valor Proiettile",
+      "rotation": [0, -90, 0]
+    },
+    {
+      "file": "rigged_car_mustang_1965_with_engine_3d_model.glb",
+      "name": "Mustang 1965",
+      "rotation": [0, 180, 0]
+    },
+    {
+      "file": "yuterra_buegett.glb",
+      "name": "Yuterra Buegett"
+    },
+    {
+      "file": "beetlefusca_version_1.glb",
+      "name": "Beetle / Fusca",
+      "rotation": [0, 180, 0]
+    },
+    {
+      "file": "cartoon_sports_car.glb",
+      "name": "Cartoon Sports Car",
+      "rotation": [0, -90, 0]
+    },
+    {
+      "file": "cicada_-_retro_cartoon_car.glb",
+      "name": "Cicada (Retro Cartoon Car)",
+      "rotation": [0, 90, 0]
     }
   ],
   "barrier": {

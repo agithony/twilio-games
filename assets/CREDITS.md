@@ -9,7 +9,7 @@ textures, resized to 1024px) of the original Sketchfab downloads. Raw originals 
 locally in `assets/_raw/` (gitignored). Per CC-BY, derivatives are permitted; attribution to
 the original authors is preserved below.
 
-## Used models (15, CC-BY 4.0)
+## Used car models (19, CC-BY 4.0)
 
 | Model file | Title | Author | Sketchfab |
 |---|---|---|---|
@@ -25,9 +25,13 @@ the original authors is preserved below.
 | `climber.glb` | Climber | Linomig | https://skfb.ly/ooBtY |
 | `1955_american_sedan_packard_based_free.glb` | 1955 American Sedan (Packard based) FREE | Libau Media | https://skfb.ly/pFq8S |
 | `car.glb` | Car | cuadot.fbx | https://skfb.ly/owHIr |
-| `mazda_rx-7_car.glb` | Mazda RX-7 (Car) | Anokino | https://skfb.ly/orn7t |
-| `hover_car.glb` | Hover Car | Just8 | https://skfb.ly/oPG9x |
 | `18_mclaren_senna_crxw_widebody_kit_animated.glb` | 18' McLaren Senna Crxw Widebody Kit (Animated) | crxw.cgi | https://skfb.ly/oyYv9 |
+| `airtsel_valor_proiettile.glb` | Airtsel Valor Proiettile | Yudha Mfr | https://skfb.ly/oJJKq |
+| `rigged_car_mustang_1965_with_engine_3d_model.glb` | Rigged Car Mustang 1965 With Engine | Godspeed | https://skfb.ly/pDprw |
+| `yuterra_buegett.glb` | Yuterra Buegett | Yudha Mfr | https://skfb.ly/oJ6qx |
+| `beetlefusca_version_1.glb` | Beetle/Fusca (Version 1) | soujagah | https://skfb.ly/6GFDP |
+| `cartoon_sports_car.glb` | Cartoon Sports Car | RCC Design | https://skfb.ly/6xHtJ |
+| `cicada_-_retro_cartoon_car.glb` | Cicada - Retro Cartoon Car | RCC Design | https://skfb.ly/6vtXV |
 
 ## Obstacle + track models (CC-BY 4.0)
 
@@ -46,3 +50,6 @@ Kept in `assets/_quarantine_noncommercial/` (gitignored), excluded for licensing
 |---|---|---|---|---|
 | `jeep_1-_testmotions.glb` | Jeep 1- Test+motions | Kapi777 | CC-BY-**NC** 4.0 | NonCommercial — unsafe for a commercial/event context |
 | `vehicle_blue_train_bentley.glb` | (Bentley) | — | **unknown** | No attribution/license provided — verify before any use |
+| `bmw_e36_318ti.glb` | BMW E36 318ti | Nothing Software | CC-BY-**NC** 4.0 | NonCommercial — unsafe for a commercial/event context |
+| `evo_rally_car.glb` | Evo Rally Car | SpatialNeglect | CC-BY-**NC** 4.0 | NonCommercial — unsafe for a commercial/event context |
+| `bmw_x7_m60i.glb` | BMW X7 M60i | — | **unknown** | No attribution/license provided — verify before any use |

@@ -1,6 +1,6 @@
 {
-  "silver_lake": {
-    "map": "silver_lake",
+  "Silver Lake": {
+    "map": "Silver Lake",
     "file": "silver_lake.glb",
     "model": {
       "pos": [
@@ -30,7 +30,27 @@
     },
     "cars": {
       "masterScale": 1,
-      "overrides": {}
+      "overrides": {
+        "batmobile-the_dark_knight_tumbler.glb": 2.5,
+        "18_mclaren_senna_crxw_widebody_kit_animated.glb": 2.6,
+        "lotus_elise.glb": 2.7,
+        "bronco_car_animation_red.glb": 2.65,
+        "1955_american_sedan_packard_based_free.glb": 3.05,
+        "buggy__free_3d.glb": 2.25,
+        "jurassic_park_1930_-_park_rover.glb": 2.35,
+        "drunk_monster_truck.glb": 2.75,
+        "monowheel_bot__vgdc.glb": 0.8,
+        "climber.glb": 2,
+        "forklift.glb": 1.5,
+        "car.glb": 0.9,
+        "airtsel_valor_proiettile.glb": 2.9,
+        "rigged_car_mustang_1965_with_engine_3d_model.glb": 2.95,
+        "yuterra_buegett.glb": 2.45,
+        "beetlefusca_version_1.glb": 2.4,
+        "cartoon_sports_car.glb": 1.95,
+        "cicada_-_retro_cartoon_car.glb": 1.9,
+        "pig_farm_car_trailer.glb": 1.95
+      }
     },
     "props": [],
     "startLine": {

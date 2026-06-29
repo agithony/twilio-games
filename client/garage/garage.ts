@@ -11,14 +11,13 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { stripDisplayBases } from '../asset-loader';
+import { applyModelTransform } from '../model-transform';
 import { fetchManifest, saveManifest, fetchAssets } from '../editor/manifest-client';
-import { autoFitScale, isWheelNode, CAR_TARGET, BARRIER_TARGET, BOOST_TARGET } from '../../shared/asset-fit';
+import { isWheelNode, CAR_TARGET, BARRIER_TARGET, BOOST_TARGET } from '../../shared/asset-fit';
 import type { Manifest, AssetRef } from '../../shared/asset-manifest';
 
 type Mode = 'static' | 'wheels' | 'clip';
 type Role = 'car' | 'barrier' | 'boost' | 'prop';
-const deg = (d: number) => (d * Math.PI) / 180;
-const rad = (r: number) => (r * 180) / Math.PI;
 
 // ── Scene ───────────────────────────────────────────────────────────────────────────────────────
 const app = document.getElementById('app')!;
@@ -60,7 +59,7 @@ let allGlbs: string[] = [];
 let idx = 0;
 let current: { group: THREE.Group; model: THREE.Object3D; wheels: THREE.Object3D[];
                mixer: THREE.AnimationMixer | null; clips: THREE.AnimationClip[]; action: THREE.AnimationAction | null;
-               fit: number } | null = null;
+               } | null = null;
 let mode: Mode = 'static';
 let turntable = true;
 let paused = false;
@@ -148,7 +147,7 @@ async function show(i: number): Promise<void> {
   model.traverse((o) => { if (o.name && isStrictWheel(o.name)) wheels.push(o); });
   const clips: THREE.AnimationClip[] = gltf.animations ?? [];
   const mixer = clips.length ? new THREE.AnimationMixer(model) : null;
-  current = { group, model, wheels, mixer, clips, action: null, fit: 1 };
+  current = { group, model, wheels, mixer, clips, action: null };
 
   applyTransform();   // scale/rotation/offset + auto-fit + grounding
   // Clip dropdown
@@ -164,20 +163,12 @@ async function show(i: number): Promise<void> {
   statusEl.textContent = `${clips.length} clip${clips.length === 1 ? '' : 's'} · ${wheels.length} wheels`;
 }
 
-/** Re-apply scale/rotation/offset from the panel onto the model (auto-fit × scale, then ground). */
+/** Re-apply scale/rotation/offset from the panel onto the model. Uses the SAME shared placement
+ *  helper as the game loader (rotate → fit → ground/center) so the garage is true WYSIWYG. */
 function applyTransform(): void {
   if (!current) return;
   const e = entries[idx]; const ref = e?.get(); if (!ref) return;
-  const m = current.model;
-  m.scale.setScalar(1); m.rotation.set(0, 0, 0); m.position.set(0, 0, 0);
-  const box = new THREE.Box3().setFromObject(m); const size = new THREE.Vector3(); box.getSize(size);
-  current.fit = autoFitScale([size.x, size.y, size.z], e!.target);
-  m.scale.setScalar(current.fit * (ref.scale ?? 1));
-  if (ref.rotation) m.rotation.set(deg(ref.rotation[0]!), deg(ref.rotation[1]!), deg(ref.rotation[2]!));
-  const box2 = new THREE.Box3().setFromObject(m); const c = new THREE.Vector3(); box2.getCenter(c);
-  m.position.x += -c.x + (ref.offset?.[0] ?? 0);
-  m.position.y += -box2.min.y + (ref.offset?.[1] ?? 0);
-  m.position.z += -c.z + (ref.offset?.[2] ?? 0);
+  applyModelTransform(current.model, ref, e!.target);
 }
 
 function isStrictWheel(name: string): boolean {

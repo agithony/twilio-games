@@ -1,12 +1,11 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
-import { autoFitScale, isWheelNode, isDisplayBaseNode, groundPlaneIndices, CAR_TARGET, BARRIER_TARGET, BOOST_TARGET } from '../shared/asset-fit';
+import { isWheelNode, isDisplayBaseNode, groundPlaneIndices, CAR_TARGET, BARRIER_TARGET, BOOST_TARGET } from '../shared/asset-fit';
 import type { MeshSize } from '../shared/asset-fit';
 import { parseManifest } from '../shared/asset-manifest';
 import type { Manifest, AssetRef } from '../shared/asset-manifest';
-
-const deg = (d: number) => (d * Math.PI) / 180;
+import { applyModelTransform } from './model-transform';
 
 /** Count mesh descendants of an object (including itself). */
 function meshCount(o: THREE.Object3D): number {
@@ -107,20 +106,9 @@ export class AssetLoader {
     // bokeh planes) entirely — so they don't render AND don't skew the measurements that
     // drive auto-fit and grounding. Done before any Box3 so the car alone defines the size.
     stripDisplayBases(g);
-    // measure, auto-fit to target longest dimension (car geometry only now)
-    const box = new THREE.Box3().setFromObject(g);
-    const size = new THREE.Vector3(); box.getSize(size);
-    const fit = autoFitScale([size.x, size.y, size.z], target);
-    const s = fit * (ref.scale ?? 1);
-    g.scale.setScalar(s);
-    // recompute box after scaling; sit the model on y=0 and center x/z, then apply offset
-    const box2 = new THREE.Box3().setFromObject(g);
-    const c = new THREE.Vector3(); box2.getCenter(c);
-    const min = box2.min;
-    g.position.x += -c.x + (ref.offset?.[0] ?? 0);
-    g.position.y += -min.y + (ref.offset?.[1] ?? 0);
-    g.position.z += -c.z + (ref.offset?.[2] ?? 0);
-    if (ref.rotation) g.rotation.set(deg(ref.rotation[0]), deg(ref.rotation[1]), deg(ref.rotation[2]));
+    // rotate → fit → ground/center via the shared helper (same ordering as the garage). Rotating
+    // BEFORE measuring keeps off-origin models (e.g. monster truck) centered after a 90° turn.
+    applyModelTransform(g, ref, target);
     // tag wheel meshes for spin animation
     const wheels: THREE.Object3D[] = [];
     g.traverse(o => { if (isWheelNode(o.name)) wheels.push(o); });
