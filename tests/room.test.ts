@@ -104,8 +104,8 @@ describe('Room — Smash-style pre-race flow', () => {
     room.addPlayer('Ada'); room.addPlayer('Rex');
     expect(room.phase).toBe('lobby');
     room.advance(); expect(room.phase).toBe('car_select');
+    room.advance(); expect(room.phase).toBe('car_select');  // blocked — nobody has picked yet
     room.selectCar(room.lobbyPlayers()[0]!.playerId, 3);
-    room.advance(); expect(room.phase).toBe('car_select');  // blocked — Rex hasn't picked
     room.selectCar(room.lobbyPlayers()[1]!.playerId, 5);
     room.advance(); expect(room.phase).toBe('map_select');
     room.selectMap('Neon City');

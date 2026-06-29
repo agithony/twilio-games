@@ -17,6 +17,10 @@ export interface ScreensCallbacks {
 
 const PLACE_LABEL = (p: number) => p === 1 ? '1st' : p === 2 ? '2nd' : p === 3 ? '3rd' : `${p}th`;
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
+/** Defense-in-depth: only let an obvious CSS color literal into a style attribute (the server also
+ *  sanitizes, but never trust a single layer for values that land in `style="..."`). */
+const cssColor = (c: string, fallback = '#888') =>
+  /^(#[0-9a-fA-F]{3,8}|rgb\([\d,\s]+\)|hsl\([\d,%\s]+\))$/.test(c?.trim?.() ?? '') ? c.trim() : fallback;
 
 export class Screens {
   private root: HTMLElement;
@@ -80,12 +84,12 @@ export class Screens {
 
   private carTile(i: number, name: string, claimedBy: LobbyPlayer[]): string {
     const claimed = claimedBy.length > 0;
-    const ring = claimed ? claimedBy[0]!.color : 'transparent';
+    const ring = claimed ? cssColor(claimedBy[0]!.color) : 'transparent';
     const portrait = this.carThumbs[i]
       ? `<img src="${this.carThumbs[i]}" alt="" style="width:100%;height:120px;object-fit:contain;filter:drop-shadow(0 6px 10px rgba(0,0,0,.5))">`
       : `<div style="height:120px;display:flex;align-items:center;justify-content:center;font-size:15px;letter-spacing:2px;opacity:.3">CAR ${i + 1}</div>`;
     const badges = claimedBy.map(p =>
-      `<span style="display:inline-flex;align-items:center;gap:4px;background:${p.color};color:#06101f;border-radius:999px;padding:2px 9px;font-size:12px;font-weight:700">${esc(p.name)}</span>`
+      `<span style="display:inline-flex;align-items:center;gap:4px;background:${cssColor(p.color)};color:#06101f;border-radius:999px;padding:2px 9px;font-size:12px;font-weight:700">${esc(p.name)}</span>`
     ).join(' ');
     return `
       <div style="position:relative;background:rgba(20,28,52,.85);border:3px solid ${ring};border-radius:16px;
@@ -188,10 +192,11 @@ export class Screens {
       return `<div style="text-align:center;opacity:.5;font-size:16px;min-height:64px;display:flex;align-items:center;justify-content:center">No players yet</div>`;
     const chips = players.map(p => {
       const carTxt = p.carIndex !== null ? esc(this.carNames[p.carIndex] ?? `Car ${p.carIndex + 1}`) : '…';
+      const col = cssColor(p.color);
       return `
-        <div style="display:flex;align-items:center;gap:9px;background:rgba(35,43,69,.92);border:2px solid ${p.ready ? p.color : '#38425e'};
+        <div style="display:flex;align-items:center;gap:9px;background:rgba(35,43,69,.92);border:2px solid ${p.ready ? col : '#38425e'};
                     border-radius:999px;padding:7px 16px;font-size:16px">
-          <span style="width:13px;height:13px;border-radius:50%;background:${p.color};display:inline-block"></span>
+          <span style="width:13px;height:13px;border-radius:50%;background:${col};display:inline-block"></span>
           <b>${esc(p.name)}</b>
           <span style="opacity:.65;font-size:13px">${carTxt}</span>
         </div>`;

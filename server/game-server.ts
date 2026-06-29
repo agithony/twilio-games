@@ -205,6 +205,9 @@ export class GameServer {
 
   getOrCreateRoom(code: string): Room { return this.room(code); }
   findRoom(code: string): Room | undefined { return this.rooms.find(code); }
+  /** Test seam: advance one room's simulation by `dt` (drives the same stepRoom path the loop uses),
+   *  so the racing→results→leaderboard reporting can be verified deterministically without real time. */
+  stepRoomForTest(room: Room, dt: number): void { this.stepRoom(room, dt); }
   /** Number of live rooms (test/diagnostic hook for the room-leak fix). */
   get roomCount(): number { return this.rooms.count; }
 
@@ -239,21 +242,29 @@ export class GameServer {
   }
 
   private stepRoom(room: Room, dt: number): void {
-    // Once a race ends the room sits in 'results' (no world to advance). Clear the "already
-    // reported" flag for non-results phases so the NEXT race can be reported, and persist the
-    // standings once on the racing→results edge.
     if (room.phase !== 'countdown' && room.phase !== 'racing') {
+      // Not racing: nothing to simulate. Clear the "already reported" flag for non-results phases
+      // so the NEXT race reports too. (A room sitting in results was reported the tick it finished.)
       this.roomAccum.delete(room);
-      if (room.phase === 'results') {
-        if (!this.reported.has(room)) { this.reported.add(room); this.onRaceFinished?.(room); }
-      } else {
-        this.reported.delete(room);
-      }
+      if (room.phase !== 'results') this.reported.delete(room);
+      else this.reportFinishedOnce(room);   // belt-and-suspenders if it slipped through
       return;
     }
     let acc = (this.roomAccum.get(room) ?? 0) + dt;
     while (acc >= STEP) { room.tick(STEP); acc -= STEP; }
     this.roomAccum.set(room, acc);
+    // A tick may have flipped racing→results INSIDE this call. Report it NOW (same call as the
+    // transition) so the standings persist even if the player disconnects this very tick and the
+    // room gets reaped before the next stepRoom. (Read fresh — phase changed during tick().)
+    const phaseAfter: string = room.phase;
+    if (phaseAfter === 'results') this.reportFinishedOnce(room);
+  }
+
+  /** Fire onRaceFinished exactly once per finished race (the WeakSet clears when it leaves results). */
+  private reportFinishedOnce(room: Room): void {
+    if (this.reported.has(room)) return;
+    this.reported.add(room);
+    this.onRaceFinished?.(room);
   }
 
   /** True for the non-racing phases that broadcast roster/selection/results rather than snapshots. */

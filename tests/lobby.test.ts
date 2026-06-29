@@ -43,16 +43,15 @@ describe('Lobby — phase advance', () => {
     expect(l.phase).toBe('lobby');
   });
 
-  it('does not advance car_select → map_select until every player has picked a car', () => {
+  it('does not advance car_select → map_select until at least ONE player has picked', () => {
     const l = new Lobby(opts());
     l.addPlayer('p1', 'Ada', '#f00'); l.addPlayer('p2', 'Rex', '#0f0');
     l.advance();                       // car_select
-    l.selectCar('p1', 1);
-    expect(l.allPicked()).toBe(false);
-    l.advance();                       // blocked — p2 hasn't picked
+    expect(l.anyPicked()).toBe(false);
+    l.advance();                       // blocked — nobody has picked
     expect(l.phase).toBe('car_select');
-    l.selectCar('p2', 2);
-    expect(l.allPicked()).toBe(true);
+    l.selectCar('p1', 1);              // one pick is enough (idle players fall back)
+    expect(l.anyPicked()).toBe(true);
     l.advance();
     expect(l.phase).toBe('map_select');
   });
@@ -142,5 +141,50 @@ describe('Lobby — race init + reset', () => {
     l.back(); expect(l.phase).toBe('car_select');
     l.back(); expect(l.phase).toBe('lobby');
     l.back(); expect(l.phase).toBe('lobby');   // clamps
+  });
+
+  it('back() out of map_select clears the selected map (no stale-map premature start)', () => {
+    const l = new Lobby(opts());
+    l.addPlayer('p1', 'Ada', '#f00'); l.advance(); l.selectCar('p1', 0); l.advance();
+    l.selectMap('Silver Lake');
+    expect(l.selectedMap).toBe('Silver Lake');
+    l.back();                                  // → car_select
+    expect(l.selectedMap).toBe(null);          // map de-armed
+    l.advance();                               // → map_select again
+    expect(l.canStart()).toBe(false);          // must re-pick a map
+  });
+});
+
+describe('Lobby — late join + idle robustness', () => {
+  it('a player who joins during map_select can still pick a car (no permanent wedge)', () => {
+    const l = new Lobby(opts());
+    l.addPlayer('p1', 'Ada', '#f00'); l.advance(); l.selectCar('p1', 1); l.advance();
+    expect(l.phase).toBe('map_select');
+    l.addPlayer('p2', 'Late', '#0f0');         // joins late, carIndex null → would block canStart
+    expect(l.allPicked()).toBe(false);
+    l.selectCar('p2', 2);                      // must be accepted in map_select
+    expect(l.allPicked()).toBe(true);
+    l.selectMap('Silver Lake');
+    expect(l.canStart()).toBe(true);
+  });
+
+  it('advance() out of car_select progresses once at least one player has picked (idle players fall back)', () => {
+    const l = new Lobby(opts());
+    l.addPlayer('p1', 'Ada', '#f00'); l.addPlayer('p2', 'Idle', '#0f0');
+    l.advance();                               // car_select
+    l.selectCar('p1', 3);                      // p2 never picks (AFK)
+    l.advance();                               // should NOT wedge — at least one picked
+    expect(l.phase).toBe('map_select');
+    const inits = l.toRaceInits();
+    expect(inits.find(i => i.id === 'p1')!.carIndex).toBe(3);
+    expect(inits.find(i => i.id === 'p2')!.carIndex).toBe(1);   // join-index fallback
+  });
+
+  it('still does not advance car_select with ZERO picks', () => {
+    const l = new Lobby(opts());
+    l.addPlayer('p1', 'Ada', '#f00'); l.addPlayer('p2', 'Idle', '#0f0');
+    l.advance();                               // car_select
+    l.advance();                               // nobody picked → stay
+    expect(l.phase).toBe('car_select');
   });
 });

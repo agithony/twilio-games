@@ -154,8 +154,24 @@ describe('GameServer integration', () => {
     expect(snap.snapshot.cars[0].carIndex).toBe(12);                    // raced the chosen model
   });
 
-  // NOTE: the results-broadcast PATH (results phase → 'results' message) is covered by
-  // tests/room.test.ts (Room captures standings + enters 'results' when the world finishes) plus
-  // preRaceMessage's results branch. A full solo race takes ~55s of sim time, too slow to drive
-  // end-to-end over the wire in a unit test, so we don't replay one here.
+  it('fires onRaceFinished EXACTLY ONCE when a race reaches results (leaderboard persistence)', async () => {
+    server = new GameServer({ port: 0, broadcastHz: 30 });
+    server.setRoomConfigProvider(() => ({ carCount: 19, maps: ['Silver Lake'] }));
+    let fired = 0; let reportedMap: string | null = null; let reportedResults: any[] = [];
+    server.setOnRaceFinished((room) => { fired++; reportedMap = room.selectedMap; reportedResults = room.results(); });
+    const port = await server.start();
+    // Build a solo race directly on the room (fast — sync), then drive stepRoom to completion.
+    const room = server.getOrCreateRoom('FINISH');
+    room.addPlayer('Solo');
+    room.advance(); room.selectCar(room.lobbyPlayers()[0]!.playerId, 4);
+    room.advance(); room.selectMap('Silver Lake'); room.advance();
+    // Pump the sim via the SAME stepRoom path the loop uses, in big dt slices, until results.
+    for (let i = 0; i < 2000 && room.phase !== 'results'; i++) server.stepRoomForTest(room, 0.1);
+    expect(room.phase).toBe('results');
+    // a few more steps in results must NOT re-fire the report
+    for (let i = 0; i < 5; i++) server.stepRoomForTest(room, 0.1);
+    expect(fired).toBe(1);
+    expect(reportedMap).toBe('Silver Lake');
+    expect(reportedResults[0]).toMatchObject({ name: 'Solo', place: 1, carIndex: 4, finished: true });
+  });
 });

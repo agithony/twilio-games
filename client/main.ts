@@ -55,26 +55,30 @@ let raceLive = false;
 let flowPhase: 'lobby' | 'car_select' | 'map_select' | 'other' = 'lobby';
 let flowMaps: string[] = [];
 let typedDigits = '';
+let typedPhase: 'car_select' | 'map_select' | null = null;   // the phase when accumulation STARTED
 let typedTimer: ReturnType<typeof setTimeout> | null = null;
 
 /** Keyboard digit input → select_car / select_map by number (stands in for SMS car/map picks).
- *  Multi-digit aware (e.g. "15"): accumulates briefly, then commits on a short pause or Enter. */
+ *  Multi-digit aware (e.g. "15"): accumulates briefly, then commits on a short pause. The pick is
+ *  bound to the phase that was active when typing started — so a digit typed during car_select can't
+ *  misfire as a map pick if the phase flips before the 450ms commit. */
 function bindFlowDigits(): void {
   addEventListener('keydown', (e) => {
     if (flowPhase !== 'car_select' && flowPhase !== 'map_select') return;
     if (!/^[0-9]$/.test(e.key)) return;
+    if (typedPhase !== flowPhase) { typedDigits = ''; typedPhase = flowPhase; }   // phase changed → reset
     typedDigits += e.key;
     if (typedTimer) clearTimeout(typedTimer);
     typedTimer = setTimeout(commitTypedDigits, 450);
   });
 }
 function commitTypedDigits(): void {
-  const n = parseInt(typedDigits, 10); typedDigits = '';
+  const n = parseInt(typedDigits, 10); const phase = typedPhase;
+  typedDigits = ''; typedPhase = null;
   if (!Number.isFinite(n) || n < 1) return;
-  if (flowPhase === 'car_select') conn.selectCar(n - 1);          // tiles are 1-based on screen
-  else if (flowPhase === 'map_select') {
-    const m = flowMaps[n - 1]; if (m) conn.selectMap(m);
-  }
+  if (phase !== flowPhase) return;                                // phase moved on — drop the stale pick
+  if (phase === 'car_select') conn.selectCar(n - 1);             // tiles are 1-based on screen
+  else if (phase === 'map_select') { const m = flowMaps[n - 1]; if (m) conn.selectMap(m); }
 }
 
 // AI announcer: speaks commentary (host audio) and feeds the ticker HUD.
@@ -98,26 +102,31 @@ muteBtn.addEventListener('click', () => {
   muteBtn.textContent = hostOn ? 'Host: on' : 'Host: off';
 });
 
+// Bumped on every phase change so an in-flight async (e.g. the leaderboard fetch) can tell whether
+// the flow has moved on before it resolves — preventing a stale render from resurrecting a screen.
+let flowEpoch = 0;
+
 conn.onItems((items) => renderer.buildItems(items));
-conn.onSnapshot((s) => { raceLive = true; flowPhase = 'other'; screens.hide(); big.textContent = ''; started = true; buffer.push(s, performance.now()); });
+conn.onSnapshot((s) => { raceLive = true; flowPhase = 'other'; flowEpoch++; screens.hide(); big.textContent = ''; started = true; buffer.push(s, performance.now()); });
 conn.onLobby((m) => {
   if (raceLive) return;                       // race already running; ignore stale lobby
-  flowPhase = 'lobby'; big.textContent = '';
+  flowPhase = 'lobby'; flowEpoch++; big.textContent = '';
   screens.renderLobby(m.roomCode, m.players);
 });
 conn.onSelectState((m) => {
-  raceLive = false; big.textContent = '';
+  raceLive = false; flowEpoch++; big.textContent = '';
   if (m.phase === 'car_select') { flowPhase = 'car_select'; screens.renderCarSelect(m.players); }
   else if (m.phase === 'map_select') { flowPhase = 'map_select'; flowMaps = m.maps; screens.renderMapSelect(m.maps, m.selectedMap, m.players); }
 });
 conn.onResults((m) => {
-  raceLive = false; flowPhase = 'other'; big.textContent = '';
-  // Show this race immediately, then fold in the all-time board for this map once it fetches.
+  raceLive = false; flowPhase = 'other'; const epoch = ++flowEpoch; big.textContent = '';
+  // Show this race immediately, then fold in the all-time board for this map once it fetches —
+  // but only if the flow hasn't advanced past this results screen by the time the fetch resolves.
   screens.renderResults(m.results, (i) => assets.carName(i));
   const q = m.map ? `?map=${encodeURIComponent(m.map)}&limit=10` : '?limit=10';
   fetch(`/api/leaderboard${q}`)
     .then(r => r.ok ? r.json() : { entries: [] })
-    .then((data) => screens.renderResults(m.results, (i) => assets.carName(i), { map: m.map, entries: data.entries ?? [] }))
+    .then((data) => { if (epoch === flowEpoch) screens.renderResults(m.results, (i) => assets.carName(i), { map: m.map, entries: data.entries ?? [] }); })
     .catch(() => { /* keep the race-only view */ });
 });
 conn.onEvent((e) => {

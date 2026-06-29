@@ -63,9 +63,11 @@ export class Lobby {
     if (info.color !== undefined) s.color = info.color;
   }
 
-  /** A player claims a car by manifest index. Only valid during car_select + in range. Locks ready. */
+  /** A player claims a car by manifest index. Valid during car_select AND map_select (so a player
+   *  who joined late — after the host advanced — can still lock in, instead of wedging canStart()).
+   *  In range only. Locks ready. */
   selectCar(id: string, carIndex: number): void {
-    if (this._phase !== 'car_select') return;
+    if (this._phase !== 'car_select' && this._phase !== 'map_select') return;
     if (!Number.isInteger(carIndex) || carIndex < 0 || carIndex >= this.carCount) return;
     const s = this.slots.find(x => x.id === id); if (!s) return;
     s.carIndex = carIndex; s.ready = true;
@@ -83,25 +85,38 @@ export class Lobby {
     return this.slots.length > 0 && this.slots.every(s => s.carIndex !== null);
   }
 
+  /** At least one player has locked a car — enough to leave car_select (idle players get the
+   *  toRaceInits() join-index fallback, so a single AFK player can't wedge the room forever). */
+  anyPicked(): boolean {
+    return this.slots.some(s => s.carIndex !== null);
+  }
+
   /** Advance one phase if its gate is satisfied; otherwise no-op (stays put). */
   advance(): void {
     if (this._phase === 'lobby') {
       if (this.slots.length > 0) this._phase = 'car_select';
     } else if (this._phase === 'car_select') {
-      if (this.allPicked()) this._phase = 'map_select';
+      // Progress once SOMEONE has picked — unpicked players fall back in toRaceInits(). Requiring
+      // EVERY player would let one idle phone caller wedge car_select indefinitely.
+      if (this.anyPicked()) this._phase = 'map_select';
     }
     // map_select is the last pre-race phase; starting the race is the server's job (canStart()).
   }
 
-  /** Step the phase backward (host "back" button); clamps at lobby. */
+  /** Step the phase backward (host "back" button); clamps at lobby. Leaving map_select DE-ARMS the
+   *  map so a re-pick of cars can't silently start on a stale map. */
   back(): void {
     const i = ORDER.indexOf(this._phase);
-    if (i > 0) this._phase = ORDER[i - 1]!;
+    if (i > 0) {
+      if (this._phase === 'map_select') this._map = null;
+      this._phase = ORDER[i - 1]!;
+    }
   }
 
-  /** Ready to kick off the race: in map_select, players present, a map chosen. */
+  /** Ready to kick off the race: in map_select, at least one car picked (rest fall back), map chosen.
+   *  Uses anyPicked (not allPicked) for the same reason advance() does — no AFK-player wedge. */
   canStart(): boolean {
-    return this._phase === 'map_select' && this.allPicked() && this._map !== null;
+    return this._phase === 'map_select' && this.anyPicked() && this._map !== null;
   }
 
   /** Build the per-player race inits; an unpicked car falls back to join-index (mod carCount). */
