@@ -5,6 +5,7 @@ import { TRACK_CENTER } from './map-world';
 import { CurvedTrack } from './track-path';
 import { buildTrackSurface, type SurfaceOpts } from './track-surface';
 import { makeSkyDome, setSkyColors } from './sky-dome';
+import { frameField } from './field-camera';
 import { autoFitScale } from '../shared/asset-fit';
 import { stripDisplayBases } from './asset-loader';
 import type { WorldSnapshot, Item } from '../shared/types';
@@ -622,18 +623,27 @@ export class Renderer {
       scaled.rotation.y += dt * HOVER_SPIN;
     }
     this.updatePops(dt);
-    // Camera focus: in spectator mode, follow the LEADING car (front of the pack) so
-    // the action is always on screen no matter which car is whose. Otherwise follow "my" car.
+    // Camera focus. The shared DISPLAY frames the whole FIELD (every player is on one screen, so we
+    // can't chase the leader — that pushes the back of the pack off-screen). A solo keyboard player
+    // (own myId, not the spectator display) still follows their own car.
+    const fieldMode = this.spectator || !this.myId;
     let focus: typeof snap.cars[number] | undefined;
-    if (this.spectator || !this.myId) {
+    if (fieldMode) {
+      // `z` for zone/sun = field CENTER (mid of clamped pack), so atmosphere tracks the action.
       focus = snap.cars.length
-        ? snap.cars.reduce((a, b) => (b.z > a.z ? b : a))   // furthest-ahead car
+        ? snap.cars.reduce((a, b) => (b.z > a.z ? b : a))   // leader, only used as a fallback ref
         : undefined;
     } else {
       focus = snap.cars.find(c => c.id === this.myId) ?? snap.cars[0];
     }
     const me = focus;
-    const z = me ? me.z : 0;
+    // z drives zone-cycling + sun aim. In field mode use the pack center; solo uses the own car.
+    let z = me ? me.z : 0;
+    if (fieldMode && snap.cars.length) {
+      let front = -Infinity, back = Infinity;
+      for (const c of snap.cars) { if (c.z > front) front = c.z; if (c.z < back) back = c.z; }
+      z = (front + back) / 2;
+    }
 
     if (shouldCycleZones(this.lightingLocked)) {
       const theme = themeAtZ(z);
@@ -669,8 +679,22 @@ export class Renderer {
         this.camera.position.set(px, py, pz);
         this.camera.lookAt(lx, ly, lz);
       }
+    } else if (fieldMode) {
+      // FIELD cam: frame the whole pack (sim-space eye/look from frameField), pulling back + rising
+      // as the field spreads so every player stays visible. Offsets come from the level chase params.
+      const { behind, height, lookAhead, lookHeight, lateral } = this.cam;
+      const f = frameField(snap.cars, { behind, height, lookAhead, lookHeight, lateral });
+      if (this.path) {
+        const eye = this.path.sample(f.eyeZ, f.eyeX);
+        const look = this.path.sample(f.lookZ, f.lookX);
+        this.camera.position.set(eye.pos.x, eye.pos.y + f.eyeY, eye.pos.z);
+        this.camera.lookAt(look.pos.x, look.pos.y + f.lookY, look.pos.z);
+      } else {
+        this.camera.position.set(f.eyeX, f.eyeY, f.eyeZ);
+        this.camera.lookAt(f.lookX, f.lookY, f.lookZ);
+      }
     } else {
-      // CHASE cam (default): behind + above + slightly lateral, looking down-track past the pack.
+      // SOLO CHASE cam: follow my own car. behind + above + slightly lateral, looking down-track.
       // Offsets come from the level (default = the classic 24 back / 9 up / 45 ahead / 10 lateral /
       // 2.2 look-height), so a level with no camera renders exactly as before.
       const { behind, height, lookAhead, lookHeight, lateral } = this.cam;
