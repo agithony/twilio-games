@@ -3,7 +3,10 @@
 // re-rendered from the server's lobby / select_state / results messages. Players act by TEXTING
 // (concierge/SMS) or, on the host display, keyboard; this module is presentation only — it calls
 // back to the caller for host actions (advance/back/start). See [[lobby-character-select-vision]].
-import type { LobbyPlayer, RaceResult, Phase } from '../shared/types';
+import type { LobbyPlayer, RaceResult } from '../shared/types';
+
+/** One row of the persistent global leaderboard (best all-time times). */
+export interface GlobalEntry { name: string; map: string; carIndex: number; finishT: number; at: number }
 
 export interface ScreensCallbacks {
   /** Host pressed advance (Enter / →): move the flow forward a phase or start the race. */
@@ -123,8 +126,9 @@ export class Screens {
         ← back · <b>${selectedMap ? 'ENTER to RACE' : 'choose a track'}</b></div>`;
   }
 
-  // ── Results scoreboard ───────────────────────────────────────────────────────────────────────
-  renderResults(results: RaceResult[], carNameFor: (i: number) => string): void {
+  // ── Results scoreboard (this race) + global all-time board ─────────────────────────────────────
+  renderResults(results: RaceResult[], carNameFor: (i: number) => string,
+                global?: { map: string | null; entries: GlobalEntry[] }): void {
     this.show();
     const PLACE_COLOR = ['#ffd23f', '#c8d4e6', '#d9914e'];   // gold / silver / bronze for 1-3
     const rows = results.map((r) => {
@@ -133,19 +137,41 @@ export class Screens {
       const accent = PLACE_COLOR[r.place - 1] ?? '#5c8aff';
       return `
         <div style="display:flex;align-items:center;gap:16px;background:rgba(20,28,52,${big ? '.95' : '.7'});
-                    border-radius:14px;padding:${big ? '18px' : '12px'} 22px;${big ? 'border:2px solid #ffd23f;box-shadow:0 0 26px #ffd23f44' : ''}">
-          <div style="font-size:${big ? '34px' : '24px'};font-weight:900;width:72px;color:${accent}">${PLACE_LABEL(r.place)}</div>
-          <div style="flex:1;font-size:${big ? '28px' : '20px'};font-weight:700">${esc(r.name)}</div>
-          <div style="opacity:.7;font-size:16px">${esc(carNameFor(r.carIndex))}</div>
-          <div style="font-variant-numeric:tabular-nums;font-size:${big ? '26px' : '20px'};font-weight:700;width:120px;text-align:right">${time}</div>
+                    border-radius:14px;padding:${big ? '16px' : '11px'} 22px;${big ? 'border:2px solid #ffd23f;box-shadow:0 0 26px #ffd23f44' : ''}">
+          <div style="font-size:${big ? '32px' : '22px'};font-weight:900;width:66px;color:${accent}">${PLACE_LABEL(r.place)}</div>
+          <div style="flex:1;font-size:${big ? '26px' : '19px'};font-weight:700">${esc(r.name)}</div>
+          <div style="opacity:.7;font-size:15px">${esc(carNameFor(r.carIndex))}</div>
+          <div style="font-variant-numeric:tabular-nums;font-size:${big ? '24px' : '19px'};font-weight:700;width:110px;text-align:right">${time}</div>
         </div>`;
     }).join('');
+
+    const globalBoard = global ? this.globalBoardHtml(global.map, global.entries, carNameFor) : '';
     this.root.innerHTML = `
       ${this.header('RESULTS', '')}
-      <div style="flex:1;display:flex;flex-direction:column;gap:12px;max-width:760px;width:100%;margin:0 auto;justify-content:center;padding:20px">
-        ${rows}
+      <div style="flex:1;display:flex;gap:28px;max-width:1180px;width:100%;margin:0 auto;justify-content:center;align-items:center;padding:16px 24px">
+        <div style="flex:1;display:flex;flex-direction:column;gap:10px;max-width:680px">
+          <div style="font-size:14px;letter-spacing:2px;opacity:.6;margin-bottom:2px">THIS RACE</div>
+          ${rows}
+        </div>
+        ${globalBoard}
       </div>
       <div style="text-align:center;padding:16px;font-size:18px;opacity:.85"><b>ENTER</b> to play again</div>`;
+  }
+
+  private globalBoardHtml(map: string | null, entries: GlobalEntry[], carNameFor: (i: number) => string): string {
+    const rows = entries.length ? entries.map((e, i) => `
+        <div style="display:flex;align-items:center;gap:12px;background:rgba(16,22,40,.7);border-radius:10px;padding:9px 14px">
+          <div style="width:30px;font-weight:800;opacity:.6">${i + 1}</div>
+          <div style="flex:1;font-weight:600">${esc(e.name)}</div>
+          <div style="opacity:.55;font-size:13px">${esc(carNameFor(e.carIndex))}</div>
+          <div style="font-variant-numeric:tabular-nums;font-weight:700;width:90px;text-align:right">${e.finishT.toFixed(2)}s</div>
+        </div>`).join('')
+      : `<div style="opacity:.5;padding:16px;text-align:center">No records yet — set the first time!</div>`;
+    return `
+      <div style="width:420px;display:flex;flex-direction:column;gap:8px">
+        <div style="font-size:14px;letter-spacing:2px;opacity:.6;margin-bottom:2px">ALL-TIME BEST${map ? ' · ' + esc(map).toUpperCase() : ''}</div>
+        ${rows}
+      </div>`;
   }
 
   // ── shared bits ──────────────────────────────────────────────────────────────────────────────

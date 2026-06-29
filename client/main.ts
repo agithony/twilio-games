@@ -112,7 +112,13 @@ conn.onSelectState((m) => {
 });
 conn.onResults((m) => {
   raceLive = false; flowPhase = 'other'; big.textContent = '';
+  // Show this race immediately, then fold in the all-time board for this map once it fetches.
   screens.renderResults(m.results, (i) => assets.carName(i));
+  const q = m.map ? `?map=${encodeURIComponent(m.map)}&limit=10` : '?limit=10';
+  fetch(`/api/leaderboard${q}`)
+    .then(r => r.ok ? r.json() : { entries: [] })
+    .then((data) => screens.renderResults(m.results, (i) => assets.carName(i), { map: m.map, entries: data.entries ?? [] }))
+    .catch(() => { /* keep the race-only view */ });
 });
 conn.onEvent((e) => {
   announcer.handle(e);

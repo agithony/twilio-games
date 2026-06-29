@@ -11,3 +11,6 @@ assets/maps/_raw/
 
 # headless render smoke screenshots
 tools/.smoke/
+
+# runtime leaderboard store
+/data/

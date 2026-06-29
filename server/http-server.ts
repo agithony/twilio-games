@@ -1,6 +1,6 @@
 import http from 'http';
 import path from 'node:path';
-import { readFile, writeFile, readdir, rename } from 'node:fs/promises';
+import { readFile, writeFile, readdir, rename, mkdir } from 'node:fs/promises';
 import { WebSocketServer, WebSocket } from 'ws';
 import { GameServer } from './game-server';
 import { ConversationRelayAdapter } from './conversation-relay';
@@ -9,6 +9,7 @@ import { validateTwilioSignature } from './twilio-signature';
 import { ManifestStore } from './manifest-store';
 import { parseManifest } from '../shared/asset-manifest';
 import { mergeMapConfig } from '../shared/maps-store';
+import { appendResults, parseLeaderboard, topEntries } from '../shared/leaderboard-store';
 
 export class HttpServer {
   private server: http.Server;
@@ -20,10 +21,13 @@ export class HttpServer {
   private readonly validateSignatures: boolean;
   private manifestStore: ManifestStore;
   private readonly mapsPath: string;
+  private readonly leaderboardPath: string;
   private readonly editorToken?: string;
   /** Cached selectable cars/maps for the lobby (refreshed from manifest + maps.json periodically). */
   private roomConfigCache: { carCount: number; maps: string[] } = { carCount: 0, maps: [] };
   private roomConfigTimer: ReturnType<typeof setInterval> | null = null;
+  /** Serializes leaderboard writes so two near-simultaneous race finishes can't clobber each other. */
+  private leaderboardWrite: Promise<void> = Promise.resolve();
 
   constructor(opts: {
     port: number;
@@ -33,6 +37,7 @@ export class HttpServer {
     validateSignatures?: boolean;
     manifestPath?: string;   // injectable so tests don't clobber the real assets/manifest.json
     mapsPath?: string;       // injectable so tests don't clobber the real assets/maps/maps.json
+    leaderboardPath?: string;// injectable; persistent global leaderboard JSON (default data/leaderboard.json)
     editorToken?: string;    // when set, /api writes require ?token= or x-editor-token; open if unset
   }) {
     this.port = opts.port;
@@ -41,6 +46,7 @@ export class HttpServer {
     this.validateSignatures = opts.validateSignatures ?? true;
     this.manifestStore = new ManifestStore(opts.manifestPath ?? 'assets/manifest.json');
     this.mapsPath = opts.mapsPath ?? 'assets/maps/maps.json';
+    this.leaderboardPath = opts.leaderboardPath ?? 'data/leaderboard.json';
     this.editorToken = opts.editorToken;
     this.server = http.createServer((req, res) => {
       this.onRequest(req, res).catch((err) => {
@@ -56,6 +62,8 @@ export class HttpServer {
     this.game.setRoomConfigProvider(() => this.roomConfigCache);
     void this.refreshRoomConfig();
     this.roomConfigTimer = setInterval(() => void this.refreshRoomConfig(), 5000);
+    // Persist each finished race onto the global leaderboard (serialized, atomic).
+    this.game.setOnRaceFinished((room) => this.persistRaceResults(room.selectedMap, room.results()));
     this.voiceWss = new WebSocketServer({ noServer: true });
     this.server.on('upgrade', (req, socket, head) => {
       const path = (req.url ?? '').split('?')[0];
@@ -78,6 +86,22 @@ export class HttpServer {
       if (all && typeof all === 'object') maps = Object.keys(all);
     } catch { /* keep prior */ }
     this.roomConfigCache = { carCount: carCount || this.roomConfigCache.carCount, maps: maps.length ? maps : this.roomConfigCache.maps };
+  }
+
+  /** Append one finished race's standings to the persistent global leaderboard (serialized + atomic).
+   *  Best-effort: a write failure is logged, never thrown (a race result is not worth crashing over). */
+  private persistRaceResults(map: string | null, results: import('../shared/types').RaceResult[]): void {
+    if (!map || results.length === 0) return;
+    const at = Date.now();
+    // Chain onto the previous write so concurrent finishes serialize (read-modify-write safety).
+    this.leaderboardWrite = this.leaderboardWrite.then(async () => {
+      let existing = '';
+      try { existing = await readFile(this.leaderboardPath, 'utf8'); } catch { existing = ''; }
+      const out = appendResults(existing, { map, results, at });
+      if (!out.ok) { console.error('leaderboard append refused:', out.error); return; }
+      try { await this.writeFileAtomic(this.leaderboardPath, JSON.stringify(out.entries)); }
+      catch (e) { console.error('leaderboard write failed:', (e as Error).message); }
+    }).catch((e) => console.error('leaderboard persist error:', e));
   }
 
   private onVoiceConnection(ws: WebSocket): void {
@@ -183,6 +207,18 @@ export class HttpServer {
       res.end(JSON.stringify(all));
       return;
     }
+    // ---- global leaderboard (best finish times, all-time) ----
+    if (path === '/api/leaderboard' && req.method === 'GET') {
+      const url = new URL(req.url ?? '', 'http://localhost');
+      const map = url.searchParams.get('map') ?? undefined;
+      const limit = Math.min(100, Math.max(1, parseInt(url.searchParams.get('limit') ?? '10', 10) || 10));
+      let entries = [] as ReturnType<typeof parseLeaderboard>;
+      try { entries = parseLeaderboard(await readFile(this.leaderboardPath, 'utf8')); } catch { entries = []; }
+      const top = topEntries(entries, { map, limit });
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify({ entries: top }));
+      return;
+    }
     // ---- map configs (level layouts authored in /editor) ----
     if (path === '/api/maps' && req.method === 'GET') {
       let body = '{}';
@@ -231,8 +267,11 @@ export class HttpServer {
     return false;
   }
 
-  /** Write a file atomically (temp file + rename) so a crash mid-write can't truncate/corrupt it. */
+  /** Write a file atomically (temp file + rename) so a crash mid-write can't truncate/corrupt it.
+   *  Ensures the parent directory exists (e.g. data/ for the leaderboard on first run). */
   private async writeFileAtomic(file: string, contents: string): Promise<void> {
+    const dir = path.dirname(file);
+    if (dir && dir !== '.') await mkdir(dir, { recursive: true });
     const tmp = `${file}.tmp-${process.pid}`;
     await writeFile(tmp, contents);
     await rename(tmp, file);   // rename is atomic on the same filesystem

@@ -55,6 +55,10 @@ export class GameServer {
   /** Supplies the selectable cars/maps for newly created rooms (set by the http server, which owns
    *  the manifest + map list). Sync + cached so getOrCreate stays synchronous. */
   private roomConfig: (() => RoomConfig) | null = null;
+  /** Fired once when a room's race finishes (transitions into results), for leaderboard persistence. */
+  private onRaceFinished: ((room: Room) => void) | null = null;
+  /** Rooms whose finished race we've already reported (cleared when they leave results). */
+  private reported = new WeakSet<Room>();
 
   constructor(opts: { port?: number; server?: HttpServer; broadcastHz?: number }) {
     this.port = opts.port;
@@ -65,6 +69,11 @@ export class GameServer {
   /** Register the room-config provider (car count + map list). Existing rooms are reconfigured too. */
   setRoomConfigProvider(fn: () => RoomConfig): void {
     this.roomConfig = fn;
+  }
+
+  /** Register a hook fired once when a room's race finishes (results phase) — for leaderboard saves. */
+  setOnRaceFinished(fn: (room: Room) => void): void {
+    this.onRaceFinished = fn;
   }
 
   /** Create-or-fetch a room, configuring brand-new rooms with the current car/map choices. */
@@ -230,9 +239,18 @@ export class GameServer {
   }
 
   private stepRoom(room: Room, dt: number): void {
-    // Only an active race (countdown/racing) needs simulating. A lobby or a finished race has
-    // no world to advance — stepping it just burns CPU and grows the accumulator pointlessly.
-    if (room.phase !== 'countdown' && room.phase !== 'racing') { this.roomAccum.delete(room); return; }
+    // Once a race ends the room sits in 'results' (no world to advance). Clear the "already
+    // reported" flag for non-results phases so the NEXT race can be reported, and persist the
+    // standings once on the racing→results edge.
+    if (room.phase !== 'countdown' && room.phase !== 'racing') {
+      this.roomAccum.delete(room);
+      if (room.phase === 'results') {
+        if (!this.reported.has(room)) { this.reported.add(room); this.onRaceFinished?.(room); }
+      } else {
+        this.reported.delete(room);
+      }
+      return;
+    }
     let acc = (this.roomAccum.get(room) ?? 0) + dt;
     while (acc >= STEP) { room.tick(STEP); acc -= STEP; }
     this.roomAccum.set(room, acc);
