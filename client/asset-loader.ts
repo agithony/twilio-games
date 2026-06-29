@@ -53,12 +53,11 @@ export class AssetLoader {
       this.loader.load(`/assets/${ref.file}`, (gltf) => {
         try {
           const g = this.normalize(gltf.scene, ref, target);
-          // NOTE: we deliberately do NOT auto-play the GLB's baked clips. On free
-          // Sketchfab models these are usually SHOWCASE animations (doors opening,
-          // suspension "air out", turntable spins) that look broken while driving.
-          // Cars animate via wheel-spin (or stay static); a clean static car beats a
-          // car driving with its doors flapping open.
-          g.userData.clips = [];
+          // Baked clips are OFF by default: on free Sketchfab models they're usually SHOWCASE
+          // animations (doors opening, "air out") with an OPEN resting pose that looks broken while
+          // driving. Cars then animate via wheel-spin. Opt IN per-model with ref.animate (Models
+          // Library toggle) for cars whose clip runs cleanly. buildCar reads userData.clips.
+          g.userData.clips = ref.animate ? gltf.animations : [];
           resolve(g);
         }
         catch { resolve(null); }

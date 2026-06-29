@@ -36,4 +36,15 @@ describe('parseManifest', () => {
     const m = parseManifest(JSON.stringify({ cars: [{ file: 'a.glb', scale: 2 }], barrier: null, boostPad: null, props: [] }));
     expect(parseManifest(serializeManifest(m))).toEqual(m);
   });
+  it('parses the per-model animate flag (opt-in; absent/false => undefined)', () => {
+    const m = parseManifest(JSON.stringify({ cars: [
+      { file: 'on.glb', animate: true },
+      { file: 'off.glb', animate: false },
+      { file: 'absent.glb' },
+    ] }));
+    expect(m.cars[0]!.animate).toBe(true);
+    expect(m.cars[1]!.animate).toBeUndefined();   // false is not persisted (default)
+    expect(m.cars[2]!.animate).toBeUndefined();
+    expect(parseManifest(serializeManifest(m))).toEqual(m);   // round-trips
+  });
 });

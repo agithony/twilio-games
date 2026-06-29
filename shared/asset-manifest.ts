@@ -3,6 +3,10 @@ export type AssetRef = {
   scale?: number;
   rotation?: [number, number, number];
   offset?: [number, number, number];
+  // Play the GLB's baked animation clip in-game? Default false: many free Sketchfab cars ship with
+  // a showcase clip ("Air Out", doors/hood open) and a default OPEN resting pose. Off keeps the
+  // model static (wheel-spin only); on lets the clip run (useful for cars that animate cleanly).
+  animate?: boolean;
 };
 export type Manifest = {
   cars: AssetRef[];
@@ -24,6 +28,7 @@ function ref(v: unknown): AssetRef | null {
   if (typeof o.scale === 'number') out.scale = o.scale;
   const r = triple(o.rotation); if (r) out.rotation = r;
   const off = triple(o.offset); if (off) out.offset = off;
+  if (o.animate === true) out.animate = true;   // opt-in; absent/false = static (default)
   return out;
 }
 function refArray(v: unknown): AssetRef[] {

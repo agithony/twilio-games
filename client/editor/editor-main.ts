@@ -347,6 +347,7 @@ function renderInspector(): void {
     .map((f) => `<option value="${esc(f)}"${ref && ref.file === f ? ' selected' : ''}>${esc(f)}</option>`)
     .join('');
 
+  const animate = ref?.animate === true;
   inspectorEl.innerHTML = `
     <h4 style="margin-top:12px">${roleLabel(selected.binding)}</h4>
     <label>Model<select id="f-file">${options}</select></label>
@@ -357,6 +358,11 @@ function renderInspector(): void {
     <label>Off X<input id="f-ox" type="number" step="0.1" value="${off[0]}"></label>
     <label>Off Y<input id="f-oy" type="number" step="0.1" value="${off[1]}"></label>
     <label>Off Z<input id="f-oz" type="number" step="0.1" value="${off[2]}"></label>
+    <label style="display:flex;align-items:center;gap:8px;margin-top:8px">
+      <input id="f-animate" type="checkbox"${animate ? ' checked' : ''}> Play baked animation
+    </label>
+    <div class="hint" style="font-size:11px;opacity:.7">Off (default) = static + wheel-spin. Many models'
+      clips open doors/hood — only turn on if this car animates cleanly (check in /play.html?garage=1).</div>
   `;
 
   const num = (id: string): number => {
@@ -382,6 +388,12 @@ function renderInspector(): void {
   for (const id of ['f-scale', 'f-rx', 'f-ry', 'f-rz', 'f-ox', 'f-oy', 'f-oz']) {
     inspectorEl.querySelector<HTMLInputElement>(`#${id}`)?.addEventListener('input', onFieldChange);
   }
+
+  // Animate toggle: saved on the AssetRef; the game/garage loader reads it (clips only run when on).
+  inspectorEl.querySelector<HTMLInputElement>('#f-animate')?.addEventListener('change', (ev) => {
+    const r = selected && refOf(selected.binding);
+    if (r) r.animate = (ev.target as HTMLInputElement).checked || undefined;   // omit when false (clean save)
+  });
 
   const fileSel = inspectorEl.querySelector<HTMLSelectElement>('#f-file');
   fileSel?.addEventListener('change', () => {
