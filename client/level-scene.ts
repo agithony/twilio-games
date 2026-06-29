@@ -496,9 +496,20 @@ export class LevelScene {
     else if (key === 'map') this.gizmo.attach(this.mapGroup);
     else if (key === 'startLine' && this.startGantry) this.gizmo.attach(this.startGantry);
     else if (key === 'finishLine' && this.finishGantry) this.gizmo.attach(this.finishGantry);
+    else if (key === 'obstacle' || key === 'boost') {
+      // The barrier/boost samples are sized by sliders (level-wide), not moved freely — make sure
+      // the preview is on so there's something to see, and don't attach the gizmo (no per-object
+      // transform; they're scaled via the inspector + placed by the course generator at runtime).
+      this.obstaclePreviewOn = true; this.applyObstacles(); this.gizmo.detach();
+    }
     else { const g = this.propGroups.get(key); if (g) this.gizmo.attach(g); else this.gizmo.detach(); }
     this.addArmed = false;   // dropping selection cancels any pending add
     this.changeCb();
+  }
+
+  /** The live preview wrapper for the barrier or boost sample (or null if not built yet). */
+  private obstacleSample(kind: 'barrier' | 'boost'): THREE.Object3D | null {
+    return this.previewObstacles.children.find(o => o.userData.kind === kind) ?? null;
   }
 
   /**
@@ -517,6 +528,8 @@ export class LevelScene {
     const obj = key === 'map' ? this.mapGroup
       : key === 'startLine' ? this.startGantry
       : key === 'finishLine' ? this.finishGantry
+      : key === 'obstacle' ? this.obstacleSample('barrier')
+      : key === 'boost' ? this.obstacleSample('boost')
       : (key === 'track' || key === 'level') ? null
       : this.propGroups.get(key) ?? null;
 
