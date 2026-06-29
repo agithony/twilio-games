@@ -3,6 +3,18 @@ function esc(s: string): string {
           .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
 }
 
+/** An SMS reply: one outbound message back to the sender. */
+export function twimlMessage(text: string): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<Response><Message>${esc(text)}</Message></Response>`;
+}
+
+/** An empty response: acknowledge the webhook without sending any SMS (e.g. duplicate retry). */
+export function twimlEmpty(): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<Response></Response>`;
+}
+
 export function twimlGatherRoomCode(opts: { actionUrl: string }): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>

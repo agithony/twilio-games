@@ -4,12 +4,13 @@ import { readFile, writeFile, readdir, rename, mkdir } from 'node:fs/promises';
 import { WebSocketServer, WebSocket } from 'ws';
 import { GameServer } from './game-server';
 import { ConversationRelayAdapter } from './conversation-relay';
-import { twimlGatherRoomCode, twimlConnectRelay } from './twiml';
+import { twimlGatherRoomCode, twimlConnectRelay, twimlMessage, twimlEmpty } from './twiml';
 import { validateTwilioSignature } from './twilio-signature';
 import { ManifestStore } from './manifest-store';
 import { parseManifest } from '../shared/asset-manifest';
 import { mergeMapConfig } from '../shared/maps-store';
 import { appendResults, parseLeaderboard, topEntries } from '../shared/leaderboard-store';
+import { SmsConcierge, type ConciergeRoom } from './sms-concierge';
 
 export class HttpServer {
   private server: http.Server;
@@ -28,6 +29,13 @@ export class HttpServer {
   private roomConfigTimer: ReturnType<typeof setInterval> | null = null;
   /** Serializes leaderboard writes so two near-simultaneous race finishes can't clobber each other. */
   private leaderboardWrite: Promise<void> = Promise.resolve();
+  /** SMS concierge (per-phone onboarding + car/map selection). */
+  private concierge: SmsConcierge;
+  /** Cached car display names (manifest order) for concierge confirmations; refreshed with config. */
+  private carNamesCache: string[] = [];
+  /** Per-phone reply lock so two rapid texts from one number serialize (read-modify-write safety). */
+  private smsLocks = new Map<string, Promise<void>>();
+  private smsSweepTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(opts: {
     port: number;
@@ -64,6 +72,9 @@ export class HttpServer {
     this.roomConfigTimer = setInterval(() => void this.refreshRoomConfig(), 5000);
     // Persist each finished race onto the global leaderboard (serialized, atomic).
     this.game.setOnRaceFinished((room) => this.persistRaceResults(room.selectedMap, room.results()));
+    // SMS concierge: resolves a room code to a live Room wrapped as a ConciergeRoom (adds car names).
+    this.concierge = new SmsConcierge({ findRoom: (code) => this.conciergeRoom(code) });
+    this.smsSweepTimer = setInterval(() => this.concierge.sweep(), 5 * 60 * 1000);
     this.voiceWss = new WebSocketServer({ noServer: true });
     this.server.on('upgrade', (req, socket, head) => {
       const path = (req.url ?? '').split('?')[0];
@@ -77,15 +88,38 @@ export class HttpServer {
     });
   }
 
-  /** Refresh the cached lobby choices: car count from the manifest, map keys from maps.json. */
+  /** Refresh the cached lobby choices: car count + names from the manifest, map keys from maps.json. */
   private async refreshRoomConfig(): Promise<void> {
-    let carCount = 0, maps: string[] = [];
-    try { carCount = (await this.manifestStore.read()).cars.length; } catch { /* keep prior */ }
+    let carCount = 0, maps: string[] = [], carNames: string[] = [];
+    try {
+      const m = await this.manifestStore.read();
+      carCount = m.cars.length;
+      carNames = m.cars.map(r => r.name?.trim() || r.file.replace(/\.glb$/i, '').replace(/[_-]+/g, ' ').trim());
+    } catch { /* keep prior */ }
     try {
       const all = JSON.parse(await readFile(this.mapsPath, 'utf8'));
       if (all && typeof all === 'object') maps = Object.keys(all);
     } catch { /* keep prior */ }
     this.roomConfigCache = { carCount: carCount || this.roomConfigCache.carCount, maps: maps.length ? maps : this.roomConfigCache.maps };
+    if (carNames.length) this.carNamesCache = carNames;
+  }
+
+  /** Wrap a live game Room as a ConciergeRoom (adds car names/count from the cached manifest). */
+  private conciergeRoom(code: string): ConciergeRoom | null {
+    const room = this.game.findRoom(code) ?? this.game.getOrCreateRoom(code);
+    if (!room) return null;
+    const carNames = this.carNamesCache;
+    return {
+      get phase() { return room.phase; },
+      get mapChoices() { return room.mapChoices; },
+      carNames,
+      carCount: this.roomConfigCache.carCount || carNames.length,
+      addPlayer: (name) => room.addPlayer(name),
+      setPlayerInfo: (id, info) => room.setPlayerInfo(id, info),
+      selectCar: (id, idx) => room.selectCar(id, idx),
+      selectMap: (m) => room.selectMap(m),
+      removePlayer: (id) => room.removePlayer(id),
+    };
   }
 
   /** Append one finished race's standings to the persistent global leaderboard (serialized + atomic).
@@ -102,6 +136,16 @@ export class HttpServer {
       try { await this.writeFileAtomic(this.leaderboardPath, JSON.stringify(out.entries)); }
       catch (e) { console.error('leaderboard write failed:', (e as Error).message); }
     }).catch((e) => console.error('leaderboard persist error:', e));
+  }
+
+  /** Run an SMS handler serialized per phone number (chained promises keyed by `from`). */
+  private async runSmsSerialized(from: string, fn: () => string): Promise<string> {
+    const prior = this.smsLocks.get(from) ?? Promise.resolve();
+    let result = '';
+    const run = prior.then(() => { result = fn(); });
+    this.smsLocks.set(from, run.catch(() => {}));
+    await run;
+    return result;
   }
 
   private onVoiceConnection(ws: WebSocket): void {
@@ -148,6 +192,32 @@ export class HttpServer {
     }
     if (req.method === 'POST' && path === '/voice/session-ended') {
       res.writeHead(204).end();
+      return;
+    }
+    // ---- SMS concierge: onboarding + car/map selection by text ----
+    if (req.method === 'POST' && path === '/sms') {
+      const body = await readBody(req);
+      const params = Object.fromEntries(new URLSearchParams(body));
+      if (this.validateSignatures) {
+        if (!this.authToken) { res.writeHead(500).end('signature validation enabled but TWILIO_AUTH_TOKEN not configured'); return; }
+        const sig = req.headers['x-twilio-signature'];
+        const ok = validateTwilioSignature({ authToken: this.authToken,
+          signature: Array.isArray(sig) ? sig[0] : sig, url: `${this.publicBaseUrl}/sms`, params });
+        if (!ok) { res.writeHead(403).end('invalid signature'); return; }
+      }
+      const from = (params['From'] ?? '').trim();
+      const smsBody = params['Body'] ?? '';
+      const messageSid = params['MessageSid'] ?? '';
+      // Media (MMS) isn't supported — reply politely without invoking the state machine.
+      if ((parseInt(params['NumMedia'] ?? '0', 10) || 0) > 0) {
+        res.writeHead(200, { 'Content-Type': 'text/xml' }).end(
+          twimlMessage('Images are not supported. Reply with the car or map number from the screen.'));
+        return;
+      }
+      if (!from) { res.writeHead(200, { 'Content-Type': 'text/xml' }).end(twimlEmpty()); return; }
+      // Serialize per-phone so two rapid texts can't race on the same session/room mutation.
+      const reply = await this.runSmsSerialized(from, () => this.concierge.handle({ from, body: smsBody, messageSid }));
+      res.writeHead(200, { 'Content-Type': 'text/xml' }).end(twimlMessage(reply));
       return;
     }
     // ---- manifest API ----
@@ -304,6 +374,7 @@ export class HttpServer {
   stop(): Promise<void> {
     return new Promise((resolve) => {
       if (this.roomConfigTimer) { clearInterval(this.roomConfigTimer); this.roomConfigTimer = null; }
+      if (this.smsSweepTimer) { clearInterval(this.smsSweepTimer); this.smsSweepTimer = null; }
       this.game.stopLoopOnly();
       this.server.close(() => resolve());
     });
