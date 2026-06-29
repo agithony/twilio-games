@@ -20,8 +20,8 @@ import { buildCar } from './car-factory';
 import { makeSkyDome, setSkyColors } from './sky-dome';
 import { RACE_LEN, TRACK_W, laneX, LANES } from '../shared/constants';
 import { addProp as addPropPure, duplicateProp as dupPropPure, removeProp as rmPropPure,
-         resolveCarScale, resolveItemScale, DEFAULT_LIGHTING, DEFAULT_EFFECTS, type PlacedProp } from '../shared/level';
-import type { LevelConfig, LevelTransform } from '../shared/level';
+         resolveCarScale, resolveItemScale, resolveCamera, DEFAULT_LIGHTING, DEFAULT_EFFECTS, type PlacedProp } from '../shared/level';
+import type { LevelConfig, LevelTransform, ResolvedCamera } from '../shared/level';
 import { clone as skeletonClone } from 'three/examples/jsm/utils/SkeletonUtils.js';
 
 export class LevelScene {
@@ -49,6 +49,14 @@ export class LevelScene {
   private assets = new AssetLoader();
   private previewCars = new THREE.Group();
   private carPreviewOn = false;
+  // ── Per-level camera preview ──────────────────────────────────────────────────────────────────
+  // gameCam mirrors what the GAME camera will be for this level (built from resolveCamera). camHelper
+  // draws its frustum (the "vision cone"); camIcon is the draggable body (fixed mode); previewOn
+  // renders a small inset from gameCam so you see the in-game framing live.
+  private gameCam = new THREE.PerspectiveCamera(46, 16 / 9, 0.5, 6000);
+  private camHelper: THREE.CameraHelper | null = null;
+  private camIcon = new THREE.Group();
+  private camPreviewOn = true;
   // Obstacle/boost preview: a sample barrier + boost on the track, sized by the per-level scale, so
   // you can see and tune how big they'll be in-game. On by default so obstacles are visible.
   private previewObstacles = new THREE.Group();
@@ -324,6 +332,76 @@ export class LevelScene {
     }
   }
 
+  // ── Per-level camera (preview cone + live inset) ──────────────────────────────────────────────
+  /** Representative car z the chase-cam frames in the editor (mid of the first stretch). */
+  private static readonly CAM_PREVIEW_Z = 60;
+
+  setCameraPreview(on: boolean): void { this.camPreviewOn = on; this.changeCb(); }
+  cameraPreviewEnabled(): boolean { return this.camPreviewOn; }
+  /** The resolved level camera (mode + params), for the inspector to read/edit. */
+  resolvedCamera(): ResolvedCamera { return resolveCamera(this.level); }
+
+  /** (Re)build the camera cone + icon + inset to reflect the level's current camera config. Called
+   *  on load and whenever a camera control changes. */
+  applyCamera(): void {
+    // FOV mirrors the game so the cone + inset match what will actually render.
+    const cam = resolveCamera(this.level);
+    this.gameCam.fov = cam.fov; this.gameCam.updateProjectionMatrix();
+    // Build the frustum helper + a small camera-body icon once; both ride trackGroup like the race.
+    if (!this.camHelper) {
+      this.camHelper = new THREE.CameraHelper(this.gameCam);
+      this.scene.add(this.camHelper);   // helper reads gameCam's world matrix; keep it in world space
+      // simple camera body icon: a little box + lens cone
+      const body = new THREE.Mesh(new THREE.BoxGeometry(4, 3, 6),
+        new THREE.MeshBasicMaterial({ color: 0x36d1dc }));
+      const lens = new THREE.Mesh(new THREE.ConeGeometry(2, 4, 16),
+        new THREE.MeshBasicMaterial({ color: 0x0b1020 }));
+      lens.rotation.x = -Math.PI / 2; lens.position.z = 4;
+      this.camIcon.add(body, lens);
+    }
+    this.trackGroup.add(this.camIcon);   // re-parent after a loadLevel trackGroup.clear() (idempotent)
+    this.placeGameCam();
+    this.camHelper.visible = this.camPreviewOn;
+    this.camIcon.visible = this.camPreviewOn;
+    this.changeCb();
+  }
+
+  /** Pose gameCam (and the icon) using the SAME math as the game renderer, so the cone/inset show
+   *  exactly the in-game framing. Chase uses a representative car at CAM_PREVIEW_Z; fixed uses pos. */
+  private placeGameCam(): void {
+    const cam = resolveCamera(this.level);
+    const curve = this.curve?.curve();
+    const laneScale = this.curve?.laneScale ?? 1;
+    if (cam.mode === 'fixed' && cam.pos && cam.lookAt) {
+      const [px, py, pz] = cam.pos as [number, number, number];
+      const [lx, ly, lz] = cam.lookAt as [number, number, number];
+      if (curve) {
+        const eye = curve.sample(pz, px), look = curve.sample(lz, lx);
+        this.gameCam.position.set(eye.pos.x, eye.pos.y + py, eye.pos.z);
+        this.gameCam.lookAt(look.pos.x, look.pos.y + ly, look.pos.z);
+      } else {
+        this.gameCam.position.set(px, py, pz); this.gameCam.lookAt(lx, ly, lz);
+      }
+    } else {
+      const z = LevelScene.CAM_PREVIEW_Z;
+      if (curve) {
+        const eye = curve.sample(z - cam.behind, cam.lateral * laneScale);
+        const look = curve.sample(z + cam.lookAhead, 0);
+        this.gameCam.position.set(eye.pos.x, eye.pos.y + cam.height, eye.pos.z);
+        this.gameCam.lookAt(look.pos.x, look.pos.y + cam.lookHeight, look.pos.z);
+      } else {
+        this.gameCam.position.set(cam.lateral, cam.height, z - cam.behind);
+        this.gameCam.lookAt(0, cam.lookHeight, z + cam.lookAhead);
+      }
+    }
+    this.gameCam.updateMatrixWorld();
+    // The icon: trackGroup-LOCAL pose. gameCam is parented to the scene (world), trackGroup may carry
+    // a transform — convert the world eye into trackGroup-local so the icon sits at the camera.
+    this.camIcon.position.copy(this.trackGroup.worldToLocal(this.gameCam.position.clone()));
+    this.camIcon.quaternion.copy(this.gameCam.quaternion);   // good enough visually for the body
+    this.camHelper?.update();
+  }
+
   async loadLevel(level: LevelConfig, opts?: { keepHistory?: boolean }): Promise<void> {
     this.level = level;
     // A fresh load (dropdown/New) establishes the Reset baseline + clears history. Undo/redo/reset
@@ -366,6 +444,8 @@ export class LevelScene {
     // mirror any saved lighting/effects onto the editor scene (no-op-safe when unset)
     this.applyLighting();
     this.applyEffects();
+    // per-level camera: build the cone/icon and pose gameCam from the level's camera config
+    this.applyCamera();
     this.select('track');
   }
 
@@ -502,6 +582,12 @@ export class LevelScene {
       // transform; they're scaled via the inspector + placed by the course generator at runtime).
       this.obstaclePreviewOn = true; this.applyObstacles(); this.gizmo.detach();
     }
+    else if (key === 'camera') {
+      // Show the cone + inset so the user sees the camera they're editing. The camera is edited via
+      // the inspector's numeric fields (sim-space, unambiguous); the icon is a visual marker, so no
+      // gizmo is attached (dragging would need inverse curve-projection to write back).
+      this.camPreviewOn = true; this.applyCamera(); this.gizmo.detach();
+    }
     else { const g = this.propGroups.get(key); if (g) this.gizmo.attach(g); else this.gizmo.detach(); }
     this.addArmed = false;   // dropping selection cancels any pending add
     this.changeCb();
@@ -530,6 +616,7 @@ export class LevelScene {
       : key === 'finishLine' ? this.finishGantry
       : key === 'obstacle' ? this.obstacleSample('barrier')
       : key === 'boost' ? this.obstacleSample('boost')
+      : key === 'camera' ? this.camIcon
       : (key === 'track' || key === 'level') ? null
       : this.propGroups.get(key) ?? null;
 
@@ -747,6 +834,7 @@ export class LevelScene {
     this.placeGantries();
     this.placePreviewCars();
     this.placePreviewObstacles();
+    if (this.camHelper) this.placeGameCam();   // keep the camera cone glued to the live curve
     this.applyPulse();
     // Far plane must contain the WHOLE level (scene radius) AND whatever's beyond the camera at the
     // current zoom — so distant terrain never clips, whether zoomed in on the track or way out.
@@ -765,6 +853,26 @@ export class LevelScene {
     // Sky dome rides the camera so the gradient is always the backdrop.
     this.sky.position.copy(this.camera.position);
     this.composer.render();   // post-FX (bloom) so the preview matches the game exactly
+    this.renderCameraInset();
+  }
+
+  /** Render a small bottom-right inset from gameCam: a live "this is the in-game view" preview.
+   *  Drawn straight to the framebuffer (no composer) after the main pass via scissor + viewport. */
+  private renderCameraInset(): void {
+    if (!this.camPreviewOn) return;
+    const r = this.renderer;
+    const w = Math.round(innerWidth * 0.26), h = Math.round(w * 9 / 16);
+    const x = innerWidth - w - 16, y = 16;   // bottom-right (GL origin is bottom-left)
+    // The cone/icon shouldn't appear INSIDE the camera's own preview — hide them for this pass.
+    const helperVis = this.camHelper?.visible ?? false, iconVis = this.camIcon.visible;
+    if (this.camHelper) this.camHelper.visible = false; this.camIcon.visible = false;
+    this.gameCam.aspect = w / h; this.gameCam.updateProjectionMatrix();
+    r.setScissorTest(true);
+    r.setViewport(x, y, w, h); r.setScissor(x, y, w, h);
+    r.render(this.scene, this.gameCam);
+    r.setScissorTest(false);
+    r.setViewport(0, 0, innerWidth, innerHeight);
+    if (this.camHelper) this.camHelper.visible = helperVis; this.camIcon.visible = iconVis;
   }
 
   /** Animate the level's track-glow pulse on the curve ribbon, mirroring the game renderer so the

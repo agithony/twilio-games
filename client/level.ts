@@ -73,6 +73,9 @@ function renderTree(): void {
   // Obstacle + boost — always present (the barrier/boost models the race uses). Selecting one
   // frames the camera on a live sample and shows its size controls.
   tree.append(mk('Obstacle (barrier)', 'obstacle'), mk('Boost pad', 'boost'));
+  // Camera — per-level game camera (chase tuning or a fixed cinematic shot). Selecting it shows the
+  // vision cone + a live in-game preview inset.
+  tree.append(mk('Camera', 'camera'));
   const cfg = scene.current();
   const h = document.createElement('h4'); h.textContent = `Props (${cfg.props.length})`; tree.append(h);
   for (const p of cfg.props) tree.append(mk(`${p.file.replace('.glb','')} (${p.id})`, p.id));
@@ -142,6 +145,7 @@ function renderPanel(): void {
   else if (key === 'track') renderTrackSection(panel);
   else if (key === 'obstacle') renderObstacleSizeSection(panel, 'barrier');
   else if (key === 'boost') renderObstacleSizeSection(panel, 'boost');
+  else if (key === 'camera') renderCameraSection(panel);
   else renderObjectSection(panel, key);
 }
 
@@ -303,6 +307,72 @@ function renderObstacleSizeSection(host: HTMLElement, kind: 'barrier' | 'boost')
     + '(set in the Models library); 1 = unchanged. Obstacles are placed automatically by the course '
     + 'generator at race time, so only their size is set here — not positions.';
   host.append(note);
+}
+
+/** Camera section: per-level game camera. Two modes — 'chase' (tune the follow-cam offsets) or
+ *  'fixed' (a static placed/aimed camera). A vision cone + live in-game preview inset show the
+ *  result in the viewport. OPT-IN: the level gains its own `camera` only when you change something. */
+function renderCameraSection(host: HTMLElement): void {
+  heading(host, 'Camera');
+  const lvl = scene.getLevel();
+  const ensure = (): NonNullable<LevelConfig['camera']> => (lvl.camera ??= {});
+  const cam = scene.resolvedCamera();
+
+  // Show-preview toggle (cone + inset).
+  const toggle = document.createElement('label');
+  const cb = document.createElement('input'); cb.type = 'checkbox';
+  cb.checked = scene.cameraPreviewEnabled();
+  cb.onchange = () => scene.setCameraPreview(cb.checked);
+  toggle.append(cb, document.createTextNode(' Show camera cone + preview')); host.append(toggle);
+
+  // Mode toggle.
+  const modeBar = document.createElement('div');
+  modeBar.style.cssText = 'display:flex;gap:6px;margin:8px 0';
+  const modeBtn = (label: string, m: 'chase' | 'fixed') => {
+    const b = document.createElement('button'); b.className = 'btn'; b.textContent = label;
+    if (cam.mode === m) b.style.outline = '2px solid #36d1dc';
+    b.onclick = () => { ensure().mode = m; scene.applyCamera(); renderPanel(); };
+    modeBar.append(b);
+  };
+  modeBtn('Chase cam', 'chase'); modeBtn('Fixed cam', 'fixed');
+  host.append(modeBar);
+
+  numberRow(host, 'FOV', cam.fov, 20, 100, 1, (v) => { ensure().fov = v; scene.applyCamera(); });
+
+  if (cam.mode === 'fixed') {
+    heading(host, 'Position (x, height, z)');
+    const pos = cam.pos ?? [10, 50, -30];
+    numberRow(host, 'X', pos[0]!, -300, 300, 1, (v) => { setFixed('pos', 0, v); });
+    numberRow(host, 'Height', pos[1]!, 0, 400, 1, (v) => { setFixed('pos', 1, v); });
+    numberRow(host, 'Z (along track)', pos[2]!, -200, 2200, 5, (v) => { setFixed('pos', 2, v); });
+    heading(host, 'Look at (x, height, z)');
+    const la = cam.lookAt ?? [0, 2, 700];
+    numberRow(host, 'X', la[0]!, -300, 300, 1, (v) => { setFixed('lookAt', 0, v); });
+    numberRow(host, 'Height', la[1]!, 0, 200, 1, (v) => { setFixed('lookAt', 1, v); });
+    numberRow(host, 'Z (along track)', la[2]!, -200, 2200, 5, (v) => { setFixed('lookAt', 2, v); });
+    const note = document.createElement('p');
+    note.style.cssText = 'font-size:12px;opacity:.7;margin:6px 0';
+    note.textContent = 'The race plays from this fixed viewpoint. Z is distance along the track (0 = start).';
+    host.append(note);
+  } else {
+    heading(host, 'Chase offsets');
+    numberRow(host, 'Distance behind', cam.behind, 4, 120, 1, (v) => { ensure().behind = v; scene.applyCamera(); });
+    numberRow(host, 'Height', cam.height, 1, 80, 0.5, (v) => { ensure().height = v; scene.applyCamera(); });
+    numberRow(host, 'Look ahead', cam.lookAhead, 5, 160, 1, (v) => { ensure().lookAhead = v; scene.applyCamera(); });
+    numberRow(host, 'Look height', cam.lookHeight, 0, 30, 0.2, (v) => { ensure().lookHeight = v; scene.applyCamera(); });
+    numberRow(host, 'Lateral offset', cam.lateral, -40, 40, 1, (v) => { ensure().lateral = v; scene.applyCamera(); });
+    const note = document.createElement('p');
+    note.style.cssText = 'font-size:12px;opacity:.7;margin:6px 0';
+    note.textContent = 'The camera follows the lead car with these offsets. Cone shows a representative pose.';
+    host.append(note);
+  }
+
+  function setFixed(field: 'pos' | 'lookAt', i: number, v: number): void {
+    const e = ensure();
+    const base = field === 'pos' ? (e.pos ?? cam.pos ?? [10, 50, -30]) : (e.lookAt ?? cam.lookAt ?? [0, 2, 700]);
+    const arr = [...base]; arr[i] = v; e[field] = arr;
+    scene.applyCamera();
+  }
 }
 
 /** Lighting section (level-wide; replaces zone cycling in-game). OPT-IN: initial VALUES read from a
