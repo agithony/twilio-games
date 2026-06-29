@@ -31,9 +31,14 @@ export function isDisplayBaseNode(name: string): boolean {
   // "Circle.001"). Match plane/circle/disc as a substring — these tokens don't appear in
   // real car-part names.
   if (/(plane|circle|disc|disk)/i.test(name)) return true;
-  // "floor/ground/backdrop/platform/stand/riser/dais/stage" as a word (NOT inside another
-  // word like "License Plate Background" — a real part). Anchored to separators.
-  if (/(^|[_\-. :])(floor|ground|backdrop|platform|stand|riser|dais|stage)([_\-. :0-9]|$)/i.test(name)) return true;
+  // "floor/ground/backdrop/platform/stand/riser/dais/stage/terrain/environment" as a word (NOT
+  // inside another word like "License Plate Background" — a real part). Anchored to separators.
+  if (/(^|[_\-. :])(floor|ground|backdrop|platform|stand|riser|dais|stage|terrain|environment)([_\-. :0-9]|$)/i.test(name)) return true;
+  // "SOL" (French floor — Lotus showroom disc "SOL01_SOL_0") + "Mountain..." scenery (Jurassic
+  // terrain "MountainpaintedGroup…"). SOL must be UPPERCASE + a whole token so it can't hit
+  // "console"/"solenoid"; Mountain is matched as a name-start prefix (scenery group naming).
+  if (/(^|[_\-. :])SOL([_\-. :0-9]|$)/.test(name)) return true;
+  if (/^mountain/i.test(name)) return true;
   // Reflection/sky domes used as showroom environments (e.g. "Sphere_1"). Anchored so it
   // won't hit car parts; NOTE we deliberately do NOT match "mirror" (real wing-mirrors) or
   // "ball" (could be a joint) without a clearer base context.

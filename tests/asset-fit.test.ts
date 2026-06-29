@@ -36,6 +36,9 @@ describe('isDisplayBaseNode', () => {
       'JP1930_ParkRover:Floor', 'pPlane18', 'PlaneShape', 'Base_Lowpoly',
       'Camera_Bokeh_Plane_Plane.008_11', 'Camera_Optical_Vignetting_Plane.007_12',
       'Sphere_1',   // chrome reflection dome on the Squadra Lamborghini
+      'SOL01_SOL_0', 'SOL_ground',         // Lotus showroom ground disc ("sol" = floor in French)
+      'MountainpaintedGroup15820_Mountainpaintedl',   // Jurassic environment terrain
+      'Terrain_01', 'Environment_bg',
     ]) expect(isDisplayBaseNode(n)).toBe(true);
   });
   it('does NOT flag real car parts (incl. wing mirrors + license plate background)', () => {
@@ -49,6 +52,8 @@ describe('isDisplayBaseNode', () => {
       // (a real part), it is NOT a standalone base prop. Must NOT be stripped (was eating the body).
       'A_Old_BaseCar_0', 'Door_L_BaseCar_0', 'Fender_Front_L_BaseCar_0', 'RamaFrontUp_R_BaseCar_0',
       'Rul_BaseCar_0', 'Tiaga_Back_L_D001_BaseCar_0',
+      // "sol" must NOT match inside real part words (console/solenoid/solid):
+      'console_trim', 'solenoid_valve', 'solid_axle',
     ]) expect(isDisplayBaseNode(n)).toBe(false);
   });
 });

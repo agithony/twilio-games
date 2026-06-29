@@ -7,15 +7,30 @@ import type { Manifest, AssetRef } from '../shared/asset-manifest';
 
 const deg = (d: number) => (d * Math.PI) / 180;
 
+/** Count mesh descendants of an object (including itself). */
+function meshCount(o: THREE.Object3D): number {
+  let n = 0; o.traverse((c) => { if ((c as THREE.Mesh).isMesh) n++; }); return n;
+}
+
 /**
  * Remove showroom display props (bases, floors, turntable discs, photo backdrops) from a
  * loaded GLB so only the actual vehicle remains. Shared by the game loader and the editor
  * so both see identical geometry. Collects matches first, then detaches (mutating during
  * traverse is unsafe).
+ *
+ * STRUCTURAL GUARD: a real showroom prop is a SMALL leaf (a single flat plane/disc/dome), whereas
+ * car parts that happen to be named "Circle"/"Sphere"/"Base" (e.g. wheels named Circle_NNN that
+ * PARENT the rim/tire meshes, or a body named BaseCar) hold many meshes. So we only strip a
+ * name-matched node when it carries at most 1 mesh — this protects wheel groups + bodies that
+ * earlier over-eager name rules were deleting (McLaren wheels, climber body).
  */
 export function stripDisplayBases(root: THREE.Object3D): void {
   const remove: THREE.Object3D[] = [];
-  root.traverse(o => { if (o !== root && o.name && isDisplayBaseNode(o.name)) remove.push(o); });
+  root.traverse(o => {
+    if (o === root || !o.name || !isDisplayBaseNode(o.name)) return;
+    if (meshCount(o) > 1) return;   // a multi-mesh group is real geometry, not a flat prop
+    remove.push(o);
+  });
   for (const o of remove) o.parent?.remove(o);
 }
 
