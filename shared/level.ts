@@ -24,15 +24,41 @@ export interface GantryOffset { pos?: number[]; rotDeg?: number[]; scale?: numbe
 // these scale it per level so a barrier sized for a flat track can be resized to a 200x map). 1 = no
 // change. Mirrors the per-level car-scale override model.
 export interface ObstacleScales { barrierScale?: number; boostScale?: number }
+// Per-level CAMERA. Two modes:
+//  - 'chase' (default): the cinematic follow-cam. Tunable offsets relative to the lead car along the
+//    track: `behind`/`height`/`lateral` place the eye, `lookAhead`/`lookHeight` aim it down-track.
+//  - 'fixed': a static camera at world `pos` looking at world `lookAt` — the race plays from it.
+// All fields optional on disk; resolveCamera() fills them from DEFAULT_CAMERA.
+export interface LevelCamera {
+  mode?: 'chase' | 'fixed';
+  // chase params
+  behind?: number; height?: number; lookAhead?: number; lookHeight?: number; lateral?: number;
+  // fixed params (world space, sim coords)
+  pos?: number[]; lookAt?: number[];
+  fov?: number;   // shared by both modes
+}
 export interface LevelConfig {
   map: string; file: string;
   model: LevelTransform; track: LevelTransform; path?: LevelPath;
   cars: { masterScale: number; overrides: Record<string, number> };
   props: PlacedProp[];
   obstacles?: ObstacleScales;
+  camera?: LevelCamera;
   startLine?: GantryOffset; finishLine?: GantryOffset;
   lighting?: LevelLighting; effects?: LevelEffects;
 }
+
+// The chase-cam numbers the game has always used (renderer.ts). A level with no camera resolves to
+// exactly this, so existing levels look identical.
+export interface ResolvedCamera {
+  mode: 'chase' | 'fixed';
+  behind: number; height: number; lookAhead: number; lookHeight: number; lateral: number;
+  pos?: number[]; lookAt?: number[];
+  fov: number;
+}
+export const DEFAULT_CAMERA = {
+  mode: 'chase' as const, behind: 24, height: 9, lookAhead: 45, lookHeight: 2.2, lateral: 10, fov: 46,
+};
 
 // Default look: GOLDEN HOUR — a warm, low-angle sun (long shadows), cool sky fill for contrast,
 // gentle warm fog, and tasteful bloom on highlights. A low sun.y vs a far +x/-z gives raking light
@@ -149,6 +175,17 @@ export function mergeLevel(saved: unknown): LevelConfig {
     if (typeof O.boostScale === 'number' && isFinite(O.boostScale)) obs.boostScale = O.boostScale;
     if (obs.barrierScale !== undefined || obs.boostScale !== undefined) out.obstacles = obs;
   }
+  if (isObj(s.camera)) {
+    const C = s.camera as Record<string, unknown>;
+    const cam: LevelCamera = {};
+    if (C.mode === 'chase' || C.mode === 'fixed') cam.mode = C.mode;
+    for (const k of ['behind', 'height', 'lookAhead', 'lookHeight', 'lateral', 'fov'] as const) {
+      if (typeof C[k] === 'number' && isFinite(C[k] as number)) cam[k] = C[k] as number;
+    }
+    if (Array.isArray(C.pos) && C.pos.length === 3) cam.pos = C.pos.map(Number);
+    if (Array.isArray(C.lookAt) && C.lookAt.length === 3) cam.lookAt = C.lookAt.map(Number);
+    if (Object.keys(cam).length > 0) out.camera = cam;
+  }
   return out;
 }
 
@@ -162,6 +199,25 @@ export function resolveItemScale(level: LevelConfig, kind: 'barrier' | 'boost'):
   const o = level.obstacles;
   if (!o) return 1;
   return (kind === 'barrier' ? o.barrierScale : o.boostScale) ?? 1;
+}
+
+/** Resolve a level's camera to a complete config, filling any missing field from DEFAULT_CAMERA. */
+export function resolveCamera(level: LevelConfig): ResolvedCamera {
+  const c = level.camera ?? {};
+  const r: ResolvedCamera = {
+    mode: c.mode === 'fixed' ? 'fixed' : 'chase',
+    behind: num(c.behind, DEFAULT_CAMERA.behind),
+    height: num(c.height, DEFAULT_CAMERA.height),
+    lookAhead: num(c.lookAhead, DEFAULT_CAMERA.lookAhead),
+    lookHeight: num(c.lookHeight, DEFAULT_CAMERA.lookHeight),
+    lateral: num(c.lateral, DEFAULT_CAMERA.lateral),
+    fov: num(c.fov, DEFAULT_CAMERA.fov),
+  };
+  if (r.mode === 'fixed') {
+    r.pos = Array.isArray(c.pos) && c.pos.length === 3 ? c.pos.map(Number) : [10, 50, -30];
+    r.lookAt = Array.isArray(c.lookAt) && c.lookAt.length === 3 ? c.lookAt.map(Number) : [0, 2, 700];
+  }
+  return r;
 }
 
 function nextPropId(level: LevelConfig): string {

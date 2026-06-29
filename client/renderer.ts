@@ -17,7 +17,8 @@ import { AssetLoader } from './asset-loader';
 import { buildCar } from './car-factory';
 import { themeAtZ } from '../shared/zones';
 import { shouldCycleZones } from './zone-gate';
-import type { LevelLighting, LevelEffects, PlacedProp, GantryOffset } from '../shared/level';
+import type { LevelLighting, LevelEffects, PlacedProp, GantryOffset, ResolvedCamera } from '../shared/level';
+import { DEFAULT_CAMERA } from '../shared/level';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 
@@ -122,6 +123,9 @@ export class Renderer {
   // main.ts wires (kind) => resolveItemScale(level, kind). buildItems re-reads it, so changing it
   // and rebuilding items resizes them live.
   private itemScale: (kind: 'barrier' | 'boost') => number = () => 1;
+  // Per-level camera (chase-cam tuning OR a fixed cinematic camera). Defaults to the classic chase
+  // numbers so a level without a camera looks exactly as before.
+  private cam: ResolvedCamera = { ...DEFAULT_CAMERA };
   private propsGroup = new THREE.Group();     // decoration props live here (added to trackContent)
   private propLoader = (() => {
     const l = new GLTFLoader(); const d = new DRACOLoader();
@@ -246,6 +250,11 @@ export class Renderer {
   setCarScale(fn: (i: number) => number): void { this.carScale = fn; }
   /** Set the per-level obstacle/boost size multiplier (applied in buildItems on top of auto-fit). */
   setItemScale(fn: (kind: 'barrier' | 'boost') => number): void { this.itemScale = fn; }
+  /** Set the per-level camera (chase tuning or a fixed cinematic camera); null reverts to default. */
+  setCamera(cam: ResolvedCamera | null): void {
+    this.cam = cam ?? { ...DEFAULT_CAMERA };
+    this.camera.fov = this.cam.fov; this.camera.updateProjectionMatrix();
+  }
 
   getLightingLocked(): boolean { return this.lightingLocked; }
 
@@ -559,20 +568,37 @@ export class Renderer {
     this.sun.target.position.copy(tgt); this.sun.target.updateMatrixWorld();
     this.sun.position.copy(tgt).addScaledVector(this.sunDir, 260);
 
-    // Cinematic 3/4 chase: behind + above + slightly offset, looking down-track past the pack.
     const mx = me ? me.x : 0;
-    if (this.path) {
-      // Curve-aware chase: sample the curve behind the car and ahead of it, so the camera swings
-      // through bends instead of pointing off the track. Same offsets as straight (24 back / 45
-      // ahead / +10 lateral / height 9), just measured ALONG the curve.
-      const eye = this.path.sample(z - 24, mx * 0.3 + 10);
-      const look = this.path.sample(z + 45, mx * 0.4);
-      // Offsets (9 up / 2.2 look-height) are relative to the track surface, so add its Y height.
-      this.camera.position.set(eye.pos.x, eye.pos.y + 9, eye.pos.z);
-      this.camera.lookAt(look.pos.x, look.pos.y + 2.2, look.pos.z);
+    if (this.cam.mode === 'fixed' && this.cam.pos && this.cam.lookAt) {
+      // FIXED cinematic camera: a static eye/look in sim-world space, mapped onto the curve when a
+      // path is set (so "z" reads as track distance), else used as raw world coords. The race plays
+      // from this viewpoint — cars drive through frame.
+      const px = this.cam.pos[0]!, py = this.cam.pos[1]!, pz = this.cam.pos[2]!;
+      const lx = this.cam.lookAt[0]!, ly = this.cam.lookAt[1]!, lz = this.cam.lookAt[2]!;
+      if (this.path) {
+        const eye = this.path.sample(pz, px);
+        const look = this.path.sample(lz, lx);
+        this.camera.position.set(eye.pos.x, eye.pos.y + py, eye.pos.z);
+        this.camera.lookAt(look.pos.x, look.pos.y + ly, look.pos.z);
+      } else {
+        this.camera.position.set(px, py, pz);
+        this.camera.lookAt(lx, ly, lz);
+      }
     } else {
-      this.camera.position.set(mx * 0.3 + 10, 9, z - 24);
-      this.camera.lookAt(mx * 0.4, 2.2, z + 45);
+      // CHASE cam (default): behind + above + slightly lateral, looking down-track past the pack.
+      // Offsets come from the level (default = the classic 24 back / 9 up / 45 ahead / 10 lateral /
+      // 2.2 look-height), so a level with no camera renders exactly as before.
+      const { behind, height, lookAhead, lookHeight, lateral } = this.cam;
+      if (this.path) {
+        // Curve-aware: sample behind/ahead along the curve so the camera swings through bends.
+        const eye = this.path.sample(z - behind, mx * 0.3 + lateral);
+        const look = this.path.sample(z + lookAhead, mx * 0.4);
+        this.camera.position.set(eye.pos.x, eye.pos.y + height, eye.pos.z);
+        this.camera.lookAt(look.pos.x, look.pos.y + lookHeight, look.pos.z);
+      } else {
+        this.camera.position.set(mx * 0.3 + lateral, height, z - behind);
+        this.camera.lookAt(mx * 0.4, lookHeight, z + lookAhead);
+      }
     }
     // Sky dome rides with the camera so the horizon is always far away.
     this.sky.position.copy(this.camera.position);

@@ -1,7 +1,7 @@
 // tests/level.test.ts
 import { describe, it, expect } from 'vitest';
 import { levelDefaults, mergeLevel, resolveCarScale, resolveItemScale, addProp, duplicateProp, removeProp,
-         DEFAULT_LIGHTING, DEFAULT_EFFECTS } from '../shared/level';
+         DEFAULT_LIGHTING, DEFAULT_EFFECTS, DEFAULT_CAMERA, resolveCamera } from '../shared/level';
 
 describe('levelDefaults', () => {
   it('produces a full, sane level', () => {
@@ -71,6 +71,49 @@ describe('mergeLevel (back-compat)', () => {
     const l = mergeLevel({ map: 'm', file: 'm.glb',
       model: levelDefaults('m','m.glb').model, track: levelDefaults('m','m.glb').track });
     expect(l.obstacles).toBeUndefined();
+  });
+
+  it('round-trips a chase camera config', () => {
+    const l = mergeLevel({ map: 'm', file: 'm.glb',
+      model: levelDefaults('m','m.glb').model, track: levelDefaults('m','m.glb').track,
+      camera: { mode: 'chase', behind: 40, height: 14, lookAhead: 60, lookHeight: 3, lateral: 5, fov: 55 } });
+    expect(l.camera).toEqual({ mode: 'chase', behind: 40, height: 14, lookAhead: 60, lookHeight: 3, lateral: 5, fov: 55 });
+  });
+
+  it('round-trips a fixed camera config', () => {
+    const l = mergeLevel({ map: 'm', file: 'm.glb',
+      model: levelDefaults('m','m.glb').model, track: levelDefaults('m','m.glb').track,
+      camera: { mode: 'fixed', pos: [10, 50, -30], lookAt: [0, 2, 700], fov: 40 } });
+    expect(l.camera).toMatchObject({ mode: 'fixed', pos: [10, 50, -30], lookAt: [0, 2, 700], fov: 40 });
+  });
+
+  it('leaves camera undefined when not authored (game uses its default chase-cam)', () => {
+    const l = mergeLevel({ map: 'm', file: 'm.glb',
+      model: levelDefaults('m','m.glb').model, track: levelDefaults('m','m.glb').track });
+    expect(l.camera).toBeUndefined();
+  });
+});
+
+describe('DEFAULT_CAMERA', () => {
+  it('reproduces the current game chase-cam numbers exactly', () => {
+    expect(DEFAULT_CAMERA).toEqual({
+      mode: 'chase', behind: 24, height: 9, lookAhead: 45, lookHeight: 2.2, lateral: 10, fov: 46,
+    });
+  });
+});
+
+describe('resolveCamera', () => {
+  it('returns DEFAULT_CAMERA when the level has no camera', () => {
+    expect(resolveCamera(levelDefaults('m', 'm.glb'))).toEqual(DEFAULT_CAMERA);
+  });
+  it('fills missing chase fields from the default', () => {
+    const l = levelDefaults('m', 'm.glb');
+    l.camera = { mode: 'chase', behind: 50 };
+    const c = resolveCamera(l);
+    expect(c.mode).toBe('chase');
+    expect(c.behind).toBe(50);
+    expect(c.height).toBe(DEFAULT_CAMERA.height);   // unspecified → default
+    expect(c.fov).toBe(DEFAULT_CAMERA.fov);
   });
 });
 
