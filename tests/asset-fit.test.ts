@@ -45,6 +45,10 @@ describe('isDisplayBaseNode', () => {
       'LamborghiniHuracanGT3_WingMirrors_19',
       'License Plate_License Plate Background_0_167_55',
       'JP1930_ParkRover:Mirrors',
+      // The climber's body parts use "BaseCar" as a material/part suffix — "Base" PREFIXES "Car"
+      // (a real part), it is NOT a standalone base prop. Must NOT be stripped (was eating the body).
+      'A_Old_BaseCar_0', 'Door_L_BaseCar_0', 'Fender_Front_L_BaseCar_0', 'RamaFrontUp_R_BaseCar_0',
+      'Rul_BaseCar_0', 'Tiaga_Back_L_D001_BaseCar_0',
     ]) expect(isDisplayBaseNode(n)).toBe(false);
   });
 });

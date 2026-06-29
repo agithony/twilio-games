@@ -38,5 +38,10 @@ export function isDisplayBaseNode(name: string): boolean {
   // won't hit car parts; NOTE we deliberately do NOT match "mirror" (real wing-mirrors) or
   // "ball" (could be a joint) without a clearer base context.
   if (/^sphere([._]\d+)?$|sky.?dome|reflection.?(sphere|dome)|env.?(sphere|dome|map)/i.test(name)) return true;
-  return /(^|[_\- ]|[a-z])Base/.test(name) || /^base/i.test(name);
+  // "Base" as a showroom plinth: it must be a whole word / trailing noun ("CarBase", "Base_01",
+  // "Base"), NOT a prefix of a bigger word. A trailing letter means it's part of a real name like
+  // "BaseCar"/"Basecolor" (the climber's body parts are "..._BaseCar_0") — those must survive.
+  const baseEnd = '([^a-zA-Z]|$)';   // Base not followed by ANY letter (so "BaseCar"/"Basecolor" survive)
+  if (new RegExp(`(^|[_\\- ]|[a-z])Base${baseEnd}`).test(name)) return true;
+  return new RegExp(`^base${baseEnd}`, 'i').test(name);
 }
