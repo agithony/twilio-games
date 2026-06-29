@@ -135,9 +135,10 @@ async function boot() {
         renderer.setLighting(level.lighting ?? null);
         renderer.setEffects(level.effects ?? null);
         renderer.setProps(level.props);
-        // Per-level car sizing: the game-side half. Overrides are keyed by the car INDEX STRING
-        // ("0","1",…) — the SAME key the editor (cars panel) writes.
-        renderer.setCarScale((i) => resolveCarScale(level, String(i)));
+        // Per-level car sizing: overrides are keyed by the car MODEL FILENAME (so each model can be
+        // sized per level), the SAME key the editor's Cars panel writes. Falls back to index string
+        // if the manifest isn't loaded yet (keeps masterScale working).
+        renderer.setCarScale((i) => resolveCarScale(level, assets.carFile(i) ?? String(i)));
         renderer.setItemScale((kind) => resolveItemScale(level, kind));
         renderer.setCamera(resolveCamera(level));
         gantryOffsets = { start: level.startLine, finish: level.finishLine };

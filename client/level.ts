@@ -6,8 +6,6 @@ import { numberRow, colorRow, heading } from './level-panels';
 import { mergeLevel, levelDefaults, DEFAULT_LIGHTING, DEFAULT_EFFECTS,
          type LevelConfig } from '../shared/level';
 
-const LANES_PREVIEW = 3;
-
 const scene = new LevelScene(document.getElementById('app')!);
 // Dev-only (localhost): expose the scene for in-browser debugging / headless smoke introspection.
 if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
@@ -67,7 +65,8 @@ function renderTree(): void {
     d.textContent = label; d.onclick = () => { scene.selectAndFrame(key); renderTree(); };
     return d;
   };
-  tree.append(mk('Level (cars · lighting · effects)', 'level'), mk('Map', 'map'), mk('Track', 'track'));
+  tree.append(mk('Level (lighting · effects)', 'level'), mk('Map', 'map'), mk('Track', 'track'),
+              mk('Cars (per-model size)', 'cars'));
   // Start/finish gantries — always present (auto-placed at the track ends, but movable/saveable).
   tree.append(mk('Start line', 'startLine'), mk('Finish line', 'finishLine'));
   // Obstacle + boost — always present (the barrier/boost models the race uses). Selecting one
@@ -138,10 +137,12 @@ function renderPanel(): void {
   // Undo/redo + reset are at the top of every panel (they apply to the whole edit history).
   renderHistoryBar(panel);
   // Context-aware: show ONLY the controls relevant to what's selected.
-  //  - 'level' → level-wide Cars / Lighting / Effects
+  //  - 'level' → level-wide Lighting / Effects
+  //  - 'cars'  → per-model car sizing
   //  - 'track' → the curve/width controls
   //  - 'map' / a prop → that object's transform (edited via the gizmo) + a hint
-  if (key === 'level') { renderCarsSection(panel); renderLightingSection(panel); renderEffectsSection(panel); }
+  if (key === 'level') { renderLightingSection(panel); renderEffectsSection(panel); }
+  else if (key === 'cars') renderCarsSection(panel);
   else if (key === 'track') renderTrackSection(panel);
   else if (key === 'obstacle') renderObstacleSizeSection(panel, 'barrier');
   else if (key === 'boost') renderObstacleSizeSection(panel, 'boost');
@@ -280,13 +281,30 @@ function renderCarsSection(host: HTMLElement): void {
   const toggle = document.createElement('label');
   const cb = document.createElement('input'); cb.type = 'checkbox';
   cb.checked = scene.carPreviewEnabled();
-  cb.onchange = () => scene.setCarPreview(cb.checked);
+  cb.onchange = () => { scene.setCarPreview(cb.checked); renderPanel(); };
   toggle.append(cb, document.createTextNode(' Show sample cars')); host.append(toggle);
-  for (let i = 0; i < LANES_PREVIEW; i++) {
-    numberRow(host, `Car ${i + 1} tweak`, lvl.cars.overrides[String(i)] ?? 1, 0.2, 5, 0.05, (v) => {
-      lvl.cars.overrides[String(i)] = v; scene.applyCars();
+
+  // Per-MODEL size: one field per car GLB (keyed by filename — the same key the game uses), so each
+  // model can be sized for THIS level. Final in-game size = master × this model's value.
+  heading(host, 'Per-model size (this level)');
+  const models = scene.carModelFiles();
+  if (models.length === 0) {
+    const p = document.createElement('p'); p.style.cssText = 'font-size:12px;opacity:.7';
+    p.textContent = 'Loading car models…'; host.append(p); return;
+  }
+  for (const file of models) {
+    const label = file.replace(/\.glb$/i, '').replace(/_/g, ' ');
+    numberRow(host, label, lvl.cars.overrides[file] ?? 1, 0.2, 5, 0.05, (v) => {
+      if (v === 1) delete lvl.cars.overrides[file];        // keep saved data clean (1 = default)
+      else lvl.cars.overrides[file] = v;
+      scene.applyCars();
     });
   }
+  const note = document.createElement('p');
+  note.style.cssText = 'font-size:12px;opacity:.7;margin:6px 0';
+  note.textContent = 'Each value sizes that car model for this level only (1 = unchanged). Turn on '
+    + '"Show sample cars" to preview — the 3 samples use the first 3 models.';
+  host.append(note);
 }
 
 /** Inspector for the Obstacle or Boost tree entry: a per-level SIZE multiplier for that model so

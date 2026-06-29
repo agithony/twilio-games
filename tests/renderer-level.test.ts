@@ -14,14 +14,15 @@ describe('shouldCycleZones', () => {
   });
 });
 
-describe('renderer car scale (index-string contract)', () => {
-  // The game's setCarScale callback is (i) => resolveCarScale(level, String(i)); car overrides
-  // are keyed by the per-car INDEX STRING ("0","1",…), the SAME key the editor (Task 5) writes.
-  it('keys car overrides by index string', () => {
+describe('renderer car scale (per-model contract)', () => {
+  // The game's setCarScale callback is (i) => resolveCarScale(level, assets.carFile(i)); car
+  // overrides are keyed by the car MODEL FILENAME, the SAME key the editor's Cars panel writes —
+  // so each model can be sized per level. Final size = master × that model's override.
+  it('keys car overrides by model filename', () => {
     const l = levelDefaults('m', 'm.glb');
     l.cars.masterScale = 1.5;
-    l.cars.overrides['2'] = 2;
-    expect(resolveCarScale(l, '2')).toBe(3);     // master 1.5 × override 2
-    expect(resolveCarScale(l, '0')).toBe(1.5);   // master only (no override)
+    l.cars.overrides['monster_truck.glb'] = 2;
+    expect(resolveCarScale(l, 'monster_truck.glb')).toBe(3);   // master 1.5 × override 2
+    expect(resolveCarScale(l, 'lotus_elise.glb')).toBe(1.5);   // master only (no override)
   });
 });

@@ -85,8 +85,10 @@ export class LevelScene {
   private finishGantry: THREE.Object3D | null = null;
 
   constructor(mount: HTMLElement) {
-    // kick off car-template loading non-blocking; preview cars fall back to primitives until ready
-    this.assets.loadManifest().catch(() => {});
+    // kick off car-template loading non-blocking; preview cars fall back to primitives until ready.
+    // When it resolves, refresh the car/obstacle previews + notify (so the Cars panel lists models
+    // and samples upgrade from primitive to real models) — avoids a stale empty list at boot.
+    this.assets.loadManifest().then(() => { this.applyCars(); this.applyObstacles(); this.changeCb(); }).catch(() => {});
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     this.renderer.setSize(innerWidth, innerHeight);
     // Match the GAME renderer's material pipeline so "what you edit is what you play": ACES tone
@@ -249,6 +251,9 @@ export class LevelScene {
 
   /** Whether sample-car preview is on — so a panel re-render can reflect the live toggle state. */
   carPreviewEnabled(): boolean { return this.carPreviewOn; }
+  /** The manifest car-model filenames (the keys per-level car-scale overrides use). May be empty
+   *  until the manifest finishes loading; the Cars panel re-renders on change. */
+  carModelFiles(): string[] { return this.assets.carFiles(); }
 
   /**
    * (Re)build sample cars at the start of each lane, scaled by the level's resolved car scale.
@@ -262,7 +267,9 @@ export class LevelScene {
       const tmpl = this.assets.carTemplate(lane);
       const model = buildCar(tmpl ?? null, '#36d1dc', false);
       const wrap = new THREE.Group(); wrap.add(model);
-      const s = resolveCarScale(this.level, String(lane));
+      // Size the sample by the SAME key the game uses — the car model's filename — so the preview
+      // matches in-game sizing. Falls back to index if the manifest hasn't loaded.
+      const s = resolveCarScale(this.level, this.assets.carFile(lane) ?? String(lane));
       wrap.scale.setScalar(s);
       wrap.userData.lane = lane;   // remembered so placePreviewCars() can re-place on curve edits
       this.previewCars.add(wrap);
@@ -601,6 +608,10 @@ export class LevelScene {
       // gizmo is attached (dragging would need inverse curve-projection to write back).
       this.camPreviewOn = true; this.applyCamera(); this.gizmo.detach();
     }
+    else if (key === 'cars') {
+      // Turn on the sample cars so the per-model size edits are visible; no gizmo (sized via panel).
+      this.carPreviewOn = true; this.applyCars(); this.gizmo.detach();
+    }
     else { const g = this.propGroups.get(key); if (g) this.gizmo.attach(g); else this.gizmo.detach(); }
     this.addArmed = false;   // dropping selection cancels any pending add
     this.changeCb();
@@ -630,6 +641,7 @@ export class LevelScene {
       : key === 'obstacle' ? this.obstacleSample('barrier')
       : key === 'boost' ? this.obstacleSample('boost')
       : key === 'camera' ? this.camIcon
+      : key === 'cars' ? (this.previewCars.children[0] ?? null)   // frame the first sample car
       : (key === 'track' || key === 'level') ? null
       : this.propGroups.get(key) ?? null;
 

@@ -97,4 +97,10 @@ export class AssetLoader {
   carTemplate(i: number): THREE.Group | null { return this.cars.length ? this.cars[i % this.cars.length] ?? null : null; }
   barrierTemplate(): THREE.Group | null { return this.barrier; }
   boostTemplate(): THREE.Group | null { return this.boost; }
+  /** The manifest car-model filenames in order (car index i uses carFile(i)). Used to key per-level
+   *  car-scale overrides by MODEL (so each car model can be sized per level), not by join index. */
+  carFiles(): string[] { return this.manifest.cars.map(r => r.file); }
+  carFile(i: number): string | null {
+    return this.manifest.cars.length ? this.manifest.cars[i % this.manifest.cars.length]!.file : null;
+  }
 }
