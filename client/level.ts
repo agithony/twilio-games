@@ -270,40 +270,55 @@ function renderObjectSection(host: HTMLElement, key: string): void {
   }
 }
 
-/** Cars section (level-wide). Overrides keyed by car INDEX string ("0","1",…) — same key the game
- *  uses — NOT a GLB filename. Labels read "Car 1…" (1-based) while the key stays the 0-based index. */
+/** Cars section: pick a car MODEL from a dropdown → it shows alone in the editor → size it for this
+ *  level. Overrides are keyed by model filename (the same key the game uses). Final in-game size =
+ *  "All cars size" master × the selected model's value. */
 function renderCarsSection(host: HTMLElement): void {
   heading(host, 'Cars');
   const lvl = scene.getLevel();
+
   numberRow(host, 'All cars size', lvl.cars.masterScale, 0.1, 10, 0.05, (v) => {
     lvl.cars.masterScale = v; scene.applyCars();
   });
-  const toggle = document.createElement('label');
-  const cb = document.createElement('input'); cb.type = 'checkbox';
-  cb.checked = scene.carPreviewEnabled();
-  cb.onchange = () => { scene.setCarPreview(cb.checked); renderPanel(); };
-  toggle.append(cb, document.createTextNode(' Show sample cars')); host.append(toggle);
 
-  // Per-MODEL size: one field per car GLB (keyed by filename — the same key the game uses), so each
-  // model can be sized for THIS level. Final in-game size = master × this model's value.
-  heading(host, 'Per-model size (this level)');
   const models = scene.carModelFiles();
   if (models.length === 0) {
     const p = document.createElement('p'); p.style.cssText = 'font-size:12px;opacity:.7';
     p.textContent = 'Loading car models…'; host.append(p); return;
   }
-  for (const file of models) {
-    const label = file.replace(/\.glb$/i, '').replace(/_/g, ' ');
-    numberRow(host, label, lvl.cars.overrides[file] ?? 1, 0.2, 5, 0.05, (v) => {
-      if (v === 1) delete lvl.cars.overrides[file];        // keep saved data clean (1 = default)
-      else lvl.cars.overrides[file] = v;
-      scene.applyCars();
-    });
+  const selected = scene.selectedCarModel() ?? models[0]!;
+  const pretty = (f: string) => f.replace(/\.glb$/i, '').replace(/_/g, ' ');
+
+  // Model picker — selecting one shows it alone in the viewport so you scale what you see.
+  const pick = document.createElement('label');
+  pick.textContent = 'Car model';
+  const sel = document.createElement('select');
+  sel.style.cssText = 'width:100%;background:var(--th-input,#1a2030);color:var(--th-text,#e8ecf6);'
+    + 'border:1px solid var(--th-input-border,#38425e);border-radius:8px;padding:8px;font:inherit;margin-top:4px';
+  for (const f of models) {
+    const o = document.createElement('option'); o.value = f; o.textContent = pretty(f);
+    if (f === selected) o.selected = true; sel.appendChild(o);
   }
+  sel.onchange = () => { scene.setCarPreview(true); scene.setSelectedCarModel(sel.value); renderPanel(); };
+  pick.appendChild(sel); host.append(pick);
+
+  // Size for the SELECTED model only (1 = unchanged for this level).
+  numberRow(host, `Size — ${pretty(selected)}`, lvl.cars.overrides[selected] ?? 1, 0.2, 5, 0.05, (v) => {
+    if (v === 1) delete lvl.cars.overrides[selected];   // keep saved data clean (1 = default)
+    else lvl.cars.overrides[selected] = v;
+    scene.applyCars();
+  });
+
+  const toggle = document.createElement('label');
+  const cb = document.createElement('input'); cb.type = 'checkbox';
+  cb.checked = scene.carPreviewEnabled();
+  cb.onchange = () => { scene.setCarPreview(cb.checked); renderPanel(); };
+  toggle.append(cb, document.createTextNode(' Show car in editor')); host.append(toggle);
+
   const note = document.createElement('p');
   note.style.cssText = 'font-size:12px;opacity:.7;margin:6px 0';
-  note.textContent = 'Each value sizes that car model for this level only (1 = unchanged). Turn on '
-    + '"Show sample cars" to preview — the 3 samples use the first 3 models.';
+  note.textContent = 'Pick a car model to preview it on the track, then set its size for this level '
+    + '(1 = unchanged). In-game size = master × this value.';
   host.append(note);
 }
 

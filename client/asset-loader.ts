@@ -103,4 +103,9 @@ export class AssetLoader {
   carFile(i: number): string | null {
     return this.manifest.cars.length ? this.manifest.cars[i % this.manifest.cars.length]!.file : null;
   }
+  /** The loaded car template for a given model filename (null if not found / not loaded). */
+  carTemplateByFile(file: string): THREE.Group | null {
+    const i = this.manifest.cars.findIndex(r => r.file === file);
+    return i >= 0 ? this.cars[i] ?? null : null;
+  }
 }

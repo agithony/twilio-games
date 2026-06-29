@@ -50,6 +50,9 @@ export class LevelScene {
   private assets = new AssetLoader();
   private previewCars = new THREE.Group();
   private carPreviewOn = false;
+  // Which car MODEL the Cars panel is focused on (dropdown). The editor shows just this one car at
+  // its resolved per-level size, so you can see exactly what you're scaling. null = none selected yet.
+  private selectedCarFile: string | null = null;
   // ── Per-level camera preview ──────────────────────────────────────────────────────────────────
   // gameCam mirrors what the GAME camera will be for this level (built from resolveCamera). camHelper
   // draws its frustum (the "vision cone"); camIcon is the draggable body (fixed mode); previewOn
@@ -255,43 +258,44 @@ export class LevelScene {
    *  until the manifest finishes loading; the Cars panel re-renders on change. */
   carModelFiles(): string[] { return this.assets.carFiles(); }
 
+  /** Which car model the editor is previewing (the Cars-panel dropdown), defaulting to the first. */
+  selectedCarModel(): string | null {
+    if (this.selectedCarFile) return this.selectedCarFile;
+    return this.assets.carFiles()[0] ?? null;
+  }
+  /** Focus the editor preview on one car model (from the Cars-panel dropdown). */
+  setSelectedCarModel(file: string): void { this.selectedCarFile = file; this.applyCars(); }
+
   /**
-   * (Re)build sample cars at the start of each lane, scaled by the level's resolved car scale.
-   * CONTRACT: overrides are keyed by the car INDEX STRING ("0","1","2", …) — the same key the game
-   * uses (cars are assigned by index), NOT a GLB filename. Keep this in lockstep with the cars panel.
+   * Show ONE car — the model selected in the Cars panel — at its resolved per-level size, centered
+   * on the track, so you can see exactly what you're scaling. Overrides are keyed by the car model
+   * FILENAME (the same key the game uses). Older "3 cars per lane" preview is gone — it couldn't
+   * show the 16 models past lane 3.
    */
   applyCars(): void {
     this.previewCars.clear();
     if (!this.carPreviewOn) return;
-    for (let lane = 0; lane < LANES; lane++) {
-      const tmpl = this.assets.carTemplate(lane);
-      const model = buildCar(tmpl ?? null, '#36d1dc', false);
-      const wrap = new THREE.Group(); wrap.add(model);
-      // Size the sample by the SAME key the game uses — the car model's filename — so the preview
-      // matches in-game sizing. Falls back to index if the manifest hasn't loaded.
-      const s = resolveCarScale(this.level, this.assets.carFile(lane) ?? String(lane));
-      wrap.scale.setScalar(s);
-      wrap.userData.lane = lane;   // remembered so placePreviewCars() can re-place on curve edits
-      this.previewCars.add(wrap);
-    }
+    const file = this.selectedCarModel();
+    const tmpl = file ? this.assets.carTemplateByFile(file) : null;
+    const model = buildCar(tmpl ?? null, '#36d1dc', false);
+    const wrap = new THREE.Group(); wrap.add(model);
+    wrap.scale.setScalar(file ? resolveCarScale(this.level, file) : this.level.cars.masterScale);
+    this.previewCars.add(wrap);
     this.placePreviewCars();
     this.changeCb();
   }
 
-  /** Position the preview cars onto the live curve (sample z=20 with the lane offset, like the
-   *  game) so they stay ON a curved track as its points are dragged. Cheap; called per-frame. */
+  /** Position the single preview car centered down-track (curve-aware), re-placed each frame. */
   private placePreviewCars(): void {
     const SAMPLE_Z = 20;
     const curve = this.curve?.curve();
-    const laneScale = this.curve?.laneScale ?? 1;
     for (const wrap of this.previewCars.children) {
-      const lane = (wrap.userData.lane as number) ?? 0;
       if (curve) {
-        const p = curve.sample(SAMPLE_Z, laneX(lane) * laneScale);
+        const p = curve.sample(SAMPLE_Z, 0);
         wrap.position.set(p.pos.x, p.pos.y + 0.6, p.pos.z);
         wrap.rotation.y = p.headingY;
       } else {
-        wrap.position.set(laneX(lane), 0.6, SAMPLE_Z); wrap.rotation.y = 0;
+        wrap.position.set(0, 0.6, SAMPLE_Z); wrap.rotation.y = 0;
       }
     }
   }
