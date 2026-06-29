@@ -1,5 +1,6 @@
 export type AssetRef = {
   file: string;
+  name?: string;   // friendly display name (label shown in editors/garage); NOT the GLB filename
   scale?: number;
   rotation?: [number, number, number];
   offset?: [number, number, number];
@@ -25,6 +26,7 @@ function ref(v: unknown): AssetRef | null {
   const o = v as Record<string, unknown>;
   if (typeof o.file !== 'string' || !o.file) return null;
   const out: AssetRef = { file: o.file };
+  if (typeof o.name === 'string' && o.name.trim()) out.name = o.name;
   if (typeof o.scale === 'number') out.scale = o.scale;
   const r = triple(o.rotation); if (r) out.rotation = r;
   const off = triple(o.offset); if (off) out.offset = off;

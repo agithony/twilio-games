@@ -264,51 +264,6 @@ export class Renderer {
 
   getLightingLocked(): boolean { return this.lightingLocked; }
 
-  // ── Garage / car viewer ───────────────────────────────────────────────────────────────────────
-  // A static showcase of ONE car model on the track, at its real per-level size, slowly spinning so
-  // you can inspect it. Used by play.html?garage=1 to test cars without starting a race.
-  private garageCar: THREE.Group | null = null;
-  /** Show one car model centered near the track start, sized by `scale`. Replaces any prior one. */
-  showcaseCar(file: string, scale: number): void {
-    if (this.garageCar) { this.trackContent.remove(this.garageCar); this.garageCar = null; }
-    const template = this.assets?.carTemplateByFile(file) ?? null;
-    const model = buildCar(template, '#36d1dc', false);
-    model.traverse(o => { const m = o as THREE.Mesh; if (m.isMesh) m.castShadow = true; });
-    const wrap = new THREE.Group(); wrap.add(model);
-    wrap.scale.setScalar(scale);
-    wrap.userData.model = model;
-    // Center of lane, a little down-track so the chase/field camera frames it nicely.
-    if (this.path) {
-      const p = this.path.sample(30, 0);
-      wrap.position.set(p.pos.x, p.pos.y + 0.6, p.pos.z); wrap.rotation.y = p.headingY;
-    } else {
-      wrap.position.set(0, 0, 30);
-    }
-    this.trackContent.add(wrap);
-    this.garageCar = wrap;
-  }
-  /** Render-one-frame for garage mode: spin the showcased car + run its wheel/clip animation. */
-  renderGarage(): void {
-    const now = performance.now();
-    const dt = Math.min((now - this.lastFrame) / 1000, 0.1);
-    this.lastFrame = now;
-    this.clock += dt;
-    if (this.garageCar) {
-      this.garageCar.rotation.y += dt * 0.5;   // slow turntable
-      const model = this.garageCar.userData.model as THREE.Object3D;
-      const mixer = model?.userData.mixer as THREE.AnimationMixer | undefined;
-      if (mixer) mixer.update(dt);
-      else { const wheels = model?.userData.wheels as THREE.Object3D[] | undefined;
-             if (wheels) for (const w of wheels) w.rotation.x += dt * 6; }
-      // Frame the car: camera orbits a touch above, looking at it.
-      const z = this.garageCar.position.z;
-      this.camera.position.set(this.garageCar.position.x + 7, this.garageCar.position.y + 4, z - 9);
-      this.camera.lookAt(this.garageCar.position.x, this.garageCar.position.y + 1, z);
-    }
-    this.sky.position.copy(this.camera.position);
-    this.composer.render();
-  }
-
   /** Accessors for the in-game align mode (attach a gizmo to the live map world / track). */
   getMapWorld(): THREE.Object3D | null { return this.mapWorld; }
   getTrackGroup(): THREE.Group { return this.trackGroup; }

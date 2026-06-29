@@ -36,6 +36,17 @@ describe('parseManifest', () => {
     const m = parseManifest(JSON.stringify({ cars: [{ file: 'a.glb', scale: 2 }], barrier: null, boostPad: null, props: [] }));
     expect(parseManifest(serializeManifest(m))).toEqual(m);
   });
+  it('parses + round-trips a friendly display name (blank/absent => undefined)', () => {
+    const m = parseManifest(JSON.stringify({ cars: [
+      { file: 'a.glb', name: 'Chevy C8' },
+      { file: 'b.glb', name: '   ' },   // whitespace-only is treated as no name
+      { file: 'c.glb' },
+    ] }));
+    expect(m.cars[0]!.name).toBe('Chevy C8');
+    expect(m.cars[1]!.name).toBeUndefined();
+    expect(m.cars[2]!.name).toBeUndefined();
+    expect(parseManifest(serializeManifest(m))).toEqual(m);
+  });
   it('parses the per-model animate flag (opt-in; absent/false => undefined)', () => {
     const m = parseManifest(JSON.stringify({ cars: [
       { file: 'on.glb', animate: true },

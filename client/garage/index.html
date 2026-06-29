@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Garage — Model Viewer</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: #0b1020; overflow: hidden;
+      font-family: system-ui, sans-serif; color: #e8ecf6; }
+    #app { position: fixed; inset: 0; }
+    #bar { position: fixed; top: 14px; left: 14px; right: 14px; display: flex; gap: 10px;
+      align-items: center; flex-wrap: wrap; background: rgba(16,22,40,.86); border: 1px solid #38425e;
+      border-radius: 12px; padding: 10px 14px; backdrop-filter: blur(6px); z-index: 10; }
+    #bar strong { font-size: 15px; margin-right: 4px; }
+    #bar label { font-size: 12px; opacity: .8; display: flex; flex-direction: column; gap: 3px; }
+    #bar select, #bar input[type=text], #bar input[type=number] {
+      background: #1a2030; color: #e8ecf6; border: 1px solid #38425e; border-radius: 8px;
+      padding: 7px 9px; font: inherit; font-size: 13px; }
+    #bar select { min-width: 200px; }
+    .seg { display: flex; gap: 4px; }
+    .seg button, .gbtn { background: #232b45; color: #e8ecf6; border: 1px solid #38425e;
+      border-radius: 8px; padding: 7px 11px; font: inherit; font-size: 13px; cursor: pointer; }
+    .seg button.on { outline: 2px solid #36d1dc; }
+    #save { background: #ef223a; border: none; }
+    #status { font-size: 12px; color: #36e08a; min-width: 70px; }
+    a.back { color: #cdd5e0; font-size: 12px; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <div id="bar">
+    <strong>Garage</strong>
+    <label>Model <select id="model"></select></label>
+    <label>Animation <select id="clip"></select></label>
+    <div>
+      <div style="font-size:12px;opacity:.8;margin-bottom:3px">Mode</div>
+      <div class="seg" id="mode">
+        <button data-mode="static">Static</button>
+        <button data-mode="wheels">Wheel-spin</button>
+        <button data-mode="clip">Play clip</button>
+      </div>
+    </div>
+    <button class="gbtn" id="turntable">Turntable: on</button>
+    <label>Display name <input id="name" type="text" placeholder="(optional)" size="16" /></label>
+    <button class="gbtn" id="save">Save names</button>
+    <span id="status"></span>
+    <span style="flex:1"></span>
+    <a class="back" href="/editor">Level Editor</a>
+  </div>
+  <script type="module" src="./garage.ts"></script>
+</body>
+</html>

@@ -362,7 +362,7 @@ function renderInspector(): void {
       <input id="f-animate" type="checkbox"${animate ? ' checked' : ''}> Play baked animation
     </label>
     <div class="hint" style="font-size:11px;opacity:.7">Off (default) = static + wheel-spin. Many models'
-      clips open doors/hood — only turn on if this car animates cleanly (check in /play.html?garage=1).</div>
+      clips open doors/hood — only turn on if this car animates cleanly (preview clips + modes in /garage).</div>
   `;
 
   const num = (id: string): number => {
