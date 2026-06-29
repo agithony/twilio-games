@@ -118,6 +118,10 @@ export class Renderer {
   // Per-level car sizing: the game-side half of the editor's car scale. Keyed by the per-car INDEX
   // (the SAME key the editor writes), so main.ts wires (i) => resolveCarScale(level, String(i)).
   private carScale: (i: number) => number = () => 1;
+  // Per-level obstacle/boost size multiplier (applied on top of the manifest's global auto-fit).
+  // main.ts wires (kind) => resolveItemScale(level, kind). buildItems re-reads it, so changing it
+  // and rebuilding items resizes them live.
+  private itemScale: (kind: 'barrier' | 'boost') => number = () => 1;
   private propsGroup = new THREE.Group();     // decoration props live here (added to trackContent)
   private propLoader = (() => {
     const l = new GLTFLoader(); const d = new DRACOLoader();
@@ -240,6 +244,8 @@ export class Renderer {
 
   /** Set the per-car scale multiplier (keyed by car index) the game applies in ensureCar. */
   setCarScale(fn: (i: number) => number): void { this.carScale = fn; }
+  /** Set the per-level obstacle/boost size multiplier (applied in buildItems on top of auto-fit). */
+  setItemScale(fn: (kind: 'barrier' | 'boost') => number): void { this.itemScale = fn; }
 
   getLightingLocked(): boolean { return this.lightingLocked; }
 
@@ -437,8 +443,13 @@ export class Renderer {
           : new THREE.Mesh(new THREE.CylinderGeometry(1.3, 1.3, 0.25, 20),
               new THREE.MeshStandardMaterial({ color: 0x36e08a, emissive: 0x0a5a32 }));
       }
+      // Per-level size multiplier on an INNER group (keeps the model's baked grounding/offset),
+      // so resizing scales the obstacle in place without lifting/sinking it off the track.
+      const scaled = new THREE.Group();
+      scaled.add(model);
+      scaled.scale.setScalar(this.itemScale(item.kind));
       const mesh = new THREE.Group();
-      mesh.add(model);
+      mesh.add(scaled);
       // Real models self-ground via baked -min.y, so wrapper y=0. Primitives have no baked
       // grounding (box centered, pad thin), so keep their original y (0.8 / 0.13).
       const y = usingTemplate ? 0 : (item.kind === 'barrier' ? 0.8 : 0.13);

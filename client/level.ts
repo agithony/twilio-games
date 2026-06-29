@@ -135,7 +135,7 @@ function renderPanel(): void {
   //  - 'level' → level-wide Cars / Lighting / Effects
   //  - 'track' → the curve/width controls
   //  - 'map' / a prop → that object's transform (edited via the gizmo) + a hint
-  if (key === 'level') { renderCarsSection(panel); renderLightingSection(panel); renderEffectsSection(panel); }
+  if (key === 'level') { renderCarsSection(panel); renderObstaclesSection(panel); renderLightingSection(panel); renderEffectsSection(panel); }
   else if (key === 'track') renderTrackSection(panel);
   else renderObjectSection(panel, key);
 }
@@ -278,6 +278,30 @@ function renderCarsSection(host: HTMLElement): void {
       lvl.cars.overrides[String(i)] = v; scene.applyCars();
     });
   }
+}
+
+/** Obstacles section (level-wide): per-level SIZE multipliers for the barrier + boost models, so
+ *  each map can size obstacles to its track. The manifest sets the global base size; these scale it.
+ *  OPT-IN: a level gains its own `obstacles` only when you change a value (1 = unchanged). */
+function renderObstaclesSection(host: HTMLElement): void {
+  heading(host, 'Obstacles & boosts');
+  const lvl = scene.getLevel();
+  const ensure = (): NonNullable<LevelConfig['obstacles']> => (lvl.obstacles ??= {});
+  const toggle = document.createElement('label');
+  const cb = document.createElement('input'); cb.type = 'checkbox';
+  cb.checked = scene.obstaclePreviewEnabled();
+  cb.onchange = () => scene.setObstaclePreview(cb.checked);
+  toggle.append(cb, document.createTextNode(' Show sample obstacle + boost')); host.append(toggle);
+  numberRow(host, 'Barrier size', lvl.obstacles?.barrierScale ?? 1, 0.1, 20, 0.05, (v) => {
+    ensure().barrierScale = v; scene.applyObstacles();
+  });
+  numberRow(host, 'Boost size', lvl.obstacles?.boostScale ?? 1, 0.1, 20, 0.05, (v) => {
+    ensure().boostScale = v; scene.applyObstacles();
+  });
+  const note = document.createElement('p');
+  note.style.cssText = 'font-size:12px;opacity:.7;margin:4px 0';
+  note.textContent = 'Multiplies the global model size (set in the Models library). 1 = unchanged.';
+  host.append(note);
 }
 
 /** Lighting section (level-wide; replaces zone cycling in-game). OPT-IN: initial VALUES read from a

@@ -20,11 +20,16 @@ export interface LevelEffects {
 // Start/finish gantries are auto-placed on the track ends; an optional GantryOffset lets the author
 // nudge/rotate/resize them off that default and have it persist (applied in both editor + game).
 export interface GantryOffset { pos?: number[]; rotDeg?: number[]; scale?: number }
+// Per-level size multipliers for the obstacle/boost models (the manifest sets the GLOBAL base size;
+// these scale it per level so a barrier sized for a flat track can be resized to a 200x map). 1 = no
+// change. Mirrors the per-level car-scale override model.
+export interface ObstacleScales { barrierScale?: number; boostScale?: number }
 export interface LevelConfig {
   map: string; file: string;
   model: LevelTransform; track: LevelTransform; path?: LevelPath;
   cars: { masterScale: number; overrides: Record<string, number> };
   props: PlacedProp[];
+  obstacles?: ObstacleScales;
   startLine?: GantryOffset; finishLine?: GantryOffset;
   lighting?: LevelLighting; effects?: LevelEffects;
 }
@@ -137,11 +142,26 @@ export function mergeLevel(saved: unknown): LevelConfig {
       skyTop: str(E.skyTop, DEFAULT_EFFECTS.skyTop), skyBottom: str(E.skyBottom, DEFAULT_EFFECTS.skyBottom),
     };
   }
+  if (isObj(s.obstacles)) {
+    const O = s.obstacles as Record<string, unknown>;
+    const obs: ObstacleScales = {};
+    if (typeof O.barrierScale === 'number' && isFinite(O.barrierScale)) obs.barrierScale = O.barrierScale;
+    if (typeof O.boostScale === 'number' && isFinite(O.boostScale)) obs.boostScale = O.boostScale;
+    if (obs.barrierScale !== undefined || obs.boostScale !== undefined) out.obstacles = obs;
+  }
   return out;
 }
 
 export function resolveCarScale(level: LevelConfig, glb: string): number {
   return level.cars.masterScale * (level.cars.overrides[glb] ?? 1);
+}
+
+/** Per-level size multiplier for an obstacle/boost (1 if the level didn't override it). The manifest
+ *  provides the global base size; this scales it so a level can fit obstacles to its track. */
+export function resolveItemScale(level: LevelConfig, kind: 'barrier' | 'boost'): number {
+  const o = level.obstacles;
+  if (!o) return 1;
+  return (kind === 'barrier' ? o.barrierScale : o.boostScale) ?? 1;
 }
 
 function nextPropId(level: LevelConfig): string {

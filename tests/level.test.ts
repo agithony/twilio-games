@@ -1,6 +1,6 @@
 // tests/level.test.ts
 import { describe, it, expect } from 'vitest';
-import { levelDefaults, mergeLevel, resolveCarScale, addProp, duplicateProp, removeProp,
+import { levelDefaults, mergeLevel, resolveCarScale, resolveItemScale, addProp, duplicateProp, removeProp,
          DEFAULT_LIGHTING, DEFAULT_EFFECTS } from '../shared/level';
 
 describe('levelDefaults', () => {
@@ -58,6 +58,38 @@ describe('mergeLevel (back-compat)', () => {
       model: levelDefaults('m','m.glb').model, track: levelDefaults('m','m.glb').track });
     expect(l.startLine).toBeUndefined();
     expect(l.finishLine).toBeUndefined();
+  });
+
+  it('round-trips per-level obstacle/boost scales when present', () => {
+    const l = mergeLevel({ map: 'm', file: 'm.glb',
+      model: levelDefaults('m','m.glb').model, track: levelDefaults('m','m.glb').track,
+      obstacles: { barrierScale: 2.5, boostScale: 0.5 } });
+    expect(l.obstacles).toEqual({ barrierScale: 2.5, boostScale: 0.5 });
+  });
+
+  it('leaves obstacles undefined when not authored', () => {
+    const l = mergeLevel({ map: 'm', file: 'm.glb',
+      model: levelDefaults('m','m.glb').model, track: levelDefaults('m','m.glb').track });
+    expect(l.obstacles).toBeUndefined();
+  });
+});
+
+describe('resolveItemScale', () => {
+  it('defaults to 1 when no per-level override', () => {
+    const l = levelDefaults('m', 'm.glb');
+    expect(resolveItemScale(l, 'barrier')).toBe(1);
+    expect(resolveItemScale(l, 'boost')).toBe(1);
+  });
+  it('returns the per-level multiplier for each kind', () => {
+    const l = levelDefaults('m', 'm.glb');
+    l.obstacles = { barrierScale: 3, boostScale: 0.4 };
+    expect(resolveItemScale(l, 'barrier')).toBe(3);
+    expect(resolveItemScale(l, 'boost')).toBe(0.4);
+  });
+  it('falls back to 1 for a kind with no value set', () => {
+    const l = levelDefaults('m', 'm.glb');
+    l.obstacles = { barrierScale: 3 };
+    expect(resolveItemScale(l, 'boost')).toBe(1);
   });
 });
 

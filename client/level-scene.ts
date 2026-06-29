@@ -20,8 +20,9 @@ import { buildCar } from './car-factory';
 import { makeSkyDome, setSkyColors } from './sky-dome';
 import { RACE_LEN, TRACK_W, laneX, LANES } from '../shared/constants';
 import { addProp as addPropPure, duplicateProp as dupPropPure, removeProp as rmPropPure,
-         resolveCarScale, DEFAULT_LIGHTING, DEFAULT_EFFECTS, type PlacedProp } from '../shared/level';
+         resolveCarScale, resolveItemScale, DEFAULT_LIGHTING, DEFAULT_EFFECTS, type PlacedProp } from '../shared/level';
 import type { LevelConfig, LevelTransform } from '../shared/level';
+import { clone as skeletonClone } from 'three/examples/jsm/utils/SkeletonUtils.js';
 
 export class LevelScene {
   private renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -48,6 +49,10 @@ export class LevelScene {
   private assets = new AssetLoader();
   private previewCars = new THREE.Group();
   private carPreviewOn = false;
+  // Obstacle/boost preview: a sample barrier + boost on the track, sized by the per-level scale, so
+  // you can see and tune how big they'll be in-game. On by default so obstacles are visible.
+  private previewObstacles = new THREE.Group();
+  private obstaclePreviewOn = true;
   // Undo/redo: each entry is a full LevelConfig snapshot (current()'s serialization). `loaded` is
   // the level as last loaded, for Reset. We snapshot BEFORE a discrete edit (see beginEdit()).
   private undoStack: LevelConfig[] = [];
@@ -275,6 +280,50 @@ export class LevelScene {
     }
   }
 
+  setObstaclePreview(on: boolean): void { this.obstaclePreviewOn = on; this.applyObstacles(); }
+  obstaclePreviewEnabled(): boolean { return this.obstaclePreviewOn; }
+
+  /** Build the sample barrier + boost preview, sized by the per-level scale the SAME way the game
+   *  does (clone the auto-fit template, multiply by resolveItemScale). Called on load + on edits. */
+  applyObstacles(): void {
+    this.previewObstacles.clear();
+    if (!this.obstaclePreviewOn) return;
+    const make = (kind: 'barrier' | 'boost', lane: number, primitive: THREE.Object3D) => {
+      const tmpl = kind === 'barrier' ? this.assets.barrierTemplate() : this.assets.boostTemplate();
+      const model = tmpl ? skeletonClone(tmpl) : primitive;   // primitive fallback = game parity
+      const inner = new THREE.Group(); inner.add(model);
+      inner.scale.setScalar(resolveItemScale(this.level, kind));
+      const wrap = new THREE.Group(); wrap.add(inner);
+      wrap.userData.lane = lane; wrap.userData.kind = kind;
+      this.previewObstacles.add(wrap);
+    };
+    // A barrier in lane 0 and a boost in lane 2, a bit further down-track than the sample cars.
+    make('barrier', 0, new THREE.Mesh(new THREE.BoxGeometry(6.5, 1.6, 1.2),
+      new THREE.MeshStandardMaterial({ color: 0xff3b3b, emissive: 0x550000 })));
+    make('boost', 2, new THREE.Mesh(new THREE.CylinderGeometry(1.3, 1.3, 0.25, 20),
+      new THREE.MeshStandardMaterial({ color: 0x36e08a, emissive: 0x0a5a32 })));
+    this.placePreviewObstacles();
+    this.changeCb();
+  }
+
+  /** Position the obstacle/boost preview onto the live curve (further down-track than the cars). */
+  private placePreviewObstacles(): void {
+    const SAMPLE_Z = 70;
+    const curve = this.curve?.curve();
+    const laneScale = this.curve?.laneScale ?? 1;
+    for (const wrap of this.previewObstacles.children) {
+      const lane = (wrap.userData.lane as number) ?? 0;
+      // primitives carry their own ground height; templates self-ground (wrapper y handled by lift)
+      if (curve) {
+        const p = curve.sample(SAMPLE_Z, laneX(lane) * laneScale);
+        wrap.position.set(p.pos.x, p.pos.y + 0.6, p.pos.z);
+        wrap.rotation.y = p.headingY;
+      } else {
+        wrap.position.set(laneX(lane), 0.6, SAMPLE_Z); wrap.rotation.y = 0;
+      }
+    }
+  }
+
   async loadLevel(level: LevelConfig, opts?: { keepHistory?: boolean }): Promise<void> {
     this.level = level;
     // A fresh load (dropdown/New) establishes the Reset baseline + clears history. Undo/redo/reset
@@ -311,6 +360,9 @@ export class LevelScene {
     // sample cars (editor-only preview) ride the track transform like the surface/props
     this.trackGroup.add(this.previewCars);
     this.applyCars();
+    // sample obstacle + boost preview (sized by the per-level scale) ride the track too
+    this.trackGroup.add(this.previewObstacles);
+    this.applyObstacles();
     // mirror any saved lighting/effects onto the editor scene (no-op-safe when unset)
     this.applyLighting();
     this.applyEffects();
@@ -681,6 +733,7 @@ export class LevelScene {
     // them too — WYSIWYG with the game).
     this.placeGantries();
     this.placePreviewCars();
+    this.placePreviewObstacles();
     this.applyPulse();
     // Far plane must contain the WHOLE level (scene radius) AND whatever's beyond the camera at the
     // current zoom — so distant terrain never clips, whether zoomed in on the track or way out.

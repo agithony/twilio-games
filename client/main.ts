@@ -7,7 +7,7 @@ import { Announcer, browserSpeechSink } from './announcer';
 import { fetchMaps, loadMapWorld, applyTrackTransform, CANONICAL_TRACK } from './map-world';
 import { CurvedTrack } from './track-path';
 import { surfaceOptsFromPath } from './track-surface';
-import { mergeLevel, resolveCarScale } from '../shared/level';
+import { mergeLevel, resolveCarScale, resolveItemScale } from '../shared/level';
 import type { GantryOffset } from '../shared/level';
 
 // Game WebSocket URL. In production the page is served by the same origin as the game server
@@ -138,6 +138,7 @@ async function boot() {
         // Per-level car sizing: the game-side half. Overrides are keyed by the car INDEX STRING
         // ("0","1",…) — the SAME key the editor (cars panel) writes.
         renderer.setCarScale((i) => resolveCarScale(level, String(i)));
+        renderer.setItemScale((kind) => resolveItemScale(level, kind));
         gantryOffsets = { start: level.startLine, finish: level.finishLine };
       }
     } catch { /* keep the generated track */ }
