@@ -33,6 +33,32 @@
       "overrides": {}
     },
     "props": [],
+    "startLine": {
+      "pos": [
+        811.931,
+        -22.874,
+        670.214
+      ],
+      "rotDeg": [
+        0,
+        -80,
+        0
+      ],
+      "scale": 1
+    },
+    "finishLine": {
+      "pos": [
+        -629.909,
+        -1.969,
+        2185.34
+      ],
+      "rotDeg": [
+        -180,
+        46,
+        -180
+      ],
+      "scale": 1
+    },
     "path": {
       "points": [
         [
@@ -132,6 +158,9 @@
       },
       "skyTop": "#3b6fb0",
       "skyBottom": "#ffcf9e"
+    },
+    "obstacles": {
+      "barrierScale": 0.8
     }
   }
 }
