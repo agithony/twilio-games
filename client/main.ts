@@ -257,10 +257,11 @@ async function loadAssetsInBackground(): Promise<void> {
   assetsReady = true;
   if (wantAttract) reallyStartAttract();
 
-  // Portraits LAST + after the reveal has settled: they're only needed once someone reaches
-  // car-select (seconds away), and rendering 19 offscreen frames competes with the attract loop on
-  // the GPU → stutter. Wait until the veil has lifted + a beat, then stream them in one per frame.
-  await new Promise(r => setTimeout(r, 2500));
+  // Portraits: render after a SHORT beat (so the attract reveal isn't fighting the GPU on its first
+  // frames) — but soon enough that they're ready before anyone navigates to car-select. They stream
+  // in (setCarThumb live-swaps each tile), so a tile shows a brief spinner only if you reach the
+  // grid before its portrait lands.
+  await new Promise(r => setTimeout(r, 800));
   try {
     await renderCarThumbnailsAsync(assets, (i, url) => screens.setCarThumb(i, url));
   } catch { /* placeholders remain */ }
