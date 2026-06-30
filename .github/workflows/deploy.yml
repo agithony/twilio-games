@@ -17,6 +17,7 @@ env:
   LOCATION: centralus
   ACR_NAME: twiliogames
   ENV_NAME: cae-twilio-games
+  LAW_NAME: law-twilio-games
   STORAGE_ACCOUNT: twiliogamesdata
   FILE_SHARE: twiliogamesdata
   IMAGE_TAG: twilio-games:${{ github.sha }}
@@ -88,13 +89,36 @@ jobs:
             --quota 5 \
             --output none 2>/dev/null || true
 
+      - name: Ensure Log Analytics workspace exists
+        # `az containerapp env create` auto-generates a Log Analytics workspace if none is given —
+        # and that implicit workspace gets NO tags, so the tenant tag-enforcement-policy denies it
+        # (the failure surfaces as a confusing CLI JSONDecodeError). Pre-create the workspace WITH
+        # the required tag and pass it to env create so nothing untagged is generated.
+        run: |
+          az monitor log-analytics workspace show \
+            --workspace-name "$LAW_NAME" --resource-group "$RESOURCE_GROUP" 2>/dev/null || \
+          az monitor log-analytics workspace create \
+            --workspace-name "$LAW_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --location "$LOCATION" \
+            --tags $RESOURCE_TAGS \
+            --output none
+
       - name: Ensure Container Apps Environment exists
         run: |
-          az containerapp env show --name "$ENV_NAME" --resource-group "$RESOURCE_GROUP" 2>/dev/null || \
+          az containerapp env show --name "$ENV_NAME" --resource-group "$RESOURCE_GROUP" 2>/dev/null && exit 0
+          # Wire the env to OUR tagged workspace (customer-id + shared key) so it doesn't auto-make an
+          # untagged one that the policy would block.
+          LAW_ID=$(az monitor log-analytics workspace show \
+            --workspace-name "$LAW_NAME" --resource-group "$RESOURCE_GROUP" --query customerId -o tsv)
+          LAW_KEY=$(az monitor log-analytics workspace get-shared-keys \
+            --workspace-name "$LAW_NAME" --resource-group "$RESOURCE_GROUP" --query primarySharedKey -o tsv)
           az containerapp env create \
             --name "$ENV_NAME" \
             --resource-group "$RESOURCE_GROUP" \
             --location "$LOCATION" \
+            --logs-workspace-id "$LAW_ID" \
+            --logs-workspace-key "$LAW_KEY" \
             --tags $RESOURCE_TAGS \
             --output none
 
