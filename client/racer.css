@@ -34,6 +34,24 @@
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--ink); font-family: var(--text); }
 
+/* ───────── Boot veil (covers scene assembly; fades out when attract is ready) ───────── */
+#veil {
+  position: fixed; inset: 0; z-index: 200; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 14px;
+  background: radial-gradient(120% 90% at 50% 35%, #0c1738 0%, var(--bg) 60%, #00081c 100%);
+  transition: opacity .6s ease; opacity: 1;
+}
+#veil.hide { opacity: 0; pointer-events: none; }
+#veil img { width: 76px; height: 76px; filter: drop-shadow(0 0 28px rgba(239,34,58,.5)); animation: veil-bob 2.4s ease-in-out infinite; }
+#veil .veil-eyebrow { font-family: var(--mono); font-size: 13px; letter-spacing: .28em; text-transform: uppercase; color: var(--ink-dim); }
+#veil .veil-title { font-family: var(--disp); font-weight: 800; font-size: 46px; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--red); text-shadow: 0 0 34px rgba(239,34,58,.5); }
+#veil .veil-bar { width: 200px; height: 4px; border-radius: 999px; background: rgba(255,255,255,.10); overflow: hidden; margin-top: 6px; }
+#veil .veil-bar span { display: block; height: 100%; width: 40%; border-radius: 999px;
+  background: linear-gradient(90deg, transparent, var(--red), transparent); animation: veil-slide 1.1s ease-in-out infinite; }
+@keyframes veil-bob { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
+@keyframes veil-slide { 0% { transform: translateX(-120%); } 100% { transform: translateX(380%); } }
+
 /* ───────── Screens overlay (lobby / car / map / results) ───────── */
 #screens {
   position: absolute; inset: 0; display: none; flex-direction: column; z-index: 50;
@@ -54,15 +72,18 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); c
 .scr-eyebrow { font-family: var(--mono); font-size: 13px; letter-spacing: .22em; text-transform: uppercase;
   color: var(--ink-dim); display: flex; align-items: center; justify-content: center; gap: 10px; }
 .scr-eyebrow img { width: 18px; height: 18px; opacity: .9; }
-.scr-title {
-  font-family: var(--disp); font-weight: 800; font-size: 52px; line-height: 1; letter-spacing: .14em;
-  margin: 8px 0 2px; text-transform: uppercase;
-  background: linear-gradient(96deg, #fff 10%, var(--red) 55%, var(--red-2) 100%);
-  -webkit-background-clip: text; background-clip: text; color: transparent;
-  filter: drop-shadow(0 6px 26px rgba(239,34,58,.35));
+.scr-title {  /* the GAME NAME — Twilio red */
+  font-family: var(--disp); font-weight: 800; font-size: 54px; line-height: 1; letter-spacing: .1em;
+  margin: 6px 0 4px; text-transform: uppercase;
+  color: var(--red);
+  text-shadow: 0 0 30px rgba(239,34,58,.45), 0 6px 26px rgba(239,34,58,.30);
   animation: title-in .5s cubic-bezier(.2,.7,.2,1) both;
 }
-.scr-sub { color: var(--ink-dim); font-size: 16px; margin-top: 4px; }
+.scr-state {  /* current screen state — Press Start / Choose Your Ride / … */
+  font-family: var(--disp); font-weight: 800; font-size: 20px; letter-spacing: .26em;
+  text-transform: uppercase; color: var(--ink); opacity: .92; margin-top: 2px;
+}
+.scr-sub { color: var(--ink-dim); font-size: 16px; margin-top: 6px; }
 .scr-sub b { color: var(--ink); }
 @keyframes title-in { from { opacity: 0; transform: translateY(-12px) scale(.96); } to { opacity: 1; transform: none; } }
 

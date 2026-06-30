@@ -108,9 +108,25 @@ muteBtn.addEventListener('click', () => {
 // the flow has moved on before it resolves — preventing a stale render from resurrecting a screen.
 let flowEpoch = 0;
 
+// Boot veil: an opaque branded cover over the 3D scene ASSEMBLING (map load → camera settle → first
+// attract frames), so the user never sees the connecting→world→top-down→cars cut sequence. We lift
+// it only after attract has painted a few stable frames (scene + camera settled), with a safety
+// timeout so it can never hang. Once lifted it stays gone.
+const veilEl = document.getElementById('veil')!;
+let veilLifted = false;
+let mapReady = false;       // the backdrop map has been applied (set by loadAssetsInBackground)
+let attractFrames = 0;
+function liftVeil() { if (veilLifted) return; veilLifted = true; veilEl.classList.add('hide'); }
+setTimeout(liftVeil, 7000);   // safety: never trap the user behind the veil
+
 // Attract mode: live autopilot gameplay behind the glass menu. Runs whenever a menu screen is up
 // and no real race is live; the renderer's spectator/field camera frames the AI pack automatically.
-const attract = new AttractMode((snap) => renderer.render(snap));
+// Lift the veil only once the MAP is applied AND attract has painted a few settled frames — so the
+// reveal shows the finished neon track + framed cars, never the mid-assembly cuts.
+const attract = new AttractMode((snap) => {
+  renderer.render(snap);
+  if (!veilLifted && mapReady && ++attractFrames >= 4) liftVeil();
+});
 function startAttract() {
   if (raceLive) return;
   // The demo has no "my car", so it must use the pack/field camera even for a direct player. Restore
@@ -225,6 +241,7 @@ async function loadAssetsInBackground(): Promise<void> {
     if (!bg) { try { bg = Object.keys(await fetchMaps())[0] ?? null; } catch { bg = null; } }
     await applyLevel(bg);
   } catch { /* keep generated track */ }
+  mapReady = true;   // the attract backdrop is now the real track → safe to lift the boot veil
   // Portraits: render one car per frame, pushing each into the (possibly visible) grid as it lands.
   try {
     await renderCarThumbnailsAsync(assets, (i, url) => screens.setCarThumb(i, url));

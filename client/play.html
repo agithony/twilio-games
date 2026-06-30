@@ -9,6 +9,16 @@
 <body>
   <div id="app"></div>
 
+  <!-- Opaque branded boot veil: covers the 3D scene assembling (map load + camera settle + first
+       attract frame) so the user never sees the ugly connecting→world→top-down→cars cut sequence.
+       Fades out once the attract scene has painted a stable frame. -->
+  <div id="veil">
+    <img src="/brand/Twilio_Logo_Bug_White.svg" alt="" />
+    <div class="veil-eyebrow">Twilio</div>
+    <div class="veil-title">Voice Racer</div>
+    <div class="veil-bar"><span></span></div>
+  </div>
+
   <!-- In-game HUD (hidden while a menu screen is up via body.in-menu) -->
   <div id="hud" class="hud-pill">
     <img class="brandbug" src="/brand/Twilio_Logo_Bug_White.svg" alt="" />
