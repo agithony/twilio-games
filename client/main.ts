@@ -272,9 +272,11 @@ async function loadAssetsInBackground(): Promise<void> {
 
   // Portraits: render after the attract reveal has SETTLED (its first ~1.5s of frames are the
   // stuttery warmup — shader compile, shadow-map init), so the heavy per-car renders don't fight the
-  // demo's opening animation. renderCarThumbnailsAsync internally paces to main-thread idle, so the
-  // demo keeps animating smoothly while portraits stream in (setCarThumb live-swaps each tile).
+  // demo's opening animation. WAIT for the car GLBs to finish streaming in first (loadManifest now
+  // resolves before they're all loaded, so the menu/background show fast) — snapshotting a half-
+  // loaded template would render a primitive. renderCarThumbnailsAsync paces to main-thread idle.
   await new Promise(r => setTimeout(r, 1500));
+  try { await assets.carsReady; } catch { /* some cars may stay primitive */ }
   try {
     await renderCarThumbnailsAsync(assets, (i, url) => screens.setCarThumb(i, url));
   } catch { /* placeholders remain */ }

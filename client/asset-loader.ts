@@ -70,18 +70,34 @@ export class AssetLoader {
     this.loader.setDRACOLoader(draco);
   }
 
+  /**
+   * Fetch the manifest + load the car/barrier/boost GLBs. Resolves as soon as the MANIFEST is parsed
+   * (names/count known) — the model GLBs then stream in IN THE BACKGROUND, filling this.cars[i] as
+   * each arrives. This is deliberate: on a slow link the 19 GLBs (one is 7.8MB) took ~40s, and the
+   * old code awaited Promise.all(all cars) before the menu/attract could start → the 3D background
+   * didn't appear for a long time. Now the menu is interactive immediately; cars upgrade from
+   * primitive fallback to real model as they load. `ready` (optional) resolves when ALL have loaded.
+   */
   async loadManifest(): Promise<void> {
     try {
       const res = await fetch('/api/manifest');
       if (!res.ok) return;   // HTTP error => everything stays primitive (fetch doesn't reject on !ok)
-      // Run the body through parseManifest (tolerant; returns EMPTY_MANIFEST on bad input) so a
-      // malformed 200 body can't throw in the .map calls below and yields a valid Manifest shape.
+      // Run the body through parseManifest (tolerant; returns EMPTY_MANIFEST on bad input).
       this.manifest = parseManifest(await res.text());
-      this.cars = await Promise.all(this.manifest.cars.map(r => this.loadRef(r, CAR_TARGET)));
-      this.barrier = this.manifest.barrier ? await this.loadRef(this.manifest.barrier, BARRIER_TARGET) : null;
-      this.boost   = this.manifest.boostPad ? await this.loadRef(this.manifest.boostPad, BOOST_TARGET) : null;
+      // Pre-size the cars array so carTemplate(i) returns null (→ primitive) until GLB i lands.
+      this.cars = new Array(this.manifest.cars.length).fill(null);
+      // Kick off ALL loads without awaiting the whole batch — each fills its slot as it resolves.
+      this.carsReady = Promise.all([
+        ...this.manifest.cars.map((r, i) => this.loadRef(r, CAR_TARGET).then(g => { this.cars[i] = g; })),
+        this.manifest.barrier ? this.loadRef(this.manifest.barrier, BARRIER_TARGET).then(g => { this.barrier = g; }) : Promise.resolve(),
+        this.manifest.boostPad ? this.loadRef(this.manifest.boostPad, BOOST_TARGET).then(g => { this.boost = g; }) : Promise.resolve(),
+      ]).then(() => undefined);
     } catch { return; }   // no manifest => everything stays primitive
   }
+
+  /** Resolves once every car/barrier/boost GLB has finished loading (or immediately if none). The
+   *  thumbnail renderer awaits this so it doesn't snapshot half-loaded templates. */
+  carsReady: Promise<void> = Promise.resolve();
 
   private loadRef(ref: AssetRef, target: number): Promise<THREE.Group | null> {
     return new Promise((resolve) => {

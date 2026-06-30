@@ -1,6 +1,8 @@
 import http from 'http';
 import path from 'node:path';
-import { readFile, writeFile, readdir, rename, mkdir } from 'node:fs/promises';
+import zlib from 'node:zlib';
+import { createReadStream } from 'node:fs';
+import { readFile, writeFile, readdir, rename, mkdir, stat } from 'node:fs/promises';
 import { WebSocketServer, WebSocket } from 'ws';
 import { GameServer } from './game-server';
 import { ConversationRelayAdapter } from './conversation-relay';
@@ -325,11 +327,11 @@ export class HttpServer {
     }
     // ---- static assets (built JS bundles AND GLB models, both under /assets/) ----
     if (req.method === 'GET' && path.startsWith('/assets/')) {
-      return this.serveAsset(path, res);
+      return this.serveAsset(path, res, req);
     }
     // ---- the built client (HTML pages, /brand, /fonts, etc.) ----
     if (req.method === 'GET') {
-      return this.serveClient(path, res);
+      return this.serveClient(path, res, req);
     }
     res.writeHead(404).end('not found');
   }
@@ -368,19 +370,47 @@ export class HttpServer {
    * serves both. Try the built client first (hashed JS), then fall back to the repo models — the
    * filenames never collide (hashed vs. named), so first-match-wins is safe.
    */
-  private async serveAsset(urlPath: string, res: http.ServerResponse): Promise<void> {
+  private async serveAsset(urlPath: string, res: http.ServerResponse, req: http.IncomingMessage): Promise<void> {
     let rel: string;
     try { rel = decodeURIComponent(urlPath.replace(/^\/assets\//, '')); }
     catch { res.writeHead(400).end('bad request'); return; }   // malformed %-escape
     if (rel.includes('..') || rel.startsWith('/')) { res.writeHead(403).end('forbidden'); return; }
     for (const base of [path.join(this.clientDir, 'assets'), 'assets']) {
+      const full = path.join(base, rel);
       try {
-        const data = await readFile(path.join(base, rel));
-        res.writeHead(200, { 'Content-Type': contentType(rel), 'Access-Control-Allow-Origin': '*' });
-        res.end(data); return;
+        await stat(full);   // existence check; throws → try next base / 404
+        // Assets are content-addressed (hashed JS bundles) or stable models → cache HARD so a client
+        // (and the CDN/edge) fetches each big GLB ONCE, not on every menu load. This is the main fix
+        // for the slow deployed menu: the 7.8MB models were re-downloaded uncompressed every time.
+        return this.sendFile(full, res, req, { 'Cache-Control': 'public, max-age=31536000, immutable', 'Access-Control-Allow-Origin': '*' });
       } catch { /* try next base */ }
     }
     res.writeHead(404).end('not found');
+  }
+
+  /**
+   * Stream a file to the response (don't buffer the whole thing — a 7.8MB GLB buffered + sent in one
+   * res.end() blocks the event loop and balloons memory on a 1-CPU container). gzip text-ish files
+   * on the fly when the client accepts it (the 600KB JS bundle → ~150KB); GLBs are already Draco-
+   * compressed, so we stream them as-is. Honors a small static header set (cache-control, CORS).
+   */
+  private async sendFile(full: string, res: http.ServerResponse, req: http.IncomingMessage,
+                         extraHeaders: Record<string, string> = {}): Promise<void> {
+    const type = contentType(full);
+    const headers: Record<string, string> = { 'Content-Type': type, ...extraHeaders };
+    // gzip only compressible text types; never re-compress GLB/PNG/fonts (already compact → wastes CPU).
+    const compressible = /^(text\/|application\/(javascript|json)|image\/svg)/.test(type);
+    const acceptsGzip = /\bgzip\b/.test(String(req.headers['accept-encoding'] ?? ''));
+    if (compressible && acceptsGzip) {
+      headers['Content-Encoding'] = 'gzip';
+      headers['Vary'] = 'Accept-Encoding';
+      res.writeHead(200, headers);
+      createReadStream(full).pipe(zlib.createGzip()).pipe(res);
+    } else {
+      try { headers['Content-Length'] = String((await stat(full)).size); } catch { /* skip length */ }
+      res.writeHead(200, headers);
+      createReadStream(full).pipe(res);
+    }
   }
 
   /**
@@ -389,7 +419,7 @@ export class HttpServer {
    * (/brand, /fonts, etc.). Path-traversal guarded to clientDir. Unknown paths 404 (this is a game
    * server, not an SPA — no catch-all index fallback).
    */
-  private async serveClient(urlPath: string, res: http.ServerResponse): Promise<void> {
+  private async serveClient(urlPath: string, res: http.ServerResponse, req: http.IncomingMessage): Promise<void> {
     let rel: string;
     try { rel = decodeURIComponent(urlPath); } catch { res.writeHead(400).end('bad request'); return; }
     if (rel.includes('..')) { res.writeHead(403).end('forbidden'); return; }
@@ -399,11 +429,13 @@ export class HttpServer {
     else if (rel === '/editor' || rel === '/editor/') file = 'editor/index.html';
     else if (rel === '/garage' || rel === '/garage/') file = 'garage/index.html';
     else file = rel.replace(/^\/+/, '');
-    try {
-      const data = await readFile(path.join(this.clientDir, file));
-      res.writeHead(200, { 'Content-Type': contentType(file) });
-      res.end(data);
-    } catch { res.writeHead(404).end('not found'); }
+    const full = path.join(this.clientDir, file);
+    try { await stat(full); } catch { res.writeHead(404).end('not found'); return; }
+    // HTML must NOT cache (so a redeploy is seen immediately); hashed /assets/* JS is handled by
+    // serveAsset's immutable cache. Other static files (brand/fonts) get a short cache.
+    const isHtml = file.endsWith('.html');
+    const cache = isHtml ? 'no-cache' : 'public, max-age=3600';
+    await this.sendFile(full, res, req, { 'Cache-Control': cache });
   }
 
   start(): Promise<number> {
