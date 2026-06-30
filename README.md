@@ -143,6 +143,18 @@ npm test
 The pure layers (`shared/`, asset + zone math, commentary, nav) are fully unit-tested offline;
 the server has WebSocket integration tests; GL/browser code is verified by build + headless smoke.
 
+## Deployment
+
+Ships to **Azure Container Apps** as a single-process container (the Node server serves the
+Vite-built client + API + WebSockets), gated behind CI. Push to `main` → CI → `az acr build` →
+rollout → `/healthz` smoke.
+
+- **How the pipeline works:** [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)
+- **One-time cloud + secrets setup + Twilio webhook config:** [`docs/INFRA_SETUP.md`](docs/INFRA_SETUP.md)
+
+Runs at a single replica by design — room/race state is in-memory in one process, so all players +
+the shared display must hit the same instance.
+
 ## Roadmap
 
 - [x] Core game engine (server-authoritative, keyboard-playable)
@@ -151,8 +163,9 @@ the server has WebSocket integration tests; GL/browser code is verified by build
 - [x] Themed atmosphere zones (neon → city → desert → night)
 - [x] In-game AI announcer (Web Speech) + commentary ticker
 - [x] Branded home / game-selection page
-- [ ] Persistent leaderboard + player history
-- [ ] Twilio Agent Connect SMS concierge (registration with memory)
+- [x] Persistent leaderboard + player history
+- [x] Twilio SMS concierge (text to join, pick car + map)
+- [x] Azure Container Apps deployment (Docker, CI-gated)
 - [ ] More games (2D voice fighter, monster battler)
 
 Design specs and implementation plans for each piece live in

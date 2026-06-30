@@ -1,0 +1,50 @@
+# Azure Container App spec for Voice Racer. Rendered by deploy.yml via envsubst (only ${APP_NAME},
+# ${CONTAINER_IMAGE}, ${BASE_URL} are substituted). One revision carries image + env + mount.
+#
+# SINGLE REPLICA IS REQUIRED, not a tuning choice: room/lobby/race state is in-memory in ONE
+# process and the game/voice WebSockets are long-lived to it. Two replicas would let a player and
+# the shared display land on different instances and never see the same race. minReplicas:1 also
+# avoids scale-to-zero cold starts dropping the display's socket.
+properties:
+  configuration:
+    ingress:
+      external: true
+      targetPort: 8080
+      transport: auto            # supports the WebSocket upgrade for /game and /voice
+    secrets:
+      - name: twilio-token
+      - name: editor-token
+  template:
+    containers:
+      - name: ${APP_NAME}
+        image: ${CONTAINER_IMAGE}
+        resources:
+          cpu: 1.0
+          memory: 2Gi
+        env:
+          - name: PORT
+            value: "8080"
+          - name: NODE_ENV
+            value: production
+          # Public base URL for Twilio webhooks (the app derives the wss:// game/voice URLs from it).
+          - name: PUBLIC_BASE_URL
+            value: ${BASE_URL}
+          # Persistent data dir (Azure Files mount) — start.sh symlinks /app/data here.
+          - name: DATA_MOUNT
+            value: /app/appdata
+          # Twilio webhook signature validation is ON whenever this is set (fail-closed in index.ts).
+          - name: TWILIO_AUTH_TOKEN
+            secretRef: twilio-token
+          # Gate the editor's /api writes on a public deploy. Empty = writes open (not recommended public).
+          - name: EDITOR_TOKEN
+            secretRef: editor-token
+        volumeMounts:
+          - volumeName: appdata
+            mountPath: /app/appdata
+    scale:
+      minReplicas: 1
+      maxReplicas: 1
+    volumes:
+      - name: appdata
+        storageName: appdata
+        storageType: AzureFile

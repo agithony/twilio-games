@@ -1,0 +1,239 @@
+name: Deploy to Azure Container Apps
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: # manual redeploy / rollback trigger from the GitHub UI
+
+# Never cancel a prod deploy mid-flight — a half-applied `az containerapp update` is worse than
+# queuing the next run.
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+env:
+  RESOURCE_GROUP: rg-twilio-games
+  APP_NAME: twilio-games
+  LOCATION: centralus
+  ACR_NAME: twiliogames
+  ENV_NAME: cae-twilio-games
+  STORAGE_ACCOUNT: twiliogamesdata
+  FILE_SHARE: twiliogamesdata
+  IMAGE_TAG: twilio-games:${{ github.sha }}
+
+jobs:
+  ci:
+    # The gate: the whole deploy hinges on Validate (typecheck + tests + build) going green.
+    # No `secrets: inherit` — ci.yml only needs the auto-provided GITHUB_TOKEN.
+    uses: ./.github/workflows/ci.yml
+
+  build-and-deploy:
+    needs: ci
+    if: needs.ci.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Login to Azure
+        uses: azure/login@v3
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      # --- Infrastructure (idempotent — safe to run every deploy) ---
+
+      - name: Ensure resource group exists
+        run: |
+          az group create \
+            --name "$RESOURCE_GROUP" \
+            --location "$LOCATION" \
+            --output none
+
+      - name: Ensure Container Registry exists
+        run: |
+          az acr show --name "$ACR_NAME" --resource-group "$RESOURCE_GROUP" 2>/dev/null || \
+          az acr create \
+            --name "$ACR_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --sku Basic \
+            --admin-enabled true \
+            --output none
+
+      - name: Ensure Storage Account exists
+        run: |
+          az storage account show --name "$STORAGE_ACCOUNT" --resource-group "$RESOURCE_GROUP" 2>/dev/null || \
+          az storage account create \
+            --name "$STORAGE_ACCOUNT" \
+            --resource-group "$RESOURCE_GROUP" \
+            --location "$LOCATION" \
+            --sku Standard_LRS \
+            --output none
+
+      - name: Ensure File Share exists (persistent leaderboard)
+        run: |
+          STORAGE_KEY=$(az storage account keys list \
+            --resource-group "$RESOURCE_GROUP" \
+            --account-name "$STORAGE_ACCOUNT" \
+            --query '[0].value' -o tsv)
+          az storage share create \
+            --name "$FILE_SHARE" \
+            --account-name "$STORAGE_ACCOUNT" \
+            --account-key "$STORAGE_KEY" \
+            --quota 5 \
+            --output none 2>/dev/null || true
+
+      - name: Ensure Container Apps Environment exists
+        run: |
+          az containerapp env show --name "$ENV_NAME" --resource-group "$RESOURCE_GROUP" 2>/dev/null || \
+          az containerapp env create \
+            --name "$ENV_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --location "$LOCATION" \
+            --output none
+
+      - name: Configure Azure Files storage mount
+        run: |
+          STORAGE_KEY=$(az storage account keys list \
+            --resource-group "$RESOURCE_GROUP" \
+            --account-name "$STORAGE_ACCOUNT" \
+            --query '[0].value' -o tsv)
+          az containerapp env storage set \
+            --name "$ENV_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --storage-name appdata \
+            --azure-file-account-name "$STORAGE_ACCOUNT" \
+            --azure-file-account-key "$STORAGE_KEY" \
+            --azure-file-share-name "$FILE_SHARE" \
+            --access-mode ReadWrite \
+            --output none
+
+      # --- Build (in the cloud, on ACR agents — no local Docker needed) ---
+
+      - name: Build and push image to ACR
+        run: |
+          az acr build \
+            --registry "$ACR_NAME" \
+            --image "$IMAGE_TAG" \
+            --image twilio-games:latest \
+            .
+
+      # --- Deploy ---
+
+      - name: Get ACR credentials
+        id: acr-creds
+        run: |
+          echo "server=${ACR_NAME}.azurecr.io" >> "$GITHUB_OUTPUT"
+          echo "username=$(az acr credential show --name "$ACR_NAME" --query username -o tsv)" >> "$GITHUB_OUTPUT"
+          echo "password=$(az acr credential show --name "$ACR_NAME" --query 'passwords[0].value' -o tsv)" >> "$GITHUB_OUTPUT"
+
+      - name: Set app secrets
+        # secret set does NOT create a new revision (preserves the registry secret); the deploy step
+        # below rolls the revision once with image + env + mount. Each secret is referenced by
+        # containerapp.yaml via secretRef. An empty GitHub secret renders as an empty Container App
+        # secret (the app then treats an empty TWILIO_AUTH_TOKEN as "validation off", per
+        # server/index.ts). Secrets are passed via env (not inline ${{ }}) so a value with shell
+        # metacharacters can't break the command or leak through arg parsing.
+        env:
+          TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
+          EDITOR_TOKEN: ${{ secrets.EDITOR_TOKEN }}
+        run: |
+          az containerapp secret set \
+            --name "$APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --secrets \
+              "twilio-token=$TWILIO_AUTH_TOKEN" \
+              "editor-token=$EDITOR_TOKEN" \
+            --output none 2>/dev/null || echo "App does not exist yet — secrets set on create below."
+
+      - name: Deploy Container App
+        run: |
+          # Resolve the public FQDN (exists for an already-created app; a new app gets it on create,
+          # then we patch BASE_URL in a second update so Twilio webhooks point at the real host).
+          FQDN=$(az containerapp show \
+            --name "$APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --query properties.configuration.ingress.fqdn -o tsv 2>/dev/null || true)
+
+          export APP_NAME="$APP_NAME"
+          export CONTAINER_IMAGE="${{ steps.acr-creds.outputs.server }}/${IMAGE_TAG}"
+          export BASE_URL="https://${FQDN}"
+          # Restrict substitution to our known vars so no other ${...} in the template is touched.
+          envsubst '${APP_NAME} ${CONTAINER_IMAGE} ${BASE_URL}' < .github/containerapp.yaml > /tmp/containerapp.yaml
+
+          if az containerapp show --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" 2>/dev/null; then
+            echo "Updating existing container app..."
+            az containerapp registry set \
+              --name "$APP_NAME" \
+              --resource-group "$RESOURCE_GROUP" \
+              --server "${{ steps.acr-creds.outputs.server }}" \
+              --username "${{ steps.acr-creds.outputs.username }}" \
+              --password "${{ steps.acr-creds.outputs.password }}" \
+              --output none
+            az containerapp update \
+              --name "$APP_NAME" \
+              --resource-group "$RESOURCE_GROUP" \
+              --yaml /tmp/containerapp.yaml \
+              --output none
+          else
+            echo "Creating new container app..."
+            az containerapp create \
+              --name "$APP_NAME" \
+              --resource-group "$RESOURCE_GROUP" \
+              --environment "$ENV_NAME" \
+              --yaml /tmp/containerapp.yaml \
+              --registry-server "${{ steps.acr-creds.outputs.server }}" \
+              --registry-username "${{ steps.acr-creds.outputs.username }}" \
+              --registry-password "${{ steps.acr-creds.outputs.password }}" \
+              --output none
+
+            # First create had BASE_URL=https:// (no FQDN yet). Re-render with the now-known FQDN and
+            # patch so PUBLIC_BASE_URL (Twilio webhook base) is correct.
+            NEW_FQDN=$(az containerapp show \
+              --name "$APP_NAME" \
+              --resource-group "$RESOURCE_GROUP" \
+              --query properties.configuration.ingress.fqdn -o tsv)
+            export BASE_URL="https://${NEW_FQDN}"
+            envsubst '${APP_NAME} ${CONTAINER_IMAGE} ${BASE_URL}' < .github/containerapp.yaml > /tmp/containerapp.yaml
+            az containerapp update \
+              --name "$APP_NAME" \
+              --resource-group "$RESOURCE_GROUP" \
+              --yaml /tmp/containerapp.yaml \
+              --output none
+          fi
+
+      - name: Resolve app FQDN
+        id: fqdn
+        run: |
+          FQDN=$(az containerapp show \
+            --name "$APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --query properties.configuration.ingress.fqdn -o tsv)
+          if [ -z "$FQDN" ]; then echo "Could not resolve container app FQDN."; exit 1; fi
+          echo "fqdn=$FQDN" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test /healthz
+        env:
+          FQDN: ${{ steps.fqdn.outputs.fqdn }}
+        run: |
+          for i in $(seq 1 30); do
+            CODE=$(curl -s -o /tmp/health.json -w "%{http_code}" "https://$FQDN/healthz" || true)
+            if [ "$CODE" = "200" ]; then
+              echo "Healthz OK after attempt $i"; cat /tmp/health.json; echo; break
+            fi
+            echo "Attempt $i: status=$CODE — retrying in 10s"; sleep 10
+            if [ "$i" = "30" ]; then echo "Healthz never returned 200 after 5 minutes."; exit 1; fi
+          done
+
+      - name: Print app URL
+        env:
+          FQDN: ${{ steps.fqdn.outputs.fqdn }}
+        run: |
+          echo "=========================================="
+          echo "  Deployment complete!"
+          echo "  App:            https://${FQDN}"
+          echo "  Racer display:  https://${FQDN}/play.html?display=1&room=4821"
+          echo "  Editor:         https://${FQDN}/editor"
+          echo "  Garage:         https://${FQDN}/garage"
+          echo "  Voice webhook:  https://${FQDN}/voice/incoming"
+          echo "  SMS webhook:    https://${FQDN}/sms"
+          echo "=========================================="
