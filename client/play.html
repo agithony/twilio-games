@@ -3,35 +3,31 @@
 <head>
   <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Voice Racer</title>
-  <link rel="icon" href="data:," />
-  <style>
-    html,body{margin:0;height:100%;background:#0b1020;color:#e8ecf6;
-      font-family:ui-sans-serif,system-ui,sans-serif;overflow:hidden}
-    #app{position:fixed;inset:0}
-    #hud{position:absolute;top:14px;left:14px;background:rgba(16,22,40,.86);
-      border:1px solid rgba(255,255,255,.1);border-radius:12px;padding:12px 16px}
-    #hint{position:absolute;top:14px;right:14px;background:rgba(16,22,40,.86);
-      border:1px solid rgba(255,255,255,.1);border-radius:12px;padding:12px 16px;font-size:12px}
-    .kbd{background:#0e1530;border:1px solid rgba(255,255,255,.1);border-radius:5px;padding:1px 6px}
-    #big{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
-      font-size:120px;font-weight:900;pointer-events:none}
-  </style>
+  <link rel="icon" href="/brand/Twilio_Logo_Bug_White.svg" />
+  <link rel="stylesheet" href="./racer.css" />
 </head>
 <body>
   <div id="app"></div>
-  <div id="hud">Voice Racer — keyboard test</div>
-  <div id="hint">You = cyan car. <span class="kbd">←</span><span class="kbd">→</span> lanes ·
-    <span class="kbd">↑</span> boost · <span class="kbd">↓</span> brake · <span class="kbd">Space</span> power</div>
-  <div id="big"></div>
-  <div id="lobby" style="position:absolute;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;background:rgba(4,8,20,.82);font-family:'Twilio Sans Text',system-ui,sans-serif;color:#fff">
-    <div style="font-family:ui-monospace,monospace;color:#9aa0b4;letter-spacing:.08em;text-transform:uppercase;font-size:13px">Room code</div>
-    <div id="lobbyCode" style="font-size:88px;font-weight:800;letter-spacing:.06em;color:#ef223a;line-height:1">----</div>
-    <div id="lobbyCount" style="margin:6px 0 18px;color:#cdd3e0;font-size:16px">Call in to join</div>
-    <div id="lobbyPlayers" style="display:flex;flex-wrap:wrap;gap:12px;justify-content:center;max-width:760px"></div>
-    <div style="margin-top:26px;color:#9aa0b4;font-size:14px">Press <b style="color:#fff">ENTER</b> to start the race</div>
+
+  <!-- In-game HUD (hidden while a menu screen is up via body.in-menu) -->
+  <div id="hud" class="hud-pill">
+    <img class="brandbug" src="/brand/Twilio_Logo_Bug_White.svg" alt="" />
+    <span class="htitle">Voice Racer</span>
   </div>
-  <div id="ticker" style="position:absolute;left:14px;bottom:14px;width:320px;display:flex;flex-direction:column-reverse;gap:4px;font-family:system-ui,sans-serif;pointer-events:none"></div>
-  <button id="mute" style="position:absolute;right:14px;bottom:14px;background:rgba(16,22,40,.9);color:#e8ecf6;border:1px solid rgba(255,255,255,.15);border-radius:8px;padding:6px 10px;cursor:pointer">Host: off</button>
+  <div id="hint" class="hud-pill">
+    <span class="me">You</span>
+    <span class="kbd">←</span><span class="kbd">→</span> lanes ·
+    <span class="kbd">↑</span> boost · <span class="kbd">↓</span> brake · <span class="kbd">Space</span> power
+  </div>
+
+  <div id="big"></div>
+
+  <!-- Legacy lobby overlay retired; the Screens overlay (built in main.ts) handles all menu states. -->
+  <div id="lobby" style="display:none"></div>
+
+  <div id="ticker"></div>
+  <button id="mute">Host audio: off</button>
+
   <script type="module" src="./main.ts"></script>
 </body>
 </html>

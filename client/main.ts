@@ -4,7 +4,8 @@ import { Renderer } from './renderer';
 import { InterpolationBuffer } from './interpolation';
 import { AssetLoader } from './asset-loader';
 import { Screens } from './screens';
-import { renderCarThumbnails } from './thumbnails';
+import { renderCarThumbnailsAsync } from './thumbnails';
+import { AttractMode } from './attract';
 import { Announcer, browserSpeechSink } from './announcer';
 import { fetchMaps, loadMapWorld, applyTrackTransform, CANONICAL_TRACK } from './map-world';
 import { CurvedTrack } from './track-path';
@@ -107,25 +108,45 @@ muteBtn.addEventListener('click', () => {
 // the flow has moved on before it resolves — preventing a stale render from resurrecting a screen.
 let flowEpoch = 0;
 
+// Attract mode: live autopilot gameplay behind the glass menu. Runs whenever a menu screen is up
+// and no real race is live; the renderer's spectator/field camera frames the AI pack automatically.
+const attract = new AttractMode((snap) => renderer.render(snap));
+function startAttract() {
+  if (raceLive) return;
+  // The demo has no "my car", so it must use the pack/field camera even for a direct player. Restore
+  // the player's own chase view when the real race takes over (handled in onSnapshot path below).
+  renderer.setSpectator(true);
+  attract.start();
+}
+function stopAttract() {
+  attract.stop();
+  renderer.setSpectator(isDisplay);   // back to the player's chase cam (or stay spectator on a display)
+}
+
 conn.onItems((items, map) => {
   // The server tells us which level THIS race uses (chosen in the lobby). Load it before building
   // items so the map world, curve path, per-car/per-item scales, camera, lighting all apply. The
   // host display has no ?map= URL param, so without this the level + scales were never applied.
   void applyLevel(map ?? urlMap).then(() => renderer.buildItems(items));
 });
-conn.onSnapshot((s) => { raceLive = true; flowPhase = 'other'; flowEpoch++; screens.hide(); big.textContent = ''; started = true; buffer.push(s, performance.now()); });
+conn.onSnapshot((s) => {
+  raceLive = true; flowPhase = 'other'; flowEpoch++; stopAttract();   // real race takes over the canvas
+  screens.hide(); big.textContent = ''; started = true; buffer.push(s, performance.now());
+});
 conn.onLobby((m) => {
   if (raceLive) return;                       // race already running; ignore stale lobby
   flowPhase = 'lobby'; flowEpoch++; big.textContent = '';
-  screens.renderLobby(m.roomCode, m.players);
+  screens.renderLobby(m.roomCode, m.players); startAttract();
 });
 conn.onSelectState((m) => {
   raceLive = false; flowEpoch++; big.textContent = '';
   if (m.phase === 'car_select') { flowPhase = 'car_select'; screens.renderCarSelect(m.players); }
   else if (m.phase === 'map_select') { flowPhase = 'map_select'; flowMaps = m.maps; screens.renderMapSelect(m.maps, m.selectedMap, m.players); }
+  startAttract();
 });
 conn.onResults((m) => {
   raceLive = false; flowPhase = 'other'; const epoch = ++flowEpoch; big.textContent = '';
+  startAttract();
   // Show this race immediately, then fold in the all-time board for this map once it fetches —
   // but only if the flow hasn't advanced past this results screen by the time the fetch resolves.
   screens.renderResults(m.results, (i) => assets.carName(i));
@@ -190,64 +211,65 @@ async function applyLevel(mapName: string | null | undefined): Promise<void> {
   renderer.setStartFinishLines(GANTRY_FILES, gantryOffsets);
 }
 
-async function boot() {
-  // Load GLB templates before the first render; primitives if the manifest is
-  // missing or any model fails (loadManifest swallows errors), so the game
-  // always starts.
-  try { await assets.loadManifest(); } catch { /* primitives */ }
+/** Load GLB templates + per-level config + car-grid thumbnails OFF the critical path, so the menu
+ *  is interactive immediately. Names appear at once; portraits stream in one per frame. */
+async function loadAssetsInBackground(): Promise<void> {
+  try { await assets.loadManifest(); } catch { /* primitives — game still runs */ }
+  // Friendly names are cheap → publish them now so the car grid has labels right away.
+  try { screens.setCarCatalog(assets.carNames(), []); } catch { /* no manifest */ }
+  // Load a map for the backdrop: an explicit ?map= wins; otherwise grab the first authored map so
+  // the attract-mode demo races a real neon track (not the bare generated straight). The race itself
+  // re-applies the lobby's chosen map on start (via onItems), so this is just the menu backdrop.
+  try {
+    let bg = urlMap;
+    if (!bg) { try { bg = Object.keys(await fetchMaps())[0] ?? null; } catch { bg = null; } }
+    await applyLevel(bg);
+  } catch { /* keep generated track */ }
+  // Portraits: render one car per frame, pushing each into the (possibly visible) grid as it lands.
+  try {
+    await renderCarThumbnailsAsync(assets, (i, url) => screens.setCarThumb(i, url));
+  } catch { /* placeholders remain */ }
+}
 
-  // Build the car-select grid catalog: friendly names + rendered portrait thumbnails (best-effort).
-  const carNames = assets.carNames();
-  let carThumbs: string[] = [];
-  try { carThumbs = renderCarThumbnails(assets); } catch { carThumbs = []; }
-  screens.setCarCatalog(carNames, carThumbs);
-
-  // A ?map= URL override loads that level immediately; otherwise the level loads on race start
-  // (the server sends the lobby's chosen map on the `items` message → onItems → applyLevel).
-  await applyLevel(urlMap);
-
+function boot() {
   if (isGarage) {
     // The car/model viewer moved to its own page (/garage) — redirect old ?garage=1 links there.
     location.href = '/garage';
     return;
   }
+  // Hide the in-game HUD until a real race starts — the menu (or the connecting beat) is the focus.
+  document.body.classList.add('in-menu');
 
-  if (isDisplay) {
-    // Shared screen: frames the whole pack (spectator camera) AND drives its own keyboard car.
-    // The host navigates the SSB-style flow with ← (back) and → / Enter (advance / start / play
-    // again). During selection those keys move the flow; during a race the keyboard drives the car.
-    conn.onJoined((playerId) => { renderer.setMyId(playerId); });
-    input.onIntent((i) => { if (!screens.isVisible) conn.sendIntent(i); });
-    renderer.setSpectator(true);
-    screens.bindHostKeys();   // ← back · → / Enter advance (only while a screen is visible)
-    addEventListener('keydown', (e) => {
-      if (screens.isVisible) return;             // flow keys handled by screens.bindHostKeys
-      if (e.key === 'r') conn.restart();
-      else if (e.key === 'Enter') { enableHost(); conn.ready(); }
-    });
-    bindFlowDigits();   // 1-9 select a car/map by number on the keyboard (stands in for SMS)
-    conn.join(roomCode, 'Screen');
-  } else {
-    // Dev keyboard-player path: join as a player and drive with the keyboard. The same flow keys
-    // work so a solo tester can pick a car/map by number and advance with Enter.
-    conn.onJoined((playerId) => { renderer.setMyId(playerId); });
-    input.onIntent((i) => { if (!screens.isVisible) conn.sendIntent(i); });
-    screens.bindHostKeys();
-    bindFlowDigits();
-    addEventListener('keydown', (e) => {
-      if (screens.isVisible) return;
-      if (e.key === 'r') conn.restart();
-      else if (e.key === 'Enter') { enableHost(); conn.ready(); }
-    });
-    conn.join(roomCode, name);
-  }
+  // CONNECT FIRST. The menu must appear the instant the server replies to join — so we wire the
+  // listeners + join NOW, BEFORE the heavy asset work below. Previously join() ran only AFTER
+  // awaiting loadManifest() (19 GLBs + Draco) and a synchronous 19-car thumbnail render, which is
+  // why the screen sat blank (with just the static HUD) for a second or more.
+  conn.onJoined((playerId) => { renderer.setMyId(playerId); });
+  input.onIntent((i) => { if (!screens.isVisible) conn.sendIntent(i); });
+  if (isDisplay) renderer.setSpectator(true);
+  screens.bindHostKeys();   // ← back · → / Enter advance (only while a screen is visible)
+  bindFlowDigits();          // 1-9 select a car/map by number (stands in for SMS)
+  addEventListener('keydown', (e) => {
+    if (screens.isVisible) return;             // flow keys handled by screens.bindHostKeys
+    if (e.key === 'r') conn.restart();
+    else if (e.key === 'Enter') { enableHost(); conn.ready(); }
+  });
+  // The display joins as 'Screen' (a player so Enter works with zero callers); a direct player uses
+  // their own name. Either way this fires immediately → the lobby renders as soon as the roster
+  // round-trips, independent of asset loading.
+  conn.join(roomCode, isDisplay ? 'Screen' : name);
+
+  // Heavy asset work happens in the BACKGROUND (off the critical path). The lobby is already up;
+  // the race only needs these once someone starts, and the car grid fills in progressively.
+  void loadAssetsInBackground();
 
   function frame() {
     requestAnimationFrame(frame);
+    // Attract mode owns the canvas while it runs (its own rAF renders the demo) — don't double-render.
+    if (attract.isRunning) { big.textContent = ''; return; }
     const snap = buffer.sample(performance.now());
     if (snap) renderer.render(snap);
-    // The Screens overlay (lobby/car/map/results) is the front-end now; only show the bare
-    // "waiting" text when NO screen is up (e.g. before the first server message arrives).
+    // Before the first server message (and before attract starts), show a branded waiting beat.
     else if (!started && !screens.isVisible) big.textContent = 'Connecting…';
     else if (screens.isVisible) big.textContent = '';
   }
