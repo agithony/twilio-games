@@ -43,10 +43,12 @@ export class AttractMode {
   nextSnapshot(t: number): WorldSnapshot {
     const cars: CarState[] = this.cars.map((c) => {
       const z = ((c.z + c.base * t) % RACE_LEN + RACE_LEN) % RACE_LEN;
-      // weave across lanes smoothly; map the sine to a lane index, then to lane-center x
+      // CONTINUOUS lane weave: glide x smoothly across the full lane span via the sine — never snap
+      // to discrete lane centers (that teleported the cars). laneF ∈ [0, LANES-1] as a float; x is
+      // its lane-center interpolation, so the car drifts fluidly between lanes.
       const laneF = (Math.sin(t * c.laneRate + c.lanePhase) * 0.5 + 0.5) * (LANES - 1);
-      const lane = Math.round(laneF);
-      const x = laneX(Math.max(0, Math.min(LANES - 1, lane)));
+      const x = laneX(0) + (laneX(LANES - 1) - laneX(0)) * (laneF / (LANES - 1));
+      const lane = Math.round(laneF);   // integer lane kept for any consumer; rendering uses x
       return {
         id: c.id, name: '', color: c.color, carIndex: c.carIndex,
         lane, targetLane: lane, x, z,

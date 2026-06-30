@@ -90,7 +90,7 @@ export class Screens {
         <div class="lobby-code">${esc(roomCode)}</div>
         <div class="lobby-join">Text <span class="num">${esc(roomCode)}</span> to join the race</div>
         ${this.chips(players)}
-        <div class="scr-foot">Host: <span class="key">ENTER</span> to choose cars</div>
+        <div class="scr-foot"><span class="key">ENTER</span> to choose cars</div>
       </div>`;
   }
 

@@ -114,27 +114,36 @@ let flowEpoch = 0;
 // timeout so it can never hang. Once lifted it stays gone.
 const veilEl = document.getElementById('veil')!;
 let veilLifted = false;
-let mapReady = false;       // the backdrop map has been applied (set by loadAssetsInBackground)
+let assetsReady = false;    // manifest (car GLBs) + backdrop map applied (set by loadAssetsInBackground)
+let wantAttract = false;    // a menu screen wants the demo running (gated until assetsReady)
 let attractFrames = 0;
 function liftVeil() { if (veilLifted) return; veilLifted = true; veilEl.classList.add('hide'); }
-setTimeout(liftVeil, 7000);   // safety: never trap the user behind the veil
+setTimeout(liftVeil, 8000);   // safety: never trap the user behind the veil
 
 // Attract mode: live autopilot gameplay behind the glass menu. Runs whenever a menu screen is up
 // and no real race is live; the renderer's spectator/field camera frames the AI pack automatically.
-// Lift the veil only once the MAP is applied AND attract has painted a few settled frames — so the
-// reveal shows the finished neon track + framed cars, never the mid-assembly cuts.
+// Lift the veil only after attract has painted a few settled frames — by which point models + map
+// are loaded (attract doesn't START until assetsReady), so the reveal shows REAL cars on the neon
+// track, never primitive boxes mid-assembly.
 const attract = new AttractMode((snap) => {
   renderer.render(snap);
-  if (!veilLifted && mapReady && ++attractFrames >= 4) liftVeil();
+  if (!veilLifted && ++attractFrames >= 4) liftVeil();
 });
 function startAttract() {
   if (raceLive) return;
-  // The demo has no "my car", so it must use the pack/field camera even for a direct player. Restore
-  // the player's own chase view when the real race takes over (handled in onSnapshot path below).
-  renderer.setSpectator(true);
+  wantAttract = true;
+  // Don't show the demo until car MODELS + map are loaded — otherwise ensureCar caches primitive
+  // BOXES for the demo ids and they never upgrade. The boot veil covers this wait. Once assets are
+  // ready, maybeStartAttract() kicks it off.
+  if (assetsReady) reallyStartAttract();
+}
+function reallyStartAttract() {
+  if (raceLive || attract.isRunning) return;
+  renderer.setSpectator(true);   // the demo has no "my car" → use the pack/field camera
   attract.start();
 }
 function stopAttract() {
+  wantAttract = false;
   attract.stop();
   renderer.setSpectator(isDisplay);   // back to the player's chase cam (or stay spectator on a display)
 }
@@ -241,8 +250,15 @@ async function loadAssetsInBackground(): Promise<void> {
     if (!bg) { try { bg = Object.keys(await fetchMaps())[0] ?? null; } catch { bg = null; } }
     await applyLevel(bg);
   } catch { /* keep generated track */ }
-  mapReady = true;   // the attract backdrop is now the real track → safe to lift the boot veil
-  // Portraits: render one car per frame, pushing each into the (possibly visible) grid as it lands.
+  // Models + map are loaded → NOW the attract demo can show real cars on the real track. If a menu
+  // already asked for it (wantAttract), kick it off; otherwise startAttract() will once a screen needs it.
+  assetsReady = true;
+  if (wantAttract) reallyStartAttract();
+
+  // Portraits LAST + after a beat: they're only needed once someone reaches car-select (seconds
+  // away), and rendering 19 offscreen frames competes with the attract loop on the GPU → stutter.
+  // Let the attract scene settle first, then stream them in.
+  await new Promise(r => setTimeout(r, 1200));
   try {
     await renderCarThumbnailsAsync(assets, (i, url) => screens.setCarThumb(i, url));
   } catch { /* placeholders remain */ }
