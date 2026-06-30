@@ -1,0 +1,29 @@
+# Reinstalled / rebuilt inside the image — never copy host copies in.
+node_modules
+client/dist
+
+# Huge local-only asset originals + quarantined models (gitignored; not needed in the image).
+assets/_raw
+assets/_quarantine_noncommercial
+assets/maps/_raw
+
+# Runtime state (lives on the Azure Files mount, not the image).
+data
+tmp
+
+# VCS / CI / editor / OS cruft.
+.git
+.github
+.gitignore
+.claude
+.superpowers
+
+# Test + tooling scratch (the prod image runs neither).
+tools/.smoke
+*.log
+npm-debug.log
+.DS_Store
+
+# Env / secrets must never bake into an image.
+.env
+.env.*
