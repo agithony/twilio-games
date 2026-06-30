@@ -263,6 +263,16 @@ export class Renderer {
       if (idx !== undefined) wrapper.scale.setScalar(fn(idx));
     }
   }
+
+  /** Remove ALL car meshes + reset the id→index maps. Called when switching from the attract-mode
+   *  demo to a real race so the demo's autopilot cars don't linger frozen on the track, and on the
+   *  reverse so a stale race car doesn't haunt the menu backdrop. */
+  clearCars(): void {
+    for (const [, wrapper] of this.carMeshes) this.trackContent.remove(wrapper);
+    this.carMeshes.clear();
+    this.carIndex.clear();
+    this.nextCarIndex = 0;
+  }
   /** Set the per-level obstacle/boost size multiplier (applied in buildItems on top of auto-fit). */
   setItemScale(fn: (kind: 'barrier' | 'boost') => number): void { this.itemScale = fn; }
   /** Set the per-level camera (chase tuning or a fixed cinematic camera); null reverts to default. */

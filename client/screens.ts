@@ -30,6 +30,7 @@ export class Screens {
   private mapPreviews: Record<string, string> = {};
   private visible = false;
   private phase: 'lobby' | 'car_select' | 'map_select' | 'results' | null = null;
+  private lastMapArgs: { maps: string[]; selectedMap: string | null; players: LobbyPlayer[] } | null = null;
   /** Signature of the last rendered state. The server re-broadcasts the roster ~2x/s; rebuilding
    *  innerHTML each time replays the CSS entrance animations → the "flicker" the user saw. We skip
    *  the rebuild when nothing meaningful changed. */
@@ -65,7 +66,15 @@ export class Screens {
     if (img instanceof HTMLImageElement) { img.src = url; img.style.opacity = '1'; }
     else if (this.visible && this.phase === 'car_select') this.rerenderCarSelect(true);
   }
-  setMapPreviews(previews: Record<string, string>): void { this.mapPreviews = previews; }
+  setMapPreviews(previews: Record<string, string>): void {
+    this.mapPreviews = previews;
+    // If the map-select screen is already showing, re-render so the previews replace the placeholders.
+    if (this.visible && this.phase === 'map_select' && this.lastMapArgs) {
+      const a = this.lastMapArgs;
+      this.lastKey = '';   // force past the dedup
+      this.renderMapSelect(a.maps, a.selectedMap, a.players);
+    }
+  }
 
   show(): void {
     this.visible = true; this.root.style.display = 'flex';
@@ -112,10 +121,14 @@ export class Screens {
     }
     const allReady = players.length > 0 && players.every(p => p.ready);
     const tiles = this.carNames.map((nm, i) => this.carTile(i, nm, claims.get(i) ?? [])).join('');
+    // Pick a column count that keeps the grid roughly landscape (≈16:9) so all cars fit on one
+    // screen without scrolling — e.g. 19 cars → 7 cols × 3 rows. CSS rows are 1fr (fill the height).
+    const n = this.carNames.length;
+    const cols = Math.max(4, Math.min(8, Math.ceil(Math.sqrt(n * 1.9))));
     this.root.innerHTML = `
       ${this.head('Choose Your Ride', allReady ? 'All locked in — ready to roll' : 'Text a car number to lock in')}
       ${this.chips(players)}
-      <div class="scr-body"><div class="grid">${tiles}</div></div>
+      <div class="scr-body"><div class="grid" style="--cols:${cols}">${tiles}</div></div>
       <div class="scr-foot"><span class="key">←</span> back ·
         <span>${allReady ? '<span class="key">ENTER</span> pick the track' : 'waiting for all players to lock in'}</span></div>`;
   }
@@ -141,7 +154,10 @@ export class Screens {
   // ── Map select ───────────────────────────────────────────────────────────────────────────────
   renderMapSelect(maps: string[], selectedMap: string | null, players: LobbyPlayer[]): void {
     this.show(); this.phase = 'map_select';
-    if (this.unchanged(`map:${selectedMap}:${maps.join(',')}:${this.rosterKey(players)}`)) return;
+    this.lastMapArgs = { maps, selectedMap, players };
+    // Include whether previews exist in the dedup key, so the tiles rebuild once they arrive.
+    const havePrev = maps.some(m => this.mapPreviews[m]) ? 'p' : 'n';
+    if (this.unchanged(`map:${selectedMap}:${maps.join(',')}:${havePrev}:${this.rosterKey(players)}`)) return;
     const tiles = maps.map((m, i) => {
       const sel = m === selectedMap;
       const prev = this.mapPreviews[m];
@@ -166,6 +182,12 @@ export class Screens {
   renderResults(results: RaceResult[], carNameFor: (i: number) => string,
                 global?: { map: string | null; entries: GlobalEntry[] }): void {
     this.show(); this.phase = 'results';
+    // Dedup: the server re-broadcasts results ~2x/s → rebuilding innerHTML replayed the title +
+    // row entrance animations = flicker. Key on the standings + the global board so the only
+    // legit re-render is when the all-time board folds in after its fetch.
+    const key = 'res:' + results.map(r => `${r.place}:${r.name}:${r.finishT}:${r.finished?1:0}`).join('|')
+      + '#' + (global ? `${global.map}:` + global.entries.map(e => `${e.name}:${e.finishT}`).join(',') : 'nob');
+    if (this.unchanged(key)) return;
     const rows = results.map((r) => {
       const win = r.place === 1;
       const accent = PLACE_COLOR[r.place - 1] ?? 'var(--cyan)';

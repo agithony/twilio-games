@@ -28,13 +28,18 @@ export function applyModelTransform(g: THREE.Object3D, ref: PlacementRef, target
   g.rotation.set(0, 0, 0);
   if (ref.rotation) g.rotation.set(deg(ref.rotation[0]), deg(ref.rotation[1]), deg(ref.rotation[2]));
 
-  // measure the ROTATED model, then fit its longest dimension to the target
+  // measure the ROTATED model, then fit its longest dimension to the target. updateMatrixWorld FIRST:
+  // Box3.setFromObject reads each child's WORLD matrix, which is stale right after a transform change.
+  // Without this, deep-hierarchy models (e.g. the 123-mesh McLaren) measure a garbage box → a wrong
+  // auto-fit scale → the car renders scattered/exploded.
+  g.updateMatrixWorld(true);
   const box = new THREE.Box3().setFromObject(g);
   const size = new THREE.Vector3(); box.getSize(size);
   const fit = autoFitScale([size.x, size.y, size.z], target);
   g.scale.setScalar(fit * (ref.scale ?? 1));
 
   // re-measure at final scale; ground on y=0, center x/z, then apply manual offset
+  g.updateMatrixWorld(true);
   const box2 = new THREE.Box3().setFromObject(g);
   const c = new THREE.Vector3(); box2.getCenter(c);
   g.position.x += -c.x + (ref.offset?.[0] ?? 0);

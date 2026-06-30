@@ -4,7 +4,7 @@ import { Renderer } from './renderer';
 import { InterpolationBuffer } from './interpolation';
 import { AssetLoader } from './asset-loader';
 import { Screens } from './screens';
-import { renderCarThumbnailsAsync } from './thumbnails';
+import { renderCarThumbnailsAsync, renderMapThumbnail } from './thumbnails';
 import { AttractMode } from './attract';
 import { Announcer, browserSpeechSink } from './announcer';
 import { fetchMaps, loadMapWorld, applyTrackTransform, CANONICAL_TRACK } from './map-world';
@@ -141,12 +141,14 @@ function startAttract() {
 }
 function reallyStartAttract() {
   if (raceLive || attract.isRunning) return;
+  renderer.clearCars();          // drop any leftover real-race cars before the demo populates its own
   renderer.setSpectator(true);   // the demo has no "my car" → use the pack/field camera
   attract.start();
 }
 function stopAttract() {
   wantAttract = false;
-  attract.stop();
+  if (attract.isRunning) { attract.stop(); renderer.clearCars(); }   // remove the demo cars so they
+                                                                     // don't sit frozen during the race
   renderer.setSpectator(isDisplay);   // back to the player's chase cam (or stay spectator on a display)
 }
 
@@ -265,6 +267,19 @@ async function loadAssetsInBackground(): Promise<void> {
   try {
     await renderCarThumbnailsAsync(assets, (i, url) => screens.setCarThumb(i, url));
   } catch { /* placeholders remain */ }
+
+  // Map previews LAST (heaviest — full scenery GLBs): render each authored map's 3D world to a tile
+  // image so the map-select screen shows what the track looks like, not a blank card.
+  try {
+    const maps = await fetchMaps();
+    const previews: Record<string, string> = {};
+    for (const [name, cfg] of Object.entries(maps)) {
+      const url = await renderMapThumbnail(cfg);
+      if (url) previews[name] = url;
+      await new Promise(requestAnimationFrame);   // yield between maps
+    }
+    screens.setMapPreviews(previews);
+  } catch { /* tiles fall back to the placeholder */ }
 }
 
 function boot() {

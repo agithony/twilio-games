@@ -93,6 +93,10 @@ export class AssetLoader {
           // driving. Cars then animate via wheel-spin. Opt IN per-model with ref.animate (Models
           // Library toggle) for cars whose clip runs cleanly. buildCar reads userData.clips.
           g.userData.clips = ref.animate ? gltf.animations : [];
+          // Keep ALL baked clips on a side field (not used by the game). The car-select thumbnail
+          // rig samples these to pose SHOWCASE models (McLaren "Air Out", Yuterra "Take 001") whose
+          // resting pose is OPEN/exploded — without it their portraits render as scattered panels.
+          g.userData.allClips = gltf.animations ?? [];
           resolve(g);
         }
         catch { resolve(null); }
@@ -146,6 +150,9 @@ export class AssetLoader {
   }
   /** Number of cars in the manifest (the selectable roster size). */
   carCount(): number { return this.manifest.cars.length; }
+  /** The raw manifest AssetRef for car i (file + scale/rotation/offset), for the thumbnail rig to
+   *  load + place a FRESH copy of the GLB (the Garage-proven path that renders every car whole). */
+  carRef(i: number): AssetRef | null { return this.manifest.cars[i] ?? null; }
   /** Friendly display name for car i: the manifest `name`, else a prettified filename. */
   carName(i: number): string {
     const r = this.manifest.cars[i];
