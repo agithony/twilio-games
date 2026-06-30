@@ -1,5 +1,6 @@
-# Azure Container App spec for Voice Racer. Rendered by deploy.yml via envsubst (only ${APP_NAME},
-# ${CONTAINER_IMAGE}, ${BASE_URL} are substituted). One revision carries image + env + mount.
+# Azure Container App spec for Voice Racer. Rendered by deploy.yml via envsubst (${APP_NAME},
+# ${CONTAINER_IMAGE}, ${BASE_URL}, ${ACR_SERVER}, ${ACR_USERNAME}, ${ACR_PASSWORD}). One revision
+# carries image + registry + env + mount.
 #
 # SINGLE REPLICA IS REQUIRED, not a tuning choice: room/lobby/race state is in-memory in ONE
 # process and the game/voice WebSockets are long-lived to it. Two replicas would let a player and
@@ -16,9 +17,18 @@ properties:
       external: true
       targetPort: 8080
       transport: auto            # supports the WebSocket upgrade for /game and /voice
+    # `update --yaml` REPLACES the whole secrets+registries config, so we must redeclare the ACR
+    # registry + its password secret here (else the auto-created registry secret is dropped and the
+    # registry's PasswordSecretRef dangles → "PasswordSecretRef not found").
     secrets:
       - name: twilio-token
       - name: editor-token
+      - name: acr-password
+        value: ${ACR_PASSWORD}
+    registries:
+      - server: ${ACR_SERVER}
+        username: ${ACR_USERNAME}
+        passwordSecretRef: acr-password
   template:
     containers:
       - name: ${APP_NAME}

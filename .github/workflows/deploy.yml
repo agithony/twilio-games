@@ -193,8 +193,14 @@ jobs:
           export APP_NAME="$APP_NAME"
           export CONTAINER_IMAGE="${{ steps.acr-creds.outputs.server }}/${IMAGE_TAG}"
           export BASE_URL="https://${FQDN}"
+          # ACR registry config goes IN the YAML (update --yaml replaces the whole registries+secrets
+          # block, so it must redeclare the registry + its password secret).
+          export ACR_SERVER="${{ steps.acr-creds.outputs.server }}"
+          export ACR_USERNAME="${{ steps.acr-creds.outputs.username }}"
+          export ACR_PASSWORD="${{ steps.acr-creds.outputs.password }}"
           # Restrict substitution to our known vars so no other ${...} in the template is touched.
-          envsubst '${APP_NAME} ${CONTAINER_IMAGE} ${BASE_URL}' < .github/containerapp.yaml > /tmp/containerapp.yaml
+          SUBST='${APP_NAME} ${CONTAINER_IMAGE} ${BASE_URL} ${ACR_SERVER} ${ACR_USERNAME} ${ACR_PASSWORD}'
+          envsubst "$SUBST" < .github/containerapp.yaml > /tmp/containerapp.yaml
 
           if az containerapp show --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" 2>/dev/null; then
             echo "Updating existing container app..."
@@ -249,7 +255,7 @@ jobs:
               --query properties.configuration.ingress.fqdn -o tsv)
             export BASE_URL="https://${NEW_FQDN}"
             echo "Applying full spec via --yaml (BASE_URL=$BASE_URL)..."
-            envsubst '${APP_NAME} ${CONTAINER_IMAGE} ${BASE_URL}' < .github/containerapp.yaml > /tmp/containerapp.yaml
+            envsubst "$SUBST" < .github/containerapp.yaml > /tmp/containerapp.yaml
             az containerapp update \
               --name "$APP_NAME" \
               --resource-group "$RESOURCE_GROUP" \
