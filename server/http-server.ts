@@ -24,6 +24,8 @@ export class HttpServer {
   private readonly mapsPath: string;
   private readonly leaderboardPath: string;
   private readonly editorToken?: string;
+  /** The Vite-built client directory served in production (one-process container). */
+  private readonly clientDir: string;
   /** Cached selectable cars/maps for the lobby (refreshed from manifest + maps.json periodically). */
   private roomConfigCache: { carCount: number; maps: string[] } = { carCount: 0, maps: [] };
   private roomConfigTimer: ReturnType<typeof setInterval> | null = null;
@@ -47,6 +49,7 @@ export class HttpServer {
     mapsPath?: string;       // injectable so tests don't clobber the real assets/maps/maps.json
     leaderboardPath?: string;// injectable; persistent global leaderboard JSON (default data/leaderboard.json)
     editorToken?: string;    // when set, /api writes require ?token= or x-editor-token; open if unset
+    clientDir?: string;      // the Vite-built client to serve (prod single-process); default client/dist
   }) {
     this.port = opts.port;
     this.authToken = opts.authToken;
@@ -56,6 +59,7 @@ export class HttpServer {
     this.mapsPath = opts.mapsPath ?? 'assets/maps/maps.json';
     this.leaderboardPath = opts.leaderboardPath ?? 'data/leaderboard.json';
     this.editorToken = opts.editorToken;
+    this.clientDir = opts.clientDir ?? 'client/dist';
     this.server = http.createServer((req, res) => {
       this.onRequest(req, res).catch((err) => {
         console.error('request handler error:', err);
@@ -159,6 +163,12 @@ export class HttpServer {
 
   private async onRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     const path = (req.url ?? '').split('?')[0] ?? '';
+    // Unauthenticated liveness probe for the ACA deploy smoke + container health checks.
+    if (req.method === 'GET' && path === '/healthz') {
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify({ status: 'ok', rooms: this.game.roomCount }));
+      return;
+    }
     if (req.method === 'POST' && (path === '/voice/incoming' || path === '/voice/join')) {
       const body = await readBody(req);
       const params = Object.fromEntries(new URLSearchParams(body));
@@ -313,9 +323,13 @@ export class HttpServer {
       res.end(JSON.stringify(merged.maps));
       return;
     }
-    // ---- static assets (GLB etc.) ----
+    // ---- static assets (built JS bundles AND GLB models, both under /assets/) ----
     if (req.method === 'GET' && path.startsWith('/assets/')) {
       return this.serveAsset(path, res);
+    }
+    // ---- the built client (HTML pages, /brand, /fonts, etc.) ----
+    if (req.method === 'GET') {
+      return this.serveClient(path, res);
     }
     res.writeHead(404).end('not found');
   }
@@ -347,17 +361,47 @@ export class HttpServer {
     await rename(tmp, file);   // rename is atomic on the same filesystem
   }
 
+  /**
+   * Serve a /assets/<rel> request. TWO things live under /assets/ in production: the Vite-built JS
+   * bundles (client/dist/assets/, hashed names) and the GLB models (repo-root assets/, named files).
+   * In dev Vite owned the JS and proxied the rest; in the single-process container the Node server
+   * serves both. Try the built client first (hashed JS), then fall back to the repo models — the
+   * filenames never collide (hashed vs. named), so first-match-wins is safe.
+   */
   private async serveAsset(urlPath: string, res: http.ServerResponse): Promise<void> {
     let rel: string;
     try { rel = decodeURIComponent(urlPath.replace(/^\/assets\//, '')); }
     catch { res.writeHead(400).end('bad request'); return; }   // malformed %-escape
     if (rel.includes('..') || rel.startsWith('/')) { res.writeHead(403).end('forbidden'); return; }
-    const full = path.join('assets', rel);
+    for (const base of [path.join(this.clientDir, 'assets'), 'assets']) {
+      try {
+        const data = await readFile(path.join(base, rel));
+        res.writeHead(200, { 'Content-Type': contentType(rel), 'Access-Control-Allow-Origin': '*' });
+        res.end(data); return;
+      } catch { /* try next base */ }
+    }
+    res.writeHead(404).end('not found');
+  }
+
+  /**
+   * Serve the built client: the home page at `/`, `/play.html`, the folder-index pages `/editor` and
+   * `/garage` (bare path → <dir>/index.html, matching the dev redirect), and any other static file
+   * (/brand, /fonts, etc.). Path-traversal guarded to clientDir. Unknown paths 404 (this is a game
+   * server, not an SPA — no catch-all index fallback).
+   */
+  private async serveClient(urlPath: string, res: http.ServerResponse): Promise<void> {
+    let rel: string;
+    try { rel = decodeURIComponent(urlPath); } catch { res.writeHead(400).end('bad request'); return; }
+    if (rel.includes('..')) { res.writeHead(403).end('forbidden'); return; }
+    // Map bare paths to files: '/' and '/editor' → index.html; '/garage' → garage/index.html.
+    let file: string;
+    if (rel === '/' || rel === '') file = 'index.html';
+    else if (rel === '/editor' || rel === '/editor/') file = 'editor/index.html';
+    else if (rel === '/garage' || rel === '/garage/') file = 'garage/index.html';
+    else file = rel.replace(/^\/+/, '');
     try {
-      const data = await readFile(full);
-      const type = rel.endsWith('.glb') ? 'model/gltf-binary'
-                 : rel.endsWith('.json') ? 'application/json' : 'application/octet-stream';
-      res.writeHead(200, { 'Content-Type': type, 'Access-Control-Allow-Origin': '*' });
+      const data = await readFile(path.join(this.clientDir, file));
+      res.writeHead(200, { 'Content-Type': contentType(file) });
       res.end(data);
     } catch { res.writeHead(404).end('not found'); }
   }
@@ -378,6 +422,27 @@ export class HttpServer {
       this.game.stopLoopOnly();
       this.server.close(() => resolve());
     });
+  }
+}
+
+/** Map a filename to a Content-Type for the static server (covers the built client + GLB models). */
+function contentType(name: string): string {
+  const ext = name.slice(name.lastIndexOf('.')).toLowerCase();
+  switch (ext) {
+    case '.html': return 'text/html; charset=utf-8';
+    case '.js': case '.mjs': return 'text/javascript; charset=utf-8';
+    case '.css': return 'text/css; charset=utf-8';
+    case '.json': return 'application/json';
+    case '.svg': return 'image/svg+xml';
+    case '.png': return 'image/png';
+    case '.jpg': case '.jpeg': return 'image/jpeg';
+    case '.webp': return 'image/webp';
+    case '.woff2': return 'font/woff2';
+    case '.woff': return 'font/woff';
+    case '.ttf': return 'font/ttf';
+    case '.glb': return 'model/gltf-binary';
+    case '.ico': return 'image/x-icon';
+    default: return 'application/octet-stream';
   }
 }
 
