@@ -87,6 +87,12 @@
     border-radius: 16px; padding: 24px; display: grid; gap: 18px;
     grid-template-columns: 1fr 1fr; }
   .join .full { grid-column: 1 / -1; }
+  /* Two side-by-side role cards: "shared screen" (primary) and "play on this device". */
+  .role { background: var(--th-raised); border: 1px solid var(--th-card-border); border-radius: 12px;
+    padding: 18px; display: flex; flex-direction: column; gap: 8px; }
+  .role h3 { font-size: 18px; }
+  .role p { color: var(--th-text-dim); font-size: 13px; margin: 0; flex: 1; }
+  button.btn.full { width: 100%; margin-top: 8px; }
   label { display: block; font-size: 13px; font-weight: 700; color: var(--th-text-label); margin-bottom: 6px; }
   input { width: 100%; background: var(--th-input); color: var(--th-text); border: 1px solid var(--th-input-border);
     border-radius: 10px; padding: 11px 13px; font: inherit; font-size: 15px; }
@@ -125,27 +131,32 @@
     <div class="section-title">Choose a game</div>
     <div class="games" id="games"></div>
 
-    <div class="section-title">Set up your game</div>
+    <div class="section-title">Start playing</div>
     <div class="join">
-      <div>
-        <label for="name">Your racer name</label>
-        <input id="name" type="text" maxlength="20" placeholder="Ada" autocomplete="off" />
-        <div class="hint">Shown on the leaderboard and called out by the AI host.</div>
-      </div>
-      <div>
+      <div class="full">
         <label for="room">Room code</label>
         <input id="room" type="text" inputmode="numeric" maxlength="4" placeholder="4821" />
-        <div class="hint">4 digits. Players join the same code (and dial it in by phone).</div>
+        <div class="hint">4 digits. The shared screen and every player — on phone or keyboard — use this same code.</div>
       </div>
-      <div class="full">
-        <label for="level">Level</label>
-        <select id="level" style="width:100%;background:var(--th-input);color:var(--th-text);border:1px solid var(--th-input-border);border-radius:10px;padding:11px 13px;font:inherit;font-size:15px"></select>
-        <div class="hint">Pick a built level, or "Generated track" for the default world.</div>
+
+      <!-- Role 1: the big shared screen. The primary, recommended way to run a session. -->
+      <div class="role">
+        <h3>Open the shared screen</h3>
+        <p>Put this on the TV or projector. It shows the room code, the live race, and the scoreboard.
+          Players join by <strong>calling or texting</strong> the number — no setup on their end.</p>
+        <button class="btn btn-primary full" id="screenBtn">Open shared screen</button>
       </div>
-      <div class="full actions">
-        <button class="btn btn-primary" id="joinBtn">Join as player</button>
-        <button class="btn btn-secondary" id="hostBtn">Host this display</button>
+
+      <!-- Role 2: play in this browser. Online players without a phone, or keyboard testing. -->
+      <div class="role">
+        <h3>Play on this device</h3>
+        <p>Drive a car right here in the browser. Use this to play online without a phone, or to
+          <strong>test with the keyboard</strong> (arrow keys steer, Enter starts).</p>
+        <label for="name" style="margin-top:4px">Your racer name</label>
+        <input id="name" type="text" maxlength="20" placeholder="Ada" autocomplete="off" />
+        <button class="btn btn-secondary full" id="deviceBtn" style="margin-top:12px">Play on this device</button>
       </div>
+
       <div class="full">
         <a class="editor-link" href="editor">Open the Level Editor</a>
         <a class="editor-link" href="garage" style="margin-left:18px">Garage (models)</a>

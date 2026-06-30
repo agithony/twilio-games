@@ -1,19 +1,18 @@
 // Pure URL-building + input sanitation for the home/lobby page.
 // Kept DOM-free so it can be unit-tested under node.
+//
+// TWO entry roles (the only distinction that matters):
+//   'screen' = the shared TV/projector — spectator pack-cam, drives the lobby by keyboard, shows the
+//              room code for phone players. The primary way to run a session (1 screen + phones).
+//   'device' = play a car in THIS browser — for distributed online players, or keyboard testing.
+// Both share the same room code; the level is chosen in-game (map-select), not on the home page.
 
-export type PlayMode = 'host' | 'player';
+export type PlayMode = 'screen' | 'device';
 
 export interface PlayParams {
   mode: PlayMode;
   roomCode: string;
   name?: string;
-  /** Which level (maps.json key) to load. Omitted/empty → the game's generated fallback world. */
-  map?: string;
-}
-
-/** A level key is a safe identifier (letters, digits, _, -). Empty/invalid → '' (no map param). */
-export function sanitizeMap(raw?: string): string {
-  return /^[A-Za-z0-9_-]+$/.test(raw ?? '') ? raw! : '';
 }
 
 /** A room code is exactly 4 digits. Sanitize arbitrary input to that, or default. */
@@ -29,18 +28,15 @@ export function sanitizeName(raw: string): string {
 }
 
 /**
- * Build the racer page URL for a join action.
- * Host  → play.html?display=1&room=CODE[&map=LEVEL]   (shared spectator/operator screen)
- * Player→ play.html?room=CODE&name=ENCODED[&map=LEVEL] (keyboard player; same code phones dial)
- * The optional `map` loads a saved level; omitted → the generated fallback world.
+ * Build the racer page URL for a launch action.
+ * screen → play.html?display=1&room=CODE   (shared spectator/operator screen; phones join by code)
+ * device → play.html?room=CODE&name=ENCODED (drive a car here — online player or keyboard testing)
  */
 export function buildPlayUrl(params: PlayParams): string {
   const room = sanitizeRoomCode(params.roomCode);
-  const map = sanitizeMap(params.map);
-  const mapPart = map ? `&map=${map}` : '';
-  if (params.mode === 'host') {
-    return `play.html?display=1&room=${room}${mapPart}`;
+  if (params.mode === 'screen') {
+    return `play.html?display=1&room=${room}`;
   }
   const name = encodeURIComponent(sanitizeName(params.name ?? ''));
-  return `play.html?room=${room}&name=${name}${mapPart}`;
+  return `play.html?room=${room}&name=${name}`;
 }

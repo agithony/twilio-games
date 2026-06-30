@@ -26,38 +26,24 @@ describe('sanitizeName', () => {
 });
 
 describe('buildPlayUrl', () => {
-  it('host mode → display + room, no name', () => {
-    expect(buildPlayUrl({ mode: 'host', roomCode: '4821' }))
+  it('screen mode → display + room, no name', () => {
+    expect(buildPlayUrl({ mode: 'screen', roomCode: '4821' }))
       .toBe('play.html?display=1&room=4821');
   });
-  it('player mode → room + encoded name', () => {
-    expect(buildPlayUrl({ mode: 'player', roomCode: '4821', name: 'Ada' }))
+  it('device mode → room + encoded name', () => {
+    expect(buildPlayUrl({ mode: 'device', roomCode: '4821', name: 'Ada' }))
       .toBe('play.html?room=4821&name=Ada');
   });
-  it('player mode URL-encodes special characters in the name', () => {
-    expect(buildPlayUrl({ mode: 'player', roomCode: '4821', name: 'A B&C' }))
+  it('device mode URL-encodes special characters in the name', () => {
+    expect(buildPlayUrl({ mode: 'device', roomCode: '4821', name: 'A B&C' }))
       .toBe('play.html?room=4821&name=A%20B%26C');
   });
   it('sanitizes a bad room code into the URL', () => {
-    expect(buildPlayUrl({ mode: 'host', roomCode: 'xx' }))
+    expect(buildPlayUrl({ mode: 'screen', roomCode: 'xx' }))
       .toBe('play.html?display=1&room=4821');
   });
-  it('player mode with empty name defaults to Racer', () => {
-    expect(buildPlayUrl({ mode: 'player', roomCode: '1234', name: '' }))
+  it('device mode with empty name defaults to Racer', () => {
+    expect(buildPlayUrl({ mode: 'device', roomCode: '1234', name: '' }))
       .toBe('play.html?room=1234&name=Racer');
-  });
-  it('appends &map= for a valid level in host mode', () => {
-    expect(buildPlayUrl({ mode: 'host', roomCode: '4821', map: 'silver_lake' }))
-      .toBe('play.html?display=1&room=4821&map=silver_lake');
-  });
-  it('appends &map= for a valid level in player mode', () => {
-    expect(buildPlayUrl({ mode: 'player', roomCode: '4821', name: 'Ada', map: 'canyon' }))
-      .toBe('play.html?room=4821&name=Ada&map=canyon');
-  });
-  it('omits map when empty or invalid (falls back to generated world)', () => {
-    expect(buildPlayUrl({ mode: 'host', roomCode: '4821', map: '' }))
-      .toBe('play.html?display=1&room=4821');
-    expect(buildPlayUrl({ mode: 'host', roomCode: '4821', map: '../evil' }))
-      .toBe('play.html?display=1&room=4821');
   });
 });

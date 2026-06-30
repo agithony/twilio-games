@@ -84,17 +84,21 @@ npm run dev:server
 npm run dev:client
 ```
 
-Then open **http://localhost:5173/** — the home page. From there:
+Then open **http://localhost:5173/** — the home page. It has just two ways in (plus the editor/garage):
 
-| Page | URL | What it is |
+| Role | URL | What it is |
 |------|-----|------------|
-| **Home** | `/` | Branded landing + game selection + join form |
-| **Racer** | `/play.html?display=1&room=4821` | The shared display (spectator + operator console) |
-| **Racer (player)** | `/play.html?room=4821&name=Ada` | A keyboard player (dev/testing) |
-| **Model studio** | `/editor/editor.html` | Arrange/scale/rotate the 3D car models, save to manifest |
+| **Home** | `/` | Branded landing + game selection + launcher |
+| **Shared screen** | `/play.html?display=1&room=4821` | The TV/projector: shows the room code, the live race, the scoreboard; driven by keyboard. Players join by calling/texting. **The primary way to run a session.** |
+| **Play on this device** | `/play.html?room=4821&name=Ada` | Drive a car in this browser — a distributed online player, or keyboard testing. |
+| **Level editor** | `/editor` | Author levels, set per-map preview shots |
+| **Garage** | `/garage` | Arrange/scale/rotate the 3D car models, save to manifest |
 
-**Play it (keyboard, no Twilio needed):** open the display URL, press **Enter** to start, then
-drive with **← →** (lanes), **↑** (boost), **↓** (brake). Open a second tab with
+The home page's two buttons — **Open shared screen** and **Play on this device** — just build those
+URLs for you. Everyone (screen, phones, device players) shares one 4-digit room code.
+
+**Play it (keyboard, no Twilio needed):** open the **shared screen** URL, press **Enter** to start,
+then drive with **← →** (lanes), **↑** (boost), **↓** (brake). Open a **Play on this device** tab with
 `?room=4821&name=Ada` before starting to add another car.
 
 ## Voice controls (Twilio)
