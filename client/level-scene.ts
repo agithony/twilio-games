@@ -203,6 +203,24 @@ export class LevelScene {
   /** Mutable live level ref, so the inspector panels can read/write car scale etc. in place. */
   getLevel(): LevelConfig { return this.level; }
 
+  /** Capture the CURRENT editor view as this level's map-select PREVIEW shot — eye + look-target in
+   *  world space (the same space renderMapThumbnail places the map in, so the tile frames identically).
+   *  Stored on this.level so current() persists it on save. */
+  capturePreviewShot(): void {
+    if (!this.level) return;
+    const eye = this.camera.position, tgt = this.orbit.target;
+    const round = (n: number) => Math.round(n * 100) / 100;
+    this.level.previewCam = {
+      pos: [round(eye.x), round(eye.y), round(eye.z)],
+      lookAt: [round(tgt.x), round(tgt.y), round(tgt.z)],
+      fov: Math.round(this.camera.fov),
+    };
+  }
+  /** Forget a saved preview shot → the map-select tile reverts to the auto establishing shot. */
+  clearPreviewShot(): void { if (this.level) delete this.level.previewCam; }
+  /** Whether this level currently has a custom preview shot (for the button label). */
+  hasPreviewShot(): boolean { return !!this.level?.previewCam; }
+
   /** The editable track curve (Track inspector buttons drive its setters), or null pre-load. */
   getCurve(): CurveEditor | null { return this.curve; }
 

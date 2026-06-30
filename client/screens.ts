@@ -63,8 +63,14 @@ export class Screens {
     if (!url) return;
     this.carThumbs[i] = url;
     const img = this.root.querySelector(`img[data-car-thumb="${i}"]`);
-    if (img instanceof HTMLImageElement) { img.src = url; img.style.opacity = '1'; }
-    else if (this.visible && this.phase === 'car_select') this.rerenderCarSelect(true);
+    if (img instanceof HTMLImageElement) {
+      img.src = url; img.style.opacity = '1';
+      // Remove the "CAR N" + spinner placeholder — it's position:absolute; inset:0, so if left in
+      // place it sits ON TOP of the finished portrait forever (the "stuck loading" overlay bug).
+      this.root.querySelector(`span.ph[data-ph="${i}"]`)?.remove();
+    } else if (this.visible && this.phase === 'car_select') {
+      this.rerenderCarSelect(true);
+    }
   }
   setMapPreviews(previews: Record<string, string>): void {
     this.mapPreviews = previews;
@@ -239,16 +245,20 @@ export class Screens {
   private chips(players: LobbyPlayer[]): string {
     if (players.length === 0)
       return `<div class="chips"><div class="chip-empty">Waiting for players…</div></div>`;
-    const chips = players.map(p => {
+    const chips = players.map((p, i) => {
       const col = cssColor(p.color);
       // Only show a car label once the player has actually picked one. In the lobby nobody has
       // chosen yet, so showing a placeholder "…" on every pill looked broken.
       const carLabel = p.carIndex !== null
         ? `<span class="car">${esc(this.carNames[p.carIndex] ?? `Car ${p.carIndex + 1}`)}</span>` : '';
+      // Two-line identity stack: a small "Player N" eyebrow over the player's NAME (the main text).
       return `
         <div class="chip${p.ready ? ' ready' : ''}"${p.ready ? ` style="border-color:${col}"` : ''}>
           <span class="dot" style="background:${col};color:${col}"></span>
-          <span class="nm">${esc(p.name)}</span>
+          <span class="who">
+            <span class="plabel">Player ${i + 1}</span>
+            <span class="nm">${esc(p.name)}</span>
+          </span>
           ${carLabel}
         </div>`;
     }).join('');

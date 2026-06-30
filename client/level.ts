@@ -558,4 +558,24 @@ document.getElementById('saveLevel')!.addEventListener('click', async () => {
   setTimeout(() => (status.textContent = ''), 2500);
 });
 
+// "Set preview shot": capture the current editor view as this map's selection-screen preview image,
+// then SAVE immediately so the new thumbnail takes effect (it's rendered at boot from the saved
+// config). Undoable. "Clear preview" reverts to the automatic angle.
+const flash = (msg: string) => { status.textContent = msg; setTimeout(() => (status.textContent = ''), 2500); };
+document.getElementById('setPreview')!.addEventListener('click', async () => {
+  scene.beginEdit();
+  scene.capturePreviewShot();
+  afterEdit();
+  const ok = await persistLevel(scene.current());
+  flash(ok ? 'Preview shot set + saved' : 'Capture ok — SAVE failed');
+});
+document.getElementById('clearPreview')!.addEventListener('click', async () => {
+  if (!scene.hasPreviewShot()) { flash('No custom preview shot to clear'); return; }
+  scene.beginEdit();
+  scene.clearPreviewShot();
+  afterEdit();
+  const ok = await persistLevel(scene.current());
+  flash(ok ? 'Preview shot cleared (auto)' : 'Cleared — SAVE failed');
+});
+
 void refresh();

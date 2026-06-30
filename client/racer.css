@@ -117,13 +117,16 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); c
 /* ───────── Player chips ───────── */
 .chips { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; padding: 4px 20px 12px; }
 .chip {
-  display: flex; align-items: center; gap: 10px; padding: 8px 16px; border-radius: 999px; font-size: 16px;
+  display: flex; align-items: center; gap: 12px; padding: 10px 20px; border-radius: 18px; font-size: 16px;
   background: var(--glass); border: 1.5px solid var(--glass-brd); backdrop-filter: blur(8px);
   animation: chip-in .3s ease both;
 }
 .chip.ready { box-shadow: 0 0 0 1px rgba(255,255,255,.05), 0 6px 22px rgba(0,0,0,.35); }
-.chip .dot { width: 13px; height: 13px; border-radius: 50%; box-shadow: 0 0 10px currentColor; }
-.chip .nm { font-weight: 700; }
+.chip .dot { width: 14px; height: 14px; border-radius: 50%; box-shadow: 0 0 10px currentColor; flex: none; }
+/* Identity stack: small "Player N" eyebrow over the name (the main text). */
+.chip .who { display: flex; flex-direction: column; line-height: 1.15; }
+.chip .plabel { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-mute); }
+.chip .nm { font-weight: 800; font-size: 18px; }
 .chip .car { color: var(--ink-dim); font-size: 13px; }
 .chip-empty { color: var(--ink-mute); font-size: 16px; min-height: 60px; display: flex; align-items: center; justify-content: center; }
 @keyframes chip-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }

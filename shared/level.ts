@@ -37,6 +37,10 @@ export interface LevelCamera {
   pos?: number[]; lookAt?: number[];
   fov?: number;   // shared by both modes
 }
+// The camera shot used for the MAP-SELECT preview thumbnail (NOT the race camera — that's `camera`).
+// World-space eye `pos` looking at `lookAt`, captured from the editor's orbit camera ("Set preview
+// shot"). When absent, renderMapThumbnail falls back to its auto-computed establishing shot.
+export interface PreviewCam { pos: number[]; lookAt: number[]; fov?: number }
 export interface LevelConfig {
   map: string; file: string;
   model: LevelTransform; track: LevelTransform; path?: LevelPath;
@@ -44,6 +48,7 @@ export interface LevelConfig {
   props: PlacedProp[];
   obstacles?: ObstacleScales;
   camera?: LevelCamera;
+  previewCam?: PreviewCam;
   startLine?: GantryOffset; finishLine?: GantryOffset;
   lighting?: LevelLighting; effects?: LevelEffects;
 }
@@ -185,6 +190,15 @@ export function mergeLevel(saved: unknown): LevelConfig {
     if (Array.isArray(C.pos) && C.pos.length === 3) cam.pos = C.pos.map(Number);
     if (Array.isArray(C.lookAt) && C.lookAt.length === 3) cam.lookAt = C.lookAt.map(Number);
     if (Object.keys(cam).length > 0) out.camera = cam;
+  }
+  if (isObj(s.previewCam)) {
+    const P = s.previewCam as Record<string, unknown>;
+    // Both pos + lookAt must be valid 3-vectors for the shot to mean anything; drop otherwise.
+    if (Array.isArray(P.pos) && P.pos.length === 3 && Array.isArray(P.lookAt) && P.lookAt.length === 3) {
+      const pv: PreviewCam = { pos: P.pos.map(Number), lookAt: P.lookAt.map(Number) };
+      if (typeof P.fov === 'number' && isFinite(P.fov)) pv.fov = P.fov;
+      out.previewCam = pv;
+    }
   }
   return out;
 }

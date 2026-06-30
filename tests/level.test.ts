@@ -94,6 +94,31 @@ describe('mergeLevel (back-compat)', () => {
   });
 });
 
+describe('previewCam (map-select thumbnail shot)', () => {
+  const base = { map: 'm', file: 'm.glb',
+    model: levelDefaults('m', 'm.glb').model, track: levelDefaults('m', 'm.glb').track };
+
+  it('round-trips a captured preview shot', () => {
+    const l = mergeLevel({ ...base, previewCam: { pos: [120, 80, -40], lookAt: [0, 5, 300], fov: 50 } });
+    expect(l.previewCam).toEqual({ pos: [120, 80, -40], lookAt: [0, 5, 300], fov: 50 });
+  });
+
+  it('keeps pos+lookAt without an explicit fov', () => {
+    const l = mergeLevel({ ...base, previewCam: { pos: [1, 2, 3], lookAt: [4, 5, 6] } });
+    expect(l.previewCam).toEqual({ pos: [1, 2, 3], lookAt: [4, 5, 6] });
+  });
+
+  it('drops a malformed preview shot (missing/short vectors)', () => {
+    expect(mergeLevel({ ...base, previewCam: { pos: [1, 2] } }).previewCam).toBeUndefined();
+    expect(mergeLevel({ ...base, previewCam: { lookAt: [0, 0, 0] } }).previewCam).toBeUndefined();
+    expect(mergeLevel({ ...base, previewCam: 'nope' }).previewCam).toBeUndefined();
+  });
+
+  it('leaves previewCam undefined when not authored (auto establishing shot)', () => {
+    expect(mergeLevel(base).previewCam).toBeUndefined();
+  });
+});
+
 describe('DEFAULT_CAMERA', () => {
   it('reproduces the current game chase-cam numbers exactly', () => {
     expect(DEFAULT_CAMERA).toEqual({

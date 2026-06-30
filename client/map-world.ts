@@ -15,7 +15,10 @@ export interface MapTransform { pos: number[]; rotDeg: number[]; scale: number; 
  * You can move EITHER in the align tool; the game applies both. `model` is optional for
  * back-compat with older configs that only stored `track`.
  */
-export interface MapConfig { map: string; file: string; track: MapTransform; model?: MapTransform; path?: TrackPath; }
+/** The saved camera shot for the map-select preview thumbnail (world space). Captured in the editor
+ *  ("Set preview shot"); renderMapThumbnail renders from it instead of the auto establishing shot. */
+export interface PreviewCam { pos: number[]; lookAt: number[]; fov?: number }
+export interface MapConfig { map: string; file: string; track: MapTransform; model?: MapTransform; path?: TrackPath; previewCam?: PreviewCam; }
 
 /**
  * A render-only curved path for the track. Control points are XZ positions (y is ground level).

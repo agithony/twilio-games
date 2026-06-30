@@ -4,6 +4,7 @@ import { Renderer } from './renderer';
 import { InterpolationBuffer } from './interpolation';
 import { AssetLoader } from './asset-loader';
 import { Screens } from './screens';
+import type { GlobalEntry } from './screens';
 import { renderCarThumbnailsAsync, renderMapThumbnail } from './thumbnails';
 import { AttractMode } from './attract';
 import { Announcer, browserSpeechSink } from './announcer';
@@ -173,17 +174,27 @@ conn.onSelectState((m) => {
   else if (m.phase === 'map_select') { flowPhase = 'map_select'; flowMaps = m.maps; screens.renderMapSelect(m.maps, m.selectedMap, m.players); }
   startAttract();
 });
+// Cache the last-fetched all-time board (keyed by map) so REPEAT results broadcasts (~2x/s) re-render
+// WITH the board already in place. Without this, each broadcast rendered first WITHOUT the board, then
+// the async fetch re-rendered WITH it — so the dedup key flip-flopped twice a second and the whole
+// scoreboard rebuilt (animations replayed) = the flicker. With the cache, once the board is known the
+// screen renders the same (board-included) view every broadcast → the dedup guard holds → no flicker.
+let lastBoard: { map: string | null; entries: GlobalEntry[] } | null = null;
 conn.onResults((m) => {
   raceLive = false; flowPhase = 'other'; const epoch = ++flowEpoch; big.textContent = '';
   startAttract();
-  // Show this race immediately, then fold in the all-time board for this map once it fetches —
-  // but only if the flow hasn't advanced past this results screen by the time the fetch resolves.
-  screens.renderResults(m.results, (i) => assets.carName(i));
+  // Render with the cached board if it's for THIS map (so a repeat broadcast doesn't strip it back to
+  // the race-only view); otherwise show race-only until the fetch lands the board (one fold-in).
+  const cached = lastBoard && lastBoard.map === m.map ? lastBoard : undefined;
+  screens.renderResults(m.results, (i) => assets.carName(i), cached);
   const q = m.map ? `?map=${encodeURIComponent(m.map)}&limit=10` : '?limit=10';
   fetch(`/api/leaderboard${q}`)
     .then(r => r.ok ? r.json() : { entries: [] })
-    .then((data) => { if (epoch === flowEpoch) screens.renderResults(m.results, (i) => assets.carName(i), { map: m.map, entries: data.entries ?? [] }); })
-    .catch(() => { /* keep the race-only view */ });
+    .then((data) => {
+      lastBoard = { map: m.map, entries: data.entries ?? [] };
+      if (epoch === flowEpoch) screens.renderResults(m.results, (i) => assets.carName(i), lastBoard);
+    })
+    .catch(() => { /* keep whatever view is up */ });
 });
 conn.onEvent((e) => {
   announcer.handle(e);
@@ -259,27 +270,38 @@ async function loadAssetsInBackground(): Promise<void> {
   assetsReady = true;
   if (wantAttract) reallyStartAttract();
 
-  // Portraits: render after a SHORT beat (so the attract reveal isn't fighting the GPU on its first
-  // frames) — but soon enough that they're ready before anyone navigates to car-select. They stream
-  // in (setCarThumb live-swaps each tile), so a tile shows a brief spinner only if you reach the
-  // grid before its portrait lands.
-  await new Promise(r => setTimeout(r, 800));
+  // Portraits: render after the attract reveal has SETTLED (its first ~1.5s of frames are the
+  // stuttery warmup — shader compile, shadow-map init), so the heavy per-car renders don't fight the
+  // demo's opening animation. renderCarThumbnailsAsync internally paces to main-thread idle, so the
+  // demo keeps animating smoothly while portraits stream in (setCarThumb live-swaps each tile).
+  await new Promise(r => setTimeout(r, 1500));
   try {
     await renderCarThumbnailsAsync(assets, (i, url) => screens.setCarThumb(i, url));
   } catch { /* placeholders remain */ }
 
   // Map previews LAST (heaviest — full scenery GLBs): render each authored map's 3D world to a tile
-  // image so the map-select screen shows what the track looks like, not a blank card.
+  // image so the map-select screen shows what the track looks like, not a blank card. Pace each one
+  // to main-thread idle so a big scenery render can't hitch the attract demo.
   try {
     const maps = await fetchMaps();
     const previews: Record<string, string> = {};
     for (const [name, cfg] of Object.entries(maps)) {
+      await whenIdle();
       const url = await renderMapThumbnail(cfg);
       if (url) previews[name] = url;
-      await new Promise(requestAnimationFrame);   // yield between maps
     }
     screens.setMapPreviews(previews);
   } catch { /* tiles fall back to the placeholder */ }
+}
+
+/** Resolve when the main thread is idle (so heavy background renders yield to the live attract demo).
+ *  requestIdleCallback where available (timeout-bounded so we never starve), else a double-rAF. */
+function whenIdle(): Promise<void> {
+  return new Promise((resolve) => {
+    const ric = (window as Window & { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => void }).requestIdleCallback;
+    if (ric) ric(() => resolve(), { timeout: 300 });
+    else requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+  });
 }
 
 function boot() {

@@ -58,10 +58,12 @@
       ]
     },
     {
-      "file": "monowheel_bot__vgdc.glb"
+      "file": "monowheel_bot__vgdc.glb",
+      "name": "Monowheel"
     },
     {
       "file": "climber.glb",
+      "name": "Climber",
       "rotation": [
         0,
         90,
