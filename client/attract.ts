@@ -55,7 +55,7 @@ export class AttractMode {
       return {
         id: c.id, name: '', color: c.color, carIndex: c.carIndex,
         lane, targetLane: lane, x, z,
-        speed: c.base, boost: 0, power: 0, powerActive: 0, stunned: 0,
+        speed: c.base, boost: 0, power: 0, powerActive: 0, invulnerable: false, stunned: 0,
         lap: 1, finished: false, finishT: 0, place: 1,
       };
     });
