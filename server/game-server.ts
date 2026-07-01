@@ -245,6 +245,38 @@ export class GameServer {
 
   getOrCreateRoom(code: string): Room { return this.room(code); }
   findRoom(code: string): Room | undefined { return this.rooms.find(code); }
+
+  // ── Voice-host actions: the conversational AI drives the game for a caller. These mirror the WS
+  //    handlers (select_car/select_map/advance) EXACTLY — same room mutation, same broadcasts + host
+  //    events — so a voice-driven pick appears on the shared screen just like a texted/keyed one.
+  voiceSelectCar(roomCode: string, playerId: string, carIndex: number): void {
+    const room = this.rooms.find(roomCode); if (!room) return;
+    room.selectCar(playerId, carIndex);
+    this.pushLobby(roomCode);
+    const who = room.lobbyPlayers().find(p => p.playerId === playerId);
+    this.emitEvent(roomCode, { kind: 'car_picked', playerId, name: who?.name ?? 'Racer', car: room.carName(carIndex) });
+  }
+  voiceSelectMap(roomCode: string, map: string): void {
+    const room = this.rooms.find(roomCode); if (!room) return;
+    room.selectMap(map);
+    this.pushLobby(roomCode);
+    this.emitEvent(roomCode, { kind: 'map_picked', map });
+  }
+  /** Advance the flow (lobby→car_select→map_select→race). Returns true if the phase actually changed. */
+  voiceAdvance(roomCode: string): boolean {
+    const room = this.rooms.find(roomCode); if (!room) return false;
+    const before = room.phase;
+    room.advance();
+    const after = room.phase;
+    if (after === 'countdown' || after === 'racing') this.broadcastItems(roomCode);
+    else this.pushLobby(roomCode);
+    if (after !== before) {
+      if (after === 'car_select') this.emitEvent(roomCode, { kind: 'enter_car_select' });
+      else if (after === 'map_select') this.emitEvent(roomCode, { kind: 'enter_map_select' });
+    }
+    return after !== before;
+  }
+
   /** Test seam: advance one room's simulation by `dt` (drives the same stepRoom path the loop uses),
    *  so the racing→results→leaderboard reporting can be verified deterministically without real time. */
   stepRoomForTest(room: Room, dt: number): void { this.stepRoom(room, dt); }

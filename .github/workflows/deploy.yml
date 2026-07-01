@@ -167,6 +167,7 @@ jobs:
         env:
           TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
           EDITOR_TOKEN: ${{ secrets.EDITOR_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           az containerapp secret set \
             --name "$APP_NAME" \
@@ -174,6 +175,7 @@ jobs:
             --secrets \
               "twilio-token=$TWILIO_AUTH_TOKEN" \
               "editor-token=$EDITOR_TOKEN" \
+              "openai-key=$OPENAI_API_KEY" \
             --output none 2>/dev/null || echo "App does not exist yet — secrets set on create below."
 
       - name: Deploy Container App
@@ -182,6 +184,7 @@ jobs:
         env:
           TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
           EDITOR_TOKEN: ${{ secrets.EDITOR_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           # Resolve the public FQDN (exists for an already-created app; a new app gets it on create,
           # then we patch BASE_URL in a second update so Twilio webhooks point at the real host).
@@ -200,8 +203,10 @@ jobs:
           export ACR_PASSWORD="${{ steps.acr-creds.outputs.password }}"
           # ElevenLabs voiceId for Conversation Relay talk-back (optional repo var; empty → default voice).
           export CR_TTS_VOICE="${{ vars.CR_TTS_VOICE }}"
+          # OpenAI model for the conversational AI host (optional repo var; empty → server default).
+          export OPENAI_MODEL="${{ vars.OPENAI_MODEL }}"
           # Restrict substitution to our known vars so no other ${...} in the template is touched.
-          SUBST='${APP_NAME} ${CONTAINER_IMAGE} ${BASE_URL} ${ACR_SERVER} ${ACR_USERNAME} ${ACR_PASSWORD} ${CR_TTS_VOICE}'
+          SUBST='${APP_NAME} ${CONTAINER_IMAGE} ${BASE_URL} ${ACR_SERVER} ${ACR_USERNAME} ${ACR_PASSWORD} ${CR_TTS_VOICE} ${OPENAI_MODEL}'
           envsubst "$SUBST" < .github/containerapp.yaml > /tmp/containerapp.yaml
 
           # Retry an `az containerapp` write on ACA's transient control-plane race
@@ -259,6 +264,7 @@ jobs:
               --secrets \
                 "twilio-token=${TWILIO_AUTH_TOKEN:-}" \
                 "editor-token=${EDITOR_TOKEN:-}" \
+                "openai-key=${OPENAI_API_KEY:-}" \
               --output none
 
             # The app now exists + has its FQDN. Re-render the YAML with the real BASE_URL so

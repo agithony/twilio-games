@@ -55,9 +55,14 @@ Set under **Settings → Secrets and variables → Actions → Secrets**:
 | `AZURE_CREDENTIALS` | SP login JSON from step 1 | **Yes** |
 | `TWILIO_AUTH_TOKEN` | Validates inbound Twilio webhook signatures. When set, validation is ON (fail-closed). | Yes for voice/SMS |
 | `EDITOR_TOKEN` | Gates the level-editor `/api` writes on the public deploy. Pick any strong string. | Recommended |
+| `OPENAI_API_KEY` | Powers the conversational AI host (natural-language chat + voice-driven car/map/start actions in the menus + end-of-race, via Conversation Relay). **Empty/unset → the game falls back to scripted phrase-bank lines and still works.** | Optional (for the AI demo) |
 
-There are **no required repo variables** for the base deploy. (Unlike the cartoon-printer, this app
-has no `ALLOWED_EMAILS`/OAuth.)
+Optional **repo variables** (Settings → … → Variables) — all safe to leave unset:
+
+| Variable | Purpose |
+|---|---|
+| `CR_TTS_VOICE` | ElevenLabs voiceId for the spoken race-host talk-back (empty → Conversation Relay default voice). |
+| `OPENAI_MODEL` | Which OpenAI model the AI host uses (empty → server default, currently `gpt-4o-mini`). Bump this as OpenAI ships newer models — no code change needed. |
 
 ## Tenant tag policy (already handled)
 

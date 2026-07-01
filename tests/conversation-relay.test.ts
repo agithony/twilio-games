@@ -170,6 +170,50 @@ describe('ConversationRelayAdapter', () => {
     expect(said[0]!.toLowerCase()).toContain('second');
   });
 
+  // ── Conversational routing (menus → LLM host; race → fast commands) ─────────────────────────────
+  it('routes a MENU utterance to converse() and speaks the reply (not the command path)', async () => {
+    const room = fakeRoom(); const said: string[] = []; let conversed = '';
+    const a = new ConversationRelayAdapter({
+      findOrCreateRoom: () => room, say: (t) => said.push(t),
+      phaseOf: () => 'car_select',
+      converse: async (_r, _p, utterance) => { conversed = utterance; return 'The McLaren is fastest!'; },
+    });
+    a.handleMessage(JSON.stringify({ type:'setup', callSid:'CA1', customParameters:{ roomCode:'4821' } }));
+    said.length = 0;
+    a.handleMessage(JSON.stringify({ type:'prompt', voicePrompt:'which car is fastest?', last:true }));
+    await new Promise(r => setTimeout(r, 0));   // let the converse promise resolve
+    expect(conversed).toBe('which car is fastest?');
+    expect(said).toContain('The McLaren is fastest!');
+    expect(room.applied).toHaveLength(0);        // menu chat must NOT drive the car
+  });
+
+  it('during a RACE, uses the fast command path (does NOT call converse)', async () => {
+    const room = fakeRoom(); let conversed = false;
+    const a = new ConversationRelayAdapter({
+      findOrCreateRoom: () => room,
+      phaseOf: () => 'racing',
+      converse: async () => { conversed = true; return 'chat'; },
+    });
+    a.handleMessage(JSON.stringify({ type:'setup', callSid:'CA1', customParameters:{ roomCode:'4821' } }));
+    a.handleMessage(JSON.stringify({ type:'prompt', voicePrompt:'left', last:true }));
+    await new Promise(r => setTimeout(r, 0));
+    expect(conversed).toBe(false);
+    expect(room.applied).toEqual([{ id:'p1', intent:'MOVE_LEFT' }]);
+  });
+
+  it('only converses on the FINAL transcript, not interim partials', async () => {
+    const room = fakeRoom(); let calls = 0;
+    const a = new ConversationRelayAdapter({
+      findOrCreateRoom: () => room, phaseOf: () => 'lobby',
+      converse: async () => { calls++; return null; },
+    });
+    a.handleMessage(JSON.stringify({ type:'setup', callSid:'CA1', customParameters:{ roomCode:'4821' } }));
+    a.handleMessage(JSON.stringify({ type:'prompt', voicePrompt:'start the', last:false }));
+    a.handleMessage(JSON.stringify({ type:'prompt', voicePrompt:'start the race', last:true }));
+    await new Promise(r => setTimeout(r, 0));
+    expect(calls).toBe(1);
+  });
+
   it('unregisters on close', () => {
     const room = fakeRoom(); let unreg = false;
     const a = new ConversationRelayAdapter({

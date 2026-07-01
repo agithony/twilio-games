@@ -54,6 +54,13 @@ export interface AdapterDeps {
   /** Register/unregister this adapter to receive its room's game events (greeting/countdown/result). */
   register?: (roomCode: string, adapter: ConversationRelayAdapter) => void;
   unregister?: (adapter: ConversationRelayAdapter) => void;
+  /** Run a conversational AI turn for this caller: given their utterance, return what the host should
+   *  SAY back (having also executed any game actions), or null to fall back to scripted behavior.
+   *  Wired to the LLM game-host. Absent → no conversational AI (scripted-only, current behavior).
+   *  `phase` lets the caller decide command-vs-chat routing. */
+  converse?: (roomCode: string, playerId: string, utterance: string) => Promise<string | null>;
+  /** The room's current phase, so the adapter routes: race → fast commands; else → conversation. */
+  phaseOf?: (roomCode: string) => string;
 }
 
 export class ConversationRelayAdapter {
@@ -110,22 +117,34 @@ export class ConversationRelayAdapter {
         break;
       }
       case 'prompt': {
-        // Conversation Relay sends ACCUMULATING partial transcripts within an utterance — but ASR
-        // also REVISES them ("left" → corrected to "right"). Position-slicing (the old approach)
-        // silently dropped a command whenever a word changed instead of appended, which is exactly
-        // why "left"/"right" sometimes didn't move the car. Instead: dedup by CONTENT via the longest
-        // common prefix between what we've already fired this utterance and the current transcript's
-        // intents — fire only the genuinely-new tail. This recovers from corrections (the corrected
-        // word DOES fire) while still deduping true appends + repeats.
-        const cur = intentsFromTranscript(msg.voicePrompt);
-        const p = commonPrefixLen(this.firedIntents, cur);
-        const fresh = cur.slice(p);
-        console.log(`[CR] prompt last=${msg.last} text="${msg.voicePrompt}" → fired ${fresh.length} new: [${fresh.join(',')}]${this.playerId ? '' : ' (NOT BOUND — dropped)'}`);
-        if (this.room && this.playerId) {
-          for (const intent of fresh) this.room.applyIntent(this.playerId, intent);
+        // ROUTE by phase: during a live RACE, keep the fast local command path (no LLM latency in the
+        // hot loop). In menus/results, route the FINAL utterance to the conversational AI host so the
+        // caller can talk naturally ("which car is fastest?", "pick me a fast one", "start the race").
+        const racing = this.deps.phaseOf && this.roomCode
+          ? (this.deps.phaseOf(this.roomCode) === 'racing' || this.deps.phaseOf(this.roomCode) === 'countdown')
+          : true;   // no phaseOf → behave as before (command path)
+
+        if (racing || !this.deps.converse) {
+          // Fast command path. CR sends ACCUMULATING partials that ASR also REVISES ("left" →
+          // "right"); dedup by CONTENT (longest common prefix) so a corrected word still fires and
+          // true appends/repeats don't double-fire.
+          const cur = intentsFromTranscript(msg.voicePrompt);
+          const p = commonPrefixLen(this.firedIntents, cur);
+          const fresh = cur.slice(p);
+          console.log(`[CR] prompt last=${msg.last} text="${msg.voicePrompt}" → fired ${fresh.length} new: [${fresh.join(',')}]${this.playerId ? '' : ' (NOT BOUND — dropped)'}`);
+          if (this.room && this.playerId) for (const intent of fresh) this.room.applyIntent(this.playerId, intent);
+          this.firedIntents = cur;
+          if (msg.last) this.firedIntents = [];
+        } else if (msg.last && this.roomCode && this.playerId) {
+          // Conversational path — only on the FINAL transcript (partials would spam the LLM). Fire and
+          // forget; the reply is spoken via deps.say when it resolves.
+          const text = msg.voicePrompt.trim();
+          if (text) {
+            void this.deps.converse(this.roomCode, this.playerId, text)
+              .then(reply => { if (reply) this.deps.say?.(reply); })
+              .catch(() => { /* LLM failure → stay quiet, never break the call */ });
+          }
         }
-        this.firedIntents = cur;
-        if (msg.last) this.firedIntents = [];   // utterance over; next starts fresh
         break;
       }
       case 'dtmf': {

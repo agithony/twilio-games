@@ -13,6 +13,9 @@ import { parseManifest } from '../shared/asset-manifest';
 import { mergeMapConfig } from '../shared/maps-store';
 import { appendResults, parseLeaderboard, topEntries } from '../shared/leaderboard-store';
 import { SmsConcierge, type ConciergeRoom } from './sms-concierge';
+import { OpenAiClient, NullLlmClient, type LlmClient, type LlmTurn } from './llm';
+import { hostTurn, fuzzyMatch, type HostContext } from './game-host';
+import type { Room } from './room';
 
 export class HttpServer {
   private server: http.Server;
@@ -48,6 +51,9 @@ export class HttpServer {
    *  The game loop's per-room events (onRoomEvents) are fanned to these so callers hear countdown/
    *  go/their finish. Each adapter speaks the caller-relevant subset. */
   private voiceAdapters = new Map<string, Set<ConversationRelayAdapter>>();
+  /** The conversational AI host (OpenAI, or a null no-op when OPENAI_API_KEY is unset → scripted
+   *  fallback). Turns a caller's natural-language menu utterances into spoken replies + game actions. */
+  private llm: LlmClient;
 
   constructor(opts: {
     port: number;
@@ -71,6 +77,13 @@ export class HttpServer {
     this.editorToken = opts.editorToken;
     this.clientDir = opts.clientDir ?? 'client/dist';
     this.crVoice = (process.env.CR_TTS_VOICE ?? '').trim();
+    // Conversational AI host: OpenAI when OPENAI_API_KEY is set (model via OPENAI_MODEL), else a
+    // null client so the game degrades gracefully to the scripted phrase-bank lines.
+    const openaiKey = (process.env.OPENAI_API_KEY ?? '').trim();
+    this.llm = openaiKey
+      ? new OpenAiClient({ apiKey: openaiKey, model: (process.env.OPENAI_MODEL ?? '').trim() || undefined })
+      : new NullLlmClient();
+    if (this.llm.enabled) console.log(`[LLM] conversational host ENABLED (model=${process.env.OPENAI_MODEL || 'default'})`);
     this.server = http.createServer((req, res) => {
       this.onRequest(req, res).catch((err) => {
         console.error('request handler error:', err);
@@ -175,6 +188,8 @@ export class HttpServer {
 
   private onVoiceConnection(ws: WebSocket): void {
     console.log('[CR] voice WebSocket connected (Conversation Relay)');
+    // Per-CALLER conversation history (this WS only), so the AI host has context across turns.
+    const history: LlmTurn[] = [];
     const adapter = new ConversationRelayAdapter({
       findOrCreateRoom: (code) => this.game.getOrCreateRoom(code),
       // SPEAK to the caller: Conversation Relay TTS-synthesizes {type:'text'} tokens onto the call.
@@ -190,9 +205,55 @@ export class HttpServer {
           if (set.delete(a) && set.size === 0) this.voiceAdapters.delete(code);
         }
       },
+      phaseOf: (roomCode) => this.game.findRoom(roomCode)?.phase ?? 'lobby',
+      // Conversational AI turn: build the host context from the live room, run the LLM (with history),
+      // return what to say. Null when the LLM is disabled → adapter stays quiet (scripted fallback).
+      converse: async (roomCode, playerId, utterance) => {
+        if (!this.llm.enabled) return null;
+        const room = this.game.findRoom(roomCode);
+        if (!room) return null;
+        history.push({ role: 'user', content: utterance });
+        const reply = await hostTurn(this.llm, this.hostContext(room, playerId), history);
+        if (reply) history.push({ role: 'assistant', content: reply });
+        // Bound history so a long call doesn't grow unbounded (keep the last ~12 turns).
+        if (history.length > 12) history.splice(0, history.length - 12);
+        return reply;
+      },
     });
     ws.on('message', (d) => adapter.handleMessage(d.toString()));
     ws.on('close', () => { console.log('[CR] voice WebSocket closed'); adapter.handleClose(); });
+  }
+
+  /** Build the AI host's view of a live room for one caller: what it can see + the actions it can take
+   *  (pick a car/map by fuzzy name, start the race). Actions delegate to the same Room methods + the
+   *  game-server broadcast, so a voice-driven pick shows up on the screen exactly like a texted one. */
+  private hostContext(room: Room, playerId: string): HostContext {
+    const cars = this.roomConfigCache.carNames;
+    const me = room.lobbyPlayers().find(p => p.playerId === playerId);
+    const myCarIdx = me?.carIndex ?? null;
+    return {
+      phase: room.phase as HostContext['phase'],
+      cars, maps: room.mapChoices, selectedMap: room.selectedMap,
+      myCar: myCarIdx !== null ? room.carName(myCarIdx) : null,
+      myPlace: room.results().find(r => r.name === me?.name)?.place ?? null,
+      racerCount: room.playerCount,
+      selectCarByName: (name) => {
+        const i = fuzzyMatch(name, cars);
+        if (i < 0 || room.phase !== 'car_select') return null;
+        this.game.voiceSelectCar(room.code, playerId, i);
+        return `Locked in — the ${room.carName(i)}!`;
+      },
+      selectMapByName: (name) => {
+        const i = fuzzyMatch(name, room.mapChoices);
+        if (i < 0 || room.phase !== 'map_select') return null;
+        this.game.voiceSelectMap(room.code, room.mapChoices[i]!);
+        return `${room.mapChoices[i]} it is!`;
+      },
+      startRace: () => {
+        const ok = this.game.voiceAdvance(room.code);
+        return ok ? "Here we go — let's race!" : null;
+      },
+    };
   }
 
   private async onRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {

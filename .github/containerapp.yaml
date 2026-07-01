@@ -23,6 +23,7 @@ properties:
     secrets:
       - name: twilio-token
       - name: editor-token
+      - name: openai-key
       - name: acr-password
         value: ${ACR_PASSWORD}
     registries:
@@ -65,6 +66,12 @@ properties:
           # from the CR_TTS_VOICE repo variable (falls back to empty if unset).
           - name: CR_TTS_VOICE
             value: "${CR_TTS_VOICE}"
+          # Conversational AI host (OpenAI). Empty key → the game falls back to scripted phrase-bank
+          # lines (never breaks). OPENAI_MODEL is an optional repo var (empty → server default).
+          - name: OPENAI_API_KEY
+            secretRef: openai-key
+          - name: OPENAI_MODEL
+            value: "${OPENAI_MODEL}"
         volumeMounts:
           - volumeName: appdata
             mountPath: /app/appdata
