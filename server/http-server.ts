@@ -660,6 +660,10 @@ export function contentType(name: string): string {
     case '.woff2': return 'font/woff2';
     case '.woff': return 'font/woff';
     case '.ttf': return 'font/ttf';
+    // .otf served as octet-stream → some browsers refuse to apply the @font-face, silently falling
+    // back to a system font (why the branded Twilio Sans numbers looked different in prod vs. dev,
+    // where Vite sent the right type). The Twilio Sans faces are all .otf.
+    case '.otf': return 'font/otf';
     case '.glb': return 'model/gltf-binary';
     case '.ico': return 'image/x-icon';
     // Audio (shared-screen background music) — a decodable Content-Type so the browser's Web Audio

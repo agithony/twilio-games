@@ -96,6 +96,12 @@ describe('static client serving', () => {
     expect(contentType('x.zzz')).toBe('application/octet-stream');
   });
 
+  it('maps .otf fonts to font/otf (else browsers reject the @font-face → wrong font in prod)', () => {
+    expect(contentType('/fonts/TwilioSansDisplay-Extrabold.otf')).toBe('font/otf');
+    expect(contentType('x.woff2')).toBe('font/woff2');
+    expect(contentType('x.ttf')).toBe('font/ttf');
+  });
+
   it('still 404s an unknown path', async () => {
     srv = makeServer(); const port = await srv.start();
     expect((await get(port, '/nope/missing')).status).toBe(404);

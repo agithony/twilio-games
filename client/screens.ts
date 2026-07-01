@@ -157,7 +157,7 @@ export class Screens {
         <div class="lobby-main">
           <div class="join-flow">
             <div class="join-qr">
-              <img src="/brand/join-qr.png" alt="Scan to call and join" onerror="this.style.display='none'">
+              <img src="/brand/join-qr.png?v=2" alt="Scan to call and join" onerror="this.style.display='none'">
               <div class="join-qr-cap">Scan to call</div>
             </div>
             <ol class="join-steps">
