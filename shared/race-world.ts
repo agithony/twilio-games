@@ -21,6 +21,8 @@ export class RaceWorld {
   private _phase: Phase = 'countdown';
   private events: GameEvent[] = [];
   private leadId: string | null = null;
+  /** Previous-frame place per car, so we can fire a one-shot "fell to last" callout on the edge. */
+  private prevPlace = new Map<string, number>();
   /** Tracks which item ids have already been triggered per car. playerId -> Set<itemId> */
   private hits = new Map<string, Set<number>>();
   /** Boosts are SHARED consumables: the first car to touch one collects it, and it's hidden until
@@ -36,9 +38,12 @@ export class RaceWorld {
       speed: BASE_SPEED, boost: 0, power: 1, powerActive: 0, stunned: 0,
       lap: 1, finished: false, finishT: 0, place: i + 1,
     }));
-    // Initialize hits map for each player
-    for (const p of players) {
-      this.hits.set(p.id, new Set<number>());
+    // Initialize hits map for each player + seed prev-place from the STARTING GRID (place = i+1) so
+    // the first real place change during the race is detected as an edge (a car that immediately
+    // drops to last still fires fell_to_last, instead of the default masking the first transition).
+    for (let i = 0; i < players.length; i++) {
+      this.hits.set(players[i]!.id, new Set<number>());
+      this.prevPlace.set(players[i]!.id, i + 1);
     }
     // Pre-generate a smart, fair gauntlet (deterministic via rng, so all clients agree;
     // VARIETY comes from the per-race seed chosen at Room.start()). See course-gen.ts:
@@ -166,6 +171,11 @@ export class RaceWorld {
             set.add(it.id);
             c.stunned = 0.8; c.boost = -0.6;
             this.events.push({ kind: 'hit', playerId: c.id });
+            // Milestone: every 3rd barrier this car has hit → a "barrier magnet" callout (set.size
+            // is the running total of distinct barriers this car has clipped).
+            if (set.size % 3 === 0) {
+              this.events.push({ kind: 'hit_streak', playerId: c.id, name: c.name, count: set.size });
+            }
           } else {
             // Boost = SHARED consumable: skip if currently picked-up (waiting to respawn). The FIRST
             // car to reach an available boost collects it; it vanishes for BOOST_RESPAWN seconds.
@@ -202,6 +212,19 @@ export class RaceWorld {
       return q.z - p.z;
     });
     order.forEach((c, i) => { c.place = i + 1; });
+    // "Fell to last" callout: fire once on the EDGE when a car drops INTO last place (needs ≥3 cars
+    // so it's a real setback, not a 2-player back-and-forth). prevPlace is seeded from the starting
+    // grid, so a car that STARTS last (was===last) never false-fires; only a genuine drop does.
+    const last = this.cars.length;
+    if (last >= 3) {
+      for (const c of this.cars) {
+        const was = this.prevPlace.get(c.id) ?? c.place;
+        if (c.place === last && was !== last && !c.finished) {
+          this.events.push({ kind: 'fell_to_last', playerId: c.id, name: c.name });
+        }
+      }
+    }
+    for (const c of this.cars) this.prevPlace.set(c.id, c.place);
     // backfill finish-event places (they were pushed with place 0)
     for (const e of this.events) {
       if (e.kind === 'finish' && e.place === 0) {

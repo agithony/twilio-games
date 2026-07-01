@@ -23,9 +23,16 @@ describe('voice-lines', () => {
     expect(lineForEvent({ kind: 'finish', playerId: 'p1', name: 'Me', place: 1 }, null)).toBeNull();
   });
 
-  it('mid-race cues are NOT spoken to the caller (screen-only)', () => {
-    expect(lineForEvent({ kind: 'lead_change', playerId: 'p1', name: 'Me' }, 'p1')).toBeNull();
-    expect(lineForEvent({ kind: 'hit', playerId: 'p1' }, 'p1')).toBeNull();
+  it('speaks arcade lines for the caller\'s OWN car (took lead / hit streak / fell to last)', () => {
+    expect(lineForEvent({ kind: 'lead_change', playerId: 'p1', name: 'Me' }, 'p1')).toMatch(/lead|front|first/i);
+    expect(lineForEvent({ kind: 'hit_streak', playerId: 'p1', name: 'Me', count: 3 }, 'p1')).toMatch(/barrier|wall|gap/i);
+    expect(lineForEvent({ kind: 'fell_to_last', playerId: 'p1', name: 'Me' }, 'p1')).toMatch(/last|catch|climb|up/i);
+  });
+
+  it('does NOT speak arcade lines about OTHER players, or raw hit/race_over, to the caller', () => {
+    expect(lineForEvent({ kind: 'lead_change', playerId: 'p2', name: 'Them' }, 'p1')).toBeNull();
+    expect(lineForEvent({ kind: 'hit_streak', playerId: 'p2', name: 'Them', count: 3 }, 'p1')).toBeNull();
+    expect(lineForEvent({ kind: 'hit', playerId: 'p1' }, 'p1')).toBeNull();       // raw hit → screen only
     expect(lineForEvent({ kind: 'race_over' }, 'p1')).toBeNull();
   });
 

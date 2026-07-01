@@ -29,4 +29,20 @@ describe('InterpolationBuffer', () => {
     const s = b.sample(1150)!;
     expect(s.cars[0]!.z).toBeCloseTo(50, 0);
   });
+  it('EXTRAPOLATES forward when render runs past the newest snapshot (hides a late packet)', () => {
+    const b = new InterpolationBuffer(0);   // 0 delay so target == renderT for clarity
+    b.push(snap(1, 0),   1000);
+    b.push(snap(2, 100), 1100);   // speed = 100 units / 100ms
+    // render at 1150ms → 50ms past the last snapshot → project half a span forward → z≈150
+    const s = b.sample(1150)!;
+    expect(s.cars[0]!.z).toBeCloseTo(150, 0);
+  });
+  it('caps extrapolation at one snapshot span (no fling on a long gap)', () => {
+    const b = new InterpolationBuffer(0);
+    b.push(snap(1, 0),   1000);
+    b.push(snap(2, 100), 1100);
+    // render 500ms past last → capped at one span (100ms) → z at most ≈200, not 600
+    const s = b.sample(1600)!;
+    expect(s.cars[0]!.z).toBeCloseTo(200, 0);
+  });
 });

@@ -1,6 +1,6 @@
 import type { Intent, GameEvent } from '../shared/types';
 import { intentsFromTranscript } from './voice-intent';
-import { greetingLine, lineForEvent } from './voice-lines';
+import { greetingLine, lineForEvent, isChattyEvent } from './voice-lines';
 
 export type CrMessage =
   | { type:'setup'; callSid:string; from?:string; customParameters: Record<string,string> }
@@ -41,6 +41,10 @@ const DTMF_TO_INTENT: Record<string, Intent> = {
   '1': 'MOVE_LEFT', '2': 'BOOST', '3': 'MOVE_RIGHT', '4': 'BRAKE', '5': 'USE_POWER',
 };
 
+/** Min gap between mid-race "arcade" voice lines to a caller, so they stay fun (not spammy) and don't
+ *  talk over the caller's spoken commands. ~8s → a few quips per race, never a stream. */
+const CHATTY_GAP_MS = 8000;
+
 /** Everything the adapter needs from its host to TALK BACK to the caller + hook game events. All
  *  optional so existing callers/tests that only drive intents keep working unchanged. */
 export interface AdapterDeps {
@@ -56,10 +60,10 @@ export class ConversationRelayAdapter {
   private room: RoomLike | null = null;
   private playerId: string | null = null;
   private roomCode: string | null = null;
-  // Conversation Relay sends ACCUMULATING partial transcripts ("left" → "left right"
-  // → "left right boost"). We count how many command-words we've already fired this
-  // utterance and only act on newly-appended ones, so each spoken command fires once.
-  private firedThisUtterance = 0;
+  // The intents already fired for the CURRENT utterance (reset on last:true). We compare each new
+  // partial's intents against this by longest-common-prefix and fire only the new tail — robust to
+  // ASR revising a word mid-utterance (see the prompt handler).
+  private firedIntents: Intent[] = [];
   constructor(private deps: AdapterDeps) {}
 
   /** The caller's bound player id (null until setup binds them) — for event targeting. */
@@ -68,10 +72,22 @@ export class ConversationRelayAdapter {
   get boundRoomCode(): string | null { return this.roomCode; }
 
   /** Called by the voice registry when THIS caller's room emits a game event. Speaks the caller-
-   *  relevant ones (their countdown/go/finish); ignores mid-race cues. Safe no-op if no `say` sink. */
+   *  relevant lines. Key moments (countdown/go/finish) always speak; mid-race "arcade" lines
+   *  (hit-streak/fell-to-last/took-lead) are THROTTLED — at most one every CHATTY_GAP ms — so spoken
+   *  audio never buries the caller's own left/right/boost. Safe no-op if no `say` sink. */
+  private lineSeq = 0;
+  private lastChattyAt = -1e9;
+  private clockMs = 0;   // advanced from event cadence; monotonic enough for throttling
   onGameEvent(ev: GameEvent): void {
-    const line = lineForEvent(ev, this.playerId);
-    if (line) this.deps.say?.(line);
+    this.clockMs += 50;   // events arrive on the ~20Hz broadcast; approx a wall clock for throttling
+    if (isChattyEvent(ev.kind)) {
+      if (this.clockMs - this.lastChattyAt < CHATTY_GAP_MS) return;   // too soon → stay quiet
+      const line = lineForEvent(ev, this.playerId, this.lineSeq);
+      if (line) { this.lastChattyAt = this.clockMs; this.lineSeq++; this.deps.say?.(line); }
+      return;
+    }
+    const line = lineForEvent(ev, this.playerId, this.lineSeq);
+    if (line) { this.lineSeq++; this.deps.say?.(line); }
   }
 
   handleMessage(raw: string): void {
@@ -93,15 +109,22 @@ export class ConversationRelayAdapter {
         break;
       }
       case 'prompt': {
-        const intents = intentsFromTranscript(msg.voicePrompt);
-        // Fire only command-words newly appended since the last partial of this utterance.
-        const fresh = intents.slice(this.firedThisUtterance);
+        // Conversation Relay sends ACCUMULATING partial transcripts within an utterance — but ASR
+        // also REVISES them ("left" → corrected to "right"). Position-slicing (the old approach)
+        // silently dropped a command whenever a word changed instead of appended, which is exactly
+        // why "left"/"right" sometimes didn't move the car. Instead: dedup by CONTENT via the longest
+        // common prefix between what we've already fired this utterance and the current transcript's
+        // intents — fire only the genuinely-new tail. This recovers from corrections (the corrected
+        // word DOES fire) while still deduping true appends + repeats.
+        const cur = intentsFromTranscript(msg.voicePrompt);
+        const p = commonPrefixLen(this.firedIntents, cur);
+        const fresh = cur.slice(p);
         console.log(`[CR] prompt last=${msg.last} text="${msg.voicePrompt}" → fired ${fresh.length} new: [${fresh.join(',')}]${this.playerId ? '' : ' (NOT BOUND — dropped)'}`);
         if (this.room && this.playerId) {
           for (const intent of fresh) this.room.applyIntent(this.playerId, intent);
         }
-        this.firedThisUtterance = intents.length;
-        if (msg.last) this.firedThisUtterance = 0;  // utterance over; next starts fresh
+        this.firedIntents = cur;
+        if (msg.last) this.firedIntents = [];   // utterance over; next starts fresh
         break;
       }
       case 'dtmf': {
@@ -129,4 +152,13 @@ export class ConversationRelayAdapter {
 function playerName(from?: string): string {
   if (from && from.length >= 4) return `Racer ${from.slice(-4)}`;
   return 'Racer';
+}
+
+/** Length of the shared leading run of two intent arrays (how many already-fired intents the new
+ *  transcript still agrees with). Everything past this in the new array is genuinely new → fire it. */
+function commonPrefixLen(a: Intent[], b: Intent[]): number {
+  const n = Math.min(a.length, b.length);
+  let i = 0;
+  while (i < n && a[i] === b[i]) i++;
+  return i;
 }

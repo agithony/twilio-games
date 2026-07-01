@@ -76,6 +76,32 @@ describe('ConversationRelayAdapter', () => {
     ]);
   });
 
+  it('fires the CORRECTED command when ASR revises a partial (left → right)', () => {
+    // The real dropped-command bug: Deepgram hears "left", then corrects the SAME utterance to
+    // "right". Position-slicing dropped the correction; content dedup must fire RIGHT.
+    const room = fakeRoom();
+    const a = new ConversationRelayAdapter({ findOrCreateRoom: () => room });
+    a.handleMessage(JSON.stringify({ type:'setup', callSid:'CA1', customParameters:{ roomCode:'4821' } }));
+    a.handleMessage(JSON.stringify({ type:'prompt', voicePrompt:'left',  last:false }));  // fires LEFT
+    a.handleMessage(JSON.stringify({ type:'prompt', voicePrompt:'right', last:true }));   // corrected → RIGHT
+    expect(room.applied).toEqual([
+      { id:'p1', intent:'MOVE_LEFT' },
+      { id:'p1', intent:'MOVE_RIGHT' },
+    ]);
+  });
+
+  it('fires an appended second command in the same utterance ("left" then "left right")', () => {
+    const room = fakeRoom();
+    const a = new ConversationRelayAdapter({ findOrCreateRoom: () => room });
+    a.handleMessage(JSON.stringify({ type:'setup', callSid:'CA1', customParameters:{ roomCode:'4821' } }));
+    a.handleMessage(JSON.stringify({ type:'prompt', voicePrompt:'left',       last:false }));
+    a.handleMessage(JSON.stringify({ type:'prompt', voicePrompt:'left right',  last:true }));
+    expect(room.applied).toEqual([
+      { id:'p1', intent:'MOVE_LEFT' },
+      { id:'p1', intent:'MOVE_RIGHT' },
+    ]);
+  });
+
   it('maps dtmf digits to intents as a fallback (1=left,2=boost,3=right)', () => {
     const room = fakeRoom();
     const a = new ConversationRelayAdapter({ findOrCreateRoom: () => room });

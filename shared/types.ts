@@ -88,6 +88,8 @@ export type GameEvent =
   | { kind: 'go' }
   | { kind: 'lead_change'; playerId: string; name: string }
   | { kind: 'hit'; playerId: string }
+  | { kind: 'hit_streak'; playerId: string; name: string; count: number }  // hit N barriers total (milestone)
+  | { kind: 'fell_to_last'; playerId: string; name: string }               // dropped into last place mid-race
   | { kind: 'boost_taken'; playerId: string; itemId: number }
   | { kind: 'finish'; playerId: string; name: string; place: number }
   | { kind: 'race_over' };

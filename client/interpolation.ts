@@ -15,8 +15,21 @@ export class InterpolationBuffer {
   sample(renderT: number): WorldSnapshot | null {
     if (this.buf.length === 0) return null;
     const target = renderT - this.delayMs;
+    const last = this.buf[this.buf.length - 1]!;
+    // If render time has run PAST the newest snapshot (a packet was late/dropped), don't FREEZE —
+    // briefly EXTRAPOLATE forward from the last two snapshots so cars keep gliding. Capped so a long
+    // gap doesn't fling them off; clamped to the sim length elsewhere. This hides the ~64ms deployed
+    // cadence + occasional jitter that otherwise reads as stutter.
+    if (target >= last.recvT) {
+      if (this.buf.length < 2) return last.snap;
+      const prev = this.buf[this.buf.length - 2]!;
+      const span = last.recvT - prev.recvT || 1;
+      const over = Math.min(target - last.recvT, span);   // extrapolate at most one snapshot ahead
+      const f = 1 + over / span;                          // f>1 → project past `last`
+      return lerpSnapshot(prev.snap, last.snap, f);
+    }
     // find the two snapshots straddling `target`
-    let a = this.buf[0]!, b = this.buf[this.buf.length - 1]!;
+    let a = this.buf[0]!, b = last;
     for (let i = 0; i < this.buf.length - 1; i++) {
       if (this.buf[i]!.recvT <= target && this.buf[i + 1]!.recvT >= target) {
         a = this.buf[i]!; b = this.buf[i + 1]!; break;

@@ -33,7 +33,12 @@ const renderer = new Renderer(document.getElementById('app')!, assets);
 if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
   (window as unknown as { __renderer?: unknown }).__renderer = renderer;
 }
-const buffer = new InterpolationBuffer(100);
+// 150ms interpolation delay (was 100): the deployed server broadcasts at ~64ms/snapshot (not the
+// ideal 50ms) with some jitter, so 100ms left barely one snapshot of runway → one late packet
+// stalled motion. 150ms keeps ~2+ snapshots buffered so playback stays smooth; the buffer also
+// extrapolates briefly past the newest snapshot instead of freezing. Small cost: +50ms input-to-
+// screen latency, imperceptible vs. the smoothness win.
+const buffer = new InterpolationBuffer(150);
 const big = document.getElementById('big')!;
 const lobbyEl = document.getElementById('lobby')!;
 lobbyEl.style.display = 'none';   // legacy overlay retired; the Screens overlay handles pre/post-race

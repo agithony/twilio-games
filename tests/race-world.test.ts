@@ -91,6 +91,24 @@ describe('RaceWorld', () => {
     expect(w.snapshot().cars.every(c => c.finished)).toBe(true);
   });
 
+  it('emits fell_to_last when a car (3+ racers) drops into last place mid-race', () => {
+    const w3 = new RaceWorld([
+      { id: 'p1', name: 'You', color: '#36d1dc' },
+      { id: 'p2', name: 'Ada', color: '#f22f46' },
+      { id: 'p3', name: 'Rex', color: '#ffd23f' },
+    ], 777);
+    startRacing(w3);
+    let sawFellToLast = false;
+    // p1 brakes every frame → falls behind the other two → should transition into last place.
+    for (let i = 0; i < 60 * 8; i++) {
+      w3.applyIntent('p1', 'BRAKE');
+      w3.step(STEP);
+      if (w3.drainEvents().some(e => e.kind === 'fell_to_last' && e.playerId === 'p1')) { sawFellToLast = true; break; }
+      if (w3.over) break;
+    }
+    expect(sawFellToLast).toBe(true);
+  });
+
   it('removeCar drops a car so the race can still finish (no wedge on disconnect)', () => {
     const w = new RaceWorld(PLAYERS, 12345);
     startRacing(w);

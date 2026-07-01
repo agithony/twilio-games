@@ -248,6 +248,12 @@ export class GameServer {
 
   private startLoop(): void {
     let last = process.hrtime.bigint();
+    // Run the loop at ~120Hz target. The sim steps by real dt (frame-rate independent) so this only
+    // affects the GRANULARITY at which the broadcast accumulator is checked: a faster loop means the
+    // accumulator reaches broadcastEvery (50ms) close to on-time even when the container starves the
+    // timer to ~60ms actual. At 60Hz target, a starved tick meant broadcasts landed at ~64ms (≈15Hz);
+    // the tighter target keeps the effective broadcast rate near the intended 20Hz. The loop body is
+    // cheap (one small room), so the extra wakeups cost almost nothing.
     this.loop = setInterval(() => {
       const now = process.hrtime.bigint();
       let dt = Number(now - last) / 1e9; last = now;
@@ -259,8 +265,13 @@ export class GameServer {
         if (room && !seen.has(room)) { seen.add(room); this.stepRoom(room, dt); }
       }
       this.broadcastAccum += dt;
-      if (this.broadcastAccum >= this.broadcastEvery) { this.broadcastAccum = 0; this.broadcastAll(); }
-    }, 1000 / 60);
+      if (this.broadcastAccum >= this.broadcastEvery) {
+        // Reset to the REMAINDER (not 0) so timing errors don't accumulate — keeps the long-run rate
+        // locked to broadcastEvery instead of slipping slower with each late tick.
+        this.broadcastAccum = this.broadcastAccum % this.broadcastEvery;
+        this.broadcastAll();
+      }
+    }, 1000 / 120);
   }
 
   private stepRoom(room: Room, dt: number): void {

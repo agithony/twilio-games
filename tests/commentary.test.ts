@@ -33,4 +33,14 @@ describe('commentaryFor', () => {
   it('per-countdown-tick returns null (big-text already shows the number)', () => {
     expect(commentaryFor({ kind: 'countdown', n: 3 }, 0)).toBeNull();
   });
+  it('hit_streak names the player + is a barrier-magnet callout', () => {
+    const s = commentaryFor({ kind: 'hit_streak', playerId: 'p1', name: 'Ada', count: 3 }, 0)!;
+    expect(s).toContain('Ada');
+    expect(s).toMatch(/barrier|wall|gap|aiming/i);
+  });
+  it('fell_to_last names the player + is an encouraging setback line', () => {
+    const s = commentaryFor({ kind: 'fell_to_last', playerId: 'p1', name: 'Rex' }, 0)!;
+    expect(s).toContain('Rex');
+    expect(s).toMatch(/last|back|climb|rear/i);
+  });
 });

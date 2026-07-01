@@ -7,6 +7,11 @@ const HIT = ['Ooh, that\'s gotta hurt!', 'Into the barrier!', 'Crunch! Someone\'
   'Bumper cars out there!', 'That\'s a costly tap!'];
 const LEAD = ['takes the lead!', 'surges to the front!', 'is out in front now!', 'grabs P1!'];
 const OVER = ['That\'s the checkered flag!', 'Race over — what a finish!', 'And that\'s a wrap, folks!'];
+// Arcade-style reactive banks (name is prefixed by the caller):
+const STREAK = ['is a barrier magnet today!', 'again?! Are you AIMING for those?',
+  'can\'t stop hitting the walls!', 'and the barriers are winning!', 'needs to find the gaps!'];
+const LAST = ['drops to dead last — shake it off!', 'tumbles to the back — climb back up!',
+  'is in last, but it\'s not over!', 'falls to the rear of the pack!'];
 
 function ordinal(n: number): string {
   const s = ['th','st','nd','rd'], v = n % 100;
@@ -17,6 +22,8 @@ export function commentaryFor(event: GameEvent, seq: number): string | null {
   switch (event.kind) {
     case 'go':          return pick(GO, seq);
     case 'hit':         return pick(HIT, seq);
+    case 'hit_streak':  return `${event.name} ${pick(STREAK, seq)}`;
+    case 'fell_to_last':return `${event.name} ${pick(LAST, seq)}`;
     case 'lead_change': return `${event.name} ${pick(LEAD, seq)}`;
     case 'finish':      return event.place === 1
       ? `${event.name} wins it — first place!`
