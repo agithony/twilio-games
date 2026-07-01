@@ -42,8 +42,8 @@ const DTMF_TO_INTENT: Record<string, Intent> = {
 };
 
 /** Min gap between mid-race "arcade" voice lines to a caller, so they stay fun (not spammy) and don't
- *  talk over the caller's spoken commands. ~8s → a few quips per race, never a stream. */
-const CHATTY_GAP_MS = 8000;
+ *  talk over the caller's spoken commands. 2s → snappy, reactive, still not a constant stream. */
+const CHATTY_GAP_MS = 2000;
 
 /** Everything the adapter needs from its host to TALK BACK to the caller + hook game events. All
  *  optional so existing callers/tests that only drive intents keep working unchanged. */
