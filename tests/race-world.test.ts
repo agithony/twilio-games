@@ -199,6 +199,37 @@ describe('RaceWorld', () => {
     expect(w.snapshot().consumedItems).toContain(boost.id);
   });
 
+  it('collecting an orb ADDS a dash charge — it does NOT auto-activate the dash', () => {
+    // The fix: picking up an orb should bank a charge (power++), not fire the invulnerable dash.
+    // The player must explicitly say "power" to spend a charge. So on pickup: power goes UP and
+    // powerActive stays 0.
+    const solo = new RaceWorld([{ id: 'p1', name: 'You', color: '#fff' }], 555);
+    startRacing(solo);
+    const startCharges = solo.snapshot().cars[0]!.power;
+    const orb = solo.items.filter(i => i.kind === 'boost').sort((a, b) => a.z - b.z)[0]!;
+    let charges = startCharges;
+    for (let i = 0; i < 60 * 90; i++) {
+      const c = solo.snapshot().cars[0]!;
+      // merge into the orb's lane on approach
+      if (c.z > orb.z - 30) {
+        if (c.targetLane < orb.lane) solo.applyIntent('p1', 'MOVE_RIGHT');
+        else if (c.targetLane > orb.lane) solo.applyIntent('p1', 'MOVE_LEFT');
+      }
+      solo.step(STEP);
+      const cc = solo.snapshot().cars[0]!;
+      // The moment the orb is consumed, the charge count must have gone UP and NOT auto-activated.
+      if (solo.snapshot().consumedItems.includes(orb.id)) {
+        charges = cc.power;
+        expect(cc.power).toBeGreaterThan(startCharges);   // banked a charge
+        expect(cc.powerActive).toBe(0);                   // did NOT auto-fire
+        expect(cc.invulnerable).toBe(false);
+        break;
+      }
+      if (cc.z > orb.z + 8 || cc.finished) break;
+    }
+    expect(charges).toBeGreaterThan(startCharges);
+  });
+
   it('a consumed boost reappears after the cooldown (for trailing players)', () => {
     const w = new RaceWorld(PLAYERS, 555);
     startRacing(w);

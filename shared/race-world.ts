@@ -2,7 +2,7 @@ import { Rng } from './rng';
 import {
   LANES, LAP_TARGET, TRACK_LEN, RACE_LEN, BASE_SPEED, MAX_RACE_SECONDS,
   ITEM_START, laneX, BOOST_MAX, BOOST_MIN, BOOST_SPEED_PER,
-  POWER_BOOST, POWER_ACTIVE_SECS, POWER_PAD_SECS, POWER_START,
+  POWER_BOOST, POWER_ACTIVE_SECS, POWER_MAX, POWER_START,
 } from './constants';
 import { generateCourse } from './course-gen';
 import type { Intent, Item, CarState, WorldSnapshot, Phase, GameEvent } from './types';
@@ -194,11 +194,13 @@ export class RaceWorld {
               this.events.push({ kind: 'hit_streak', playerId: c.id, name: c.name, count: set.size });
             }
           } else {
-            // Boost = SHARED consumable: skip if currently picked-up (waiting to respawn). The FIRST
-            // car to reach an available boost collects it; it vanishes for BOOST_RESPAWN seconds.
+            // Orb = SHARED consumable: skip if currently picked-up (waiting to respawn). The FIRST
+            // car to reach an available orb collects it; it vanishes for BOOST_RESPAWN seconds.
             const goneUntil = this.consumedUntil.get(it.id);
             if (goneUntil !== undefined && this.t < goneUntil) continue;
-            c.powerActive = Math.max(c.powerActive, POWER_PAD_SECS);
+            // BANK a dash charge (capped) — do NOT auto-activate. The player spends it by saying
+            // "power" (USE_POWER). This keeps the dash a deliberate, saved-up move.
+            c.power = Math.min(c.power + 1, POWER_MAX);
             this.consumedUntil.set(it.id, this.t + BOOST_RESPAWN);
             this.events.push({ kind: 'boost_taken', playerId: c.id, itemId: it.id });
           }

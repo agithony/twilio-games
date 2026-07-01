@@ -21,8 +21,10 @@ export const BOOST_SPEED_PER = 12;
 // pickup grabs POWER_PAD_SECS of it. Players START each race with POWER_START charges.
 export const POWER_BOOST = 16;
 export const POWER_ACTIVE_SECS = 2.2;
-export const POWER_PAD_SECS = 1.4;
 export const POWER_START = 1;
+// Collecting an orb BANKS a dash charge (does not auto-fire); the player spends one by saying
+// "power". Charges are capped so you can't hoard invincibility across a whole race.
+export const POWER_MAX = 3;
 export const ITEM_START = 55;        // z of first obstacle row (course-gen.ts owns spacing/ramp)
 // Hard cap on race duration (seconds from GO). A clean race is ~55s; if any car is stuck/very slow
 // (repeated barriers, a wedged/disconnected racer), force-finish everyone at this point so the race

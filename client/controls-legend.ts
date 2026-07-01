@@ -13,7 +13,7 @@ const ROWS: Row[] = [
   { say: '“Brake” / “Slow”', action: 'Slow down' },
   // POWER's explanation is the longest — split it across lines so it never runs off one line.
   { say: '“Power”', action: 'NITRO DASH', accent: 'power',
-    hint: ['SMASH through barriers — unstoppable!', 'One charge · grab a glowing orb to refill'] },
+    hint: ['SMASH through barriers!', 'One charge · Grab a glowing orb to refill'] },
 ];
 
 /**

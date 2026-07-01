@@ -68,8 +68,14 @@ function paintGauge(snap: import('../shared/types').WorldSnapshot | null): void 
   // real orb model (setOrbThumb), so the label doesn't need to describe it.
   gPowerEl.classList.toggle('ready', !!h.powerReady);
   gPowerEl.classList.toggle('active', !!h.powerActive);
-  // ACTIVE = the invulnerable dash is firing ("SMASH!"); READY = a charge is armed; else refill.
-  gPowerLabel.textContent = h.powerActive ? 'DASH — SMASH!' : h.powerReady ? 'NITRO DASH READY' : 'grab an orb';
+  // ACTIVE = the invulnerable dash is firing ("SMASH!"); READY = one or more banked charges (show the
+  // count + prompt to say "power"); else empty → go grab an orb.
+  const charges = h.charges ?? 0;
+  gPowerLabel.textContent = h.powerActive
+    ? 'DASH — SMASH!'
+    : h.powerReady
+      ? `DASH READY ×${charges} — say “power”`
+      : 'grab an orb';
   // Boost bar: fill from center — right/green when boosting, left/red when braking. Normalize the
   // boost modifier against its sim bounds so the bar caps out exactly when the sim does.
   const b = h.boost ?? 0;
