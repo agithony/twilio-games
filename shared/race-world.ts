@@ -2,7 +2,7 @@ import { Rng } from './rng';
 import {
   LANES, LAP_TARGET, TRACK_LEN, RACE_LEN, BASE_SPEED, MAX_RACE_SECONDS,
   ITEM_START, laneX, BOOST_MAX, BOOST_MIN, BOOST_SPEED_PER,
-  POWER_BOOST, POWER_ACTIVE_SECS, POWER_MAX, POWER_START,
+  POWER_BOOST, POWER_ACTIVE_SECS, POWER_MAX, POWER_START, BARRIER_STUN_SECS,
 } from './constants';
 import { generateCourse } from './course-gen';
 import type { Intent, Item, CarState, WorldSnapshot, Phase, GameEvent } from './types';
@@ -186,7 +186,7 @@ export class RaceWorld {
               this.events.push({ kind: 'barrier_smashed', playerId: c.id, itemId: it.id });
               continue;
             }
-            c.stunned = 0.8; c.boost = -0.6;
+            c.stunned = BARRIER_STUN_SECS; c.boost = -0.6;
             this.events.push({ kind: 'hit', playerId: c.id });
             // Milestone: every 3rd barrier this car has hit → a "barrier magnet" callout (set.size
             // is the running total of distinct barriers this car has clipped).
