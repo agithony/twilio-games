@@ -626,10 +626,10 @@ export class LevelScene {
 
   select(key: 'map' | 'track' | string): void {
     this.selKey = key;
-    // Map / props use the gizmo (move/rotate/scale the whole object). The TRACK is edited by its
-    // curve POINTS (drag handles in the viewport), so the gizmo is detached while Track is selected
-    // — otherwise its handles would intercept the clicks meant for the control-point dots.
-    if (key === 'track') this.gizmo.detach();
+    // Map / track / props use the gizmo (move/rotate/scale the whole object) AND the numeric fields.
+    // The track's curve control-POINTS are still separately draggable in the viewport; the gizmo sits
+    // at the track group's origin for whole-track placement (what the user expects to grab).
+    if (key === 'track') this.gizmo.attach(this.trackGroup);
     else if (key === 'map') this.gizmo.attach(this.mapGroup);
     else if (key === 'startLine' && this.startGantry) this.gizmo.attach(this.startGantry);
     else if (key === 'finishLine' && this.finishGantry) this.gizmo.attach(this.finishGantry);
@@ -711,6 +711,7 @@ export class LevelScene {
   private selectedObject(): THREE.Object3D | null {
     const k = this.selKey;
     if (k === 'map') return this.mapGroup;
+    if (k === 'track') return this.trackGroup;   // track IS gizmo/numeric-movable (move/rotate/scale)
     if (k === 'startLine') return this.startGantry;
     if (k === 'finishLine') return this.finishGantry;
     return this.propGroups.get(k) ?? null;
