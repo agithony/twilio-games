@@ -253,8 +253,8 @@ fileSel.addEventListener('change', () => { writeRef((r) => { r.file = fileSel.va
 $('save').addEventListener('click', async () => {
   statusEl.textContent = 'saving…';
   try { manifest = await saveManifest(manifest); entries = buildEntries(manifest); statusEl.textContent = 'saved'; }
-  catch { statusEl.textContent = 'save failed'; }
-  setTimeout(() => (statusEl.textContent = ''), 2500);
+  catch (e) { statusEl.textContent = (e as Error).message || 'save failed'; }   // surface 401/unauthorized
+  setTimeout(() => (statusEl.textContent = ''), 5000);
 });
 
 /** Move the currently-selected CAR earlier (-1) or later (+1) in the car-select order. Cars occupy

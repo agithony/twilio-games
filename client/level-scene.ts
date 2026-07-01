@@ -203,6 +203,20 @@ export class LevelScene {
   /** Mutable live level ref, so the inspector panels can read/write car scale etc. in place. */
   getLevel(): LevelConfig { return this.level; }
 
+  /** Measure a map GLB and return a good STARTING model scale so its footprint ≈ the track length —
+   *  a sane initial size for a brand-new level (the fixed default only suited tiny models; large
+   *  track GLBs ×20 rendered off-screen/inside the mesh). Returns null on load failure (keep default). */
+  async measureMapScale(file: string): Promise<number | null> {
+    return new Promise((resolve) => {
+      this.loader.load(`/assets/maps/${file}`, (g) => {
+        const wrap = wrapMapScene(g.scene);   // recenter like the real placement
+        const size = new THREE.Box3().setFromObject(wrap).getSize(new THREE.Vector3());
+        // Fit the model's largest dimension to the full driven length, so the whole track frames up.
+        resolve(autoFitScale([size.x, size.y, size.z], RACE_LEN) || 1);
+      }, undefined, () => resolve(null));
+    });
+  }
+
   /** Capture the CURRENT editor view as this level's map-select PREVIEW shot — eye + look-target in
    *  world space (the same space renderMapThumbnail places the map in, so the tile frames identically).
    *  Stored on this.level so current() persists it on save. */

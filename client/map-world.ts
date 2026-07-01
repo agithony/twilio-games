@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { RACE_LEN } from '../shared/constants';
+import { withToken } from './editor/editor-auth';
 
 export interface MapTransform { pos: number[]; rotDeg: number[]; scale: number; }
 /**
@@ -76,10 +77,11 @@ export async function fetchMapFiles(): Promise<string[]> {
   } catch { return []; }
 }
 
-/** Delete a level by key. Returns true on success. */
+/** Delete a level by key. Returns true on success. Forwards the editor token (?token=) so the
+ *  DELETE isn't 401'd on a gated deploy. */
 export async function deleteMap(key: string): Promise<boolean> {
   try {
-    const res = await fetch(`/api/maps?map=${encodeURIComponent(key)}`, { method: 'DELETE' });
+    const res = await fetch(withToken(`/api/maps?map=${encodeURIComponent(key)}`), { method: 'DELETE' });
     return res.ok;
   } catch { return false; }
 }

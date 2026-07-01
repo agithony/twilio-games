@@ -2,6 +2,7 @@
 import { LevelScene } from './level-scene';
 import { fetchMaps, fetchMapFiles, deleteMap } from './map-world';
 import { fetchAssets } from './editor/manifest-client';
+import { authHeaders } from './editor/editor-auth';
 import { numberRow, colorRow, heading } from './level-panels';
 import { mergeLevel, levelDefaults, DEFAULT_LIGHTING, DEFAULT_EFFECTS,
          type LevelConfig } from '../shared/level';
@@ -490,6 +491,14 @@ document.getElementById('newLevel')!.addEventListener('click', async () => {
     map = retry;
   }
   const created = levelDefaults(map, file);
+  // Auto-fit the initial map scale to the actual GLB size. The fixed default (×20) only suited small
+  // source models — these track GLBs are already 500–3400 units in their own space, so ×20 buried the
+  // camera inside a giant mesh and the map "didn't render". Measure once + scale so the map's footprint
+  // ≈ the track length, giving a visible, roughly-right starting point to fine-tune.
+  try {
+    const fit = await scene.measureMapScale(file);
+    if (fit) created.model.scale = fit;
+  } catch { /* keep the default scale */ }
   levels[map] = created;
   await scene.loadLevel(structuredClone(created));
   await persistLevel(created);               // save immediately so a brand-new level exists server-side
@@ -542,11 +551,13 @@ function pickFromList(title: string, items: string[]): Promise<string | null> {
   });
 }
 
-/** POST one level config to the server (shared by Save / New / Rename). */
+/** POST one level config to the server (shared by Save / New / Rename). Sends the editor token
+ *  (from ?token= on a gated deploy) so the write isn't 401'd. */
 async function persistLevel(cfg: LevelConfig): Promise<boolean> {
   try {
     const res = await fetch('/api/maps', { method: 'POST',
-      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cfg) });
+      headers: authHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify(cfg) });
+    if (!res.ok && res.status === 401) status.textContent = 'save failed: unauthorized — open /editor?token=YOUR_EDITOR_TOKEN';
     return res.ok;
   } catch { return false; }
 }
