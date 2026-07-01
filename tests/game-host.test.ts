@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildSystemPrompt, hostTurn, fuzzyMatch, HOST_TOOLS, type HostContext } from '../server/game-host';
+import { buildSystemPrompt, hostTurn, fuzzyMatch, matchChoice, HOST_TOOLS, type HostContext } from '../server/game-host';
 import type { LlmClient, LlmReply } from '../server/llm';
 
 function ctx(over: Partial<HostContext> = {}): HostContext {
@@ -33,6 +33,26 @@ describe('fuzzyMatch', () => {
   });
 });
 
+describe('matchChoice (number OR name)', () => {
+  const cars = ['Batmobile', 'McLaren Senna', 'Lotus Elise', 'Ford Bronco'];
+  it('matches by digit number ("car 2" → index 1)', () => {
+    expect(matchChoice('car 2', cars)).toBe(1);
+    expect(matchChoice('number 4', cars)).toBe(3);
+    expect(matchChoice('3', cars)).toBe(2);
+  });
+  it('matches by number WORD ("the third one", "two")', () => {
+    expect(matchChoice('two', cars)).toBe(1);
+    expect(matchChoice('give me car four', cars)).toBe(3);
+  });
+  it('still matches by name when no number is present', () => {
+    expect(matchChoice('mclaren', cars)).toBe(1);
+    expect(matchChoice('bronco', cars)).toBe(3);
+  });
+  it('out-of-range number falls through to name match / -1', () => {
+    expect(matchChoice('car 99', cars)).toBe(-1);
+  });
+});
+
 describe('buildSystemPrompt', () => {
   it('includes the phase + car list during car_select', () => {
     const p = buildSystemPrompt(ctx({ phase: 'car_select' }));
@@ -62,13 +82,18 @@ describe('hostTurn', () => {
     const out = await hostTurn(fakeLlm({ say: 'The McLaren is fastest!', toolCalls: [] }), ctx(), []);
     expect(out).toBe('The McLaren is fastest!');
   });
-  it('executes a select_car tool call + appends the confirmation', async () => {
+  it('executes a select_car tool call; speaks the MODEL words only (no double car name)', async () => {
     let picked = '';
     const c = ctx({ selectCarByName: (n) => { picked = n; return 'Locked in — the McLaren Senna!'; } });
-    const out = await hostTurn(fakeLlm({ say: 'Great taste!', toolCalls: [{ name: 'select_car', args: { name: 'mclaren' } }] }), c, []);
-    expect(picked).toBe('mclaren');
-    expect(out).toContain('Great taste!');
-    expect(out).toContain('Locked in');
+    const out = await hostTurn(fakeLlm({ say: 'Great taste — the McLaren it is!', toolCalls: [{ name: 'select_car', args: { name: 'mclaren' } }] }), c, []);
+    expect(picked).toBe('mclaren');                 // the action still ran
+    expect(out).toBe('Great taste — the McLaren it is!');   // ...but only the model's words are spoken
+    expect(out).not.toContain('Locked in');         // no appended confirmation → no repetition
+  });
+  it('speaks the tool confirmation when the model gives NO words (bare tool call)', async () => {
+    const c = ctx({ selectCarByName: () => 'Locked in — the McLaren Senna!' });
+    const out = await hostTurn(fakeLlm({ say: '', toolCalls: [{ name: 'select_car', args: { name: 'mclaren' } }] }), c, []);
+    expect(out).toBe('Locked in — the McLaren Senna!');
   });
   it('does NOT run select_car outside car_select', async () => {
     let called = false;

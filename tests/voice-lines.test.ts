@@ -17,8 +17,10 @@ describe('voice-lines', () => {
     expect(lineForEvent({ kind: 'go' }, 'p1')).toContain('Go');
   });
 
-  it('finish is spoken only for the caller\'s own player', () => {
-    expect(lineForEvent({ kind: 'finish', playerId: 'p1', name: 'Me', place: 1 }, 'p1')).toContain('First');
+  it('finish is spoken only for the caller\'s own player, and a win is HYPE', () => {
+    const win = lineForEvent({ kind: 'finish', playerId: 'p1', name: 'Me', place: 1 }, 'p1')!;
+    expect(win.toLowerCase()).toContain('first place');
+    expect(win).toMatch(/CHAMPION|YES|!!/);   // maximum excitement for a win
     expect(lineForEvent({ kind: 'finish', playerId: 'p2', name: 'Them', place: 1 }, 'p1')).toBeNull();
     expect(lineForEvent({ kind: 'finish', playerId: 'p1', name: 'Me', place: 1 }, null)).toBeNull();
   });

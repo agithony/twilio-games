@@ -2,7 +2,7 @@
 import { LevelScene } from './level-scene';
 import { fetchMaps, fetchMapFiles, deleteMap } from './map-world';
 import { fetchAssets } from './editor/manifest-client';
-import { authHeaders } from './editor/editor-auth';
+import { authHeaders, promptForToken } from './editor/editor-auth';
 import { numberRow, colorRow, heading } from './level-panels';
 import { mergeLevel, levelDefaults, DEFAULT_LIGHTING, DEFAULT_EFFECTS,
          type LevelConfig } from '../shared/level';
@@ -551,13 +551,17 @@ function pickFromList(title: string, items: string[]): Promise<string | null> {
   });
 }
 
-/** POST one level config to the server (shared by Save / New / Rename). Sends the editor token
- *  (from ?token= on a gated deploy) so the write isn't 401'd. */
+/** POST one level config to the server (shared by Save / New / Rename). Sends the editor token so
+ *  the write isn't 401'd on a gated deploy; if it IS unauthorized, prompt for the token once + retry. */
 async function persistLevel(cfg: LevelConfig): Promise<boolean> {
   try {
-    const res = await fetch('/api/maps', { method: 'POST',
+    let res = await fetch('/api/maps', { method: 'POST',
       headers: authHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify(cfg) });
-    if (!res.ok && res.status === 401) status.textContent = 'save failed: unauthorized — open /editor?token=YOUR_EDITOR_TOKEN';
+    if (res.status === 401 && promptForToken()) {
+      res = await fetch('/api/maps', { method: 'POST',
+        headers: authHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify(cfg) });
+    }
+    if (!res.ok) status.textContent = res.status === 401 ? 'save failed: editor token required' : `save failed (${res.status})`;
     return res.ok;
   } catch { return false; }
 }

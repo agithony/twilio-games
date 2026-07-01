@@ -14,7 +14,7 @@ import { mergeMapConfig } from '../shared/maps-store';
 import { appendResults, parseLeaderboard, topEntries } from '../shared/leaderboard-store';
 import { SmsConcierge, type ConciergeRoom } from './sms-concierge';
 import { OpenAiClient, NullLlmClient, type LlmClient, type LlmTurn } from './llm';
-import { hostTurn, fuzzyMatch, type HostContext } from './game-host';
+import { hostTurn, matchChoice, type HostContext } from './game-host';
 import type { Room } from './room';
 
 export class HttpServer {
@@ -249,13 +249,13 @@ export class HttpServer {
         return `Nice to meet you, ${clean}!`;
       },
       selectCarByName: (name) => {
-        const i = fuzzyMatch(name, cars);
+        const i = matchChoice(name, cars);
         if (i < 0 || room.phase !== 'car_select') return null;
         this.game.voiceSelectCar(room.code, playerId, i);
         return `Locked in — the ${room.carName(i)}!`;
       },
       selectMapByName: (name) => {
-        const i = fuzzyMatch(name, room.mapChoices);
+        const i = matchChoice(name, room.mapChoices);
         if (i < 0 || room.phase !== 'map_select') return null;
         this.game.voiceSelectMap(room.code, room.mapChoices[i]!, playerId);   // vote
         return `Your vote's in for ${room.mapChoices[i]}!`;

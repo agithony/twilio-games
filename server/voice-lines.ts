@@ -63,13 +63,14 @@ export function isChattyEvent(kind: GameEvent['kind']): boolean {
   return kind === 'hit_streak' || kind === 'fell_to_last' || kind === 'lead_change';
 }
 
-/** A short, punchy result callout by finishing place. */
+/** A result callout by finishing place. First place is BIG — this is the scripted fallback (when the
+ *  LLM host is off); the LLM path gets its own maximum-hype prompt for a win. */
 export function placeLine(place: number): string {
   switch (place) {
-    case 1: return 'First place! You win! Incredible driving!';
-    case 2: return 'Second place — so close! Great race!';
-    case 3: return 'Third place — on the podium! Nice one!';
-    default: return `You finished ${ordinal(place)}. Good race — go again!`;
+    case 1: return "YES!! FIRST PLACE! You are the CHAMPION! Absolutely incredible driving — take a bow! Wanna run it back?";
+    case 2: return 'SO close — second place! What a race! Go again and take the crown?';
+    case 3: return 'Third place — on the podium! Nice driving! One more?';
+    default: return `You finished ${ordinal(place)} — good hustle out there! Run it back?`;
   }
 }
 

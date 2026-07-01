@@ -13,6 +13,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { stripDisplayBases } from '../asset-loader';
 import { applyModelTransform } from '../model-transform';
 import { fetchManifest, saveManifest, fetchAssets } from '../editor/manifest-client';
+import { promptForToken } from '../editor/editor-auth';
 import { isWheelNode, CAR_TARGET, BARRIER_TARGET, BOOST_TARGET } from '../../shared/asset-fit';
 import type { Manifest, AssetRef } from '../../shared/asset-manifest';
 
@@ -250,12 +251,20 @@ for (const el of [...rIn, ...oIn]) el.addEventListener('input', () => {
 useAnim.addEventListener('change', () => writeRef((r) => { if (useAnim.checked) r.animate = true; else delete r.animate; }));
 fileSel.addEventListener('change', () => { writeRef((r) => { r.file = fileSel.value; }); populateModelDropdown(); void show(idx); });
 
-$('save').addEventListener('click', async () => {
+async function doSave(): Promise<void> {
   statusEl.textContent = 'saving…';
   try { manifest = await saveManifest(manifest); entries = buildEntries(manifest); statusEl.textContent = 'saved'; }
-  catch (e) { statusEl.textContent = (e as Error).message || 'save failed'; }   // surface 401/unauthorized
-  setTimeout(() => (statusEl.textContent = ''), 5000);
-});
+  catch (e) {
+    const msg = (e as Error).message || 'save failed';
+    // On an auth failure, ask for the token once + retry (so you don't juggle ?token= URLs).
+    if (/unauthorized/i.test(msg) && promptForToken()) { await doSave(); return; }
+    statusEl.textContent = msg;
+    setTimeout(() => (statusEl.textContent = ''), 6000);
+    return;
+  }
+  setTimeout(() => (statusEl.textContent = ''), 3000);
+}
+$('save').addEventListener('click', () => void doSave());
 
 /** Move the currently-selected CAR earlier (-1) or later (+1) in the car-select order. Cars occupy
  *  entries[0..carCount-1] (1:1 with manifest.cars), so the entry index IS the manifest car index.

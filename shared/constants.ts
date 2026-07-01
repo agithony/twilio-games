@@ -7,6 +7,10 @@ export const RACE_LEN = TRACK_LEN * LAP_TARGET;   // full distance cars actually
 export const STEP = 1 / 60;          // fixed sim timestep (seconds)
 export const BASE_SPEED = 38;        // cruise speed (units/s)
 export const ITEM_START = 55;        // z of first obstacle row (course-gen.ts owns spacing/ramp)
+// Hard cap on race duration (seconds from GO). A clean race is ~55s; if any car is stuck/very slow
+// (repeated barriers, a wedged/disconnected racer), force-finish everyone at this point so the race
+// ALWAYS ends and shows results — no "car stuck at the end, game never ends" hang.
+export const MAX_RACE_SECONDS = 90;
 
 // The rendered road ribbon sits this far above the curve centerline (so it never z-fights the map
 // road beneath it). Cars are grounded at their local y=0, so they must lift by the SAME amount to

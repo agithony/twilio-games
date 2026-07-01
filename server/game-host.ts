@@ -55,7 +55,10 @@ export function buildSystemPrompt(ctx: HostContext): string {
   if (ctx.phase === 'car_select') lines.push(`Car selection. Cars available: ${ctx.cars.join(', ')}. The caller ${ctx.myCar ? `has picked the ${ctx.myCar}` : 'has NOT picked a car'}. Proactively ask which car they want (offer a fun suggestion); when they answer, CALL select_car. Once they have a car, move them to the track vote by CALLing start_race.`);
   if (ctx.phase === 'map_select') lines.push(`Track selection — this is a VOTE (multiple players may each vote; most votes wins, ties broken randomly). Tracks available: ${ctx.maps.join(', ')}. Ask which track they want and CALL select_map to cast THEIR vote. Tell them it's a vote. When they're ready, CALL start_race.`);
   if (ctx.phase === 'racing' || ctx.phase === 'countdown') lines.push('A race is LIVE — do NOT chat; the caller should be driving. Stay silent or a few words max.');
-  if (ctx.phase === 'results' || ctx.phase === 'finished') lines.push(`The race is over. The caller finished ${ctx.myPlace ? `in place ${ctx.myPlace}` : 'the race'}. Congratulate/console them and mention they can play again.`);
+  if (ctx.phase === 'results' || ctx.phase === 'finished') {
+    if (ctx.myPlace === 1) lines.push('The caller just WON — FIRST PLACE! React with MAXIMUM hype and energy, like a race announcer calling a photo finish. Be loud and thrilled (in words — no emojis). Celebrate them by name if you know it. Then invite them to race again.');
+    else lines.push(`The race is over — the caller finished ${ctx.myPlace ? `in place ${ctx.myPlace}` : 'the race'}. Give an upbeat, encouraging reaction (still energetic!) and invite them to race again.`);
+  }
   lines.push('', 'Never mention that you are an AI language model. Stay in character as the race host. Do not use emojis (this is spoken aloud).');
   return lines.join('\n');
 }
@@ -68,11 +71,17 @@ export async function hostTurn(
 ): Promise<string | null> {
   if (!llm.enabled) return null;
   const reply = await llm.respond(buildSystemPrompt(ctx), history, HOST_TOOLS);
+  // Execute the tool calls (side effects: pick car/map, set name, start) — we still run them for
+  // their game effect even if we don't speak their confirmation.
   const confirmations = reply.toolCalls.map(tc => runTool(ctx, tc)).filter((s): s is string => !!s);
-  // Prefer the model's own words; append action confirmations. If it ONLY called a tool with no
-  // words, speak the confirmation(s). If nothing at all, null → caller falls back.
-  const parts = [reply.say, ...confirmations].filter(Boolean);
-  return parts.length ? parts.join(' ') : null;
+  const said = reply.say.trim();
+  // ANTI-REPETITION: the model usually acknowledges its own action in words ("Great pick, the
+  // McLaren!"). Appending the tool confirmation too ("...the McLaren!") said the car/map name TWICE.
+  // So: if the model spoke, trust ITS words alone. Only fall back to the confirmation when the model
+  // said nothing (a bare tool call). Never concatenate both.
+  if (said) return said;
+  if (confirmations.length) return confirmations.join(' ');
+  return null;
 }
 
 /** Execute one tool call against the game, returning a short confirmation to speak (or null). */
@@ -85,6 +94,34 @@ function runTool(ctx: HostContext, tc: ToolCall): string | null {
     case 'start_race': return ctx.startRace();
     default:           return null;
   }
+}
+
+/** Spoken number words → value, for "car eleven" / "number three" voice picks (ASR often gives words,
+ *  not digits). Covers 1–20 which comfortably spans the roster + map list. */
+const NUM_WORDS: Record<string, number> = {
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+  eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17,
+  eighteen: 18, nineteen: 19, twenty: 20,
+};
+
+/** Parse a 1-based selection NUMBER out of a spoken phrase ("car 11", "number three", "the 3rd one",
+ *  "eleven"), or null if none. Digit forms + number words both handled. */
+export function parseSelectionNumber(spoken: string): number | null {
+  const q = spoken.toLowerCase();
+  const digit = q.match(/\b(\d{1,2})\b/);   // "car 11", "3"
+  if (digit) return parseInt(digit[1]!, 10);
+  for (const [word, n] of Object.entries(NUM_WORDS)) {
+    if (new RegExp(`\\b${word}\\b`).test(q)) return n;
+  }
+  return null;
+}
+
+/** Match a spoken phrase to a choice index. Tries a NUMBER first ("car 11" → index 10), then falls
+ *  back to fuzzy NAME matching. Returns the index or -1. Shared by HostContext impls + tests. */
+export function matchChoice(spoken: string, choices: string[]): number {
+  const num = parseSelectionNumber(spoken);
+  if (num !== null && num >= 1 && num <= choices.length) return num - 1;   // 1-based → index
+  return fuzzyMatch(spoken, choices);
 }
 
 /** Fuzzy-match a spoken name against a list of choices (case-insensitive substring / word overlap).

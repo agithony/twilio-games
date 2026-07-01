@@ -1,6 +1,6 @@
 import { Rng } from './rng';
 import {
-  LANES, LAP_TARGET, TRACK_LEN, BASE_SPEED,
+  LANES, LAP_TARGET, TRACK_LEN, RACE_LEN, BASE_SPEED, MAX_RACE_SECONDS,
   ITEM_START, laneX,
 } from './constants';
 import { generateCourse } from './course-gen';
@@ -109,7 +109,9 @@ export class RaceWorld {
 
     this.tick++; this.t += dt;
     for (const c of this.cars) {
-      if (c.finished) { c.z += BASE_SPEED * dt; continue; }
+      // A finished car coasts a LITTLE past the line for a natural stop, but is CLAMPED so it doesn't
+      // glide off the end of the track into empty space (the "stuck at the end" look). It's done.
+      if (c.finished) { c.z = Math.min(c.z + BASE_SPEED * dt, RACE_LEN + 60); continue; }
       // player boost decays toward cruise; AI handled by server-side controllers later
       c.boost = lerp(c.boost, 0, 0.6 * dt);
       const tx = laneX(c.targetLane);
@@ -133,6 +135,12 @@ export class RaceWorld {
     this.resolveCollisions(dt);
     this.updatePlaces();
     this.detectLeadChange();
+    // SAFETY TIMEOUT: if the race runs past MAX_RACE_SECONDS (a car wedged/very slow/disconnected mid-
+    // race), force-finish everyone still going so the race ALWAYS ends + shows results — no hang.
+    // Stragglers are marked DNF (finishT=0) so the scoreboard renders them as such.
+    if (this.t >= MAX_RACE_SECONDS) {
+      for (const c of this.cars) if (!c.finished) { c.finished = true; c.finishT = 0; }
+    }
     // Race ends when every remaining car has finished. An EMPTY world (all players left
     // mid-race) also ends — `every` is true for [] — so a fully-abandoned race transitions
     // to finished instead of ticking forever, letting the server reset/clean up the room.
