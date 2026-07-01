@@ -325,10 +325,11 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); c
 .g-power.ready { border-color: var(--gold); box-shadow: 0 0 18px rgba(255,210,63,.28); }
 .g-power.ready .g-orb { filter: none; }
 .g-power.ready .g-label { color: var(--gold); }
-/* ACTIVE: the burst is firing — cyan pulse, orb throbs. */
-.g-power.active { border-color: var(--cyan); box-shadow: 0 0 22px rgba(54,209,220,.45); }
+/* ACTIVE: the invulnerable DASH is firing — flame-orange pulse (matches the in-world dash aura),
+   orb throbs. Distinctly different from the gold "ready" and the boost bar. */
+.g-power.active { border-color: #ff7a1a; box-shadow: 0 0 26px rgba(255,122,26,.6); background: rgba(255,122,26,.16); }
 .g-power.active .g-orb { filter: none; animation: pw-pulse .5s ease-in-out infinite; }
-.g-power.active .g-label { color: var(--cyan); }
+.g-power.active .g-label { color: #ff9a4a; }
 @keyframes pw-pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.2); } }
 
 .g-boost {

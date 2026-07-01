@@ -14,7 +14,7 @@ import { surfaceOptsFromPath } from './track-surface';
 import { mergeLevel, resolveCarScale, resolveItemScale, resolveCamera } from '../shared/level';
 import type { GantryOffset } from '../shared/level';
 import { hudStateFor } from './hud-state';
-import { BOOST_MAX, BOOST_MIN } from '../shared/constants';
+import { BOOST_MAX, BOOST_MIN, DEFAULT_ROOM } from '../shared/constants';
 
 // Game WebSocket URL. In production the page is served by the same origin as the game server
 // (behind one HTTPS tunnel), so use the page's protocol+host — wss:// over https avoids a
@@ -68,7 +68,8 @@ function paintGauge(snap: import('../shared/types').WorldSnapshot | null): void 
   // real orb model (setOrbThumb), so the label doesn't need to describe it.
   gPowerEl.classList.toggle('ready', !!h.powerReady);
   gPowerEl.classList.toggle('active', !!h.powerActive);
-  gPowerLabel.textContent = h.powerActive ? 'NITRO!' : h.powerReady ? 'NITRO READY' : 'grab a pad';
+  // ACTIVE = the invulnerable dash is firing ("SMASH!"); READY = a charge is armed; else refill.
+  gPowerLabel.textContent = h.powerActive ? 'DASH — SMASH!' : h.powerReady ? 'NITRO DASH READY' : 'grab an orb';
   // Boost bar: fill from center — right/green when boosting, left/red when braking. Normalize the
   // boost modifier against its sim bounds so the bar caps out exactly when the sim does.
   const b = h.boost ?? 0;
@@ -86,7 +87,7 @@ const screens = new Screens(document.getElementById('app')!, {
   onBack: () => conn.back(),
 });
 
-const roomCode = new URLSearchParams(location.search).get('room') ?? '4821';
+const roomCode = new URLSearchParams(location.search).get('room') ?? DEFAULT_ROOM;
 const name = new URLSearchParams(location.search).get('name') ?? 'You';
 const urlMap = new URLSearchParams(location.search).get('map');   // legacy/manual override (?map=)
 const isDisplay = new URLSearchParams(location.search).get('display') === '1';

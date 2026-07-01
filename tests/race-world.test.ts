@@ -73,6 +73,57 @@ describe('RaceWorld', () => {
     expect(w.snapshot().cars[0]!.speed).toBeGreaterThan(base);
   });
 
+  // ── POWER = an invulnerable NITRO DASH (distinct from BOOST's throttle) ──
+  // Drive a lone car into a barrier and observe whether it gets stunned. With POWER active the car
+  // should smash THROUGH the barrier unharmed; without it, it gets stunned. We target a barrier
+  // WELL down-track (z>250) so the guaranteed early boost pad's power has long since expired for the
+  // no-power case, and we do NOT steer through any pad on the way (stay in the barrier's lane only
+  // once we're near it). Robust to course-gen layout: we assert on the exact target barrier.
+  function runIntoBarrier(withPower: boolean): { hit: boolean } {
+    const solo = new RaceWorld([{ id: 'p1', name: 'You', color: '#fff' }], 4242);
+    startRacing(solo);
+    // A barrier whose lane has NO boost pad in the 50 units before it — so merging into its lane on
+    // approach can't accidentally grant power (course-gen places risk/reward pads beside some walls).
+    const barrier = solo.items
+      .filter(it => it.kind === 'barrier' && it.z > 250)
+      .filter(bar => !solo.items.some(p => p.kind === 'boost' && p.lane === bar.lane && p.z > bar.z - 55 && p.z <= bar.z))
+      .sort((a, b) => a.z - b.z)[0]!;
+    expect(barrier).toBeDefined();
+    let everHit = false;
+    for (let i = 0; i < 60 * 120; i++) {
+      const c = solo.snapshot().cars[0]!;
+      // Only merge into the barrier's lane in the final approach, so we don't accidentally scoop a
+      // boost pad in another lane earlier (which would grant power to the "no-power" run).
+      if (c.z > barrier.z - 40) {
+        if (c.targetLane < barrier.lane) solo.applyIntent('p1', 'MOVE_RIGHT');
+        else if (c.targetLane > barrier.lane) solo.applyIntent('p1', 'MOVE_LEFT');
+        if (withPower) solo.applyIntent('p1', 'USE_POWER');   // keep the dash live through contact
+      }
+      solo.step(STEP);
+      const cc = solo.snapshot().cars[0]!;
+      if (cc.z > barrier.z - 3 && cc.z < barrier.z + 3 && cc.lane === barrier.lane && cc.stunned > 0) everHit = true;
+      if (cc.z > barrier.z + 8 || cc.finished) break;
+    }
+    return { hit: everHit };
+  }
+
+  it('WITHOUT power, a car is stunned when it hits a barrier', () => {
+    expect(runIntoBarrier(false).hit).toBe(true);
+  });
+
+  it('POWER dash is INVULNERABLE: the car smashes through a barrier unharmed', () => {
+    expect(runIntoBarrier(true).hit).toBe(false);
+  });
+
+  it('the snapshot exposes an invulnerable flag while a POWER dash is active', () => {
+    startRacing(w);
+    w.applyIntent('p1', 'USE_POWER');
+    w.step(STEP);
+    const me = w.snapshot().cars.find(c => c.id === 'p1')!;
+    expect(me.powerActive).toBeGreaterThan(0);
+    expect(me.invulnerable).toBe(true);   // renderer + HUD key the dash visuals off this
+  });
+
   it('cars advance forward while racing', () => {
     startRacing(w);
     const z0 = w.snapshot().cars[0]!.z;

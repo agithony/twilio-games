@@ -1,6 +1,10 @@
 export const LANES = 3;
 export const LAP_TARGET = 3;
 export const MAX_PLAYERS = 8;
+// The single shared game room. Callers bind here directly on connect (no room-code entry — fewest
+// taps), and the shared display + web players default to it too, so everyone lands in the SAME game.
+// One display / one game at a time; multi-room was removed in favor of instant join.
+export const DEFAULT_ROOM = '4821';
 export const TRACK_W = 24;           // world units wide (3 roomy lanes)
 export const TRACK_LEN = 700;        // z-distance per lap
 export const RACE_LEN = TRACK_LEN * LAP_TARGET;   // full distance cars actually drive (no looping)

@@ -8,7 +8,7 @@ import type { WorldSnapshot, CarState } from '../shared/types';
 function car(over: Partial<CarState> = {}): CarState {
   return {
     id: 'p1', name: 'Me', color: '#0af', carIndex: 0, lane: 1, targetLane: 1, x: 0, z: 100,
-    speed: 38, boost: 0, power: 1, powerActive: 0, stunned: 0, lap: 1, finished: false, finishT: 0, place: 1,
+    speed: 38, boost: 0, power: 1, powerActive: 0, invulnerable: false, stunned: 0, lap: 1, finished: false, finishT: 0, place: 1,
     ...over,
   };
 }

@@ -15,8 +15,9 @@ export interface CarState {
   z: number;             // cumulative forward distance
   speed: number;
   boost: number;         // -1..+2-ish modifier
-  power: number;         // remaining one-shot power-ups
+  power: number;         // remaining one-shot power-ups (NITRO DASH charges)
   powerActive: number;   // seconds of active power remaining
+  invulnerable: boolean; // true while a POWER dash is active: smashes THROUGH barriers unharmed
   stunned: number;       // seconds of stun remaining
   lap: number;
   finished: boolean;
@@ -94,6 +95,7 @@ export type GameEvent =
   | { kind: 'lead_change'; playerId: string; name: string }
   | { kind: 'hit'; playerId: string }
   | { kind: 'hit_streak'; playerId: string; name: string; count: number }  // hit N barriers total (milestone)
+  | { kind: 'barrier_smashed'; playerId: string; itemId: number }          // POWER dash blasted through a barrier
   | { kind: 'fell_to_last'; playerId: string; name: string }               // dropped into last place mid-race
   | { kind: 'boost_taken'; playerId: string; itemId: number }
   | { kind: 'finish'; playerId: string; name: string; place: number }

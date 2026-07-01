@@ -36,7 +36,7 @@ export class RaceWorld {
       id: p.id, name: p.name, color: p.color, carIndex: p.carIndex ?? 0,
       lane: i % LANES, targetLane: i % LANES,
       x: laneX(i % LANES), z: -i * 3,
-      speed: BASE_SPEED, boost: 0, power: POWER_START, powerActive: 0, stunned: 0,
+      speed: BASE_SPEED, boost: 0, power: POWER_START, powerActive: 0, invulnerable: false, stunned: 0,
       lap: 1, finished: false, finishT: 0, place: i + 1,
     }));
     // Initialize hits map for each player + seed prev-place from the STARTING GRID (place = i+1) so
@@ -75,7 +75,7 @@ export class RaceWorld {
     this.cars.push({
       id: p.id, name: p.name, color: p.color, carIndex: p.carIndex ?? 0,
       lane, targetLane: lane, x: laneX(lane), z: rearZ,
-      speed: BASE_SPEED, boost: 0, power: POWER_START, powerActive: 0, stunned: 0,
+      speed: BASE_SPEED, boost: 0, power: POWER_START, powerActive: 0, invulnerable: false, stunned: 0,
       lap: 1, finished: false, finishT: 0, place: this.cars.length + 1,
     });
     this.hits.set(p.id, new Set<number>());
@@ -178,6 +178,14 @@ export class RaceWorld {
             // Barriers are hazards (not consumed) — edge-trigger once per car per item.
             if (set.has(it.id)) continue;
             set.add(it.id);
+            // POWER DASH is INVULNERABLE: while active, the car smashes THROUGH the barrier unharmed
+            // (no stun, no speed loss). This is what makes POWER a distinct ABILITY, not just "faster"
+            // — save it to blast through a wall you can't dodge. Emit a distinct event for the crash-
+            // through visual/audio (renderer keys the flame+shatter off it).
+            if (c.powerActive > 0) {
+              this.events.push({ kind: 'barrier_smashed', playerId: c.id, itemId: it.id });
+              continue;
+            }
             c.stunned = 0.8; c.boost = -0.6;
             this.events.push({ kind: 'hit', playerId: c.id });
             // Milestone: every 3rd barrier this car has hit → a "barrier magnet" callout (set.size
@@ -259,7 +267,7 @@ export class RaceWorld {
         id: c.id, name: c.name, color: c.color, carIndex: c.carIndex,
         lane: c.lane, targetLane: c.targetLane,
         x: c.x, z: c.z, speed: c.speed, boost: c.boost, power: c.power,
-        powerActive: c.powerActive, stunned: c.stunned, lap: c.lap,
+        powerActive: c.powerActive, invulnerable: c.powerActive > 0, stunned: c.stunned, lap: c.lap,
         finished: c.finished, finishT: c.finishT, place: c.place,
       })),
       items: this.items,

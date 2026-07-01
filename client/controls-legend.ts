@@ -9,10 +9,10 @@ interface Row { say: string; action: string; hint?: string; accent?: 'power' }
 
 const ROWS: Row[] = [
   { say: '“Left” · “Right”', action: 'Change lane' },
-  { say: '“Boost” / “Go”', action: 'Speed up' },
+  { say: '“Boost” / “Go”', action: 'Go faster', hint: 'keep saying it to build speed' },
   { say: '“Brake” / “Slow”', action: 'Slow down' },
-  { say: '“Power”', action: 'NITRO burst', accent: 'power',
-    hint: 'one charge — grab a glowing orb to refill' },
+  { say: '“Power”', action: 'NITRO DASH', accent: 'power',
+    hint: 'SMASH through barriers, unstoppable! one charge — grab a glowing orb to refill' },
 ];
 
 /**

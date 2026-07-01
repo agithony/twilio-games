@@ -5,7 +5,7 @@ import type { WorldSnapshot } from '../shared/types';
 function snap(tick: number, z: number): WorldSnapshot {
   return { tick, t: tick / 60, phase: 'racing', countdown: 0,
     cars: [{ id: 'p1', name: 'You', color: '#fff', carIndex: 0, lane: 0, targetLane: 0, x: 0, z,
-      speed: 38, boost: 0, power: 1, powerActive: 0, stunned: 0, lap: 1,
+      speed: 38, boost: 0, power: 1, powerActive: 0, invulnerable: false, stunned: 0, lap: 1,
       finished: false, finishT: 0, place: 1 }], items: [], consumedItems: [] };
 }
 

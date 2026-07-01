@@ -6,12 +6,13 @@ import { readFile, writeFile, readdir, rename, mkdir, stat } from 'node:fs/promi
 import { WebSocketServer, WebSocket } from 'ws';
 import { GameServer } from './game-server';
 import { ConversationRelayAdapter } from './conversation-relay';
-import { twimlGatherRoomCode, twimlConnectRelay, twimlMessage, twimlEmpty } from './twiml';
+import { twimlConnectRelay, twimlMessage, twimlEmpty } from './twiml';
 import { validateTwilioSignature } from './twilio-signature';
 import { ManifestStore } from './manifest-store';
 import { parseManifest } from '../shared/asset-manifest';
 import { mergeMapConfig } from '../shared/maps-store';
 import { seedMapsPlan } from './maps-seed';
+import { DEFAULT_ROOM } from '../shared/constants';
 import { appendResults, parseLeaderboard, topEntries } from '../shared/leaderboard-store';
 import { SmsConcierge, type ConciergeRoom } from './sms-concierge';
 import { OpenAiClient, NullLlmClient, type LlmClient, type LlmTurn } from './llm';
@@ -346,17 +347,22 @@ export class HttpServer {
           return;
         }
       }
-      const xml = path === '/voice/incoming'
-        ? twimlGatherRoomCode({ actionUrl: `${this.publicBaseUrl}/voice/join` })
-        : twimlConnectRelay({
-            wsUrl: `${this.publicBaseUrl.replace(/^http/, 'ws')}/voice`,
-            sessionEndedUrl: `${this.publicBaseUrl}/voice/session-ended`,
-            roomCode: (params['Digits'] ?? '').trim() || '0000',
-            // ElevenLabs voice for the race-announcer talk-back; swap via the CR_TTS_VOICE env.
-            ttsProvider: 'ElevenLabs',
-            voice: this.crVoice,
-            welcomeGreeting: this.crVoice ? "Welcome to Voice Racer! You're joining the race." : '',
-          });
+      // INSTANT JOIN: a call binds straight to the single shared game (DEFAULT_ROOM) — no room-code
+      // keypad step (fewest taps: scan QR → call → you're racing). One display / one game at a time.
+      // /voice/join is kept as an alias in case a legacy DTMF-gathered call still hits it (uses the
+      // dialed Digits if present, else the default room).
+      const roomCode = path === '/voice/join'
+        ? ((params['Digits'] ?? '').trim() || DEFAULT_ROOM)
+        : DEFAULT_ROOM;
+      const xml = twimlConnectRelay({
+        wsUrl: `${this.publicBaseUrl.replace(/^http/, 'ws')}/voice`,
+        sessionEndedUrl: `${this.publicBaseUrl}/voice/session-ended`,
+        roomCode,
+        // ElevenLabs voice for the race-announcer talk-back; swap via the CR_TTS_VOICE env.
+        ttsProvider: 'ElevenLabs',
+        voice: this.crVoice,
+        welcomeGreeting: this.crVoice ? "Welcome to Voice Racer! You're in the race." : '',
+      });
       res.writeHead(200, { 'Content-Type': 'text/xml' }).end(xml);
       return;
     }

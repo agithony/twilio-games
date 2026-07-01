@@ -140,11 +140,12 @@ export class Screens {
   renderLobby(roomCode: string, players: LobbyPlayer[]): void {
     this.show(); this.phase = 'lobby';
     this.lastLobby = { roomCode, players };
-    if (this.unchanged(`lobby:${roomCode}:${this.selfPlaying ? 'P' : 'p'}:${this.phoneNumber}:${this.boostThumb ? 'orb' : 'noorb'}:${this.rosterKey(players)}`)) return;
+    void roomCode;   // no longer shown — calls bind straight to the single game (instant join)
+    if (this.unchanged(`lobby:${this.selfPlaying ? 'P' : 'p'}:${this.phoneNumber}:${this.boostThumb ? 'orb' : 'noorb'}:${this.rosterKey(players)}`)) return;
     const n = players.length;
-    const sub = n === 0 ? 'Scan, call in, and join the race' : `${n} ${n === 1 ? 'racer' : 'racers'} in the room`;
-    // JOIN FLOW (3 steps): scan the QR to call the number, then punch the room code on the phone
-    // keypad (Twilio DTMF). The number comes from /api/config; a clear placeholder if it's unset.
+    const sub = n === 0 ? 'Scan, call in, and race' : `${n} ${n === 1 ? 'racer' : 'racers'} in the room`;
+    // JOIN FLOW: scan the QR → it dials the number → you're IN the race (no room code to type — the
+    // call binds straight to this game). The number comes from /api/config (placeholder if unset).
     const num = this.phoneNumber
       ? `<a class="num" href="tel:${esc(this.phoneNumber)}">${esc(this.phoneNumber)}</a>`
       : `<span class="num num-unset">set GAME_PHONE_NUMBER</span>`;
@@ -158,12 +159,12 @@ export class Screens {
           <div class="join-flow">
             <div class="join-qr">
               <img src="/brand/join-qr.png?v=2" alt="Scan to call and join" onerror="this.style.display='none'">
-              <div class="join-qr-cap">Scan to call</div>
+              <div class="join-qr-cap">Scan to join</div>
             </div>
             <ol class="join-steps">
-              <li><span class="step-n">1</span> <span class="step-t">Scan the code</span></li>
-              <li><span class="step-n">2</span> <span class="step-t">Call ${num}</span></li>
-              <li><span class="step-n">3</span> <span class="step-t">Enter room code <span class="num">${esc(roomCode)}</span> on your keypad</span></li>
+              <li><span class="step-n">1</span> <span class="step-t">Scan the code with your phone</span></li>
+              <li><span class="step-n">2</span> <span class="step-t">Tap to call ${num}</span></li>
+              <li><span class="step-n">3</span> <span class="step-t">You're in — shout to drive!</span></li>
             </ol>
           </div>
           ${this.chips(players)}

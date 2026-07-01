@@ -605,6 +605,45 @@ export class Renderer {
     return wrapper;
   }
 
+  /** Show/hide + animate a car's NITRO-DASH aura. Built lazily the first time a car dashes: a flat
+   *  flame-orange glow ring under the car + a pair of trailing speed-line planes. This is the VISUAL
+   *  that makes POWER read as a distinct, invulnerable dash (not just "going faster" like boost). */
+  private updateDashFx(wrapper: THREE.Group, dashing: boolean, dt: number): void {
+    let aura = wrapper.userData.dashAura as THREE.Group | undefined;
+    if (!aura) {
+      if (!dashing) return;                       // don't build until first needed
+      aura = new THREE.Group();
+      // Glow ring hugging the ground under the car.
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(1.3, 2.4, 28),
+        new THREE.MeshBasicMaterial({ color: 0xff7a1a, transparent: true, opacity: 0.75,
+          side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
+      ring.rotation.x = -Math.PI / 2; ring.position.y = 0.15;
+      aura.add(ring);
+      // Two trailing speed-line planes streaming back from the car (additive → they glow).
+      const streak = new THREE.Mesh(
+        new THREE.PlaneGeometry(2.2, 5.5),
+        new THREE.MeshBasicMaterial({ color: 0xffd23f, transparent: true, opacity: 0.45,
+          blending: THREE.AdditiveBlending, depthWrite: false }));
+      streak.rotation.x = -Math.PI / 2; streak.position.set(0, 0.2, -3.2);
+      aura.add(streak);
+      wrapper.add(aura);
+      wrapper.userData.dashAura = aura;
+    }
+    // Fade the aura in while dashing, out when not (so it doesn't pop). Pulse the ring for energy.
+    const target = dashing ? 1 : 0;
+    const cur = (wrapper.userData.dashFade as number | undefined) ?? 0;
+    const next = cur + (target - cur) * Math.min(1, dt * 10);
+    wrapper.userData.dashFade = next;
+    aura.visible = next > 0.02;
+    const pulse = 0.75 + 0.25 * Math.sin(this.clock * 18);
+    const ring = aura.children[0] as THREE.Mesh;
+    const streak = aura.children[1] as THREE.Mesh;
+    (ring.material as THREE.MeshBasicMaterial).opacity = next * pulse;
+    ring.scale.setScalar(0.9 + 0.15 * pulse);
+    (streak.material as THREE.MeshBasicMaterial).opacity = next * 0.5;
+  }
+
   render(snap: WorldSnapshot) {
     const now = performance.now();
     const dt = Math.min((now - this.lastFrame) / 1000, 0.1);
@@ -626,6 +665,9 @@ export class Renderer {
       } else {
         wrapper.position.set(c.x, 0, c.z);
       }
+      // Dash FX: while a POWER dash is active, the car is invulnerable — show a bold NITRO look
+      // (flame-orange glow ring + speed-lines) that's unmistakably different from a plain boost.
+      this.updateDashFx(wrapper, c.invulnerable, dt);
       // Animation lives on the inner model (mixer/wheels set by buildCar).
       const model = wrapper.userData.model as THREE.Object3D;
       // Animation priority: baked clip (mixer) > wheel-spin > static.
@@ -739,8 +781,17 @@ export class Renderer {
         this.camera.lookAt(mx * 0.4, lookHeight, z + lookAhead);
       }
     }
+    // NITRO-DASH FOV KICK: when the focused car is dashing, punch the FOV out a few degrees for a
+    // "whoosh" sense of speed, then ease back. Purely cosmetic; distinguishes the dash from boost.
+    const dashKickTarget = focus?.invulnerable ? 7 : 0;
+    this.fovKick += (dashKickTarget - this.fovKick) * Math.min(1, dt * 8);
+    const wantFov = this.cam.fov + this.fovKick;
+    if (Math.abs(this.camera.fov - wantFov) > 0.05) {
+      this.camera.fov = wantFov; this.camera.updateProjectionMatrix();
+    }
     // Sky dome rides with the camera so the horizon is always far away.
     this.sky.position.copy(this.camera.position);
     this.composer.render();
   }
+  private fovKick = 0;   // current extra FOV degrees from an active dash (eased)
 }
