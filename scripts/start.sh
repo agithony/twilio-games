@@ -1,14 +1,16 @@
 #!/bin/sh
 set -e
 
-# If an Azure Files mount is present, point the app's mutable data dir at it so the persistent
-# global leaderboard (data/leaderboard.json) survives container restarts + redeploys. The app uses
-# normal fs calls (writeFileAtomic mkdir's data/); we just make data/ resolve to the share.
+# If an Azure Files mount is present, point the app's mutable data dir at it so RUNTIME-MUTABLE
+# state survives container restarts + redeploys:
+#   - data/leaderboard.json — the persistent global leaderboard
+#   - data/maps.json        — LIVE level configs authored in the editor (seeded once from the
+#                             image's assets/maps/maps.json on first boot; see http-server.seedMapsFile)
+# The app uses normal fs calls (writeFileAtomic mkdir's data/); we just make data/ resolve to the share.
 #
-# Only RUNTIME-MUTABLE state belongs on the share. assets/ (GLB models) and client/dist (the built
-# UI) ship in the image and MUST NOT be linked — they change with each deploy and the share would
-# pin a stale copy. The maps (assets/maps/maps.json) are committed to git + ship in the image; they
-# are authored via the editor at build/author time, not persisted at runtime, so they stay in-image.
+# Only runtime-mutable state belongs on the share. assets/ (GLB models) and client/dist (the built UI)
+# ship in the image and MUST NOT be linked — they change with each deploy and the share would pin a
+# stale copy. assets/maps/maps.json is the git-committed SEED for data/maps.json, never the live file.
 DATA_MOUNT="${DATA_MOUNT:-/app/appdata}"
 
 if [ -d "$DATA_MOUNT" ]; then

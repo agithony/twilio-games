@@ -17,7 +17,14 @@ if (validateSignatures && !authToken) {
 // When EDITOR_TOKEN is set, /api writes (manifest + maps) require it — gate the editor on a public
 // deploy. Unset (local dev) leaves writes open so the editor works with zero setup.
 const editorToken = process.env.EDITOR_TOKEN;
-const srv = new HttpServer({ port, publicBaseUrl, authToken, validateSignatures, editorToken });
+// Deploy-safe levels: the LIVE maps file lives on the persistent mount (data/maps.json) so editor-
+// authored levels survive redeploys; the image's committed assets/maps/maps.json is the one-time
+// SEED copied in on first boot when the persistent file doesn't exist yet.
+const srv = new HttpServer({
+  port, publicBaseUrl, authToken, validateSignatures, editorToken,
+  mapsPath: process.env.MAPS_PATH ?? 'data/maps.json',
+  bundledMapsPath: process.env.BUNDLED_MAPS_PATH ?? 'assets/maps/maps.json',
+});
 srv.start().then((p) => {
   console.log(`Voice Racer listening on http://localhost:${p}`);
   console.log(`  game WS: ws://localhost:${p}/game   voice WS: ws://localhost:${p}/voice`);

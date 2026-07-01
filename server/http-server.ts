@@ -11,6 +11,7 @@ import { validateTwilioSignature } from './twilio-signature';
 import { ManifestStore } from './manifest-store';
 import { parseManifest } from '../shared/asset-manifest';
 import { mergeMapConfig } from '../shared/maps-store';
+import { seedMapsPlan } from './maps-seed';
 import { appendResults, parseLeaderboard, topEntries } from '../shared/leaderboard-store';
 import { SmsConcierge, type ConciergeRoom } from './sms-concierge';
 import { OpenAiClient, NullLlmClient, type LlmClient, type LlmTurn } from './llm';
@@ -27,6 +28,9 @@ export class HttpServer {
   private readonly validateSignatures: boolean;
   private manifestStore: ManifestStore;
   private readonly mapsPath: string;
+  /** Image-bundled default levels, copied into `mapsPath` ONCE on first boot (when the persistent
+   *  file is absent/blank/corrupt). Unset in tests + local dev so no seeding happens there. */
+  private readonly bundledMapsPath?: string;
   private readonly leaderboardPath: string;
   private readonly editorToken?: string;
   /** The Vite-built client directory served in production (one-process container). */
@@ -62,7 +66,8 @@ export class HttpServer {
     broadcastHz?: number;
     validateSignatures?: boolean;
     manifestPath?: string;   // injectable so tests don't clobber the real assets/manifest.json
-    mapsPath?: string;       // injectable so tests don't clobber the real assets/maps/maps.json
+    mapsPath?: string;       // injectable; LIVE level configs (default data/maps.json on the persistent mount)
+    bundledMapsPath?: string;// image-bundled default levels; seeded into mapsPath once on first boot
     leaderboardPath?: string;// injectable; persistent global leaderboard JSON (default data/leaderboard.json)
     editorToken?: string;    // when set, /api writes require ?token= or x-editor-token; open if unset
     clientDir?: string;      // the Vite-built client to serve (prod single-process); default client/dist
@@ -72,7 +77,10 @@ export class HttpServer {
     this.publicBaseUrl = opts.publicBaseUrl.replace(/\/$/, '');
     this.validateSignatures = opts.validateSignatures ?? true;
     this.manifestStore = new ManifestStore(opts.manifestPath ?? 'assets/manifest.json');
-    this.mapsPath = opts.mapsPath ?? 'assets/maps/maps.json';
+    // LIVE levels default to the persistent mount (data/) — same fate as the leaderboard — so
+    // editor-authored levels survive redeploys. The image's committed levels are the SEED source.
+    this.mapsPath = opts.mapsPath ?? 'data/maps.json';
+    this.bundledMapsPath = opts.bundledMapsPath;
     this.leaderboardPath = opts.leaderboardPath ?? 'data/leaderboard.json';
     this.editorToken = opts.editorToken;
     this.clientDir = opts.clientDir ?? 'client/dist';
@@ -546,13 +554,36 @@ export class HttpServer {
     await this.sendFile(full, res, req, { 'Cache-Control': cache });
   }
 
-  start(): Promise<number> {
+  async start(): Promise<number> {
+    await this.seedMapsFile();
+    // Re-read the (possibly just-seeded) maps into the lobby cache so map choices are correct on the
+    // very first connection — the constructor's initial refresh may have run before the seed wrote.
+    await this.refreshRoomConfig();
     return new Promise((resolve) => {
       this.server.listen(this.port, () => {
         const addr = this.server.address();
         resolve(typeof addr === 'object' && addr ? addr.port : this.port);
       });
     });
+  }
+
+  /** Copy the image-bundled default levels into the LIVE (persistent) maps file ONCE, on first boot
+   *  — only when the live file is missing/blank/corrupt. Never overwrites a valid live file, so
+   *  editor-authored levels survive redeploys. No-op when no bundle path is configured (tests/dev). */
+  private async seedMapsFile(): Promise<void> {
+    if (!this.bundledMapsPath) return;
+    let liveText: string | null = null, liveExists = false;
+    try { liveText = await readFile(this.mapsPath, 'utf8'); liveExists = true; } catch { /* absent */ }
+    let bundledText: string | null = null;
+    try { bundledText = await readFile(this.bundledMapsPath, 'utf8'); } catch { /* no bundle */ }
+    const plan = seedMapsPlan({ liveExists, liveText, bundledText });
+    if (!plan.write) return;
+    try {
+      await this.writeFileAtomic(this.mapsPath, plan.contents);
+      console.log(`[maps] seeded ${this.mapsPath} from bundled defaults (${this.bundledMapsPath})`);
+    } catch (e) {
+      console.error('[maps] seed write failed:', (e as Error).message);
+    }
   }
 
   stop(): Promise<void> {

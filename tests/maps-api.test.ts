@@ -91,3 +91,33 @@ describe('maps API', () => {
     expect(noTok.status).toBe(401);
   });
 });
+
+// Deploy-safe persistence: the live maps file lives on the persistent mount (data/maps.json) and is
+// seeded ONCE from the image's bundled defaults on first boot. After that, prod-authored levels in
+// the live file must survive redeploys — the server must NOT overwrite them with the bundled copy.
+describe('maps persistence seeding (deploy-safe)', () => {
+  let BUNDLED = '';
+  beforeEach(() => { BUNDLED = `assets/_test-bundled-${process.pid}-${n++}.json`; });
+  afterEach(async () => { try { await unlink(BUNDLED); } catch {} });
+
+  it('seeds the live file from the bundled defaults on FIRST boot (live file absent)', async () => {
+    await writeFile(BUNDLED, JSON.stringify({ Silver_Lake: { map: 'Silver_Lake', file: 's.glb' } }));
+    try { await unlink(TEST_MAPS); } catch {}   // ensure the live file does NOT exist
+    srv = makeServer({ bundledMapsPath: BUNDLED }); const port = await srv.start();
+    const get = await (await fetch(`http://127.0.0.1:${port}/api/maps`)).json();
+    expect(Object.keys(get)).toEqual(['Silver_Lake']);
+    // the live file now physically exists (persisted), so subsequent boots read IT, not the bundle
+    expect(JSON.parse(await readFile(TEST_MAPS, 'utf8'))).toHaveProperty('Silver_Lake');
+  });
+
+  it('does NOT overwrite existing prod-authored levels with the bundled copy (survives deploy)', async () => {
+    // Simulate a prior boot where the author created "Drift" in the editor (only in the live file).
+    await writeFile(TEST_MAPS, JSON.stringify({ Drift: { map: 'Drift', file: 'd.glb' } }));
+    // A new image ships with a DIFFERENT bundled default (only Silver Lake).
+    await writeFile(BUNDLED, JSON.stringify({ Silver_Lake: { map: 'Silver_Lake', file: 's.glb' } }));
+    srv = makeServer({ bundledMapsPath: BUNDLED }); const port = await srv.start();
+    const get = await (await fetch(`http://127.0.0.1:${port}/api/maps`)).json();
+    // Drift must still be there — the deploy did NOT clobber it.
+    expect(Object.keys(get)).toContain('Drift');
+  });
+});
