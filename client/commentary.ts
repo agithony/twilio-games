@@ -2,6 +2,11 @@ import type { GameEvent } from '../shared/types';
 
 const pick = (arr: string[], seq: number): string => arr[Math.abs(seq) % arr.length]!;
 
+// Pre-race host lines (menus) — keep the AI talking through car/map select, not just the race.
+const CAR_SELECT = ['Pick your ride, racers!', 'Choose your machine!', 'Time to pick a car — text your number!'];
+const MAP_SELECT = ['Now choose your track!', 'Pick the course — where are we racing?', 'Select your battleground!'];
+const CAR_PICKED = ['nice choice!', 'great pick!', 'bold choice!', 'oh, a classic!', 'solid ride!'];
+const MAP_PICKED = ['Great track!', 'Ooh, that\'s a fun one!', 'Locked in — this\'ll be good!'];
 const GO = ['Green light — GO GO GO!', 'And they\'re off!', 'Hammer down — GO!', 'Here we go, racers!'];
 const HIT = ['Ooh, that\'s gotta hurt!', 'Into the barrier!', 'Crunch! Someone\'s feeling that.',
   'Bumper cars out there!', 'That\'s a costly tap!'];
@@ -20,6 +25,10 @@ function ordinal(n: number): string {
 
 export function commentaryFor(event: GameEvent, seq: number): string | null {
   switch (event.kind) {
+    case 'enter_car_select': return pick(CAR_SELECT, seq);
+    case 'enter_map_select': return pick(MAP_SELECT, seq);
+    case 'car_picked':       return `${event.name} — ${pick(CAR_PICKED, seq)} The ${event.car}!`;
+    case 'map_picked':       return `${event.map}? ${pick(MAP_PICKED, seq)}`;
     case 'go':          return pick(GO, seq);
     case 'hit':         return pick(HIT, seq);
     case 'hit_streak':  return `${event.name} ${pick(STREAK, seq)}`;

@@ -33,7 +33,7 @@ export class HttpServer {
    *  voice). A high-energy announcer voiceId is the intended default set in deploy config. */
   private readonly crVoice: string;
   /** Cached selectable cars/maps for the lobby (refreshed from manifest + maps.json periodically). */
-  private roomConfigCache: { carCount: number; maps: string[] } = { carCount: 0, maps: [] };
+  private roomConfigCache: { carCount: number; maps: string[]; carNames: string[] } = { carCount: 0, maps: [], carNames: [] };
   private roomConfigTimer: ReturnType<typeof setInterval> | null = null;
   /** Serializes leaderboard writes so two near-simultaneous race finishes can't clobber each other. */
   private leaderboardWrite: Promise<void> = Promise.resolve();
@@ -121,7 +121,11 @@ export class HttpServer {
       const all = JSON.parse(await readFile(this.mapsPath, 'utf8'));
       if (all && typeof all === 'object') maps = Object.keys(all);
     } catch { /* keep prior */ }
-    this.roomConfigCache = { carCount: carCount || this.roomConfigCache.carCount, maps: maps.length ? maps : this.roomConfigCache.maps };
+    this.roomConfigCache = {
+      carCount: carCount || this.roomConfigCache.carCount,
+      maps: maps.length ? maps : this.roomConfigCache.maps,
+      carNames: carNames.length ? carNames : this.roomConfigCache.carNames,
+    };
     if (carNames.length) this.carNamesCache = carNames;
   }
 

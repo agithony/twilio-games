@@ -1,6 +1,6 @@
 import type { Intent, GameEvent } from '../shared/types';
 import { intentsFromTranscript } from './voice-intent';
-import { greetingLine, lineForEvent, isChattyEvent } from './voice-lines';
+import { greetingLines, lineForEvent, isChattyEvent } from './voice-lines';
 
 export type CrMessage =
   | { type:'setup'; callSid:string; from?:string; customParameters: Record<string,string> }
@@ -103,9 +103,10 @@ export class ConversationRelayAdapter {
         if ('error' in res) { console.log(`[CR] addPlayer rejected: ${res.error} → unbound (caller cannot drive)`); return; }
         this.room = room; this.playerId = res.playerId; this.roomCode = code;
         console.log(`[CR] bound caller to player ${res.playerId} lane ${res.lane} in room ${code}`);
-        // Register for this room's game events (countdown/go/finish) + greet the caller.
+        // Register for this room's game events + greet the caller. Send each greeting SENTENCE as its
+        // own utterance so Relay TTS pauses naturally between them (one long string read run-on).
         this.deps.register?.(code, this);
-        this.deps.say?.(greetingLine());
+        for (const line of greetingLines()) this.deps.say?.(line);
         break;
       }
       case 'prompt': {

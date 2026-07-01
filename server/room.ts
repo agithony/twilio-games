@@ -17,7 +17,7 @@ function safeColor(color: string | undefined, fallback: string): string {
   return fallback;
 }
 
-export interface RoomConfig { carCount: number; maps: string[]; }
+export interface RoomConfig { carCount: number; maps: string[]; carNames?: string[]; }
 
 /**
  * A game room. Owns the pre-race flow (Lobby: lobby → car_select → map_select) and, once started,
@@ -35,15 +35,23 @@ export class Room {
   private eventsThisBroadcast: GameEvent[] = [];
   private lastResults: RaceResult[] = [];
   private raceMap: string | null = null;
+  private carNames: string[] = [];
 
   constructor(code: string, seed: number, config?: RoomConfig) {
     this.code = code;
     this.seed = seed;
     this.lobby = new Lobby({ carCount: config?.carCount ?? 0, maps: config?.maps ?? [] });
+    this.carNames = config?.carNames ?? [];
+  }
+
+  /** Friendly display name for a car index (for voice/announcer callouts), or a generic fallback. */
+  carName(index: number): string {
+    return this.carNames[index] ?? `car ${index + 1}`;
   }
 
   /** Late-bind the selectable cars/maps once the server has loaded the manifest + map list. */
   configure(config: RoomConfig): void {
+    if (config.carNames) this.carNames = config.carNames;
     // Rebuild the lobby with the real choices, preserving the current roster.
     const roster = this.lobby.players();
     this.lobby = new Lobby(config);

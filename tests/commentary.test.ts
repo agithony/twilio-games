@@ -43,4 +43,15 @@ describe('commentaryFor', () => {
     expect(s).toContain('Rex');
     expect(s).toMatch(/last|back|climb|rear/i);
   });
+  it('narrates the pre-race menu phases (car/map select prompts)', () => {
+    expect(commentaryFor({ kind: 'enter_car_select' }, 0)).toMatch(/car|ride|machine/i);
+    expect(commentaryFor({ kind: 'enter_map_select' }, 0)).toMatch(/track|course|battleground/i);
+  });
+  it('reacts playfully to a car pick (names the picker + car) and a map pick', () => {
+    const c = commentaryFor({ kind: 'car_picked', playerId: 'p1', name: 'Ada', car: 'McLaren Senna' }, 0)!;
+    expect(c).toContain('Ada');
+    expect(c).toContain('McLaren Senna');
+    const m = commentaryFor({ kind: 'map_picked', map: 'Silver Lake' }, 0)!;
+    expect(m).toContain('Silver Lake');
+  });
 });

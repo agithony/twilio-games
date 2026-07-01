@@ -171,22 +171,40 @@ export class GameServer {
         break;
       case 'select_car': {
         const room = conn.roomCode ? this.rooms.find(conn.roomCode) : undefined;
-        if (room && conn.playerId) { room.selectCar(conn.playerId, msg.carIndex); this.pushLobby(conn.roomCode!); }
+        if (room && conn.playerId) {
+          room.selectCar(conn.playerId, msg.carIndex);
+          this.pushLobby(conn.roomCode!);
+          // Playful host reaction to the pick (screen + the picking caller's phone).
+          const who = room.lobbyPlayers().find(p => p.playerId === conn.playerId);
+          this.emitEvent(conn.roomCode!, { kind: 'car_picked', playerId: conn.playerId,
+            name: who?.name ?? 'Racer', car: room.carName(msg.carIndex) });
+        }
         break;
       }
       case 'select_map': {
         const room = conn.roomCode ? this.rooms.find(conn.roomCode) : undefined;
-        if (room) { room.selectMap(msg.map); this.pushLobby(conn.roomCode!); }
+        if (room) {
+          room.selectMap(msg.map);
+          this.pushLobby(conn.roomCode!);
+          this.emitEvent(conn.roomCode!, { kind: 'map_picked', map: msg.map });
+        }
         break;
       }
       case 'advance': {
         const room = conn.roomCode ? this.rooms.find(conn.roomCode) : undefined;
         if (room) {
+          const before = room.phase;
           room.advance();
+          const after = room.phase;
           // Crossing into a race broadcasts items (with the chosen map) to EVERY conn in the room
           // so all displays/players load the right level; otherwise refresh the select screen.
-          if (room.phase === 'countdown' || room.phase === 'racing') this.broadcastItems(conn.roomCode!);
+          if (after === 'countdown' || after === 'racing') this.broadcastItems(conn.roomCode!);
           else this.pushLobby(conn.roomCode!);
+          // Announce entering a NEW pre-race phase (the AI host guiding the menus).
+          if (after !== before) {
+            if (after === 'car_select') this.emitEvent(conn.roomCode!, { kind: 'enter_car_select' });
+            else if (after === 'map_select') this.emitEvent(conn.roomCode!, { kind: 'enter_map_select' });
+          }
         }
         break;
       }
@@ -342,6 +360,15 @@ export class GameServer {
       this.send(c, { type: 'snapshot', snapshot: snap });
       for (const event of room.drainEventsOnce()) this.send(c, { type: 'event', event });
     }
+  }
+
+  /** Fan a single event to BOTH audiences in a room: the screen conns (as an `event` message → the
+   *  screen announcer) AND the voice callers (via onRoomEvents → their TTS). Used for the PRE-RACE
+   *  moments (car/map select) that don't flow through the racing broadcast loop, so the AI host
+   *  talks during the menus too — not just the race. */
+  private emitEvent(roomCode: string, event: GameEvent): void {
+    for (const c of this.conns) if (c.roomCode === roomCode) this.send(c, { type: 'event', event });
+    this.onRoomEvents?.(roomCode, [event]);
   }
 
   /** Immediately send the current pre/post-race state to every connection in a room. */

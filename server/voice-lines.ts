@@ -1,13 +1,24 @@
 // Pure, testable text lines the game SPEAKS TO A CALLER over their Conversation Relay call (Relay
-// TTS-synthesizes each returned string). Scope = key moments only (greeting on connect, the 3-2-1-GO
-// countdown, and that caller's own finish) — NO mid-race chatter, so spoken audio never steps on the
-// caller's own "left/right/boost" commands. No I/O here; the adapter decides WHEN to send these.
+// TTS-synthesizes each returned string). The AI host talks throughout — greeting, the menu phases
+// (pick your car / track), reactions to the caller's own picks, the 3-2-1-GO countdown, mid-race
+// arcade quips (throttled), and their finish. No I/O here; the adapter decides WHEN to send these.
 import type { GameEvent } from '../shared/types';
 
-/** The one-time greeting when a caller is bound to a room + car. */
-export function greetingLine(): string {
-  return "You're in, racer! Shout left, right, or boost to drive. Watch the big screen — race starting soon.";
+/** The connect greeting, as SEPARATE sentences. Sending each as its own TTS utterance gives natural
+ *  pauses between them — one long run-on string was read without breaths (the "no pause" issue). */
+export function greetingLines(): string[] {
+  return [
+    'Welcome to Voice Racer!',
+    "You're in the race.",
+    'Shout left, right, or boost to drive — and watch the big screen!',
+  ];
 }
+/** Back-compat single-line greeting (kept for any caller that wants one string). */
+export function greetingLine(): string { return greetingLines().join(' '); }
+
+const CAR_SELECT = ['Pick your ride! Text the car number on screen.', 'Choose your machine — text its number!'];
+const MAP_SELECT = ['Now pick the track — text the number!', 'Choose your course!'];
+const CAR_PICKED = ['Nice choice!', 'Great pick!', 'Ooh, bold choice!', 'Solid ride!'];
 
 const STREAK = ['Those barriers are magnetic! Find the gaps!', 'Ouch — watch the walls!',
   'The barriers keep finding you!'];
@@ -23,6 +34,10 @@ const LEAD = ['You\'ve got the lead! Hold it!', 'Out in front — go go go!', 'F
 export function lineForEvent(ev: GameEvent, myPlayerId: string | null, seq = 0): string | null {
   const mine = (id: string) => myPlayerId !== null && id === myPlayerId;
   switch (ev.kind) {
+    case 'enter_car_select': return pick(CAR_SELECT, seq);
+    case 'enter_map_select': return pick(MAP_SELECT, seq);
+    case 'car_picked':       return mine(ev.playerId) ? `${pick(CAR_PICKED, seq)} The ${ev.car}!` : null;
+    case 'map_picked':       return null;   // the screen host covers the map pick; don't double up
     case 'countdown':
       return ev.n > 0 ? `${ev.n}...` : null;
     case 'go':

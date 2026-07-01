@@ -141,8 +141,10 @@ describe('ConversationRelayAdapter', () => {
       register: (code) => { registered = code; }, unregister: () => {} });
     a.handleMessage(JSON.stringify({ type:'setup', callSid:'CA1', customParameters:{ roomCode:'4821' } }));
     expect(registered).toBe('4821');
-    expect(said).toHaveLength(1);
-    expect(said[0]!.toLowerCase()).toContain("you're in");
+    // Greeting is sent as MULTIPLE sentences (separate utterances → natural TTS pauses).
+    expect(said.length).toBeGreaterThan(1);
+    expect(said.join(' ').toLowerCase()).toContain('voice racer');
+    expect(said.join(' ').toLowerCase()).toMatch(/left|right|boost/);
     expect(a.boundPlayerId).toBe('p1');
   });
 

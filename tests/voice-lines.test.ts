@@ -36,6 +36,15 @@ describe('voice-lines', () => {
     expect(lineForEvent({ kind: 'race_over' }, 'p1')).toBeNull();
   });
 
+  it('prompts the caller through the menu phases + reacts to THEIR car pick only', () => {
+    expect(lineForEvent({ kind: 'enter_car_select' }, 'p1')).toMatch(/car|ride|machine|number/i);
+    expect(lineForEvent({ kind: 'enter_map_select' }, 'p1')).toMatch(/track|course|number/i);
+    // reacts to the caller's own pick, names the car
+    expect(lineForEvent({ kind: 'car_picked', playerId: 'p1', name: 'Me', car: 'Lotus Elise' }, 'p1')).toContain('Lotus Elise');
+    // silent for another player's pick
+    expect(lineForEvent({ kind: 'car_picked', playerId: 'p2', name: 'Them', car: 'Beetle' }, 'p1')).toBeNull();
+  });
+
   it('placeLine covers podium + generic ordinals', () => {
     expect(placeLine(1).toLowerCase()).toContain('first');
     expect(placeLine(2).toLowerCase()).toContain('second');
