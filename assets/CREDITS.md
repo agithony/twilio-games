@@ -42,6 +42,24 @@ the original authors is preserved below.
 | `finish_line.glb` | Finish Line | Kemal Çolak | https://skfb.ly/oDuZz | Finish gantry (track end) |
 | `cyber_orb.glb` | Cyber Orb | Tycho Magnetic Anomaly | https://skfb.ly/o7F7A | Boost pad (hovers over the track) |
 
+## Maps / tracks (`assets/maps/`)
+
+Scenery worlds a race can be played on (aligned + configured per-map in `/editor`, saved to
+`assets/maps/maps.json`). Shipped Draco+WebP optimized; raw originals in `assets/maps/_raw/` (gitignored).
+
+| Map file | Title | Author | License | Sketchfab |
+|---|---|---|---|---|
+| `silver_lake.glb` | Silver Lake | — | CC-BY 4.0 | — |
+| `drift_race_track_free.glb` | Drift Race Track Free | Nicholas-3D | **CC-BY-ND 4.0** (no derivatives — use the model as-is; do not remix the mesh) | https://skfb.ly/oXNZR |
+| `shanghai_international_circuit_2018_layout.glb` | Shanghai International Circuit 2018 layout | Dave Bored | CC-BY 4.0 | https://skfb.ly/pLqvL |
+| `suzuka_circuit_2001_layout.glb` | Suzuka Circuit 2001 layout | Dave Bored | CC-BY 4.0 | https://skfb.ly/pLorW |
+| `map_xsbn_2cs.glb` | Map_xsbn_2cs | amogusstrikesback2 | CC-BY 4.0 | https://skfb.ly/pyOzS |
+| `fixed_new_york_highway_interstate_95.glb` | New York Highway (Interstate 95) | — | see source | — |
+
+> **CC-BY-ND note (drift track):** NoDerivatives forbids distributing a *modified* mesh. We place +
+> scale the model in-scene (allowed — that's not modifying the asset itself) and never re-export an
+> altered mesh, so this stays compliant. Attribution to Nicholas-3D is required (above).
+
 ## Excluded models (NOT used in-game)
 
 Kept in `assets/_quarantine_noncommercial/` (gitignored), excluded for licensing reasons:
