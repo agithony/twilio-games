@@ -27,11 +27,21 @@ export function twimlGatherRoomCode(opts: { actionUrl: string }): string {
 
 export function twimlConnectRelay(opts: {
   wsUrl: string; sessionEndedUrl: string; roomCode: string;
+  // TTS voice for talk-back (greeting/countdown/result). ElevenLabs is Conversation Relay's premium
+  // provider; `voice` is an ElevenLabs voiceId. Both optional → Relay uses its default voice.
+  ttsProvider?: string; voice?: string;
+  // Spoken the instant the call connects (before the game WS binds) — a quick intro.
+  welcomeGreeting?: string;
 }): string {
+  // Only emit tts attrs when a voice is configured (an empty voice="" would be invalid).
+  const ttsAttrs = opts.voice
+    ? ` ttsProvider="${esc(opts.ttsProvider ?? 'ElevenLabs')}" voice="${esc(opts.voice)}"`
+    : '';
+  const greeting = esc(opts.welcomeGreeting ?? '');
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Connect action="${esc(opts.sessionEndedUrl)}">
-    <ConversationRelay url="${esc(opts.wsUrl)}" transcriptionProvider="Deepgram" speechModel="flux" partialPrompts="true" transcriptionLanguage="en-US" interruptible="none" dtmfDetection="true" hints="left, right, boost, go, brake, slow, stop, use power, power" speechTimeout="600" eotThreshold="0.5" welcomeGreeting="">
+    <ConversationRelay url="${esc(opts.wsUrl)}"${ttsAttrs} transcriptionProvider="Deepgram" speechModel="flux" partialPrompts="true" transcriptionLanguage="en-US" interruptible="none" dtmfDetection="true" hints="left, right, boost, go, brake, slow, stop, use power, power" speechTimeout="600" eotThreshold="0.5" welcomeGreeting="${greeting}">
       <Parameter name="roomCode" value="${esc(opts.roomCode)}" />
     </ConversationRelay>
   </Connect>

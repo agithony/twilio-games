@@ -106,4 +106,48 @@ describe('ConversationRelayAdapter', () => {
     a.handleMessage(JSON.stringify({ type:'prompt', voicePrompt:'left', last:true }));
     // no throw, no binding
   });
+
+  // ── Talk-back (greeting / countdown / result spoken to the caller) ──────────────────────────────
+  it('greets the caller + registers on bind', () => {
+    const room = fakeRoom(); const said: string[] = []; let registered = '';
+    const a = new ConversationRelayAdapter({
+      findOrCreateRoom: () => room, say: (t) => said.push(t),
+      register: (code) => { registered = code; }, unregister: () => {} });
+    a.handleMessage(JSON.stringify({ type:'setup', callSid:'CA1', customParameters:{ roomCode:'4821' } }));
+    expect(registered).toBe('4821');
+    expect(said).toHaveLength(1);
+    expect(said[0]!.toLowerCase()).toContain("you're in");
+    expect(a.boundPlayerId).toBe('p1');
+  });
+
+  it('speaks countdown + go events to the caller', () => {
+    const room = fakeRoom(); const said: string[] = [];
+    const a = new ConversationRelayAdapter({ findOrCreateRoom: () => room, say: (t) => said.push(t) });
+    a.handleMessage(JSON.stringify({ type:'setup', callSid:'CA1', customParameters:{ roomCode:'4821' } }));
+    said.length = 0;   // drop the greeting
+    a.onGameEvent({ kind:'countdown', n:3 });
+    a.onGameEvent({ kind:'go' });
+    expect(said).toEqual(['3...', 'Go go go!']);
+  });
+
+  it('announces the caller\'s OWN finish only, not other players\'', () => {
+    const room = fakeRoom(); const said: string[] = [];
+    const a = new ConversationRelayAdapter({ findOrCreateRoom: () => room, say: (t) => said.push(t) });
+    a.handleMessage(JSON.stringify({ type:'setup', callSid:'CA1', customParameters:{ roomCode:'4821' } }));
+    said.length = 0;
+    a.onGameEvent({ kind:'finish', playerId:'p2', name:'Other', place:1 });   // someone else → silent
+    expect(said).toHaveLength(0);
+    a.onGameEvent({ kind:'finish', playerId:'p1', name:'Me', place:2 });       // the caller → spoken
+    expect(said).toHaveLength(1);
+    expect(said[0]!.toLowerCase()).toContain('second');
+  });
+
+  it('unregisters on close', () => {
+    const room = fakeRoom(); let unreg = false;
+    const a = new ConversationRelayAdapter({
+      findOrCreateRoom: () => room, register: () => {}, unregister: () => { unreg = true; } });
+    a.handleMessage(JSON.stringify({ type:'setup', callSid:'CA1', customParameters:{ roomCode:'4821' } }));
+    a.handleClose();
+    expect(unreg).toBe(true);
+  });
 });

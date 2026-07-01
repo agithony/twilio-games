@@ -5,7 +5,7 @@ import { RoomManager } from './room-manager';
 import { Room, type RoomConfig } from './room';
 import { STEP } from '../shared/constants';
 import { INTENTS } from '../shared/types';
-import type { ClientMessage, ServerMessage } from '../shared/types';
+import type { ClientMessage, ServerMessage, GameEvent } from '../shared/types';
 
 type ParseResult = ClientMessage | { type: 'error'; code: string; message: string };
 
@@ -58,6 +58,9 @@ export class GameServer {
   private roomConfig: (() => RoomConfig) | null = null;
   /** Fired once when a room's race finishes (transitions into results), for leaderboard persistence. */
   private onRaceFinished: ((room: Room) => void) | null = null;
+  /** Fired with a room's drained game events each broadcast (countdown/go/finish/…), so the voice
+   *  layer can speak the caller-relevant ones. Same events the screen gets; voice picks a subset. */
+  private onRoomEvents: ((roomCode: string, events: GameEvent[]) => void) | null = null;
   /** Rooms whose finished race we've already reported (cleared when they leave results). */
   private reported = new WeakSet<Room>();
 
@@ -75,6 +78,11 @@ export class GameServer {
   /** Register a hook fired once when a room's race finishes (results phase) — for leaderboard saves. */
   setOnRaceFinished(fn: (room: Room) => void): void {
     this.onRaceFinished = fn;
+  }
+
+  /** Register a hook fired with a room's game events each broadcast — for the voice talk-back layer. */
+  setOnRoomEvents(fn: (roomCode: string, events: GameEvent[]) => void): void {
+    this.onRoomEvents = fn;
   }
 
   /** Create-or-fetch a room, configuring brand-new rooms with the current car/map choices. */
@@ -312,7 +320,13 @@ export class GameServer {
         if (tick % 10 === 0) this.send(c, this.preRaceMessage(room));
         continue;
       }
-      if (!cached.has(room)) { room.cacheEventsForBroadcast(); cached.add(room); }
+      if (!cached.has(room)) {
+        room.cacheEventsForBroadcast(); cached.add(room);
+        // Fan the SAME events out to the voice layer once per room (it speaks the caller-relevant
+        // subset — countdown/go/finish). Done here so the screen + phone hear the same beats.
+        const evs = room.drainEventsOnce();
+        if (evs.length && this.onRoomEvents) this.onRoomEvents(room.code, evs);
+      }
       const snap = room.snapshot(); if (!snap) continue;
       this.send(c, { type: 'snapshot', snapshot: snap });
       for (const event of room.drainEventsOnce()) this.send(c, { type: 'event', event });

@@ -39,9 +39,20 @@ describe('twimlConnectRelay', () => {
   it('sets the required transcription provider', () => {
     expect(xml).toContain('transcriptionProvider="Deepgram"');
   });
-  it('stays silent (no welcome greeting, not interruptible)', () => {
+  it('omits tts voice attrs when no voice is configured (Relay default)', () => {
     expect(xml).toContain('welcomeGreeting=""');
     expect(xml).toContain('interruptible="none"');
+    expect(xml).not.toContain('ttsProvider=');
+    expect(xml).not.toContain('voice=');
+  });
+  it('emits ElevenLabs tts + welcome greeting when a voice is configured', () => {
+    const x = twimlConnectRelay({
+      wsUrl: 'wss://x.test/voice', sessionEndedUrl: 'https://x.test/e', roomCode: 'ABCD',
+      ttsProvider: 'ElevenLabs', voice: 'voice-123', welcomeGreeting: 'Welcome to Voice Racer!',
+    });
+    expect(x).toContain('ttsProvider="ElevenLabs"');
+    expect(x).toContain('voice="voice-123"');
+    expect(x).toContain('welcomeGreeting="Welcome to Voice Racer!"');
   });
   it('passes the room code as a Parameter', () => {
     expect(xml).toContain('<Parameter name="roomCode" value="ABCD"');

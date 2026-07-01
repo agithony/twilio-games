@@ -1,5 +1,6 @@
-import type { Intent } from '../shared/types';
+import type { Intent, GameEvent } from '../shared/types';
 import { intentsFromTranscript } from './voice-intent';
+import { greetingLine, lineForEvent } from './voice-lines';
 
 export type CrMessage =
   | { type:'setup'; callSid:string; from?:string; customParameters: Record<string,string> }
@@ -40,14 +41,38 @@ const DTMF_TO_INTENT: Record<string, Intent> = {
   '1': 'MOVE_LEFT', '2': 'BOOST', '3': 'MOVE_RIGHT', '4': 'BRAKE', '5': 'USE_POWER',
 };
 
+/** Everything the adapter needs from its host to TALK BACK to the caller + hook game events. All
+ *  optional so existing callers/tests that only drive intents keep working unchanged. */
+export interface AdapterDeps {
+  findOrCreateRoom: (code: string) => RoomLike | null;
+  /** Speak a line to the caller (host wires this to a Relay `{type:'text'}` WS send). */
+  say?: (text: string) => void;
+  /** Register/unregister this adapter to receive its room's game events (greeting/countdown/result). */
+  register?: (roomCode: string, adapter: ConversationRelayAdapter) => void;
+  unregister?: (adapter: ConversationRelayAdapter) => void;
+}
+
 export class ConversationRelayAdapter {
   private room: RoomLike | null = null;
   private playerId: string | null = null;
+  private roomCode: string | null = null;
   // Conversation Relay sends ACCUMULATING partial transcripts ("left" → "left right"
   // → "left right boost"). We count how many command-words we've already fired this
   // utterance and only act on newly-appended ones, so each spoken command fires once.
   private firedThisUtterance = 0;
-  constructor(private deps: { findOrCreateRoom: (code: string) => RoomLike | null }) {}
+  constructor(private deps: AdapterDeps) {}
+
+  /** The caller's bound player id (null until setup binds them) — for event targeting. */
+  get boundPlayerId(): string | null { return this.playerId; }
+  /** The caller's room code (null until bound) — so the registry can route events. */
+  get boundRoomCode(): string | null { return this.roomCode; }
+
+  /** Called by the voice registry when THIS caller's room emits a game event. Speaks the caller-
+   *  relevant ones (their countdown/go/finish); ignores mid-race cues. Safe no-op if no `say` sink. */
+  onGameEvent(ev: GameEvent): void {
+    const line = lineForEvent(ev, this.playerId);
+    if (line) this.deps.say?.(line);
+  }
 
   handleMessage(raw: string): void {
     const msg = parseCrMessage(raw);
@@ -60,8 +85,11 @@ export class ConversationRelayAdapter {
         if (!room) { console.log(`[CR] room ${code} not found → unbound`); return; }
         const res = room.addPlayer(playerName(msg.from));
         if ('error' in res) { console.log(`[CR] addPlayer rejected: ${res.error} → unbound (caller cannot drive)`); return; }
-        this.room = room; this.playerId = res.playerId;
+        this.room = room; this.playerId = res.playerId; this.roomCode = code;
         console.log(`[CR] bound caller to player ${res.playerId} lane ${res.lane} in room ${code}`);
+        // Register for this room's game events (countdown/go/finish) + greet the caller.
+        this.deps.register?.(code, this);
+        this.deps.say?.(greetingLine());
         break;
       }
       case 'prompt': {
@@ -92,8 +120,9 @@ export class ConversationRelayAdapter {
   }
 
   handleClose(): void {
+    this.deps.unregister?.(this);
     if (this.room && this.playerId) this.room.removePlayer(this.playerId);
-    this.room = null; this.playerId = null;
+    this.room = null; this.playerId = null; this.roomCode = null;
   }
 }
 

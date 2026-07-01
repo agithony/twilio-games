@@ -198,8 +198,10 @@ jobs:
           export ACR_SERVER="${{ steps.acr-creds.outputs.server }}"
           export ACR_USERNAME="${{ steps.acr-creds.outputs.username }}"
           export ACR_PASSWORD="${{ steps.acr-creds.outputs.password }}"
+          # ElevenLabs voiceId for Conversation Relay talk-back (optional repo var; empty → default voice).
+          export CR_TTS_VOICE="${{ vars.CR_TTS_VOICE }}"
           # Restrict substitution to our known vars so no other ${...} in the template is touched.
-          SUBST='${APP_NAME} ${CONTAINER_IMAGE} ${BASE_URL} ${ACR_SERVER} ${ACR_USERNAME} ${ACR_PASSWORD}'
+          SUBST='${APP_NAME} ${CONTAINER_IMAGE} ${BASE_URL} ${ACR_SERVER} ${ACR_USERNAME} ${ACR_PASSWORD} ${CR_TTS_VOICE}'
           envsubst "$SUBST" < .github/containerapp.yaml > /tmp/containerapp.yaml
 
           if az containerapp show --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" 2>/dev/null; then

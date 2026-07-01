@@ -28,6 +28,10 @@ export class HttpServer {
   private readonly editorToken?: string;
   /** The Vite-built client directory served in production (one-process container). */
   private readonly clientDir: string;
+  /** ElevenLabs voiceId for Conversation Relay talk-back (greeting/countdown/result). From the
+   *  CR_TTS_VOICE env; empty → Relay's default voice (talk-back text still sends, just in the default
+   *  voice). A high-energy announcer voiceId is the intended default set in deploy config. */
+  private readonly crVoice: string;
   /** Cached selectable cars/maps for the lobby (refreshed from manifest + maps.json periodically). */
   private roomConfigCache: { carCount: number; maps: string[] } = { carCount: 0, maps: [] };
   private roomConfigTimer: ReturnType<typeof setInterval> | null = null;
@@ -40,6 +44,10 @@ export class HttpServer {
   /** Per-phone reply lock so two rapid texts from one number serialize (read-modify-write safety). */
   private smsLocks = new Map<string, Promise<void>>();
   private smsSweepTimer: ReturnType<typeof setInterval> | null = null;
+  /** Voice talk-back registry: roomCode → the live ConversationRelay adapters (callers) in that room.
+   *  The game loop's per-room events (onRoomEvents) are fanned to these so callers hear countdown/
+   *  go/their finish. Each adapter speaks the caller-relevant subset. */
+  private voiceAdapters = new Map<string, Set<ConversationRelayAdapter>>();
 
   constructor(opts: {
     port: number;
@@ -62,6 +70,7 @@ export class HttpServer {
     this.leaderboardPath = opts.leaderboardPath ?? 'data/leaderboard.json';
     this.editorToken = opts.editorToken;
     this.clientDir = opts.clientDir ?? 'client/dist';
+    this.crVoice = (process.env.CR_TTS_VOICE ?? '').trim();
     this.server = http.createServer((req, res) => {
       this.onRequest(req, res).catch((err) => {
         console.error('request handler error:', err);
@@ -78,6 +87,12 @@ export class HttpServer {
     this.roomConfigTimer = setInterval(() => void this.refreshRoomConfig(), 5000);
     // Persist each finished race onto the global leaderboard (serialized, atomic).
     this.game.setOnRaceFinished((room) => this.persistRaceResults(room.selectedMap, room.results()));
+    // Fan a room's game events out to any voice callers in it (greeting/countdown/go/finish talk-back).
+    this.game.setOnRoomEvents((roomCode, events) => {
+      const set = this.voiceAdapters.get(roomCode);
+      if (!set) return;
+      for (const ev of events) for (const a of set) a.onGameEvent(ev);
+    });
     // SMS concierge: resolves a room code to a live Room wrapped as a ConciergeRoom (adds car names).
     this.concierge = new SmsConcierge({ findRoom: (code) => this.conciergeRoom(code) });
     this.smsSweepTimer = setInterval(() => this.concierge.sweep(), 5 * 60 * 1000);
@@ -158,6 +173,19 @@ export class HttpServer {
     console.log('[CR] voice WebSocket connected (Conversation Relay)');
     const adapter = new ConversationRelayAdapter({
       findOrCreateRoom: (code) => this.game.getOrCreateRoom(code),
+      // SPEAK to the caller: Conversation Relay TTS-synthesizes {type:'text'} tokens onto the call.
+      // `last:true` marks a complete utterance so Relay flushes it promptly.
+      say: (text) => { if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ type: 'text', token: text, last: true })); },
+      register: (roomCode, a) => {
+        let set = this.voiceAdapters.get(roomCode);
+        if (!set) { set = new Set(); this.voiceAdapters.set(roomCode, set); }
+        set.add(a);
+      },
+      unregister: (a) => {
+        for (const [code, set] of this.voiceAdapters) {
+          if (set.delete(a) && set.size === 0) this.voiceAdapters.delete(code);
+        }
+      },
     });
     ws.on('message', (d) => adapter.handleMessage(d.toString()));
     ws.on('close', () => { console.log('[CR] voice WebSocket closed'); adapter.handleClose(); });
@@ -198,6 +226,10 @@ export class HttpServer {
             wsUrl: `${this.publicBaseUrl.replace(/^http/, 'ws')}/voice`,
             sessionEndedUrl: `${this.publicBaseUrl}/voice/session-ended`,
             roomCode: (params['Digits'] ?? '').trim() || '0000',
+            // ElevenLabs voice for the race-announcer talk-back; swap via the CR_TTS_VOICE env.
+            ttsProvider: 'ElevenLabs',
+            voice: this.crVoice,
+            welcomeGreeting: this.crVoice ? "Welcome to Voice Racer! You're joining the race." : '',
           });
       res.writeHead(200, { 'Content-Type': 'text/xml' }).end(xml);
       return;

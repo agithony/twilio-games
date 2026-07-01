@@ -59,6 +59,12 @@ properties:
           # Gate the editor's /api writes on a public deploy. Empty = writes open (not recommended public).
           - name: EDITOR_TOKEN
             secretRef: editor-token
+          # ElevenLabs voiceId for Conversation Relay talk-back (greeting/countdown/result to callers).
+          # Empty → Relay's default voice (talk-back still speaks). Set to a high-energy sports-
+          # announcer voiceId from the ElevenLabs library for the racing vibe. Rendered via envsubst
+          # from the CR_TTS_VOICE repo variable (falls back to empty if unset).
+          - name: CR_TTS_VOICE
+            value: "${CR_TTS_VOICE}"
         volumeMounts:
           - volumeName: appdata
             mountPath: /app/appdata
