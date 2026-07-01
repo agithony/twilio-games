@@ -23,8 +23,8 @@
     "puppeteer-core": "25.2.1",
     "tsx": "^4.10.0",
     "typescript": "^5.4.0",
-    "vite": "^5.2.0",
-    "vitest": "^1.6.0"
+    "vite": "8.1.2",
+    "vitest": "4.1.9"
   },
   "dependencies": {
     "@gltf-transform/core": "4.4.0",
