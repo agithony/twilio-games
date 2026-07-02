@@ -302,29 +302,33 @@ function lobbyHtml(): string {
   } else {
     action = '<div class="vm-dim">Waiting for the host to start…</div>';
   }
-  // JOIN FLOW (matches the racer's lobby): scan the QR → it dials the number → you're in. The number
-  // comes from /api/config (placeholder until it lands).
+  // TWO-COLUMN layout matching Voice Racer's lobby: LEFT = join flow (QR + numbered steps stacked) +
+  // chips + action; RIGHT = the "How to battle" legend panel. Side by side, not one tall stack.
   const num = phoneNumber
     ? `<a class="vm-num" href="tel:${esc(phoneNumber)}">${esc(phoneNumber)}</a>`
     : `<span class="vm-num vm-num-unset">set GAME_PHONE_NUMBER</span>`;
-  const joinFlow = `
-    <div class="vm-join">
-      <div class="vm-join-qr">
-        <img src="/brand/join-qr.png?v=2" alt="Scan to call and join" onerror="this.style.display='none'">
-        <div class="vm-join-cap">Scan to join</div>
+  const left = `
+    <div class="vm-lobby-main">
+      <div class="vm-join">
+        <div class="vm-join-qr">
+          <img src="/brand/join-qr.png?v=2" alt="Scan to call and join" onerror="this.style.display='none'">
+          <div class="vm-join-cap">Scan to join</div>
+        </div>
+        <ol class="vm-join-steps">
+          <li><span class="vm-step-n">1</span> Scan the code with your phone</li>
+          <li><span class="vm-step-n">2</span> Tap to call ${num}</li>
+          <li><span class="vm-step-n">3</span> You're in — pick a monster and battle by voice!</li>
+        </ol>
       </div>
-      <ol class="vm-join-steps">
-        <li><span class="vm-step-n">1</span> Scan the code with your phone</li>
-        <li><span class="vm-step-n">2</span> Tap to call ${num}</li>
-        <li><span class="vm-step-n">3</span> You're in — pick a monster and battle by voice!</li>
-      </ol>
+      <div class="vm-chips">${chips}</div>
+      ${action}
     </div>`;
-  return `<div class="vm-card wide">
+  return `<div class="vm-card wide vm-lobby">
     ${brandHead('VOICE MONSTERS', 'Call in to battle')}
-    ${joinFlow}
-    <div class="vm-chips">${chips}</div>
-    ${action}
-    ${battleControlsLegendHtml()}
+    <div class="vm-lobby-grid">
+      ${left}
+      ${battleControlsLegendHtml()}
+    </div>
   </div>`;
 }
 
