@@ -203,6 +203,14 @@ export class LevelScene {
   /** Mutable live level ref, so the inspector panels can read/write car scale etc. in place. */
   getLevel(): LevelConfig { return this.level; }
 
+  /** Set the live level data WITHOUT the async 3D reload, so the editor's tree/panel can render
+   *  immediately (and current()/getLevel() are valid) while loadLevel() populates the 3D preview in
+   *  the background. Ensures a curve exists so current() can serialize even before the GLB lands. */
+  setLevel(level: LevelConfig): void {
+    this.level = level;
+    if (!this.curve) this.curve = new CurveEditor(level.path);
+  }
+
   /** Measure a map GLB and return a good STARTING model scale so its footprint ≈ the track length —
    *  a sane initial size for a brand-new level (the fixed default only suited tiny models; large
    *  track GLBs ×20 rendered off-screen/inside the mesh). Returns null on load failure (keep default). */
@@ -469,17 +477,23 @@ export class LevelScene {
     }
     // reset groups
     this.mapGroup.clear(); this.trackGroup.clear();
-    // map GLB
+    // map GLB — resolve on success OR error OR a timeout, so a slow/stalled GLB (or DRACO decode)
+    // can NEVER hang loadLevel forever (which would freeze the rest of the editor setup). The tree/
+    // panel already rendered before this ran (see level.ts refresh), so the UI stays usable regardless.
     await new Promise<void>((res) => {
+      let done = false;
+      const finish = () => { if (!done) { done = true; res(); } };
+      const timer = setTimeout(finish, 12000);   // safety net: don't wait on a wedged load forever
       this.loader.load(`/assets/maps/${level.file}`, (g) => {
+        clearTimeout(timer);
         const wrap = wrapMapScene(g.scene); this.mapGroup.add(wrap);
         applyTrackTransform(this.mapGroup, level.model);
         // Measure the placed map's world extent so the camera far-plane can always contain it
         // (a 200×-scaled map spans tens of thousands of units — a fixed far clips the distance).
         const sphere = new THREE.Box3().setFromObject(this.mapGroup).getBoundingSphere(new THREE.Sphere());
         this.sceneRadius = Math.max(RACE_LEN, sphere.radius * 2 + sphere.center.length());
-        res();
-      }, undefined, () => res());
+        finish();
+      }, undefined, () => { clearTimeout(timer); finish(); });
     });
     // track surface — an editable CurveEditor (the Track inspector bends it) instead of a static
     // mesh, so what you author here is exactly what races. It rides the track transform.

@@ -467,8 +467,18 @@ async function refresh(selectKey?: string): Promise<void> {
     const o = document.createElement('option'); o.value = key; o.textContent = key; sel.appendChild(o);
   }
   const key = selectKey ?? Object.keys(levels)[0];
-  if (key) { sel.value = key; await scene.loadLevel(structuredClone(levels[key]!)); }
-  renderTree();
+  if (key) {
+    sel.value = key;
+    // Render the tree + panel IMMEDIATELY (they're static + read this.level, not the 3D scene) so the
+    // editor UI is usable right away — do NOT block it behind the 3D load. The map GLB / DRACO decode
+    // can be slow (or stall), and gating the whole UI on it left the editor blank. loadLevel then
+    // populates the 3D preview + fires onChange to re-render when it completes.
+    scene.setLevel(structuredClone(levels[key]!));
+    renderTree(); renderPanel();
+    void scene.loadLevel(structuredClone(levels[key]!));
+  } else {
+    renderTree();
+  }
 }
 
 sel.addEventListener('change', async () => {
