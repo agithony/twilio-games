@@ -443,21 +443,21 @@ export class HttpServer {
     const myName = /^(Challenger|Player)(\s|$)/.test(rawName) ? null : (rawName || null);
     const snap = room.snapshot();
     const res = room.result();
+    const side = this.battleSideOf(room, playerId) ?? 'a';
     if (!snap) {
       return {
-        phase: room.phase, monsterNames, myName,
+        phase: room.phase, mySide: side, monsterNames, myName,
         myMonsterId: player?.monsterId ?? null,
         myMonsterName: player?.monsterId ? (monsterById(player.monsterId)?.name ?? null) : null,
         foeMonsterName: null, myHp: null, myMaxHp: null, foeHp: null, foeMaxHp: null,
         myPotions: 2, whoseTurn: null, myMoves: [], winnerName: res?.winnerName ?? null,
       };
     }
-    const side = this.battleSideOf(room, playerId) ?? 'a';
     const me = side === 'a' ? snap.a : snap.b;
     const foe = side === 'a' ? snap.b : snap.a;
     const iChose = side === 'a' ? snap.chosen.a : snap.chosen.b;
     return {
-      phase: room.phase, monsterNames, myName,
+      phase: room.phase, mySide: side, monsterNames, myName,
       myMonsterId: me.monsterId, myMonsterName: me.monsterName,
       foeMonsterName: foe.monsterName,
       myHp: me.hp, myMaxHp: me.maxHp, foeHp: foe.hp, foeMaxHp: foe.maxHp,
@@ -489,7 +489,10 @@ export class HttpServer {
         return `Locked in — ${s.monsterNames[i]}!`;
       },
       chooseAction: (action) => {
-        if (room.phase !== 'battle') return null;
+        // Gate on the caller's TURN, not just the phase: in single-player the AI beat is deferred
+        // ~700ms, so after the caller locks a move the room is still 'battle' but whoseTurn is 'foe'.
+        // Without this, an LLM choose_action in that window would OVERWRITE the caller's locked move.
+        if (room.phase !== 'battle' || s.whoseTurn !== 'me') return null;
         const parsed = this.parseVoiceHostAction(action, s.myMoves);
         if (!parsed) return null;
         this.battle.voiceChooseAction(code, playerId, parsed);

@@ -19,6 +19,7 @@ function fakeDeps(over: Partial<BattleVoiceDeps> = {}): { deps: BattleVoiceDeps;
     say: (t) => said.push(t),
     snapshot: () => ({
       phase: 'monster_select',
+      mySide: 'a',
       monsterNames: ['Sparkmouse', 'Embertail', 'Shellback'],
       myName: null, myMonsterId: null, myMonsterName: null,
       foeMonsterName: null, myHp: null, myMaxHp: null, foeHp: null, foeMaxHp: null,
@@ -53,7 +54,7 @@ describe('BattleVoiceSession', () => {
   it('a spoken battle action during battle commits it', async () => {
     const { deps, log } = fakeDeps({
       snapshot: () => ({
-        phase: 'battle', monsterNames: ['Sparkmouse'],
+        phase: 'battle', mySide: 'a', monsterNames: ['Sparkmouse'],
         myName: 'Ada', myMonsterId: 'sparkmouse', myMonsterName: 'Sparkmouse',
         foeMonsterName: 'Galecoil', myHp: 40, myMaxHp: 70, foeHp: 55, foeMaxHp: 98,
         myPotions: 2, whoseTurn: 'me',
@@ -76,6 +77,26 @@ describe('BattleVoiceSession', () => {
     s.onBattleEvent(ev);
     expect(said.length).toBe(1);
     expect(said[0]!.toLowerCase()).toMatch(/super|effective|weak/);
+  });
+
+  it('names monsters correctly for a side-b caller (event sides are absolute)', () => {
+    // A 2nd caller is side 'b': their snapshot's my/foe is relative, but events carry absolute sides.
+    // A super-effective hit on side 'a' (the side-b caller's FOE) must name the FOE, not themselves.
+    const { deps, said } = fakeDeps({
+      snapshot: () => ({
+        phase: 'battle', mySide: 'b', monsterNames: ['Sparkmouse'],
+        myName: 'Bo', myMonsterId: 'galecoil', myMonsterName: 'Galecoil',
+        foeMonsterName: 'Sparkmouse', myHp: 50, myMaxHp: 98, foeHp: 30, foeMaxHp: 70,
+        myPotions: 2, whoseTurn: 'foe', myMoves: [], winnerName: null,
+      }),
+    });
+    const s = new BattleVoiceSession(deps);
+    s.handleMessage(setup());
+    said.length = 0;
+    // move_used by side 'a' (the foe, Sparkmouse) → the line must name Sparkmouse, not Galecoil.
+    s.onBattleEvent({ kind: 'move_used', by: 'a', moveId: 'sparkmouse.jolt', moveName: 'Thunder Jolt' });
+    expect(said[0]).toContain('Sparkmouse');
+    expect(said[0]).not.toContain('Galecoil');
   });
 
   it('stays silent (no crash) on an unbound event before setup', () => {

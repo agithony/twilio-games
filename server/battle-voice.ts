@@ -14,6 +14,7 @@ import type { BattleEvent, BattleAction } from '../shared/battle-world';
 /** A snapshot of the caller's live battle state, flattened for voice routing + the LLM host context. */
 export interface BattleVoiceSnapshot {
   phase: 'lobby' | 'monster_select' | 'battle' | 'results';
+  mySide: 'a' | 'b';                       // the caller's ABSOLUTE side (for mapping event sides → names)
   monsterNames: string[];                 // selectable monsters (roster order) — for select + LLM
   myName: string | null;
   myMonsterId: string | null; myMonsterName: string | null;
@@ -88,6 +89,10 @@ export class BattleVoiceSession {
   /** Route one final utterance: try a deterministic game action first (fast, LLM-independent), else
    *  hand to the conversational host for chat/questions/ambiguous input. */
   private handleUtterance(text: string): void {
+    // A NEW final utterance advances the barge-in epoch so any in-flight LLM reply from a PRIOR
+    // utterance is dropped (not spoken over/after a fresh deterministic pick/action). converse() bumps
+    // it again for the LLM path; bumping here covers the deterministic early-returns too.
+    this.turnEpoch++;
     const snap = this.deps.snapshot(this.code!, this.playerId!);
     if (!snap) { void this.converse(text); return; }
 
@@ -130,8 +135,13 @@ export class BattleVoiceSession {
   onBattleEvent(ev: BattleEvent): void {
     if (!this.code || !this.playerId) return;
     const snap = this.deps.snapshot(this.code, this.playerId);
-    const aName = snap?.myMonsterName ?? 'Your monster';
-    const bName = snap?.foeMonsterName ?? 'the rival';
+    // Battle events carry ABSOLUTE sides (a/b); commentary maps side 'a'→aName, 'b'→bName. But the
+    // snapshot's my/foe are RELATIVE to the caller, so map back to absolute: if the caller is side 'b',
+    // THEY are 'b' and their foe is 'a'. Without this, a 2nd caller (side 'b') hears every line naming
+    // the wrong monster.
+    const mine = snap?.myMonsterName ?? 'Your monster';
+    const foe = snap?.foeMonsterName ?? 'the rival';
+    const [aName, bName] = snap?.mySide === 'b' ? [foe, mine] : [mine, foe];
     const line = commentaryForBattleEvent(ev, { aName, bName }, this.lineSeq);
     if (line) { this.lineSeq++; this.deps.say(line); }
     // A new turn resets the caller's voice menu level so "one/two…" re-map to root actions.
