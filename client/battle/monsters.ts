@@ -121,16 +121,39 @@ function drainNext(): void {
   renderer.playEvent(ev);
   const banner = bannerFor(ev);
   if (banner) renderer.setEventBanner(banner);
-  // Linger on the dramatic beats — effectiveness call, faint, win, and a CRIT — so the player reads them.
-  // Durations tuned up from 550/1100 so attacks + outcomes stay on screen long enough to read.
-  const slow = ev.kind === 'effectiveness' || ev.kind === 'faint' || ev.kind === 'battle_over'
-    || (ev.kind === 'damage' && ev.crit);
-  setTimeout(drainNext, slow ? 1500 : 850);
+  setTimeout(drainNext, dwellFor(ev, eventQ[0]));
+}
+
+/** How long to hold on `ev` before playing the next one. Paces the fight so it reads as clearly
+ *  turn-based: each "X used Move!" sits on screen BEFORE its hit lands, hits + outcomes linger, and a
+ *  LONG handoff pause opens whenever the NEXT event starts the other side's action (a new move_used)
+ *  or the turn ends — that gap is the visual "now it's their turn" beat. */
+function dwellFor(ev: BattleEvent, next: BattleEvent | undefined): number {
+  let ms: number;
+  switch (ev.kind) {
+    case 'turn_start':   ms = 700; break;                    // "Turn N" title card
+    case 'move_used':    ms = 1100; break;                   // announce the move, THEN it hits
+    case 'damage':       ms = ev.crit ? 1600 : 1000; break;  // the hit + HP drop registers
+    case 'effectiveness':ms = 1500; break;                   // "It's super effective!" lands
+    case 'faint':        ms = 1700; break;
+    case 'battle_over':  ms = 1800; break;
+    default:             ms = 900;
+  }
+  // Extra breath at the sub-turn boundary: after this side's action fully resolves and the OTHER side
+  // is about to move (next is a move_used), pause longer so the handoff is unmistakable.
+  if (next?.kind === 'move_used' && ev.kind !== 'turn_start') ms += 800;
+  return ms;
+}
+/** The monster name for a side, from the current snapshot (for "X used Move!" banners). */
+function actorName(side: 'a' | 'b'): string {
+  const snap = state?.snapshot; if (!snap) return side === 'a' ? 'You' : 'Foe';
+  return (side === 'a' ? snap.a : snap.b).monsterName;
 }
 function bannerFor(ev: BattleEvent): string | null {
   switch (ev.kind) {
-    case 'turn_start': return `Turn ${ev.turn}`;
-    case 'move_used': return `${ev.moveName}!`;
+    case 'turn_start': return `— Turn ${ev.turn} —`;
+    // Name the attacker so it's unmistakable WHOSE turn it is ("Sparkmouse used Thunder Jolt!").
+    case 'move_used': return `${actorName(ev.by)} used ${ev.moveName}!`;
     case 'damage': return ev.crit ? 'A critical hit!' : null;   // a normal hit shows no banner
     case 'effectiveness': return effectivenessLabel(ev.multiplier);
     case 'faint': return `${ev.monsterName} fainted!`;

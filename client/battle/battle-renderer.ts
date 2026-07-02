@@ -12,7 +12,7 @@ import type { BattleSnapshot, BattleEvent } from '../../shared/battle-world';
 import { GB_SHADES, drawMonsterSprite, typeColor } from './monster-sprite';
 import { spriteCandidateUrls } from './sprite-sources';
 import { ResolutionHp } from './resolution-hp';
-import { powerPips, fitMoveName } from './move-menu';
+import { powerPips } from './move-menu';
 import { hpFraction, hpZone, hpColor } from './hp-bar';
 
 // Logical GB resolution (160×144); we scale up to fill the element with nearest-neighbor crispness.
@@ -193,14 +193,15 @@ export class BattleRenderer {
       : (this.statusLine || (this.snap ? '' : 'Waiting…'));
     this.drawText(line, 11, 101);
     if (this.uiPhase === 'awaiting-input') {
-      // 4 moves in two columns under the prompt. Each cell: "1 Ember" + a 5-pip power rating drawn as
-      // little filled/empty squares (NOT the meaningless raw base-power number). Name is truncated so
-      // nothing clips the 160px window. Command window spans x 4..156; two columns at 11 and 87.
+      // 4 moves in two columns under the prompt. Each cell: the FULL move name on one row, then a 5-pip
+      // power rating on the row below (little squares in the type color — NOT the meaningless raw
+      // base-power number). Pips sit UNDER the name (not beside it) so the whole 73px column width is
+      // free for the name — every roster name (≤12 chars) fits without abbreviating. Window x 4..156.
       this.menuMoves.slice(0, 4).forEach((m, i) => {
         const col = i % 2, row = Math.floor(i / 2);
-        const x = 11 + col * 73, y = 117 + row * 12;
-        this.drawText(`${i + 1} ${fitMoveName(m.name, 9)}`, x, y, true);
-        this.drawPips(x, y + 6, powerPips(m.power), typeColor(m.type));   // rating row under the name
+        const x = 11 + col * 73, y = 116 + row * 13;
+        this.drawText(`${i + 1} ${m.name}`, x, y, true);
+        this.drawPips(x + 6, y + 6, powerPips(m.power), typeColor(m.type));   // rating row under the name
       });
     }
     ctx.restore();
