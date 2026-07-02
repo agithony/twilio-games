@@ -102,11 +102,24 @@ function render(): void {
 function lobbyHtml(): string {
   const players = state?.players ?? [];
   const chips = players.map(p => `<span class="vm-chip">${esc(p.name)}${p.monsterId ? ' ✓' : ''}</span>`).join('') || '<span class="vm-dim">Waiting for challengers…</span>';
+  const havePlayers = players.length > 0;
+  // The display needs at least one PLAYER before it can start (a battle needs a combatant). Offer to
+  // play on this screen; once there's a player, offer to advance to monster-select.
+  let action: string;
+  if (isDisplay && !joinedHere && !havePlayers) {
+    action = `<button class="vm-btn" data-act="play-here">Play on this screen ▶</button>
+      <div class="vm-dim">…or have players call in to join</div>`;
+  } else if (isDisplay) {
+    action = `<button class="vm-btn" data-act="advance">Choose your monster ▶</button>
+      ${!joinedHere ? '<button class="vm-btn vm-btn-ghost" data-act="play-here">＋ Play on this screen</button>' : ''}`;
+  } else {
+    action = '<div class="vm-dim">Waiting for the host to start…</div>';
+  }
   return `<div class="vm-card">
     <div class="vm-title">VOICE MONSTERS</div>
     <div class="vm-sub">Call in to battle — or play on this device</div>
     <div class="vm-chips">${chips}</div>
-    ${isDisplay ? `<button class="vm-btn" data-act="advance">Choose your monster ▶</button>` : '<div class="vm-dim">Waiting for the host to start…</div>'}
+    ${action}
   </div>`;
 }
 
@@ -139,13 +152,24 @@ function wireOverlay(): void {
     el.onclick = () => conn.selectMonster(el.dataset.mon!));
   overlay.querySelectorAll<HTMLElement>('[data-act="advance"]').forEach(el =>
     el.onclick = () => conn.advance());
+  overlay.querySelectorAll<HTMLElement>('[data-act="play-here"]').forEach(el =>
+    el.onclick = () => { joinAsPlayer(); render(); });
 }
 
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
 
 // ── connect: display spectates, device joins ─────────────────────────────────────────────────────
+// The shared screen SPECTATES by default (phone players join by call). But for solo testing/play it
+// can opt IN as a player on this screen ("Play on this screen" → join → battle the AI). Tracked so
+// the lobby shows the right button + we don't double-join.
+let joinedHere = false;
+function joinAsPlayer(): void {
+  if (joinedHere) return;
+  joinedHere = true;
+  conn.join(roomCode, name);
+}
 if (isDisplay) conn.spectate(roomCode);
-else conn.join(roomCode, name);
+else { conn.join(roomCode, name); joinedHere = true; }
 
 // Keyboard fallback (testing / device play): 1–4 choose a move during battle; Enter advances (host).
 addEventListener('keydown', (e) => {

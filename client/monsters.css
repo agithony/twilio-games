@@ -41,6 +41,10 @@ html, body { margin: 0; height: 100%; background: #06110a; color: var(--ink); fo
   color: #06110a; font-weight: 800; border: none; border-radius: 12px; padding: 12px 22px;
   font-family: var(--disp); font-size: 16px; cursor: pointer; }
 .vm-btn:hover { filter: brightness(1.08); }
+/* Secondary "＋ Play on this screen" action — outlined, not filled. */
+.vm-btn-ghost { background: transparent; color: var(--gb-paper); border: 1px solid var(--gb-lite);
+  font-weight: 700; font-size: 14px; padding: 9px 18px; margin-left: 8px; }
+.vm-btn-ghost:hover { background: rgba(139,172,15,.14); }
 
 /* Monster-select grid of creature cards. */
 .vm-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 20px 0; }
