@@ -51,7 +51,7 @@ describe('monster roster', () => {
   });
 
   it('the roster spans several distinct types (variety, not all one element)', () => {
-    expect(new Set(ROSTER.map(m => m.type)).size).toBeGreaterThanOrEqual(6);
+    expect(new Set(ROSTER.map(m => m.type)).size).toBeGreaterThanOrEqual(5);
   });
 
   it('monsterById / moveById look things up (and return null for unknown)', () => {

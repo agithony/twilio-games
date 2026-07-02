@@ -8,8 +8,8 @@ import { pickAiMove } from '../shared/battle-ai';
 import { Rng } from '../shared/rng';
 
 // Deterministic combatants for tests.
-const FAST = 'gustwing';     // speed 105
-const SLOW = 'pebblefist';   // speed 30
+const FAST = 'voltcrest';    // speed 100
+const SLOW = 'shellback';    // speed 43
 const FIRE = 'embertail';
 const GRASS = 'thornling';
 
@@ -72,7 +72,7 @@ describe('battle pacing (balance)', () => {
   });
 });
 
-const ROSTER_IDS = ['sparkmouse', 'embertail', 'shellback', 'thornling', 'pebblefist', 'gustwing', 'mudpup', 'tuskox'] as const;
+const ROSTER_IDS = ['sparkmouse', 'embertail', 'shellback', 'thornling', 'galecoil', 'voltcrest', 'dazeduck', 'psyclone'] as const;
 
 /** Play every roster matchup, many seeds, via the REAL BattleWorld. When `humanRandom`, side 'a' taps
  *  a pseudo-random move (a real player) while side 'b' uses the damage-maximizing AI; otherwise BOTH
@@ -122,7 +122,7 @@ describe('BattleWorld', () => {
   it('resolves a turn once both have chosen: damage is dealt and turn count advances', () => {
     // Two BULKY monsters so one turn deals damage but can't KO — proving the turn resolves and hands
     // back to 'choosing' rather than ending. (A glass-cannon pairing can legitimately end in 1 turn.)
-    const w = newBattle('shellback', 'tuskox');   // 92hp/88def vs 110hp/74def
+    const w = newBattle('shellback', 'galecoil');   // 92hp/88def vs 98hp/79def — both bulky
     const before = w.snapshot();
     bothPickFirstMove(w);
     const after = w.snapshot();

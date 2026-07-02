@@ -27,7 +27,7 @@ describe('pickAiMove', () => {
   });
 
   it('is deterministic for a given rng seed', () => {
-    const a = monsterById('gustwing')!, b = monsterById('mudpup')!;
+    const a = monsterById('voltcrest')!, b = monsterById('dazeduck')!;
     expect(pickAiMove(a, b, new Rng(42))).toBe(pickAiMove(a, b, new Rng(42)));
   });
 });

@@ -4,7 +4,7 @@
 // ONE source of truth and it's fully unit-testable.
 
 export const MONSTER_TYPES = [
-  'normal', 'fire', 'water', 'grass', 'electric', 'rock', 'ground', 'flying',
+  'normal', 'fire', 'water', 'grass', 'electric', 'rock', 'ground', 'flying', 'psychic',
 ] as const;
 export type MonsterType = (typeof MONSTER_TYPES)[number];
 
@@ -16,12 +16,13 @@ const STRONG: Record<MonsterType, MonsterType[]> = {
   water:    ['fire', 'rock', 'ground'],    // douses fire, erodes stone/earth
   grass:    ['water', 'rock', 'ground'],   // roots crack rock, drink water
   electric: ['water', 'flying'],           // conducts through water, zaps fliers
-  rock:     ['fire', 'flying'],            // stones knock fliers down
+  rock:     ['fire', 'flying', 'psychic'], // stones knock fliers down; blunt force cuts through focus
   ground:   ['fire', 'electric', 'rock'],  // smothers fire, grounds electric, buries rock
   flying:   ['grass'],                     // gusts shred foliage
+  psychic:  ['normal', 'flying'],          // bends brute + bird minds
 };
 const WEAK: Record<MonsterType, MonsterType[]> = {
-  normal:   [],
+  normal:   ['psychic'],                   // a plain bruiser's hits glance off a psychic's guard
   fire:     ['water', 'rock'],             // put out / smothered
   water:    ['grass'],                     // absorbed by plants
   grass:    ['fire', 'flying'],            // burned / shredded
@@ -29,6 +30,7 @@ const WEAK: Record<MonsterType, MonsterType[]> = {
   rock:     ['water', 'grass', 'ground'],  // eroded / overgrown / buried
   ground:   ['grass'],                     // rooted through
   flying:   ['electric', 'rock'],          // zapped / stoned out of the sky
+  psychic:  ['rock'],                      // raw stone resists mind force
 };
 
 /** Damage multiplier when `atk`-type hits a `def`-type defender: 2 (super-effective), 0.5 (resisted),

@@ -23,6 +23,7 @@ const TYPE_TINT: Record<MonsterType, [string, string]> = {
   rock:     ['#7a6a4f', '#b8a888'],
   ground:   ['#9a7b4f', '#d0b483'],
   flying:   ['#5a7fb0', '#a8c8e8'],
+  psychic:  ['#9b3fb0', '#e58fd0'],
 };
 
 const INK = GB_SHADES[0];                 // outline / darkest
@@ -51,6 +52,7 @@ function colorFor(ch: string, tint: [string, string], accent: string, back: bool
 const TYPE_ACCENT: Record<MonsterType, string> = {
   normal: '#e8e8c0', fire: '#ffd23f', water: '#bfe3ff', grass: '#c6f06a',
   electric: '#fff27a', rock: '#d8c8a0', ground: '#e8cf9a', flying: '#d6ecff',
+  psychic: '#f7b8ec',
 };
 
 /** Draw a creature to a fresh canvas. Uses the hand-authored grid for its id; falls back to a simple

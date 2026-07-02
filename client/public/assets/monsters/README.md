@@ -18,7 +18,7 @@ a time.
 
 ## The 8 monster ids
 
-`sparkmouse` · `embertail` · `shellback` · `thornling` · `pebblefist` · `gustwing` · `mudpup` · `tuskox`
+`sparkmouse` · `embertail` · `shellback` · `thornling` · `galecoil` · `voltcrest` · `dazeduck` · `psyclone`
 
 So a full set is 16 files, e.g. `embertail_front.gif`, `embertail_back.png`, …
 

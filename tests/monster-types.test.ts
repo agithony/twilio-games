@@ -26,6 +26,12 @@ describe('typeMultiplier', () => {
     expect(typeMultiplier('electric', 'ground')).toBe(0.5);
   });
 
+  it('psychic overwhelms brute types (normal + flying) but is dulled by solid rock', () => {
+    expect(typeMultiplier('psychic', 'normal')).toBe(2);
+    expect(typeMultiplier('psychic', 'flying')).toBe(2);
+    expect(typeMultiplier('psychic', 'rock')).toBe(0.5);
+  });
+
   it('every attacking type has a defined multiplier vs every defending type', () => {
     for (const atk of MONSTER_TYPES) {
       for (const def of MONSTER_TYPES) {
@@ -35,8 +41,8 @@ describe('typeMultiplier', () => {
     }
   });
 
-  it('exposes exactly 8 types', () => {
-    expect(MONSTER_TYPES).toHaveLength(8);
-    expect(new Set(MONSTER_TYPES).size).toBe(8);
+  it('exposes exactly 9 types', () => {
+    expect(MONSTER_TYPES).toHaveLength(9);
+    expect(new Set(MONSTER_TYPES).size).toBe(9);
   });
 });

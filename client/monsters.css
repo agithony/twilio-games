@@ -69,6 +69,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); c
 /* Type color system — one accent var per element, used for the badge + selected border. */
 .t-fire{--tc:#ff6b3d} .t-water{--tc:#3f9be0} .t-grass{--tc:#4fc44a} .t-electric{--tc:#ffd23f}
 .t-rock{--tc:#b89a6a} .t-ground{--tc:#d0a45a} .t-flying{--tc:#7ec0ff} .t-normal{--tc:#c8d4e6}
+.t-psychic{--tc:#d861c9}
 
 /* Monster-select grid — BIGGER cards, MINIMAL info: portrait + name + one type badge. Detail (stats,
    moves) is shown only for the highlighted pick, not crammed onto every tile. */

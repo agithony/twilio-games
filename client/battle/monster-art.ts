@@ -89,8 +89,8 @@ export const MONSTER_ART: Record<string, ArtGrid> = {
     '................',
     '................',
   ],
-  // Rock brute: blocky boulder body, heavy fists, craggy edges.
-  pebblefist: [
+  // Tempest serpent (Galecoil): coiled leviathan body — placeholder until the real sprite loads.
+  galecoil: [
     '................',
     '...XXXXXXXXX....',
     '..X#########X...',
@@ -108,8 +108,8 @@ export const MONSTER_ART: Record<string, ArtGrid> = {
     '....XX.XX.......',
     '................',
   ],
-  // Sky hunter: outstretched wings, beak, slim body, tail.
-  gustwing: [
+  // Thunderbird (Voltcrest): outstretched wings, crested head — placeholder until the real sprite loads.
+  voltcrest: [
     '.......XX.......',
     '......X##X......',
     '..X...X##X...X..',
@@ -127,8 +127,8 @@ export const MONSTER_ART: Record<string, ArtGrid> = {
     '................',
     '................',
   ],
-  // Ground pup: four-legged, floppy ears, snout, digging claws.
-  mudpup: [
+  // Dazed waterfowl (Dazeduck): rounded body, bill — placeholder until the real sprite loads.
+  dazeduck: [
     '................',
     '..XX........XX..',
     '.X#oX......X#oX.',
@@ -146,8 +146,8 @@ export const MONSTER_ART: Record<string, ArtGrid> = {
     '................',
     '................',
   ],
-  // Bulky ox: shaggy quadruped, big head, curved tusks, sturdy legs.
-  tuskox: [
+  // Lab-born mind-force (Psyclone): upright humanoid frame — placeholder until the real sprite loads.
+  psyclone: [
     '................',
     '..X##X....X##X..',
     '.X#oo#XXXX#oo#X.',
