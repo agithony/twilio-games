@@ -55,6 +55,9 @@ export class BattleConnection {
   // waiting on a phantom 2nd player (the "stuck on waiting…" bug).
   join(roomCode: string, name: string) { this.identity = { type: 'join', roomCode, name }; this.rawSend(this.identity); }
   spectate(roomCode: string) { this.identity = { type: 'spectate', roomCode }; this.rawSend(this.identity); }
+  /** Drop this client's player slot but keep watching (the shared screen's P-toggle-off). Reverts the
+   *  replayed identity to spectator so a reconnect doesn't silently rejoin as a player. */
+  leave(roomCode: string) { this.identity = { type: 'spectate', roomCode }; this.send({ type: 'leave' }); }
   selectMonster(monsterId: string) { this.send({ type: 'select_monster', monsterId }); }
   chooseMove(moveId: string) { this.send({ type: 'choose_move', moveId }); }
   chooseAction(action: BattleAction) { this.send({ type: 'choose_action', action }); }

@@ -257,18 +257,18 @@ function canDrive(): boolean {
 }
 
 function lobbyHtml(): string {
+  // ONE lobby screen, matching Voice Racer: callers dial in and appear as chips; the shared screen can
+  // add a KEYBOARD tester with P. Advance ("Choose your monster") once at least one player is in — no
+  // separate "play on this screen" step.
   const players = state?.players ?? [];
   const chips = players.map(p => `<span class="vm-chip">${esc(p.name)}${p.monsterId ? ' ✓' : ''}</span>`).join('') || '<span class="vm-dim">Waiting for challengers…</span>';
   const havePlayers = players.length > 0;
   let action: string;
-  if (canDrive()) {
-    // A joined player (device, or the screen after "play here") advances to monster select.
-    action = `<button class="vm-btn" data-act="advance">Choose your monster ▶</button>
-      ${isDisplay && !joinedHere ? '<button class="vm-btn vm-btn-ghost" data-act="play-here">＋ Play on this screen</button>' : ''}`;
-  } else if (isDisplay && !havePlayers) {
-    // Pure shared screen with nobody yet: offer to play on-screen, or wait for callers.
-    action = `<button class="vm-btn" data-act="play-here">Play on this screen ▶</button>
-      <div class="vm-dim">…or have players call in to join</div>`;
+  if (havePlayers && canDrive()) {
+    action = `<button class="vm-btn" data-act="advance">Choose your monster ▶</button>`;
+  } else if (isDisplay) {
+    // Shared screen, nobody in yet: wait for callers, or press P to add a keyboard tester player.
+    action = `<div class="vm-dim">Have players call in to join — or press <b>P</b> to play on this screen</div>`;
   } else {
     action = '<div class="vm-dim">Waiting for the host to start…</div>';
   }
@@ -354,26 +354,37 @@ function wireOverlay(): void {
     el.onclick = () => conn.selectMonster(el.dataset.mon!));
   overlay.querySelectorAll<HTMLElement>('[data-act="advance"]').forEach(el =>
     el.onclick = () => conn.advance());
-  overlay.querySelectorAll<HTMLElement>('[data-act="play-here"]').forEach(el =>
-    el.onclick = () => { joinAsPlayer(); lastOverlayKey = ''; renderOverlay(); });
 }
 
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
 
 // ── connect: display spectates, device joins ─────────────────────────────────────────────────────
+// Matches Voice Racer's lobby model: the shared SCREEN defaults to a spectator (callers dial in as
+// players), and the operator presses P to add/drop a KEYBOARD TESTER player on this screen. A device
+// (phone browser) auto-joins as its own player. `joinedHere` = this client holds a player slot.
 let joinedHere = false;
-function joinAsPlayer(): void { if (joinedHere) return; joinedHere = true; conn.join(roomCode, name); }
 if (isDisplay) conn.spectate(roomCode);
 else { conn.join(roomCode, name); joinedHere = true; }
+
+/** Shared-screen P-toggle: opt IN as a keyboard tester player (adds a slot), or opt back OUT (drops it,
+ *  stays the display). No-op on a device (already a player). */
+function toggleSelfPlaying(): void {
+  if (!isDisplay) return;
+  if (joinedHere) { conn.leave(roomCode); joinedHere = false; }
+  else { conn.join(roomCode, name); joinedHere = true; }
+  lastOverlayKey = ''; renderOverlay();
+}
 
 // Keyboard: during MY choosing turn the command menu is two levels —
 //   root: 1 FIGHT (→ opens the moves) · 2 GUARD · 3 ITEM (Potion) · 4 TAUNT
 //   fight: 1–4 pick a move, 0 goes back to root.
-// Enter advances the lobby/select/results flow.
+// Lobby/select/results: P adds/drops a keyboard tester (shared screen); Enter advances the flow.
 addEventListener('keydown', (e) => {
   if (awaitingContinue) { dismissContinue(); return; }   // battle-end hold → any key continues
   if (state?.phase === 'battle' && currentUiPhase() === 'awaiting-input') {
     handleMenuKey(e.key);
+  } else if ((e.key === 'p' || e.key === 'P') && isDisplay && state?.phase !== 'battle') {
+    toggleSelfPlaying();
   } else if (e.key === 'Enter' && isDisplay && state?.phase !== 'battle') {
     conn.advance();
   }
