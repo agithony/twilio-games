@@ -2,16 +2,18 @@
 // URL building + input sanitation live in the pure (tested) home-nav module.
 import { buildPlayUrl } from './home-nav';
 
-interface GameCard { id: string; title: string; blurb: string; status: 'active' | 'soon'; }
+interface GameCard { id: string; title: string; blurb: string; status: 'active' | 'soon';
+  /** The page an ACTIVE card launches (shared-screen mode). Racer → play.html; battler → monsters.html. */
+  page?: string; }
 
 // Adding a future game is a one-line edit here.
 const GAMES: GameCard[] = [
-  { id: 'racer', title: 'Voice Racer', status: 'active',
+  { id: 'racer', title: 'Voice Racer', status: 'active', page: 'play.html',
     blurb: 'Lane-dodging multiplayer race. Shout your moves; dodge barriers, grab boosts.' },
+  { id: 'battler', title: 'Voice Monsters', status: 'active', page: 'monsters.html',
+    blurb: 'Command your creature out loud in turn-based duels. Call your attacks and out-strategize your rival.' },
   { id: 'fighter', title: '2D Voice Fighter', status: 'soon',
     blurb: 'Call your attacks out loud in a side-view brawler. Coming soon.' },
-  { id: 'battler', title: 'Voice Monsters', status: 'soon',
-    blurb: 'Command your creature out loud in turn-based duels — choose your monster, call your attacks, and out-strategize your rival. No thumbs required.' },
   { id: 'karaoke', title: 'Voice Karaoke Rhythm', status: 'soon',
     blurb: 'Karaoke meets Guitar Hero — sing into the call and nail the timing of each word for points. Coming soon.' },
 ];
@@ -28,8 +30,21 @@ function renderGames(): void {
     const h = document.createElement('h3'); h.textContent = g.title;
     const p = document.createElement('p'); p.textContent = g.blurb;
     card.append(tag, h, p);
+    // An ACTIVE card launches that game's SHARED SCREEN for the entered room code (the primary way to
+    // start a session). Racer → play.html, battler → monsters.html.
+    if (g.status === 'active' && g.page) {
+      card.style.cursor = 'pointer';
+      card.addEventListener('click', () => launchScreen(g.page!));
+    }
     host.appendChild(card);
   }
+}
+
+/** Open a game's shared-screen display for the current room code. */
+function launchScreen(page: string): void {
+  const roomInput = document.getElementById('room') as HTMLInputElement | null;
+  const room = (roomInput?.value ?? '').replace(/\D/g, '').slice(0, 4) || '4821';
+  location.href = `${page}?display=1&room=${room}`;
 }
 
 function go(mode: 'screen' | 'device'): void {

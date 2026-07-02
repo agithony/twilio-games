@@ -42,6 +42,7 @@ export default defineConfig({
       input: {
         home: resolve(__dirname, 'index.html'),                  // branded landing/lobby
         play: resolve(__dirname, 'play.html'),                    // the racer
+        monsters: resolve(__dirname, 'monsters.html'),           // Voice Monsters (the battler)
         editor: resolve(__dirname, 'editor/index.html'),          // unified Level Editor (/editor)
         garage: resolve(__dirname, 'garage/index.html'),          // model viewer + configurator (/garage)
       },

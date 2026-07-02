@@ -1,0 +1,60 @@
+/* Voice Monsters — the battle page. The canvas is pure Game Boy; the overlay (lobby / monster-select
+   / results) is a modern glass UI tinted with the GB green so the two read as one product. */
+:root {
+  --gb-ink: #0f380f; --gb-dark: #306230; --gb-lite: #8bac0f; --gb-paper: #9bbc0f;
+  --ink: #e8ecf6; --dim: #aeb6cc; --glass: rgba(12,18,40,.72); --brd: rgba(255,255,255,.14);
+  --disp: 'Twilio Sans Display', ui-sans-serif, system-ui, sans-serif;
+  --mono: 'Twilio Sans Mono', ui-monospace, monospace;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: #06110a; color: var(--ink); font-family: var(--disp); }
+#app { position: relative; height: 100vh; display: flex; align-items: center; justify-content: center; }
+
+/* The GB stage: a soft green vignette behind the crisp pixel canvas. */
+#stage {
+  width: min(96vw, 92vh); height: min(96vw, 92vh); max-width: 720px; max-height: 720px;
+  display: flex; align-items: center; justify-content: center;
+  background: radial-gradient(circle at 50% 40%, #223b1c, #0b1a0c 70%);
+  border-radius: 18px; box-shadow: 0 0 60px rgba(139,172,15,.15), inset 0 0 0 2px rgba(139,172,15,.2);
+}
+
+/* Overlay: lobby / monster-select / results. */
+#overlay {
+  position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
+  background: rgba(6,17,10,.78); backdrop-filter: blur(6px); padding: 24px;
+}
+.vm-card {
+  background: var(--glass); border: 1px solid var(--brd); border-top: 3px solid var(--gb-lite);
+  border-radius: 18px; padding: 28px 32px; text-align: center; max-width: 92vw;
+  box-shadow: 0 0 50px rgba(139,172,15,.18);
+}
+.vm-card.wide { max-width: 960px; width: 92vw; }
+.vm-title { font-weight: 800; font-size: 30px; letter-spacing: .04em;
+  background: linear-gradient(90deg, var(--gb-lite), var(--gb-paper)); -webkit-background-clip: text;
+  background-clip: text; color: transparent; }
+.vm-sub { color: var(--dim); font-size: 14px; margin-top: 4px; }
+.vm-dim { color: var(--dim); font-size: 13px; margin-top: 14px; }
+.vm-chips { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin: 18px 0; }
+.vm-chip { background: rgba(139,172,15,.16); border: 1px solid rgba(139,172,15,.5);
+  border-radius: 999px; padding: 5px 14px; font-family: var(--mono); font-size: 14px; }
+.vm-btn { margin-top: 18px; background: linear-gradient(135deg, var(--gb-dark), var(--gb-lite));
+  color: #06110a; font-weight: 800; border: none; border-radius: 12px; padding: 12px 22px;
+  font-family: var(--disp); font-size: 16px; cursor: pointer; }
+.vm-btn:hover { filter: brightness(1.08); }
+
+/* Monster-select grid of creature cards. */
+.vm-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 20px 0; }
+@media (max-width: 720px) { .vm-grid { grid-template-columns: repeat(2, 1fr); } }
+.vm-mon { background: rgba(18,26,52,.6); border: 1px solid var(--brd); border-radius: 12px;
+  padding: 12px; text-align: left; cursor: pointer; color: var(--ink); transition: border-color .15s, transform .1s; }
+.vm-mon:hover { transform: translateY(-2px); border-color: var(--gb-lite); }
+.vm-mon.sel { border-color: var(--gb-paper); box-shadow: 0 0 18px rgba(155,188,15,.4); }
+.vm-mon-name { font-weight: 800; font-size: 16px; }
+.vm-mon-type { display: inline-block; font-family: var(--mono); font-size: 11px; text-transform: uppercase;
+  padding: 1px 8px; border-radius: 999px; margin: 4px 0; background: rgba(255,255,255,.08); }
+.vm-mon-stats { font-family: var(--mono); font-size: 11px; color: var(--dim); }
+.vm-mon-blurb { font-size: 12px; color: var(--dim); margin-top: 6px; }
+/* type tints for the little pill */
+.t-fire{background:rgba(192,83,43,.35)} .t-water{background:rgba(58,110,165,.35)} .t-grass{background:rgba(74,122,42,.35)}
+.t-electric{background:rgba(201,176,43,.35)} .t-rock{background:rgba(122,106,79,.35)} .t-ground{background:rgba(154,123,79,.35)}
+.t-flying{background:rgba(106,143,176,.35)} .t-normal{background:rgba(139,172,15,.28)}
