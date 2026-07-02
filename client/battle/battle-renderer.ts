@@ -42,6 +42,8 @@ export class BattleRenderer {
   private lunge: { a: number; b: number } = { a: 0, b: 0 };
   private flash: { a: number; b: number } = { a: 0, b: 0 };   // hit-flash timer per side
   private shake = 0;   // screen-shake intensity (0..1, eased) — spiked by a crit hit
+  private activeSide: 'a' | 'b' | null = null;   // whose turn it is → bobbing arrow over that monster
+  private tick = 0;   // frame counter for cheap time-based bob/pulse animations
   /** Per-side displayed HP during a paced resolution (so the two bars drop one hit at a time instead
    *  of both snapping to the settled snapshot at once). */
   private resHp = new ResolutionHp();
@@ -107,6 +109,10 @@ export class BattleRenderer {
   /** Transient event text (move name / super-effective / faint); cleared when resolution settles. */
   setEventBanner(text: string): void { this.eventBanner = text; }
 
+  /** Which side is currently acting (drives a turn-indicator arrow over the active monster). null in
+   *  menus / when settled. */
+  setActiveSide(side: 'a' | 'b' | null): void { this.activeSide = side; }
+
   /** Play an event's animation cue: attacker lunges, defender flashes + its HP bar steps down to this
    *  hit's remaining HP (so the two bars drop one hit at a time during resolution). A crit shakes the
    *  screen and flashes harder. */
@@ -155,6 +161,7 @@ export class BattleRenderer {
       this.flash[s] = Math.max(0, this.flash[s] - 0.08);
     }
     this.shake = Math.max(0, this.shake - 0.05);
+    this.tick++;
     this.render();
   };
 
@@ -182,6 +189,9 @@ export class BattleRenderer {
       this.drawMonster('a', 44, 82, 52, 'back');
       this.drawHpBox('b', this.snap.b, 6, 8, false);   // enemy: top-left
       this.drawHpBox('a', this.snap.a, 84, 58, true);  // you: bottom-right (with HP numbers)
+      // Turn indicator: a bobbing arrow over whoever is acting, so the ping-pong is visible.
+      if (this.activeSide === 'b') this.drawTurnArrow(108, 2);
+      else if (this.activeSide === 'a') this.drawTurnArrow(44, 34);
     } else {
       this.hideSpriteImg('a'); this.hideSpriteImg('b');   // no battle → clear any lingering sprite <img>
     }
@@ -287,6 +297,21 @@ export class BattleRenderer {
     ctx.font = `${small ? 6 : 8}px monospace`;
     ctx.textBaseline = 'top';
     ctx.fillText(text, x, y);
+  }
+
+  /** A bobbing down-arrow marking the monster whose turn it is (centered on cx, at row y). */
+  private drawTurnArrow(cx: number, y: number): void {
+    const ctx = this.ctx;
+    const bob = Math.round(Math.sin(this.tick * 0.18) * 1.5);   // gentle vertical bob
+    const ay = y + bob;
+    ctx.fillStyle = '#ffd23f';   // bright, reads over any backdrop
+    // a chunky 7px-wide triangle pointing down
+    for (let row = 0; row < 4; row++) {
+      const half = 3 - row;
+      ctx.fillRect(cx - half, ay + row, half * 2 + 1, 1);
+    }
+    ctx.fillStyle = INK;   // 1px dark outline on top for contrast
+    ctx.fillRect(cx - 4, ay - 1, 9, 1);
   }
 
   /** A move's power rating as up to 5 tiny squares: `filled` in the type color, the rest an empty

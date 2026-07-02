@@ -51,6 +51,7 @@ interface Fighter {
   mon: Monster;
   hp: number;
   chosenMoveId: string | null;
+  committedAt: number | null;   // sequence # when this side locked its move (lower = committed first)
 }
 
 export class BattleWorld {
@@ -61,6 +62,7 @@ export class BattleWorld {
   private _turn = 0;
   private _winner: Side | null = null;
   private events: BattleEvent[] = [];
+  private commitSeq = 0;   // increments each commit so we know who locked in FIRST this turn
 
   constructor(a: Combatant, b: Combatant, seed: number) {
     this.a = this.makeFighter(a);
@@ -71,7 +73,7 @@ export class BattleWorld {
   private makeFighter(c: Combatant): Fighter {
     const mon = monsterById(c.monsterId);
     if (!mon) throw new Error(`unknown monster: ${c.monsterId}`);
-    return { id: c.id, name: c.name, mon, hp: mon.maxHp, chosenMoveId: null };
+    return { id: c.id, name: c.name, mon, hp: mon.maxHp, chosenMoveId: null, committedAt: null };
   }
 
   get phase(): BattlePhase { return this._phase; }
@@ -83,6 +85,7 @@ export class BattleWorld {
     const f = this.fighterOf(playerId);
     if (!f) return;
     if (!f.mon.moves.some(m => m.id === moveId)) return;   // not a move this monster knows → ignore
+    if (f.committedAt === null) f.committedAt = this.commitSeq++;   // stamp FIRST commit → turn order
     f.chosenMoveId = moveId;
     if (this.a.chosenMoveId && this.b.chosenMoveId) this.resolveTurn();
   }
@@ -109,9 +112,9 @@ export class BattleWorld {
       if (defender.hp <= 0) this.faint(defender);
     }
 
-    // clear choices for the next turn
-    this.a.chosenMoveId = null;
-    this.b.chosenMoveId = null;
+    // clear choices for the next turn (incl. the commit stamps, so next turn's order is fresh)
+    this.a.chosenMoveId = null; this.a.committedAt = null;
+    this.b.chosenMoveId = null; this.b.committedAt = null;
     this._turn++;
 
     if (this._winner) {
@@ -121,11 +124,26 @@ export class BattleWorld {
     }
   }
 
-  /** Who acts first this turn: higher speed; ties broken deterministically by the rng. */
+  /** Who acts first this turn: whoever COMMITTED their move first (lower committedAt). This makes
+   *  turn order "whoever attacks first goes first" — so single-player's human (who commits before the
+   *  deferred AI beat) always leads, and in 2P whoever taps first leads. Speed is now flavor. Ties
+   *  (shouldn't happen — commits are sequenced) fall back to speed, then rng, for determinism. */
   private turnOrder(): [Fighter, Fighter] {
+    const ca = this.a.committedAt, cb = this.b.committedAt;
+    if (ca !== null && cb !== null && ca !== cb) return ca < cb ? [this.a, this.b] : [this.b, this.a];
     const sa = this.a.mon.speed, sb = this.b.mon.speed;
     if (sa !== sb) return sa > sb ? [this.a, this.b] : [this.b, this.a];
     return this.rng.next() < 0.5 ? [this.a, this.b] : [this.b, this.a];
+  }
+
+  /** Which side committed its move first this turn (for the UI's "who goes first" cue). null until
+   *  at least one side has committed. */
+  firstMover(): Side | null {
+    const ca = this.a.committedAt, cb = this.b.committedAt;
+    if (ca === null && cb === null) return null;
+    if (ca === null) return 'b';
+    if (cb === null) return 'a';
+    return ca <= cb ? 'a' : 'b';
   }
 
   /** Apply one attacker's chosen move to the defender: typed damage + effectiveness event. */

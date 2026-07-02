@@ -115,34 +115,55 @@ function queueEvents(events: BattleEvent[]): void {
   eventQ.push(...events);
   if (!draining) { draining = true; paintBattle(); drainNext(); }
 }
+let movesSeenThisTurn = 0;      // how many attacks played so far this turn (resets on turn_start)
+let pendingHandoff: 'a' | 'b' | null = null;   // a synthetic "▶ X'S TURN" card to show before next move
+
 function drainNext(): void {
+  // A queued handoff card takes priority: show it as its own slow beat, THEN continue to the attack.
+  if (pendingHandoff) {
+    const who = pendingHandoff; pendingHandoff = null;
+    renderer.setEventBanner(handoffText(who));
+    renderer.setActiveSide(who);
+    setTimeout(drainNext, 1400);   // hold the "their turn" card so the ping-pong is unmistakable
+    return;
+  }
   const ev = eventQ.shift();
-  if (!ev) { draining = false; paintBattle(); renderOverlay(); return; }   // resolution done → settle
+  if (!ev) { draining = false; movesSeenThisTurn = 0; renderer.setActiveSide(null); paintBattle(); renderOverlay(); return; }
+
+  if (ev.kind === 'turn_start') movesSeenThisTurn = 0;
+  // Before the SECOND attack of a turn, inject a handoff card announcing the other side's turn.
+  if (ev.kind === 'move_used') {
+    movesSeenThisTurn++;
+    if (movesSeenThisTurn === 2) { pendingHandoff = ev.by; eventQ.unshift(ev); setTimeout(drainNext, 0); return; }
+    renderer.setActiveSide(ev.by);
+  }
+
   renderer.playEvent(ev);
   const banner = bannerFor(ev);
   if (banner) renderer.setEventBanner(banner);
-  setTimeout(drainNext, dwellFor(ev, eventQ[0]));
+  setTimeout(drainNext, dwellFor(ev));
 }
 
-/** How long to hold on `ev` before playing the next one. Paces the fight so it reads as clearly
- *  turn-based: each "X used Move!" sits on screen BEFORE its hit lands, hits + outcomes linger, and a
- *  LONG handoff pause opens whenever the NEXT event starts the other side's action (a new move_used)
- *  or the turn ends — that gap is the visual "now it's their turn" beat. */
-function dwellFor(ev: BattleEvent, next: BattleEvent | undefined): number {
-  let ms: number;
+/** "▶ YOUR TURN" when it's the local player's monster, else "▶ RIVAL'S TURN" (names the foe). */
+function handoffText(side: 'a' | 'b'): string {
+  const me = state ? mySide(state) : null;
+  if (me && side === me) return '▶ YOUR TURN';
+  return `▶ ${actorName(side).toUpperCase()}'S TURN`;
+}
+
+/** How long to hold on `ev` before playing the next one — slow, so each beat reads as its own step:
+ *  "X used Move!" sits on screen BEFORE its hit lands, and hits/outcomes linger. The between-attack
+ *  handoff is a separate injected card (see drainNext), so we don't pad here for it. */
+function dwellFor(ev: BattleEvent): number {
   switch (ev.kind) {
-    case 'turn_start':   ms = 700; break;                    // "Turn N" title card
-    case 'move_used':    ms = 1100; break;                   // announce the move, THEN it hits
-    case 'damage':       ms = ev.crit ? 1600 : 1000; break;  // the hit + HP drop registers
-    case 'effectiveness':ms = 1500; break;                   // "It's super effective!" lands
-    case 'faint':        ms = 1700; break;
-    case 'battle_over':  ms = 1800; break;
-    default:             ms = 900;
+    case 'turn_start':   return 900;                     // "— Turn N —" title card
+    case 'move_used':    return 1300;                    // announce the move, THEN it hits
+    case 'damage':       return ev.crit ? 1700 : 1150;   // the hit + HP drop registers
+    case 'effectiveness':return 1600;                    // "It's super effective!" lands
+    case 'faint':        return 1800;
+    case 'battle_over':  return 1900;
+    default:             return 1000;
   }
-  // Extra breath at the sub-turn boundary: after this side's action fully resolves and the OTHER side
-  // is about to move (next is a move_used), pause longer so the handoff is unmistakable.
-  if (next?.kind === 'move_used' && ev.kind !== 'turn_start') ms += 800;
-  return ms;
 }
 /** The monster name for a side, from the current snapshot (for "X used Move!" banners). */
 function actorName(side: 'a' | 'b'): string {

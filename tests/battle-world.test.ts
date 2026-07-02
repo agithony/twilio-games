@@ -173,11 +173,23 @@ describe('BattleWorld', () => {
     expect(after.phase).toBe('choosing');   // back to choosing for the next turn
   });
 
-  it('the FASTER monster strikes first within a turn (speed decides order)', () => {
+  it('whoever COMMITS their move first strikes first within a turn (order = commit order, not speed)', () => {
+    // Even though SLOW would win on the speed stat, if it commits FIRST it acts first. Turn order is
+    // driven by who attacks first — this makes single-player "you go first" and multiplayer
+    // "whoever taps first goes first" fall out naturally.
     const w = newBattle(FAST, SLOW);
-    bothPickFirstMove(w);
+    w.chooseMove('b', w.snapshot().b.moves[0]!.id);   // b (SLOW) commits FIRST
+    w.chooseMove('a', w.snapshot().a.moves[0]!.id);   // a (FAST) commits second
     const attacks = w.drainEvents().filter(e => e.kind === 'move_used');
-    expect(attacks[0]!.by).toBe('a');   // Gustwing (105) before Pebblefist (30)
+    expect(attacks[0]!.by).toBe('b');   // b committed first → b strikes first, despite lower speed
+  });
+
+  it('the other commit order flips who strikes first (a commits first → a acts first)', () => {
+    const w = newBattle(FAST, SLOW);
+    w.chooseMove('a', w.snapshot().a.moves[0]!.id);   // a commits FIRST
+    w.chooseMove('b', w.snapshot().b.moves[0]!.id);
+    const attacks = w.drainEvents().filter(e => e.kind === 'move_used');
+    expect(attacks[0]!.by).toBe('a');
   });
 
   it('applies the type chart: fire vs grass is super-effective (emits the event)', () => {
