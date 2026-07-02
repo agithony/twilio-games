@@ -10,10 +10,11 @@
 html, body { margin: 0; height: 100%; background: #06110a; color: var(--ink); font-family: var(--disp); }
 #app { position: relative; height: 100vh; display: flex; align-items: center; justify-content: center; }
 
-/* The GB stage: a soft green vignette behind the crisp pixel canvas. */
+/* The GB stage: a positioning context holding TWO layered canvases — the 3D arena (z-index 0/1) and
+   the transparent GB overlay canvas (z-index 2) on top. The gradient is a fallback behind the arena. */
 #stage {
+  position: relative; overflow: hidden;
   width: min(96vw, 92vh); height: min(96vw, 92vh); max-width: 720px; max-height: 720px;
-  display: flex; align-items: center; justify-content: center;
   background: radial-gradient(circle at 50% 40%, #223b1c, #0b1a0c 70%);
   border-radius: 18px; box-shadow: 0 0 60px rgba(139,172,15,.15), inset 0 0 0 2px rgba(139,172,15,.2);
 }

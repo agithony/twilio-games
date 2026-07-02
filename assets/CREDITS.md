@@ -9,6 +9,16 @@ textures, resized to 1024px) of the original Sketchfab downloads. Raw originals 
 locally in `assets/_raw/` (gitignored). Per CC-BY, derivatives are permitted; attribution to
 the original authors is preserved below.
 
+## Voice Monsters — battle arena (CC-BY 4.0)
+
+| Model file | Title | Author | Sketchfab |
+|---|---|---|---|
+| `arena/arena.glb` | Practice / Pokemon Arena | KoraProjects | https://skfb.ly/6XSOD |
+
+"Practice / Pokemon Arena" (https://skfb.ly/6XSOD) by KoraProjects is licensed under
+Creative Commons Attribution (http://creativecommons.org/licenses/by/4.0/). The committed
+`assets/arena/arena.glb` is a Draco+WebP-compressed derivative of the original download.
+
 ## Used car models (19, CC-BY 4.0)
 
 | Model file | Title | Author | Sketchfab |

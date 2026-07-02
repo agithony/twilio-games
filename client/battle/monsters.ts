@@ -8,6 +8,7 @@
 // re-mounting on every ~state push (the "win modal keeps popping up" bug).
 import { BattleConnection, type BattleStateMsg } from './battle-net';
 import { BattleRenderer, type UiPhase, type MenuMove } from './battle-renderer';
+import { ArenaBackground } from './arena-background';
 import type { RosterEntry } from '../../shared/battle-protocol';
 import type { BattleEvent } from '../../shared/battle-world';
 import { effectivenessLabel } from '../../shared/monster-types';
@@ -26,6 +27,10 @@ const overlay = document.getElementById('overlay')!;
 const stageEl = document.getElementById('stage')!;
 
 const conn = new BattleConnection(wsUrl);
+// The 3D spinning arena sits BEHIND the GB battle canvas (both live in #stage). Created first so its
+// canvas is under the renderer's. Loaded lazily when a battle actually starts (no 3D cost in menus).
+const arena = new ArenaBackground(stageEl);
+let arenaLoaded = false;
 const renderer = new BattleRenderer(stageEl);
 
 let roster: RosterEntry[] = [];
@@ -44,6 +49,11 @@ conn.onState((m) => {
   state = m;
   // A fresh turn (back to choosing) clears the last locked move so the menu returns.
   if (m.snapshot?.phase === 'choosing' && !chosenForMe(m)) lockedMoveName = null;
+  // First time we enter a battle, spin up the 3D arena behind the GB overlay (lazy — no 3D in menus).
+  if (m.phase === 'battle' && !arenaLoaded) {
+    arenaLoaded = true;
+    arena.load({ file: 'arena.glb', spinSpeed: 0.18 });
+  }
   paintBattle();
   renderOverlay();
   // Advancing OUT of battle (→ results) or into it clears stale banners.

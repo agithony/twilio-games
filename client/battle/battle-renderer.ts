@@ -39,7 +39,10 @@ export class BattleRenderer {
 
   constructor(private host: HTMLElement) {
     this.canvas = document.createElement('canvas');
-    this.canvas.style.cssText = 'image-rendering:pixelated;display:block;margin:0 auto';
+    // Layered ON TOP of the 3D arena canvas (which the host also holds). Transparent in the battle
+    // area so the spinning arena shows through behind the monsters; the HP boxes + command window are
+    // opaque panels drawn over it. z-index sits above the arena.
+    this.canvas.style.cssText = 'image-rendering:pixelated;position:absolute;inset:0;margin:auto;z-index:2';
     host.appendChild(this.canvas);
     this.ctx = this.canvas.getContext('2d')!;
     this.resize();
@@ -102,9 +105,11 @@ export class BattleRenderer {
 
   private render(): void {
     const ctx = this.ctx, S = this.scale;
+    // Clear to TRANSPARENT so the 3D arena canvas behind shows through the battle area (the monsters
+    // + HP boxes + command window are drawn opaque on top). This is what puts the pixel creatures on
+    // the spinning 3D arena instead of a flat paper card.
+    ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
     ctx.save(); ctx.scale(S, S);
-    // paper background
-    ctx.fillStyle = PAPER; ctx.fillRect(0, 0, GB_W, GB_H);
 
     if (this.snap) {
       // Enemy (b): front-facing, upper-right. You (a): back view, lower-left. Sprites are 60px so the
