@@ -140,20 +140,23 @@ export class BattleWorld {
     if (label) this.events.push({ kind: 'effectiveness', on: onSide, multiplier: mult, label });
   }
 
-  /** Damage formula (Pokémon-STYLE, original + TUNED for pacing). Goal: a battle lasts ~3–4 hits
-   *  typically (range 1–6), and NEVER a one-shot. The old formula let the multipliers compound
-   *  (base ~40-60 × STAB 1.5 × super-effective 2 = 150+ vs ~80 HP → instant KO). Fixes:
-   *   - clamp the ATK/DEF ratio so a glass-cannon-vs-tank can't explode,
-   *   - a low base coefficient so a NEUTRAL hit is ~1/4 of a health bar (~4 hits),
-   *   - gentler STAB (1.3),
-   *   - a HARD CAP at half the defender's max HP per hit, so even STAB+super-effective takes ≥2 hits. */
+  /** Damage formula (Pokémon-STYLE, original + TUNED for pacing). Goal: battles feel PUNCHY — usually
+   *  2–3 hits, up to 5 even when a human taps sub-optimal moves — but a single hit can NEVER be a
+   *  one-shot. Tuned by sweeping the whole roster in the real engine (scripts/battle-tune.ts) against
+   *  the actual asymmetry the player feels: a human picking a somewhat-random move while the AI
+   *  damage-maximizes (that asymmetry is what made the old, too-cautious numbers feel "spongy").
+   *   - bounded ATK/DEF ratio [0.5,1.7] so glass-cannon-vs-tank can't explode OR fizzle,
+   *   - coefficient 0.26 + flat 4 so even a NEUTRAL hit lands for a meaningful chunk (~1/3 a bar),
+   *   - STAB 1.5, so playing to your type matters,
+   *   - a HARD CAP at HALF the defender's max HP per hit → one-shots are impossible (≥2 hits always),
+   *     yet a strong super-effective combo can close a battle in 2 — lethal, not grindy. */
   private damage(atkMon: Monster, defMon: Monster, move: Move, typeMult: number): number {
-    const stab = move.type === atkMon.type ? 1.3 : 1;
+    const stab = move.type === atkMon.type ? 1.5 : 1;
     const ratio = Math.min(1.7, Math.max(0.5, atkMon.attack / defMon.defense));   // bounded
-    const base = move.power * ratio * 0.13 + 3;        // tuned (roster sim): ~3–4 hits to KO
+    const base = move.power * ratio * 0.26 + 4;        // tuned (roster sim): punchy 2–3-hit battles
     const variance = 0.85 + this.rng.next() * 0.30;   // 0.85–1.15
     const raw = base * stab * typeMult * variance;
-    const cap = Math.ceil(defMon.maxHp * 0.38);        // never > ~1/3 a bar → no one-shots, ≥3 hits
+    const cap = Math.ceil(defMon.maxHp * 0.5);         // never > half a bar → one-shots impossible
     return Math.max(1, Math.min(cap, Math.round(raw)));
   }
 

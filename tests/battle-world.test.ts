@@ -3,7 +3,9 @@
 // events (for the renderer to animate one hit at a time), and detects faint/win. No I/O, fully TDD.
 import { describe, it, expect } from 'vitest';
 import { BattleWorld } from '../shared/battle-world';
-import { monsterById } from '../shared/monster-roster';
+import { monsterById, moveById } from '../shared/monster-roster';
+import { pickAiMove } from '../shared/battle-ai';
+import { Rng } from '../shared/rng';
 
 // Deterministic combatants for tests.
 const FAST = 'gustwing';     // speed 105
@@ -26,42 +28,78 @@ function bothPickFirstMove(w: BattleWorld) {
 }
 
 describe('battle pacing (balance)', () => {
-  // A single hit must NEVER take more than ~40% of the defender's HP → no one-shots, and any battle
-  // takes at least a few hits. Guards the tuned damage formula against silent drift.
-  it('no single hit is a one-shot (each hit ≤ ~40% of max HP)', () => {
-    for (const seed of [1, 2, 3, 7, 11]) {
-      // pit a heavy hitter into a frail target — the worst case for one-shotting
-      const w = newBattle('pebblefist', 'gustwing', seed);
-      const maxB = w.snapshot().b.hp;
-      const before = w.snapshot().b.hp;
-      w.chooseMove('a', w.snapshot().a.moves[1]!.id);   // strong rock move
-      w.chooseMove('b', w.snapshot().b.moves[2]!.id);
-      const dealt = before - w.snapshot().b.hp;
-      expect(dealt).toBeLessThanOrEqual(Math.ceil(maxB * 0.5));   // hard cap holds
-      expect(w.snapshot().b.hp).toBeGreaterThan(0);              // survives the first hit
+  // ── The two guardrails, pinned in BOTH directions ──────────────────────────────────────────────
+  // FLOOR: no single hit is a one-shot (structural — the per-hit cap makes it impossible).
+  // CEILING: battles don't drag. The tuned formula was regressed once by only pinning the floor, so
+  //   a 7–10-turn "spongy" tail slipped through. These tests now pin the ceiling too, and — crucially
+  //   — model the REAL asymmetry the player feels: a HUMAN taps a somewhat-random move while the AI
+  //   damage-maximizes, which stretches battles more than optimal-vs-optimal ever showed.
+
+  it('no single hit is a one-shot (each hit ≤ half the defender max HP), worst case', () => {
+    // Every attacker × every one of its damaging moves × the FRAILEST target, worst-case variance.
+    const frail = ROSTER_IDS.map(id => monsterById(id)!).sort((a, b) => a.maxHp - b.maxHp)[0]!;
+    for (const atkId of ROSTER_IDS) {
+      const atk = monsterById(atkId)!;
+      if (atk.id === frail.id) continue;
+      for (const mv of atk.moves) {
+        if (mv.power <= 0) continue;
+        for (let seed = 1; seed <= 20; seed++) {
+          const w = new BattleWorld({ id: 'a', name: 'A', monsterId: atk.id }, { id: 'b', name: 'B', monsterId: frail.id }, seed);
+          const maxB = w.snapshot().b.hp;
+          w.chooseMove('a', mv.id);
+          w.chooseMove('b', frail.moves[0]!.id);
+          const dealt = maxB - w.snapshot().b.hp;
+          expect(dealt).toBeLessThanOrEqual(Math.ceil(maxB * 0.5));   // hard cap: never > half a bar
+        }
+      }
     }
   });
 
-  it('a full battle lasts several turns, not one (target ~3–6)', () => {
-    let sumTurns = 0, n = 0, oneShots = 0;
-    for (const [a, bMon] of [['embertail', 'thornling'], ['sparkmouse', 'shellback'], ['tuskox', 'mudpup']] as const) {
-      for (let seed = 1; seed <= 5; seed++) {
-        const w = newBattle(a, bMon, seed * 9 + 1);
-        for (let t = 0; t < 60 && w.snapshot().phase !== 'finished'; t++) {
-          const s = w.snapshot();
-          w.chooseMove('a', s.a.moves[1]!.id);
-          w.chooseMove('b', s.b.moves[0]!.id);
-        }
-        const turns = w.snapshot().turn;
-        sumTurns += turns; n++;
-        if (turns <= 1) oneShots++;
-        expect(turns).toBeGreaterThanOrEqual(2);   // never a one-turn battle
-      }
-    }
+  it('optimal play resolves in a tight band (median 2, never a one-shot, max ≤ 4)', () => {
+    const { median, max, oneShots } = paceDistribution(/* human random? */ false);
     expect(oneShots).toBe(0);
-    expect(sumTurns / n).toBeGreaterThanOrEqual(3);   // averages in the intended band
+    expect(median).toBeLessThanOrEqual(3);
+    expect(median).toBeGreaterThanOrEqual(2);
+    expect(max).toBeLessThanOrEqual(4);   // no drawn-out grind even between two tanks
+  });
+
+  it('a HUMAN tapping moves vs the AI does NOT grind (median ≤ 3, max ≤ 6) — the reported bug', () => {
+    // This is the case the player actually experiences. The old formula let this tail reach 10 turns.
+    const { median, max, oneShots } = paceDistribution(/* human random? */ true);
+    expect(oneShots).toBe(0);
+    expect(median).toBeLessThanOrEqual(3);
+    expect(max).toBeLessThanOrEqual(6);   // pins the spongy tail shut
   });
 });
+
+const ROSTER_IDS = ['sparkmouse', 'embertail', 'shellback', 'thornling', 'pebblefist', 'gustwing', 'mudpup', 'tuskox'] as const;
+
+/** Play every roster matchup, many seeds, via the REAL BattleWorld. When `humanRandom`, side 'a' taps
+ *  a pseudo-random move (a real player) while side 'b' uses the damage-maximizing AI; otherwise BOTH
+ *  use the AI. Returns the turn-count distribution — the ground truth the formula is tuned against. */
+function paceDistribution(humanRandom: boolean): { median: number; max: number; oneShots: number } {
+  const turns: number[] = [];
+  let oneShots = 0;
+  for (const aId of ROSTER_IDS) for (const bId of ROSTER_IDS) {
+    if (aId === bId) continue;
+    for (let seed = 1; seed <= 6; seed++) {
+      const w = new BattleWorld({ id: 'a', name: 'A', monsterId: aId }, { id: 'b', name: 'B', monsterId: bId }, seed * 7 + 3);
+      const A = monsterById(aId)!, B = monsterById(bId)!;
+      const aiRng = new Rng((seed * 7 + 3) ^ 0x5bd1e995);
+      const humanRng = new Rng((seed * 7 + 3) ^ 0x1234567);
+      for (let t = 0; t < 100 && w.snapshot().phase !== 'finished'; t++) {
+        const aMove = humanRandom ? A.moves[humanRng.int(A.moves.length)]!.id : pickAiMove(A, B, aiRng);
+        w.chooseMove('a', aMove);
+        w.chooseMove('b', pickAiMove(B, A, aiRng));
+      }
+      const tt = w.snapshot().turn;
+      turns.push(tt);
+      if (tt <= 1) oneShots++;
+    }
+  }
+  turns.sort((x, y) => x - y);
+  return { median: turns[Math.floor((turns.length - 1) * 0.5)]!, max: turns[turns.length - 1]!, oneShots };
+}
 
 describe('BattleWorld', () => {
   it('starts in a choosing phase with both monsters at full HP', () => {
