@@ -201,12 +201,14 @@ export class BattleRenderer {
     }
 
     // Bottom command / text window — branches on the TURN STATE so the game reads as turn-based.
-    this.drawWindow(4, 94, GB_W - 8, 46);
+    // Grown taller (y88, h56 → ends y144, the screen edge) so the two-line move cells (name + rating
+    // row) don't clip. Sits just under the 'a' HP box (which ends ~y84).
+    this.drawWindow(4, 88, GB_W - 8, 56);
     const line = this.uiPhase === 'resolving'
       ? (this.eventBanner || this.statusLine)
       : (this.statusLine || (this.snap ? '' : 'Waiting…'));
     // Wrap long banners ("Sparkmouse used Thunder Jolt!") to a 2nd line instead of running off the edge.
-    this.drawWrappedText(line, 11, 100, GB_W - 8 - 14, 9);
+    this.drawWrappedText(line, 11, 93, GB_W - 8 - 14, 9);
     if (this.uiPhase === 'awaiting-input') {
       // 4 moves in two columns under the prompt. Each cell: FULL move name on one row, then a rating
       // row below: power PIPS + accuracy %. Pips show EFFECTIVENESS VS THE CURRENT FOE (power × type
@@ -214,11 +216,11 @@ export class BattleRenderer {
       // "pick the fullest" becomes genuinely correct + rewards type play. Accuracy % is the risk knob.
       this.menuMoves.slice(0, 4).forEach((m, i) => {
         const col = i % 2, row = Math.floor(i / 2);
-        const x = 11 + col * 73, y = 115 + row * 14;
+        const x = 11 + col * 73, y = 112 + row * 15;
         this.drawText(`${i + 1} ${m.name}`, x, y, true);
         const mult = this.foeType ? typeMultiplier(m.type as MonsterType, this.foeType) : 1;
-        this.drawPips(x + 6, y + 6, effectivePips(m.power, mult), typeColor(m.type));
-        this.drawText(`${accuracyPercent(m.power)}%`, x + 52, y + 6, true);   // hit chance
+        this.drawPips(x + 6, y + 7, effectivePips(m.power, mult), typeColor(m.type));
+        this.drawText(`${accuracyPercent(m.power)}%`, x + 52, y + 7, true);   // hit chance
       });
     }
     ctx.restore();
