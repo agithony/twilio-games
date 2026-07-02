@@ -72,6 +72,46 @@ describe('battle pacing (balance)', () => {
   });
 });
 
+describe('critical hits (rare bonus damage)', () => {
+  // Crits are POSSIBLE but RARE, and a crit is flagged on the damage event so the UI can react. They
+  // must never break the no-one-shot guarantee (the 0.5*maxHp cap still applies AFTER the crit boost).
+
+  it('some hits crit and most do not — crits are flagged on the damage event, and are rare', () => {
+    let hits = 0, crits = 0;
+    // Many independent single-hit samples across seeds; count how many damage events are crits.
+    for (let seed = 1; seed <= 400; seed++) {
+      const w = newBattle('embertail', 'shellback', seed);
+      w.chooseMove('a', w.snapshot().a.moves[1]!.id);
+      w.chooseMove('b', w.snapshot().b.moves[0]!.id);
+      for (const ev of w.drainEvents()) {
+        if (ev.kind === 'damage') { hits++; if (ev.crit) crits++; }
+      }
+    }
+    expect(crits).toBeGreaterThan(0);              // crits DO happen
+    const rate = crits / hits;
+    expect(rate).toBeGreaterThan(0.01);            // not vanishingly impossible
+    expect(rate).toBeLessThan(0.20);               // but genuinely RARE (well under 1-in-5)
+  });
+
+  it('a crit still cannot one-shot (respects the ≤ half-HP hard cap)', () => {
+    // Force the worst case many times: heaviest hitter into the frailest foe; even crits stay capped.
+    const frail = ROSTER_IDS.map(id => monsterById(id)!).sort((a, b) => a.maxHp - b.maxHp)[0]!;
+    for (const atkId of ROSTER_IDS) {
+      const atk = monsterById(atkId)!;
+      if (atk.id === frail.id) continue;
+      for (let seed = 1; seed <= 60; seed++) {
+        const w = new BattleWorld({ id: 'a', name: 'A', monsterId: atk.id }, { id: 'b', name: 'B', monsterId: frail.id }, seed);
+        const maxB = w.snapshot().b.hp;
+        w.chooseMove('a', atk.moves[0]!.id);
+        w.chooseMove('b', frail.moves[0]!.id);
+        for (const ev of w.drainEvents()) {
+          if (ev.kind === 'damage' && ev.on === 'b') expect(ev.amount).toBeLessThanOrEqual(Math.ceil(maxB * 0.5));
+        }
+      }
+    }
+  });
+});
+
 const ROSTER_IDS = ['sparkmouse', 'embertail', 'shellback', 'thornling', 'galecoil', 'voltcrest', 'dazeduck', 'psyclone'] as const;
 
 /** Play every roster matchup, many seeds, via the REAL BattleWorld. When `humanRandom`, side 'a' taps

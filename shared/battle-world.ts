@@ -10,6 +10,11 @@ import { typeMultiplier, effectivenessLabel } from './monster-types';
 export type Side = 'a' | 'b';
 export type BattlePhase = 'choosing' | 'resolving' | 'finished';
 
+// Critical hits: rare bonus damage. 1-in-16 (the classic feel) at 1.5× — enough to swing a turn but,
+// because it's multiplied BEFORE the per-hit HP cap, it can never turn a hit into a one-shot.
+const CRIT_CHANCE = 1 / 16;
+const CRIT_MULT = 1.5;
+
 export interface Combatant { id: string; name: string; monsterId: string; }
 
 /** A combatant's live state in the battle snapshot. */
@@ -36,7 +41,7 @@ export interface BattleSnapshot {
 export type BattleEvent =
   | { kind: 'turn_start'; turn: number }
   | { kind: 'move_used'; by: Side; moveId: string; moveName: string }
-  | { kind: 'damage'; on: Side; amount: number; hpLeft: number }
+  | { kind: 'damage'; on: Side; amount: number; hpLeft: number; crit: boolean }
   | { kind: 'effectiveness'; on: Side; multiplier: number; label: string }
   | { kind: 'faint'; side: Side; monsterName: string }
   | { kind: 'battle_over'; winner: Side; winnerName: string };
@@ -131,11 +136,11 @@ export class BattleWorld {
     if (move.power <= 0) return;   // status/no-damage move (future: buffs); no damage this pass
 
     const mult = typeMultiplier(move.type, defender.mon.type);
-    const dmg = this.damage(attacker.mon, defender.mon, move, mult);
-    defender.hp = Math.max(0, defender.hp - dmg);
+    const { amount, crit } = this.damage(attacker.mon, defender.mon, move, mult);
+    defender.hp = Math.max(0, defender.hp - amount);
 
     const onSide = this.sideOf(defender);
-    this.events.push({ kind: 'damage', on: onSide, amount: dmg, hpLeft: defender.hp });
+    this.events.push({ kind: 'damage', on: onSide, amount, hpLeft: defender.hp, crit });
     const label = effectivenessLabel(mult);
     if (label) this.events.push({ kind: 'effectiveness', on: onSide, multiplier: mult, label });
   }
@@ -150,14 +155,17 @@ export class BattleWorld {
    *   - STAB 1.5, so playing to your type matters,
    *   - a HARD CAP at HALF the defender's max HP per hit → one-shots are impossible (≥2 hits always),
    *     yet a strong super-effective combo can close a battle in 2 — lethal, not grindy. */
-  private damage(atkMon: Monster, defMon: Monster, move: Move, typeMult: number): number {
+  private damage(atkMon: Monster, defMon: Monster, move: Move, typeMult: number): { amount: number; crit: boolean } {
     const stab = move.type === atkMon.type ? 1.5 : 1;
     const ratio = Math.min(1.7, Math.max(0.5, atkMon.attack / defMon.defense));   // bounded
     const base = move.power * ratio * 0.26 + 4;        // tuned (roster sim): punchy 2–3-hit battles
     const variance = 0.85 + this.rng.next() * 0.30;   // 0.85–1.15
-    const raw = base * stab * typeMult * variance;
-    const cap = Math.ceil(defMon.maxHp * 0.5);         // never > half a bar → one-shots impossible
-    return Math.max(1, Math.min(cap, Math.round(raw)));
+    // CRIT: a RARE roll multiplies the hit — applied BEFORE the cap, so a crit pushes toward the
+    // half-HP ceiling but still can NEVER one-shot. Returns the flag so the UI/commentator can react.
+    const crit = this.rng.next() < CRIT_CHANCE;
+    const raw = base * stab * typeMult * variance * (crit ? CRIT_MULT : 1);
+    const cap = Math.ceil(defMon.maxHp * 0.5);         // never > half a bar → one-shots impossible (even crits)
+    return { amount: Math.max(1, Math.min(cap, Math.round(raw))), crit };
   }
 
   private faint(f: Fighter): void {

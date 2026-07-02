@@ -121,13 +121,17 @@ function drainNext(): void {
   renderer.playEvent(ev);
   const banner = bannerFor(ev);
   if (banner) renderer.setEventBanner(banner);
-  const slow = ev.kind === 'effectiveness' || ev.kind === 'faint' || ev.kind === 'battle_over';
-  setTimeout(drainNext, slow ? 1100 : 550);
+  // Linger on the dramatic beats — effectiveness call, faint, win, and a CRIT — so the player reads them.
+  // Durations tuned up from 550/1100 so attacks + outcomes stay on screen long enough to read.
+  const slow = ev.kind === 'effectiveness' || ev.kind === 'faint' || ev.kind === 'battle_over'
+    || (ev.kind === 'damage' && ev.crit);
+  setTimeout(drainNext, slow ? 1500 : 850);
 }
 function bannerFor(ev: BattleEvent): string | null {
   switch (ev.kind) {
     case 'turn_start': return `Turn ${ev.turn}`;
     case 'move_used': return `${ev.moveName}!`;
+    case 'damage': return ev.crit ? 'A critical hit!' : null;   // a normal hit shows no banner
     case 'effectiveness': return effectivenessLabel(ev.multiplier);
     case 'faint': return `${ev.monsterName} fainted!`;
     case 'battle_over': return `${ev.winnerName} wins!`;

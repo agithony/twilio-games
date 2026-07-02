@@ -41,6 +41,7 @@ export class BattleRenderer {
   /** Transient per-side attack lunge (0..1 eased), keyed by side. Drives the "step forward" animation. */
   private lunge: { a: number; b: number } = { a: 0, b: 0 };
   private flash: { a: number; b: number } = { a: 0, b: 0 };   // hit-flash timer per side
+  private shake = 0;   // screen-shake intensity (0..1, eased) — spiked by a crit hit
   /** Per-side displayed HP during a paced resolution (so the two bars drop one hit at a time instead
    *  of both snapping to the settled snapshot at once). */
   private resHp = new ResolutionHp();
@@ -107,10 +108,14 @@ export class BattleRenderer {
   setEventBanner(text: string): void { this.eventBanner = text; }
 
   /** Play an event's animation cue: attacker lunges, defender flashes + its HP bar steps down to this
-   *  hit's remaining HP (so the two bars drop one hit at a time during resolution). */
+   *  hit's remaining HP (so the two bars drop one hit at a time during resolution). A crit shakes the
+   *  screen and flashes harder. */
   playEvent(ev: BattleEvent): void {
     if (ev.kind === 'move_used') this.lunge[ev.by] = 1;
-    else if (ev.kind === 'damage') { this.flash[ev.on] = 1; this.resHp.hit(ev.on, ev.hpLeft); }
+    else if (ev.kind === 'damage') {
+      this.flash[ev.on] = 1; this.resHp.hit(ev.on, ev.hpLeft);
+      if (ev.crit) this.shake = 1;   // extra punch on a critical hit
+    }
   }
 
   /** Load a real sprite if present, else keep the synthesized placeholder. Cached per id+view. Tries
@@ -149,6 +154,7 @@ export class BattleRenderer {
       this.lunge[s] = Math.max(0, this.lunge[s] - 0.06);
       this.flash[s] = Math.max(0, this.flash[s] - 0.08);
     }
+    this.shake = Math.max(0, this.shake - 0.05);
     this.render();
   };
 
@@ -159,6 +165,12 @@ export class BattleRenderer {
     // the spinning 3D arena instead of a flat paper card.
     ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
     ctx.save(); ctx.scale(S, S);
+    // Screen-shake (crit): jitter the whole scene a couple GB-pixels, decaying. Deterministic-ish via
+    // a cheap time-independent oscillation on the eased intensity (no reliance on Math.random timing).
+    if (this.shake > 0) {
+      const k = this.shake * this.shake * 3;
+      ctx.translate(Math.round(Math.sin(this.shake * 40) * k), Math.round(Math.cos(this.shake * 37) * k));
+    }
 
     // ── Fixed battle layout on the 160×144 screen, designed so NOTHING overlaps ──
     //  scene area  : y 0..92  (monsters on platforms + HP boxes in opposite corners)
