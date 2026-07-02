@@ -121,6 +121,17 @@ describe('GameServer integration', () => {
     expect(server.roomCount).toBe(0);
   });
 
+  it('voiceLeave reaps a voice-only room (a phone caller never hits the WS reap path)', async () => {
+    // A caller who joined ONLY by voice (no /game WS conn) must still reap on hangup, or the room leaks.
+    server = new GameServer({ port: 0, broadcastHz: 30 });
+    const port = await server.start();
+    const room = server.getOrCreateRoom('9090');
+    const res = room.addPlayer('Caller') as { playerId: string };
+    expect(server.roomCount).toBe(1);
+    server.voiceLeave('9090', res.playerId);   // caller hangs up
+    expect(server.roomCount).toBe(0);          // reaped, no leak
+  });
+
   it('restart rebuilds a fresh race with a NEW procedural course (per-race variety)', async () => {
     server = new GameServer({ port: 0, broadcastHz: 30 });
     const port = await server.start();

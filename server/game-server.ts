@@ -269,6 +269,15 @@ export class GameServer {
     this.pushLobby(roomCode);
     this.emitEvent(roomCode, { kind: 'map_picked', map });
   }
+  /** A voice caller left (hung up). Drop their slot, refresh the lobby, and REAP the room if now empty
+   *  — the racer's WS close/leave paths reap, but a phone caller never takes those, so without this a
+   *  voice-only room would leak in `this.rooms` forever. Mirrors BattleServer.voiceLeave. */
+  voiceLeave(roomCode: string, playerId: string): void {
+    const room = this.rooms.find(roomCode); if (!room) return;
+    room.removePlayer(playerId);
+    this.pushLobby(roomCode);
+    this.reapRoomIfEmpty(roomCode);
+  }
   /** Advance the flow (lobby→car_select→map_select→race). Returns true if the phase actually changed. */
   voiceAdvance(roomCode: string): boolean {
     const room = this.rooms.find(roomCode); if (!room) return false;

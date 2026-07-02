@@ -61,6 +61,10 @@ export interface AdapterDeps {
   /** Register/unregister this adapter to receive its room's game events (greeting/countdown/result). */
   register?: (roomCode: string, adapter: ConversationRelayAdapter) => void;
   unregister?: (adapter: ConversationRelayAdapter) => void;
+  /** Drop the caller's player slot AND reap the room if now empty (a phone caller never hits the WS
+   *  close/leave reap paths, so this avoids a voice-only room leaking). Falls back to plain
+   *  removePlayer when absent (keeps existing tests/callers working). */
+  leaveRoom?: (roomCode: string, playerId: string) => void;
   /** Run a conversational AI turn for this caller: given their utterance, return what the host should
    *  SAY back (having also executed any game actions), or null to fall back to scripted behavior.
    *  Wired to the LLM game-host. Absent → no conversational AI (scripted-only, current behavior).
@@ -186,7 +190,11 @@ export class ConversationRelayAdapter {
 
   handleClose(): void {
     this.deps.unregister?.(this);
-    if (this.room && this.playerId) this.room.removePlayer(this.playerId);
+    // Prefer leaveRoom (drops the slot AND reaps an empty room); fall back to plain removePlayer.
+    if (this.playerId) {
+      if (this.roomCode && this.deps.leaveRoom) this.deps.leaveRoom(this.roomCode, this.playerId);
+      else this.room?.removePlayer(this.playerId);
+    }
     this.room = null; this.playerId = null; this.roomCode = null;
   }
 }

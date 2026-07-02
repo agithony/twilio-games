@@ -245,6 +245,8 @@ export class HttpServer {
           if (set.delete(a) && set.size === 0) this.voiceAdapters.delete(code);
         }
       },
+      // Drop the caller's slot + reap the room if empty (a phone caller never hits the WS reap paths).
+      leaveRoom: (roomCode, playerId) => this.game.voiceLeave(roomCode, playerId),
       phaseOf: (roomCode) => this.game.findRoom(roomCode)?.phase ?? 'lobby',
       // Conversational AI turn: build the host context from the live room, run the LLM (with history),
       // return what to say. Null when the LLM is disabled → adapter stays quiet (scripted fallback).
