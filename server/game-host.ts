@@ -16,6 +16,10 @@ export interface HostContext {
   myCar: string | null;           // the caller's currently-picked car name, if any
   myPlace: number | null;         // during/after a race, the caller's place
   racerCount: number;
+  // ── results-screen extras (for the post-race recap) ──
+  raceStandings?: { name: string; place: number }[];   // this race's finishing order (for a recap)
+  allTimeTop?: string[];                                // a few top all-time names (fastest-first)
+  allTimeBest?: { name: string; time: number } | null;  // the all-time fastest run (name + seconds)
   // Actions (each returns a short confirmation the caller can be told, or null if it couldn't act):
   setName(name: string): string | null;             // set the caller's display name (shown on screen)
   selectCarByName(name: string): string | null;   // fuzzy-match a car name → pick it
@@ -78,8 +82,17 @@ export function buildSystemPrompt(ctx: HostContext): string {
     lines.push('A race is LIVE — the caller should be DRIVING (shouting left/right/boost/brake/nitro), and the scripted announcer handles the play-by-play. Do NOT narrate unprompted. But if they ASK you something mid-race ("what place am I?", "how do I use nitro?"), answer in a SNAPPY few words so it does not bury their next command. Otherwise stay quiet.');
   }
   if (ctx.phase === 'results' || ctx.phase === 'finished') {
-    if (ctx.myPlace === 1) lines.push('The caller just WON — FIRST PLACE! React with MAXIMUM hype and energy, like a race announcer calling a photo finish. Be loud and thrilled (in words — no emojis). Celebrate them by name if you know it. Then invite them to race again.');
-    else lines.push(`The race is over — the caller finished ${ctx.myPlace ? `in place ${ctx.myPlace}` : 'the race'}. Give an upbeat, encouraging reaction (still energetic!) and invite them to race again.`);
+    if (ctx.myPlace === 1) lines.push('The caller just WON — FIRST PLACE! React with MAXIMUM hype and energy, like a race announcer calling a photo finish. Be loud and thrilled (in words — no emojis). Celebrate them by name if you know it.');
+    else lines.push(`The race is over — the caller finished ${ctx.myPlace ? `in place ${ctx.myPlace}` : 'the race'}. Give an upbeat, encouraging reaction (still energetic!).`);
+    // A proactive RECAP + leaderboard OVERVIEW — this is the results screen, don't just wait silently.
+    if (ctx.raceStandings && ctx.raceStandings.length > 1) {
+      const order = ctx.raceStandings.slice(0, 3).map(s => `${s.place}) ${s.name}`).join(', ');
+      lines.push(`RECAP: give a quick 1-2 sentence recap of how the race played out — the podium was: ${order}. Mention the winner + any close/notable finish. Do NOT list every position robotically; summarize like a broadcaster.`);
+    }
+    if (ctx.allTimeBest) {
+      lines.push(`ALL-TIME LEADERBOARD: the overall record is ${ctx.allTimeBest.name} at ${ctx.allTimeBest.time.toFixed(1)} seconds${ctx.allTimeTop && ctx.allTimeTop.length > 1 ? ` (top names: ${ctx.allTimeTop.slice(0, 3).join(', ')})` : ''}. Work in a SHORT overview — e.g. whether the caller cracked the top times, or a nudge to beat the record. A one-line flavor mention, NOT a full readout.`);
+    }
+    lines.push('Then invite them to race again (say "rematch" or "go again").');
   }
   lines.push('',
     'RULES: Never invent car or track names — use ONLY the exact lists above. Do NOT advance the flow past the current step unless that step is done AND the caller is ready. Never mention that you are an AI language model. Stay in character as the race host. Do not use emojis (this is spoken aloud).');

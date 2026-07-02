@@ -119,6 +119,23 @@ describe('buildSystemPrompt', () => {
     expect(p).toMatch(/silver lake|drift/);
   });
 
+  it('on results, recaps the race + overviews the all-time leaderboard (not a full readout)', () => {
+    const p = buildSystemPrompt(ctx({
+      phase: 'results', myPlace: 2,
+      raceStandings: [{ name: 'Rex', place: 1 }, { name: 'Ada', place: 2 }, { name: 'Bo', place: 3 }],
+      allTimeTop: ['Rex', 'Ada', 'Bo'], allTimeBest: { name: 'Rex', time: 42.3 },
+    })).toLowerCase();
+    expect(p).toMatch(/recap/);
+    expect(p).toContain('rex');            // names the podium / record holder
+    expect(p).toMatch(/leaderboard|record|all-time/);
+    expect(p).toMatch(/summariz|overview|not.*(list|readout|every)/);   // summary, not a full readout
+  });
+
+  it('after taking the name it guides the next step (no dead air)', () => {
+    const p = buildSystemPrompt(ctx({ phase: 'lobby', myName: null })).toLowerCase();
+    expect(p).toMatch(/next step|nice to meet|do not just say|next/);
+  });
+
   it('tells the host WHICH screen the players are looking at (screen awareness)', () => {
     expect(buildSystemPrompt(ctx({ phase: 'car_select' })).toLowerCase()).toMatch(/screen|display|showing/);
     expect(buildSystemPrompt(ctx({ phase: 'map_select' })).toLowerCase()).toMatch(/screen|display|showing/);

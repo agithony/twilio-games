@@ -100,13 +100,28 @@ export class ConversationRelayAdapter {
   private lineSeq = 0;
   private lastChattyAt = -1e9;
   private clockMs = 0;   // advanced from event cadence; monotonic enough for throttling
+  private recapDone = false;   // one proactive results recap per race (reset on a new countdown/go)
   onGameEvent(ev: GameEvent): void {
     this.clockMs += 50;   // events arrive on the ~20Hz broadcast; approx a wall clock for throttling
+    if (ev.kind === 'go' || ev.kind === 'countdown') this.recapDone = false;   // fresh race → allow a new recap
     if (isChattyEvent(ev.kind)) {
       if (this.clockMs - this.lastChattyAt < CHATTY_GAP_MS) return;   // too soon → stay quiet
       const line = lineForEvent(ev, this.playerId, this.lineSeq);
       if (line) { this.lastChattyAt = this.clockMs; this.lineSeq++; this.deps.say?.(line); }
       return;
+    }
+    // THE CALLER FINISHED: prefer a proactive LLM RECAP (celebration + race recap + leaderboard
+    // overview) over the scripted one-liner, so the host actually TALKS over the scoreboard. Falls
+    // back to the scripted placeLine when the LLM host isn't wired. Only once per race.
+    if (ev.kind === 'finish' && this.playerId && ev.playerId === this.playerId && !this.recapDone) {
+      this.recapDone = true;
+      if (this.deps.converse && this.roomCode) {
+        const epoch = ++this.turnEpoch;
+        void this.deps.converse(this.roomCode, this.playerId, '(You just crossed the finish line — give a quick spoken recap of the race and a short overview of the all-time leaderboard, then invite a rematch.)')
+          .then(reply => { if (reply && epoch === this.turnEpoch) this.deps.say?.(reply); })
+          .catch(() => { const l = lineForEvent(ev, this.playerId, this.lineSeq); if (l) this.deps.say?.(l); });
+        return;
+      }
     }
     const line = lineForEvent(ev, this.playerId, this.lineSeq);
     if (line) { this.lineSeq++; this.deps.say?.(line); }

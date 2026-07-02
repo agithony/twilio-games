@@ -54,6 +54,9 @@ export class HttpServer {
   /** Cached selectable cars/maps for the lobby (refreshed from manifest + maps.json periodically). */
   private roomConfigCache: { carCount: number; maps: string[]; carNames: string[] } = { carCount: 0, maps: [], carNames: [] };
   private roomConfigTimer: ReturnType<typeof setInterval> | null = null;
+  /** A short ALL-TIME leaderboard summary (top few overall, fastest-first) the AI host can reference on
+   *  the results screen — refreshed with the room config so hostContext stays sync. e.g. "Ada, Rex, Bo". */
+  private leaderboardSummary: { topNames: string[]; bestName: string | null; bestTime: number | null } = { topNames: [], bestName: null, bestTime: null };
   /** Serializes leaderboard writes so two near-simultaneous race finishes can't clobber each other. */
   private leaderboardWrite: Promise<void> = Promise.resolve();
   /** SMS concierge (per-phone onboarding + car/map selection). */
@@ -180,6 +183,17 @@ export class HttpServer {
       carNames: carNames.length ? carNames : this.roomConfigCache.carNames,
     };
     if (carNames.length) this.carNamesCache = carNames;
+    // Refresh a tiny all-time leaderboard summary for the AI host's results recap (best overall + a
+    // few top names). Best-effort: a read failure just keeps the prior summary.
+    try {
+      const entries = parseLeaderboard(await readFile(this.leaderboardPath, 'utf8'));
+      const top = topEntries(entries, { limit: 5 });   // fastest-first across all maps
+      this.leaderboardSummary = {
+        topNames: top.map(e => e.name),
+        bestName: top[0]?.name ?? null,
+        bestTime: top[0]?.finishT ?? null,
+      };
+    } catch { /* keep prior summary */ }
   }
 
   /** Wrap a live game Room as a ConciergeRoom (adds car names/count from the cached manifest). */
@@ -388,6 +402,10 @@ export class HttpServer {
       myCar: myCarIdx !== null ? room.carName(myCarIdx) : null,
       myPlace: room.results().find(r => r.name === me?.name)?.place ?? null,
       racerCount: room.playerCount,
+      raceStandings: room.results().map(r => ({ name: r.name, place: r.place })),
+      allTimeTop: this.leaderboardSummary.topNames,
+      allTimeBest: this.leaderboardSummary.bestName !== null && this.leaderboardSummary.bestTime !== null
+        ? { name: this.leaderboardSummary.bestName, time: this.leaderboardSummary.bestTime } : null,
       setName: (name) => {
         const clean = name.trim().slice(0, 20);
         if (!clean) return null;
