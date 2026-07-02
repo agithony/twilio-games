@@ -19,6 +19,18 @@ export function powerPips(power: number): number {
   return Math.max(1, Math.min(5, pips));
 }
 
+/** Power pips adjusted for EFFECTIVENESS vs the current foe: base power × type multiplier, mapped to
+ *  1–5. So a weak super-effective move out-pips a strong resisted one, making "pick the fullest pips"
+ *  genuinely correct and rewarding type play. `mult` is 0.5 / 1 / 2 from the type chart. At 1× it
+ *  equals the plain powerPips. */
+export function effectivePips(power: number, mult: number): number {
+  if (power <= 0) return 0;
+  // Effective power on the same 40..90 band the pips are calibrated to. Neutral (1x) maps identically
+  // to powerPips; 2x pushes toward 5, 0.5x pulls toward 1. Clamp into the band before mapping.
+  const eff = Math.max(MIN_POWER, Math.min(MAX_POWER, power * mult));
+  return powerPips(eff);
+}
+
 /** Render the pip rating as a compact string of filled/empty blocks, e.g. "●●●○○" (or "" for status). */
 export function pipString(power: number): string {
   const n = powerPips(power);

@@ -4,7 +4,7 @@
 // tuned formula actually deals — so we show a normalized 1–5 "power" rating instead; (2) long move
 // names / labels clipped off the 160px window, so names are truncated to a safe width.
 import { describe, it, expect } from 'vitest';
-import { powerPips, fitMoveName } from '../client/battle/move-menu';
+import { powerPips, fitMoveName, effectivePips } from '../client/battle/move-menu';
 
 describe('powerPips', () => {
   it('a status/0-power move has no pips', () => {
@@ -34,6 +34,33 @@ describe('powerPips', () => {
   it('clamps out-of-range power into 1..5', () => {
     expect(powerPips(200)).toBe(5);
     expect(powerPips(1)).toBe(1);
+  });
+});
+
+describe('effectivePips (power × effectiveness vs the current foe)', () => {
+  it('at neutral (1x) it matches the plain power pips', () => {
+    for (const p of [40, 55, 70, 90]) expect(effectivePips(p, 1)).toBe(powerPips(p));
+  });
+
+  it('super-effective (2x) boosts a move above its neutral rating', () => {
+    expect(effectivePips(55, 2)).toBeGreaterThan(effectivePips(55, 1));
+  });
+
+  it('resisted (0.5x) drops a move below its neutral rating', () => {
+    expect(effectivePips(80, 0.5)).toBeLessThan(effectivePips(80, 1));
+  });
+
+  it('a WEAK super-effective move can out-pip a STRONG resisted one (the whole point)', () => {
+    // 55-power super-effective should read as more valuable than 90-power resisted vs this foe.
+    expect(effectivePips(55, 2)).toBeGreaterThan(effectivePips(90, 0.5));
+  });
+
+  it('stays within 1..5 for a damaging move', () => {
+    for (const mult of [0.5, 1, 2]) for (const p of [40, 60, 90]) {
+      const pips = effectivePips(p, mult);
+      expect(pips).toBeGreaterThanOrEqual(1);
+      expect(pips).toBeLessThanOrEqual(5);
+    }
   });
 });
 

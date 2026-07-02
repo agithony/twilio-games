@@ -106,7 +106,9 @@ function paintBattle(): void {
     else if (uiPhase === 'command-locked') status = `${lockedMoveName ? lockedMoveName + '! ' : ''}Waiting for ${opponentName(state)}…`;
     else if (uiPhase === 'finished') status = state.result ? `${state.result.winnerName} wins!` : '';
   }
-  renderer.setState(state.snapshot, mySideMoves(state), uiPhase, status);
+  // The foe's type → the renderer shows move pips as effectiveness vs THIS opponent.
+  const foeType = state.snapshot ? (mySide(state) === 'b' ? state.snapshot.a.type : state.snapshot.b.type) : null;
+  renderer.setState(state.snapshot, mySideMoves(state), uiPhase, status, foeType ?? null);
 }
 
 // ── paced event playback ──────────────────────────────────────────────────────────────────────────
@@ -158,6 +160,7 @@ function dwellFor(ev: BattleEvent): number {
   switch (ev.kind) {
     case 'turn_start':   return 1400;                    // "— Turn N —" title card
     case 'move_used':    return 1800;                    // announce the move, THEN it hits
+    case 'miss':         return 1700;                    // "But it missed!" lands
     case 'damage':       return ev.crit ? 2200 : 1650;   // the hit + HP drop registers
     case 'effectiveness':return 2100;                    // "It's super effective!" lands
     case 'faint':        return 2300;
@@ -175,6 +178,7 @@ function bannerFor(ev: BattleEvent): string | null {
     case 'turn_start': return `— Turn ${ev.turn} —`;
     // Name the attacker so it's unmistakable WHOSE turn it is ("Sparkmouse used Thunder Jolt!").
     case 'move_used': return `${actorName(ev.by)} used ${ev.moveName}!`;
+    case 'miss': return 'But it missed!';
     case 'damage': return ev.crit ? 'A critical hit!' : null;   // a normal hit shows no banner
     case 'effectiveness': return effectivenessLabel(ev.multiplier);
     case 'faint': return `${ev.monsterName} fainted!`;

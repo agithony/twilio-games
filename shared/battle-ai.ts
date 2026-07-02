@@ -4,6 +4,7 @@
 // the CPU combatant. Deterministic given the rng passed in (server-authoritative).
 import type { Monster } from './monster-roster';
 import { typeMultiplier } from './monster-types';
+import { moveAccuracy } from './move-stats';
 import type { Rng } from './rng';
 
 /** Pick a move id for `self` attacking `opponent`. Higher expected damage = more likely; a 0-power
@@ -14,10 +15,11 @@ export function pickAiMove(self: Monster, opponent: Monster, rng: Rng): string {
   for (const move of self.moves) {
     const stab = move.type === self.type ? 1.5 : 1;
     const mult = typeMultiplier(move.type, opponent.type);
-    // Expected damage proxy: power × STAB × effectiveness. Status (power 0) → ~0. Small rng jitter
-    // (±10%) breaks ties + adds slight unpredictability without ever preferring a weak move.
+    // EXPECTED damage proxy: power × STAB × effectiveness × ACCURACY. Weighting by hit chance means the
+    // AI won't blindly spam a whiffy nuke when a reliable move has better expected value — it plays the
+    // same risk/reward the player weighs. Status (power 0) → ~0. Small rng jitter (±10%) breaks ties.
     const jitter = 0.9 + rng.next() * 0.2;
-    const score = move.power * stab * mult * jitter;
+    const score = move.power * stab * mult * moveAccuracy(move.power) * jitter;
     if (score > bestScore) { bestScore = score; bestId = move.id; }
   }
   return bestId;

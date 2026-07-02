@@ -6,6 +6,7 @@
 import { Rng } from './rng';
 import { monsterById, moveById, type Monster, type Move } from './monster-roster';
 import { typeMultiplier, effectivenessLabel } from './monster-types';
+import { moveAccuracy } from './move-stats';
 
 export type Side = 'a' | 'b';
 export type BattlePhase = 'choosing' | 'resolving' | 'finished';
@@ -41,6 +42,7 @@ export interface BattleSnapshot {
 export type BattleEvent =
   | { kind: 'turn_start'; turn: number }
   | { kind: 'move_used'; by: Side; moveId: string; moveName: string }
+  | { kind: 'miss'; by: Side; moveName: string }
   | { kind: 'damage'; on: Side; amount: number; hpLeft: number; crit: boolean }
   | { kind: 'effectiveness'; on: Side; multiplier: number; label: string }
   | { kind: 'faint'; side: Side; monsterName: string }
@@ -152,6 +154,14 @@ export class BattleWorld {
     this.events.push({ kind: 'move_used', by: this.sideOf(attacker), moveId: move.id, moveName: move.name });
 
     if (move.power <= 0) return;   // status/no-damage move (future: buffs); no damage this pass
+
+    // ACCURACY: a high-power move can MISS (weak moves always land) — the risk/reward that gives a
+    // weaker move a reason to exist. Roll BEFORE damage so a miss short-circuits cleanly + keeps the
+    // rng stream stable per swing (accuracy roll, then damage's variance/crit rolls only if it lands).
+    if (this.rng.next() > moveAccuracy(move.power)) {
+      this.events.push({ kind: 'miss', by: this.sideOf(attacker), moveName: move.name });
+      return;
+    }
 
     const mult = typeMultiplier(move.type, defender.mon.type);
     const { amount, crit } = this.damage(attacker.mon, defender.mon, move, mult);

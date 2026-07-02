@@ -55,12 +55,14 @@ describe('battle pacing (balance)', () => {
     }
   });
 
-  it('optimal play resolves in a tight band (median 2, never a one-shot, max ≤ 4)', () => {
+  it('optimal play resolves in a tight band (median 2-3, never a one-shot, max ≤ 5)', () => {
+    // Ceiling is 5 (not 4) now that moves can MISS: even optimal play occasionally whiffs a strong
+    // move and needs an extra swing. That's the risk/reward mechanic working, not a grind.
     const { median, max, oneShots } = paceDistribution(/* human random? */ false);
     expect(oneShots).toBe(0);
     expect(median).toBeLessThanOrEqual(3);
     expect(median).toBeGreaterThanOrEqual(2);
-    expect(max).toBeLessThanOrEqual(4);   // no drawn-out grind even between two tanks
+    expect(max).toBeLessThanOrEqual(5);
   });
 
   it('a HUMAN tapping moves vs the AI does NOT grind (median ≤ 3, max ≤ 6) — the reported bug', () => {
@@ -109,6 +111,42 @@ describe('critical hits (rare bonus damage)', () => {
         }
       }
     }
+  });
+});
+
+describe('move accuracy (risk/reward)', () => {
+  // A high-power move can MISS (emitting a miss event + dealing no damage); a low-power move is
+  // reliable. This is what makes a weaker move worth picking.
+
+  it('a strong move sometimes misses — emitting a miss event and dealing no damage that swing', () => {
+    let swings = 0, misses = 0;
+    // psyclone Psystrike is pow 85 (~77% acc) → should whiff a meaningful minority across seeds.
+    for (let seed = 1; seed <= 300; seed++) {
+      const w = newBattle('psyclone', 'shellback', seed);
+      const strong = w.snapshot().a.moves[0]!;   // Psystrike (85)
+      w.chooseMove('a', strong.id);
+      w.chooseMove('b', w.snapshot().b.moves[0]!.id);
+      for (const ev of w.drainEvents()) {
+        if (ev.kind === 'move_used' && ev.by === 'a') swings++;
+        if (ev.kind === 'miss' && ev.by === 'a') misses++;
+      }
+    }
+    expect(misses).toBeGreaterThan(0);            // it DOES miss sometimes
+    expect(misses / swings).toBeGreaterThan(0.05);
+    expect(misses / swings).toBeLessThan(0.45);   // but mostly lands
+  });
+
+  it('a 100%-accuracy weak move never misses', () => {
+    // sparkmouse Static Zap is pow 40 → 100% accurate → zero misses across many seeds.
+    let misses = 0;
+    for (let seed = 1; seed <= 200; seed++) {
+      const w = newBattle('sparkmouse', 'shellback', seed);
+      const weak = w.snapshot().a.moves[1]!;   // Static Zap (40)
+      w.chooseMove('a', weak.id);
+      w.chooseMove('b', w.snapshot().b.moves[0]!.id);
+      for (const ev of w.drainEvents()) if (ev.kind === 'miss' && ev.by === 'a') misses++;
+    }
+    expect(misses).toBe(0);
   });
 });
 

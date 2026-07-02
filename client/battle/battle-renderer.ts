@@ -7,12 +7,13 @@
 // Sprites: tries /assets/monsters/<id>_<view>.gif then .png (animated GIF wins when both exist);
 // falls back to the procedural placeholder (monster-sprite.ts) so it's playable with zero art. Draws
 // at an integer scale for crisp pixels.
-import type { MonsterType } from '../../shared/monster-types';
+import { typeMultiplier, type MonsterType } from '../../shared/monster-types';
 import type { BattleSnapshot, BattleEvent } from '../../shared/battle-world';
+import { accuracyPercent } from '../../shared/move-stats';
 import { GB_SHADES, drawMonsterSprite, typeColor } from './monster-sprite';
 import { spriteCandidateUrls } from './sprite-sources';
 import { ResolutionHp } from './resolution-hp';
-import { powerPips } from './move-menu';
+import { effectivePips } from './move-menu';
 import { hpFraction, hpZone, hpColor } from './hp-bar';
 
 // Logical GB resolution (160×144); we scale up to fill the element with nearest-neighbor crispness.
@@ -35,6 +36,7 @@ export class BattleRenderer {
   private sprites = new Map<string, LoadedSprite>();   // key: `${id}:${view}`
   private snap: BattleSnapshot | null = null;
   private menuMoves: MenuMove[] = [];                  // the local player's 4 moves (bottom window)
+  private foeType: MonsterType | null = null;          // opponent's type → menu pips = effectiveness
   private uiPhase: UiPhase = 'idle';                   // whose-turn state → what the window shows
   private statusLine = '';                             // persistent prompt ("What will X do?" / "Waiting…")
   private eventBanner = '';                            // transient event text ("It's super effective!")
@@ -90,7 +92,7 @@ export class BattleRenderer {
   /** Point the renderer at the current battle state, the local player's moves, the turn state, and
    *  the persistent status line. The bottom window branches on uiPhase (menu only when it's your
    *  turn; a "waiting" line when locked; just the event banner while resolving). */
-  setState(snap: BattleSnapshot | null, myMoves: MenuMove[], uiPhase: UiPhase, statusLine: string): void {
+  setState(snap: BattleSnapshot | null, myMoves: MenuMove[], uiPhase: UiPhase, statusLine: string, foeType: MonsterType | null = null): void {
     // Begin/end the paced-HP tracker on the resolving transition. Seed pre-turn HP from the CURRENT
     // snapshot (still pre-turn: events arrive before the settled state), so bars start where the turn
     // began and step down per damage event instead of snapping to the settled HP together.
@@ -103,6 +105,7 @@ export class BattleRenderer {
     this.menuMoves = myMoves;
     this.uiPhase = uiPhase;
     this.statusLine = statusLine;
+    this.foeType = foeType;   // the opponent's type → menu pips show effectiveness vs THIS foe
     if (snap) { this.ensureSprite(snap.a.monsterId, snap.a.type, 'back'); this.ensureSprite(snap.b.monsterId, snap.b.type, 'front'); }
   }
 
@@ -202,17 +205,20 @@ export class BattleRenderer {
     const line = this.uiPhase === 'resolving'
       ? (this.eventBanner || this.statusLine)
       : (this.statusLine || (this.snap ? '' : 'Waiting…'));
-    this.drawText(line, 11, 101);
+    // Wrap long banners ("Sparkmouse used Thunder Jolt!") to a 2nd line instead of running off the edge.
+    this.drawWrappedText(line, 11, 100, GB_W - 8 - 14, 9);
     if (this.uiPhase === 'awaiting-input') {
-      // 4 moves in two columns under the prompt. Each cell: the FULL move name on one row, then a 5-pip
-      // power rating on the row below (little squares in the type color — NOT the meaningless raw
-      // base-power number). Pips sit UNDER the name (not beside it) so the whole 73px column width is
-      // free for the name — every roster name (≤12 chars) fits without abbreviating. Window x 4..156.
+      // 4 moves in two columns under the prompt. Each cell: FULL move name on one row, then a rating
+      // row below: power PIPS + accuracy %. Pips show EFFECTIVENESS VS THE CURRENT FOE (power × type
+      // multiplier), not raw power — so a weak super-effective move out-pips a strong resisted one, and
+      // "pick the fullest" becomes genuinely correct + rewards type play. Accuracy % is the risk knob.
       this.menuMoves.slice(0, 4).forEach((m, i) => {
         const col = i % 2, row = Math.floor(i / 2);
-        const x = 11 + col * 73, y = 116 + row * 13;
+        const x = 11 + col * 73, y = 115 + row * 14;
         this.drawText(`${i + 1} ${m.name}`, x, y, true);
-        this.drawPips(x + 6, y + 6, powerPips(m.power), typeColor(m.type));   // rating row under the name
+        const mult = this.foeType ? typeMultiplier(m.type as MonsterType, this.foeType) : 1;
+        this.drawPips(x + 6, y + 6, effectivePips(m.power, mult), typeColor(m.type));
+        this.drawText(`${accuracyPercent(m.power)}%`, x + 52, y + 6, true);   // hit chance
       });
     }
     ctx.restore();
@@ -298,6 +304,26 @@ export class BattleRenderer {
     ctx.font = `${small ? 6 : 8}px monospace`;
     ctx.textBaseline = 'top';
     ctx.fillText(text, x, y);
+  }
+
+  /** Draw `text` in the 8px font, WORD-WRAPPING to new lines so a long banner never runs off the
+   *  window edge. Wraps at `maxWidth` px; each line is `lineH` px tall. Caps at 3 lines (the window
+   *  fits that above the move menu). */
+  private drawWrappedText(text: string, x: number, y: number, maxWidth: number, lineH: number): void {
+    const ctx = this.ctx;
+    ctx.font = '8px monospace';
+    ctx.fillStyle = INK;
+    ctx.textBaseline = 'top';
+    const words = text.split(' ');
+    const lines: string[] = [];
+    let cur = '';
+    for (const w of words) {
+      const trial = cur ? `${cur} ${w}` : w;
+      if (ctx.measureText(trial).width > maxWidth && cur) { lines.push(cur); cur = w; }
+      else cur = trial;
+    }
+    if (cur) lines.push(cur);
+    lines.slice(0, 3).forEach((ln, i) => ctx.fillText(ln, x, y + i * lineH));
   }
 
   /** A bobbing SIDE-pointing arrow marking the monster whose turn it is. `dir` is which way it points
