@@ -4,7 +4,7 @@
 // ws/http here — fully unit-testable.
 import { BattleWorld, type BattleSnapshot, type BattleEvent, type Side, type BattleAction } from '../shared/battle-world';
 import { ROSTER, monsterById, type Monster } from '../shared/monster-roster';
-import { pickAiMove } from '../shared/battle-ai';
+import { pickAiAction } from '../shared/battle-ai';
 import { Rng } from '../shared/rng';
 
 export type BattlePhase = 'lobby' | 'monster_select' | 'battle' | 'results';
@@ -155,15 +155,20 @@ export class BattleRoom {
     return this.ai.side === 'b' ? (s.chosen.a && !s.chosen.b) : (s.chosen.b && !s.chosen.a);
   }
 
-  /** Commit the AI's move (type-aware) → resolves the turn. Called by the server after a short delay
-   *  so the CPU takes a visible, separate turn. No-op if the AI doesn't owe a move. */
+  /** Commit the AI's ACTION (type-aware: mostly FIGHT, but ITEM/GUARD/TAUNT when the situation calls
+   *  for it) → resolves the turn. Called by the server after a short delay so the CPU takes a visible,
+   *  separate turn. No-op if the AI doesn't owe a move. */
   resolveAiTurn(): void {
     if (!this.aiPending() || !this.ai || !this.world) return;
     const s = this.world.snapshot();
+    const self = this.ai.side === 'b' ? s.b : s.a;         // the AI's own live state (hp / potions)
     const oppState = this.ai.side === 'b' ? s.a : s.b;
-    const aiId = this.ai.side === 'b' ? s.b.id : s.a.id;
-    const move = pickAiMove(this.ai.monster, monsterById(oppState.monsterId)!, this.aiRng);
-    this.world.chooseMove(aiId, move);
+    const potionsLeft = this.ai.side === 'b' ? s.potions.b : s.potions.a;
+    const action = pickAiAction(
+      this.ai.monster, self.hp, self.maxHp,
+      monsterById(oppState.monsterId)!, potionsLeft, this.aiRng,
+    );
+    this.world.chooseAction(self.id, action);
     this.captureEvents();
   }
 
