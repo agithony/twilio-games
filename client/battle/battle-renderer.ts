@@ -189,9 +189,10 @@ export class BattleRenderer {
       this.drawMonster('a', 44, 82, 52, 'back');
       this.drawHpBox('b', this.snap.b, 6, 8, false);   // enemy: top-left
       this.drawHpBox('a', this.snap.a, 84, 58, true);  // you: bottom-right (with HP numbers)
-      // Turn indicator: a bobbing arrow over whoever is acting, so the ping-pong is visible.
-      if (this.activeSide === 'b') this.drawTurnArrow(108, 2);
-      else if (this.activeSide === 'a') this.drawTurnArrow(44, 34);
+      // Turn indicator: a bobbing arrow floating ABOVE whoever is acting, so the ping-pong is visible.
+      // (Sits just above each sprite's box top — a: 82-52=30, b near the screen top — not on the head.)
+      if (this.activeSide === 'b') this.drawTurnArrow(108, 0);
+      else if (this.activeSide === 'a') this.drawTurnArrow(44, 22);
     } else {
       this.hideSpriteImg('a'); this.hideSpriteImg('b');   // no battle → clear any lingering sprite <img>
     }

@@ -124,7 +124,7 @@ function drainNext(): void {
     const who = pendingHandoff; pendingHandoff = null;
     renderer.setEventBanner(handoffText(who));
     renderer.setActiveSide(who);
-    setTimeout(drainNext, 1400);   // hold the "their turn" card so the ping-pong is unmistakable
+    setTimeout(drainNext, 1900);   // hold the "their turn" card so the ping-pong is unmistakable
     return;
   }
   const ev = eventQ.shift();
@@ -156,13 +156,13 @@ function handoffText(side: 'a' | 'b'): string {
  *  handoff is a separate injected card (see drainNext), so we don't pad here for it. */
 function dwellFor(ev: BattleEvent): number {
   switch (ev.kind) {
-    case 'turn_start':   return 900;                     // "— Turn N —" title card
-    case 'move_used':    return 1300;                    // announce the move, THEN it hits
-    case 'damage':       return ev.crit ? 1700 : 1150;   // the hit + HP drop registers
-    case 'effectiveness':return 1600;                    // "It's super effective!" lands
-    case 'faint':        return 1800;
-    case 'battle_over':  return 1900;
-    default:             return 1000;
+    case 'turn_start':   return 1400;                    // "— Turn N —" title card
+    case 'move_used':    return 1800;                    // announce the move, THEN it hits
+    case 'damage':       return ev.crit ? 2200 : 1650;   // the hit + HP drop registers
+    case 'effectiveness':return 2100;                    // "It's super effective!" lands
+    case 'faint':        return 2300;
+    case 'battle_over':  return 2400;
+    default:             return 1500;
   }
 }
 /** The monster name for a side, from the current snapshot (for "X used Move!" banners). */
