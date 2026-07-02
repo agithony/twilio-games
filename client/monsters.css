@@ -43,7 +43,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); c
 #vm-collage {
   position: absolute; inset: 0; z-index: 1; pointer-events: none; overflow: hidden;
   display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; padding: 12px;
-  opacity: .16; filter: saturate(1.1); animation: vm-collage-drift 40s linear infinite;
+  opacity: .1; filter: saturate(.9) brightness(.8); animation: vm-collage-drift 40s linear infinite;
 }
 #vm-collage img { width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; }
 @keyframes vm-collage-drift { 0% { transform: translateY(0); } 100% { transform: translateY(-8%); } }
@@ -64,10 +64,11 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); c
 .vm-sub { color: var(--ink-dim); font-size: 15px; }
 .vm-dim { color: var(--ink-dim); font-size: 14px; margin-top: 14px; }
 
-/* Card + chips + buttons — Twilio glass, red accents. */
-.vm-card { background: var(--glass-2); border: 1px solid var(--glass-brd); border-top: 3px solid var(--red);
+/* Card + chips + buttons — Twilio glass, red accents. NEARLY-OPAQUE navy fill so text stays crisp over
+   the sprite-collage backdrop (a translucent card let the collage bleed through and washed text out). */
+.vm-card { background: rgba(9, 15, 34, 0.93); border: 1px solid var(--glass-brd); border-top: 3px solid var(--red);
   border-radius: 18px; padding: 30px 34px; text-align: center; max-width: 92vw;
-  box-shadow: 0 20px 60px rgba(0,0,0,.5); }
+  box-shadow: 0 20px 60px rgba(0,0,0,.5); backdrop-filter: blur(6px); }
 /* Monster-select card: fills the width but is capped to the viewport height so the whole thing (header
    + 8-tile grid + Battle button) fits WITHOUT scrolling, with margin above/below. Inner rows shrink to
    fit via the min-height:0 + the viewport-relative portrait size below. */
@@ -118,15 +119,17 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); c
 .vm-win { color: var(--red); }
 
 /* ── Lobby join flow (QR + numbered steps) — mirrors the racer's lobby so both games onboard the same. ── */
-.vm-join { display: flex; align-items: center; gap: 22px; justify-content: center; margin: 18px 0 6px; flex-wrap: wrap; }
-.vm-join-qr { text-align: center; }
-.vm-join-qr img { width: 132px; height: 132px; border-radius: 12px; background: #fff; padding: 6px; image-rendering: pixelated; }
-.vm-join-cap { font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-dim); margin-top: 6px; }
-.vm-join-steps { list-style: none; margin: 0; padding: 0; text-align: left; font-size: 15px; color: var(--ink); display: grid; gap: 10px; }
-.vm-join-steps li { display: flex; align-items: center; gap: 10px; }
-.vm-step-n { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; flex: 0 0 22px;
-  background: rgba(239,34,58,.18); border: 1px solid rgba(239,34,58,.5); border-radius: 999px; font-family: var(--disp); font-weight: 800; font-size: 13px; }
-.vm-num { color: var(--red); font-weight: 800; text-decoration: none; }
+.vm-join { display: flex; align-items: center; gap: 30px; justify-content: center; margin: 20px 0 8px; flex-wrap: wrap; }
+.vm-join-qr { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+/* BIG QR on a white card with the red glow — matches Voice Racer's 240px join QR. */
+.vm-join-qr img { width: 220px; height: 220px; display: block; background: #fff; border-radius: 16px; padding: 14px;
+  box-shadow: 0 0 40px rgba(239,34,58,.25); border: 1px solid var(--glass-brd-2); image-rendering: pixelated; }
+.vm-join-cap { font-family: var(--disp); font-weight: 700; font-size: 15px; letter-spacing: .02em; color: var(--ink-dim); }
+.vm-join-steps { list-style: none; margin: 0; padding: 0; text-align: left; font-size: 18px; color: var(--ink); display: flex; flex-direction: column; gap: 16px; }
+.vm-join-steps li { display: flex; align-items: center; gap: 12px; }
+.vm-step-n { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; flex: 0 0 28px;
+  background: rgba(239,34,58,.2); border: 1px solid rgba(239,34,58,.55); border-radius: 999px; font-family: var(--disp); font-weight: 800; font-size: 15px; }
+.vm-num { color: var(--red); font-weight: 800; text-decoration: none; font-family: var(--mono); }
 .vm-num-unset { color: var(--ink-mute); font-family: var(--mono); font-size: 13px; }
 
 /* ── How-to-battle controls legend (mirrors the racer's controls-legend so both games teach the same
