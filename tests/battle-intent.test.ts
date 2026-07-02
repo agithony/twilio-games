@@ -2,7 +2,7 @@
 // move name ("Ember!", "Thunder Jolt"), with a number fallback ("two", "move 3"). Reuses the same
 // number/fuzzy matching family as the racer's game-host. Pure + testable.
 import { describe, it, expect } from 'vitest';
-import { matchMove } from '../shared/battle-intent';
+import { matchMove, matchBattleAction, type BattleMenuCtx } from '../shared/battle-intent';
 import { monsterById } from '../shared/monster-roster';
 
 const moves = monsterById('sparkmouse')!.moves;
@@ -40,5 +40,113 @@ describe('matchMove', () => {
   it('prefers an explicit number over an incidental name word', () => {
     // "give me two" → index 1 by number, even though no name says "two"
     expect(matchMove('give me two', names)).toBe(1);
+  });
+});
+
+// ── matchBattleAction: the TWO-LEVEL command menu by voice ─────────────────────────────────────────
+// Context the caller supplies from the live snapshot: the 4 moves (id+name, slot order), remaining
+// potions, and which menu level they're on. Level matters because a bare number ("two") means a ROOT
+// action at the root but a MOVE in the fight submenu.
+const ctx = (over: Partial<BattleMenuCtx> = {}): BattleMenuCtx => ({
+  moves: moves.map(m => ({ id: m.id, name: m.name })),
+  potions: 2,
+  level: 'root',
+  ...over,
+});
+
+describe('matchBattleAction — ROOT keywords', () => {
+  it('"fight"/"attack" open the fight submenu', () => {
+    expect(matchBattleAction('fight', ctx())).toEqual({ kind: 'openFight' });
+    expect(matchBattleAction('attack!', ctx())).toEqual({ kind: 'openFight' });
+    expect(matchBattleAction('let me fight', ctx())).toEqual({ kind: 'openFight' });
+  });
+
+  it('"guard"/"block"/"brace"/"defend" → guard', () => {
+    expect(matchBattleAction('guard', ctx())).toEqual({ kind: 'guard' });
+    expect(matchBattleAction('block', ctx())).toEqual({ kind: 'guard' });
+    expect(matchBattleAction('brace for it', ctx())).toEqual({ kind: 'guard' });
+    expect(matchBattleAction('defend', ctx())).toEqual({ kind: 'guard' });
+  });
+
+  it('"item"/"potion"/"heal" → item when a potion remains', () => {
+    expect(matchBattleAction('item', ctx())).toEqual({ kind: 'item', item: 'potion' });
+    expect(matchBattleAction('use a potion', ctx())).toEqual({ kind: 'item', item: 'potion' });
+    expect(matchBattleAction('heal up', ctx())).toEqual({ kind: 'item', item: 'potion' });
+  });
+
+  it('item is REFUSED (null) when no potions remain', () => {
+    expect(matchBattleAction('potion', ctx({ potions: 0 }))).toBeNull();
+    expect(matchBattleAction('heal', ctx({ potions: 0 }))).toBeNull();
+  });
+
+  it('"taunt"/"mock"/"provoke" → taunt', () => {
+    expect(matchBattleAction('taunt', ctx())).toEqual({ kind: 'taunt' });
+    expect(matchBattleAction('mock him', ctx())).toEqual({ kind: 'taunt' });
+    expect(matchBattleAction('provoke the foe', ctx())).toEqual({ kind: 'taunt' });
+  });
+
+  it('a MOVE NAME said at root jumps straight to that fight move (skips the submenu)', () => {
+    expect(matchBattleAction('Thunder Jolt', ctx())).toEqual({ kind: 'fight', moveId: moves[0].id });
+    expect(matchBattleAction('use tackle', ctx())).toEqual({ kind: 'fight', moveId: moves[3].id });
+    expect(matchBattleAction('zap them', ctx())).toEqual({ kind: 'fight', moveId: moves[1].id });
+  });
+
+  it('a bare NUMBER at root selects the ROOT action (1 fight, 2 guard, 3 item, 4 taunt)', () => {
+    expect(matchBattleAction('one', ctx())).toEqual({ kind: 'openFight' });     // 1 = FIGHT
+    expect(matchBattleAction('two', ctx())).toEqual({ kind: 'guard' });          // 2 = GUARD
+    expect(matchBattleAction('three', ctx())).toEqual({ kind: 'item', item: 'potion' });   // 3 = ITEM
+    expect(matchBattleAction('four', ctx())).toEqual({ kind: 'taunt' });         // 4 = TAUNT
+  });
+
+  it('root number 3 (item) is refused when no potions remain', () => {
+    expect(matchBattleAction('three', ctx({ potions: 0 }))).toBeNull();
+  });
+
+  it('"back" at root is a no-op → null (already at the top)', () => {
+    expect(matchBattleAction('back', ctx())).toBeNull();
+    expect(matchBattleAction('go back', ctx())).toBeNull();
+  });
+
+  it('unrecognized input → null', () => {
+    expect(matchBattleAction('banana', ctx())).toBeNull();
+    expect(matchBattleAction('', ctx())).toBeNull();
+  });
+});
+
+describe('matchBattleAction — FIGHT submenu', () => {
+  const fightCtx = (over: Partial<BattleMenuCtx> = {}) => ctx({ level: 'fight', ...over });
+
+  it('a bare NUMBER in the fight submenu picks a MOVE (not a root action)', () => {
+    expect(matchBattleAction('one', fightCtx())).toEqual({ kind: 'fight', moveId: moves[0].id });
+    expect(matchBattleAction('two', fightCtx())).toEqual({ kind: 'fight', moveId: moves[1].id });
+    expect(matchBattleAction('move 3', fightCtx())).toEqual({ kind: 'fight', moveId: moves[2].id });
+    expect(matchBattleAction('the fourth one', fightCtx())).toEqual({ kind: 'fight', moveId: moves[3].id });
+  });
+
+  it('a move NAME in the fight submenu picks that move', () => {
+    expect(matchBattleAction('static zap', fightCtx())).toEqual({ kind: 'fight', moveId: moves[1].id });
+    expect(matchBattleAction('jolt', fightCtx())).toEqual({ kind: 'fight', moveId: moves[0].id });
+  });
+
+  it('"back"/"cancel"/"return" in the fight submenu → back', () => {
+    expect(matchBattleAction('back', fightCtx())).toEqual({ kind: 'back' });
+    expect(matchBattleAction('go back', fightCtx())).toEqual({ kind: 'back' });
+    expect(matchBattleAction('cancel', fightCtx())).toEqual({ kind: 'back' });
+    expect(matchBattleAction('never mind', fightCtx())).toEqual({ kind: 'back' });
+  });
+
+  it('an out-of-range move number in the fight submenu → null', () => {
+    expect(matchBattleAction('move 9', fightCtx())).toBeNull();
+  });
+
+  it('unrecognized input in the fight submenu → null', () => {
+    expect(matchBattleAction('banana', fightCtx())).toBeNull();
+    expect(matchBattleAction('', fightCtx())).toBeNull();
+  });
+
+  it('a ROOT action keyword still works from inside the fight submenu (e.g. "guard")', () => {
+    // Callers shouldn't have to say "back" first — a clear root command from the fight level acts.
+    expect(matchBattleAction('guard', fightCtx())).toEqual({ kind: 'guard' });
+    expect(matchBattleAction('taunt', fightCtx())).toEqual({ kind: 'taunt' });
   });
 });

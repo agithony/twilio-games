@@ -9,11 +9,14 @@
 import { BattleConnection, type BattleStateMsg } from './battle-net';
 import { BattleRenderer, type UiPhase, type MenuMove } from './battle-renderer';
 import { ArenaBackground } from './arena-background';
-import { drawMonsterSprite } from './monster-sprite';
+import { AmbientFx } from './ambient-fx';
+import { drawMonsterSprite, typeColor } from './monster-sprite';
+import { moveById } from '../../shared/monster-roster';
 import { spriteCandidateUrls } from './sprite-sources';
 import type { RosterEntry } from '../../shared/battle-protocol';
 import type { BattleEvent, BattleAction } from '../../shared/battle-world';
 import { effectivenessLabel } from '../../shared/monster-types';
+import { matchBattleAction } from '../../shared/battle-intent';
 
 const params = new URLSearchParams(location.search);
 const isDisplay = params.get('display') === '1';
@@ -27,6 +30,11 @@ const wsUrl = params.get('ws')
 
 const overlay = document.getElementById('overlay')!;
 const stageEl = document.getElementById('stage')!;
+const appEl = document.getElementById('app')!;
+
+// The OUTER background FX layer: fills #app AROUND the stage + flashes the attack's color across the
+// whole screen. Separate from the 3D arena/stage (those are untouched).
+const ambient = new AmbientFx(appEl);
 
 const conn = new BattleConnection(wsUrl);
 // The 3D spinning arena sits BEHIND the GB battle canvas (both live in #stage). Created first so its
@@ -140,6 +148,8 @@ function drainNext(): void {
     movesSeenThisTurn++;
     if (movesSeenThisTurn === 2) { pendingHandoff = ev.by; eventQ.unshift(ev); setTimeout(drainNext, 0); return; }
     renderer.setActiveSide(ev.by);
+    // Flash the OUTER background in the move's element color (leaves the 3D stage untouched).
+    ambient.flash(typeColor(moveById(ev.moveId)?.type ?? 'normal'));
   }
 
   renderer.playEvent(ev);
@@ -358,23 +368,81 @@ addEventListener('keydown', (e) => {
   }
 });
 
-/** Drive the two-level command menu from a keypress. */
+/** Drive the two-level command menu from a keypress. Thin: it maps keys → the SAME menu-action shape
+ *  voice produces (openFight/back/guard/item/taunt/fight-move), then hands off to applyMenuAction so
+ *  keyboard + voice share one nav/commit path. */
 function handleMenuKey(key: string): void {
   if (!state?.snapshot) return;
   if (menuLevel === 'root') {
-    if (key === '1') { menuLevel = 'fight'; paintBattle(); }             // FIGHT → open moves
-    else if (key === '2') commitAction({ kind: 'guard' }, 'Guard!');
-    else if (key === '3') { if (myPotions() > 0) commitAction({ kind: 'item', item: 'potion' }, 'Potion!'); }
-    else if (key === '4') commitAction({ kind: 'taunt' }, 'Taunt!');
+    if (key === '1') applyMenuAction({ kind: 'openFight' });
+    else if (key === '2') applyMenuAction({ kind: 'guard' });
+    else if (key === '3') applyMenuAction({ kind: 'item', item: 'potion' });
+    else if (key === '4') applyMenuAction({ kind: 'taunt' });
     return;
   }
   // fight submenu
-  if (key === '0' || key === 'Escape') { menuLevel = 'root'; paintBattle(); return; }   // back
+  if (key === '0' || key === 'Escape') { applyMenuAction({ kind: 'back' }); return; }
   if (/^[1-4]$/.test(key)) {
-    const side = mySide(state); if (!side) return;
-    const mv = (side === 'b' ? state.snapshot.b : state.snapshot.a).moves[parseInt(key, 10) - 1];
-    if (mv) commitAction({ kind: 'fight', moveId: mv.id }, mv.name);
+    const mv = mySnapMoves()[parseInt(key, 10) - 1];
+    if (mv) applyMenuAction({ kind: 'fight', moveId: mv.id });
   }
+}
+
+/** Drive the same two-level menu from a SPOKEN utterance (Conversation Relay transcript). Voice reuses
+ *  the SAME nav/commit path as the keyboard: we run the pure `matchBattleAction` matcher against the
+ *  live snapshot (my 4 moves + potions + current level), then hand its result to applyMenuAction.
+ *
+ *  ── WIRING SEAM ──────────────────────────────────────────────────────────────────────────────────
+ *  This is EXPORTED as the client's voice entry point. Twilio ConversationRelay is NOT yet routed to
+ *  the /battle rooms (the `/voice` WS in server/http-server.ts binds callers to the RACER game only —
+ *  `findOrCreateRoom: (code) => this.game.getOrCreateRoom(code)`). To finish live voice, the server
+ *  needs a battle-side transcript path that ultimately reaches THIS function for the shared-screen /
+ *  device client. Two follow-up options (either is a small change, both out of scope here — and
+ *  server/battle-room.ts must NOT be touched per the current task split):
+ *    (a) Client-side speech: feed the browser's SpeechRecognition final transcript here directly, OR
+ *    (b) Server relay: add a battle branch to the ConversationRelay adapter that forwards the caller's
+ *        transcript over the /battle socket to the room's client(s), which then call this. That needs a
+ *        new client→server "voice_utterance"/server→client passthrough message in battle-protocol.ts +
+ *        battle-server.ts (NOT battle-room.ts). Until then, this hook is exercised by the pure tests +
+ *        can be driven from the console (window.__battleVoice('guard')) for manual verification. */
+export function handleVoiceUtterance(text: string): boolean {
+  if (state?.phase !== 'battle' || currentUiPhase() !== 'awaiting-input') return false;
+  if (!state.snapshot) return false;
+  const action = matchBattleAction(text, {
+    moves: mySnapMoves().map(m => ({ id: m.id, name: m.name })),
+    potions: myPotions(),
+    level: menuLevel,
+  });
+  if (!action) return false;   // unrecognized → caller stays put (server/relay may re-prompt)
+  applyMenuAction(action);
+  return true;
+}
+// Expose the voice hook for manual testing + the eventual relay wiring (see the seam note above).
+(window as unknown as { __battleVoice?: (t: string) => boolean }).__battleVoice = handleVoiceUtterance;
+
+/** The single nav/commit dispatcher SHARED by keyboard + voice. Nav results (openFight/back) just move
+ *  the menu level; the four real actions commit the turn. ITEM is guarded on the potion count here too,
+ *  so neither input path can spend a potion the player doesn't have. */
+function applyMenuAction(action: BattleAction | { kind: 'openFight' } | { kind: 'back' }): void {
+  switch (action.kind) {
+    case 'openFight': menuLevel = 'fight'; paintBattle(); return;
+    case 'back':      menuLevel = 'root';  paintBattle(); return;
+    case 'guard':     commitAction({ kind: 'guard' }, 'Guard!'); return;
+    case 'taunt':     commitAction({ kind: 'taunt' }, 'Taunt!'); return;
+    case 'item':      if (myPotions() > 0) commitAction({ kind: 'item', item: 'potion' }, 'Potion!'); return;
+    case 'fight': {
+      const mv = mySnapMoves().find(m => m.id === action.moveId);
+      if (mv) commitAction({ kind: 'fight', moveId: mv.id }, mv.name);
+      return;
+    }
+  }
+}
+
+/** My monster's current move list from the live snapshot (display/spectator falls back to A's moves,
+ *  matching mySideMoves). Shared by the keyboard + voice menu logic. */
+function mySnapMoves(): { id: string; name: string }[] {
+  const snap = state?.snapshot; if (!snap) return [];
+  return (mySide(state!) === 'b' ? snap.b : snap.a).moves.map(m => ({ id: m.id, name: m.name }));
 }
 
 /** How many Potions the local player has left (greys out ITEM at 0). */
