@@ -34,7 +34,17 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': { target: 'http://localhost:8080', changeOrigin: true },
-      '/assets': { target: 'http://localhost:8080', changeOrigin: true },
+      // GLB models live in the repo-root assets/ served by the node server, so /assets is proxied.
+      // EXCEPT monster sprites, which live in client/public/assets/monsters/ and are served by Vite
+      // itself — without this bypass the proxy would forward them to node (which has no client/public)
+      // and they'd 404 to the placeholder in dev. In production node serves them from dist/, no proxy.
+      '/assets': {
+        target: 'http://localhost:8080', changeOrigin: true,
+        bypass: (req) => {
+          const url = (req.url ?? '').split('?')[0];
+          return url.startsWith('/assets/monsters/') ? url : undefined;   // Vite serves; else proxy
+        },
+      },
     },
   },
   build: {
