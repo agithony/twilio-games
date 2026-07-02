@@ -35,10 +35,14 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); c
   border-radius: 18px; box-shadow: 0 0 60px rgba(239,34,58,.12), inset 0 0 0 1px var(--glass-brd);
 }
 
-/* Overlay: lobby / monster-select / results — a full-screen Twilio glass panel over the navy bg. */
+/* Overlay: lobby / monster-select / results — a full-screen Twilio glass panel over the navy bg.
+   Scrolls when the card is taller than the viewport (the 8-monster grid), and uses `justify-content:
+   safe center` + block padding so the title/bottom hint always keep breathing room instead of
+   clipping the screen edges. */
 #overlay {
-  position: absolute; inset: 0; display: none; flex-direction: column; align-items: center; justify-content: center;
-  background: rgba(0,8,28,.72); backdrop-filter: blur(10px); padding: 24px;
+  position: absolute; inset: 0; display: none; flex-direction: column; align-items: center;
+  justify-content: safe center; overflow-y: auto;
+  background: rgba(0,8,28,.72); backdrop-filter: blur(10px); padding: 48px 24px;
 }
 
 /* ── Twilio brand header (matches Voice Racer's eyebrow → red wordmark → state) ── */
