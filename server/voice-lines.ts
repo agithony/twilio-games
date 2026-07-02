@@ -20,10 +20,14 @@ const MAP_SELECT = ['Now vote for the track — say its name or number!', 'Choos
 const CAR_PICKED = ['Nice choice!', 'Great pick!', 'Ooh, bold choice!', 'Solid ride!'];
 
 const STREAK = ['Those barriers are magnetic! Find the gaps!', 'Ouch — watch the walls!',
-  'The barriers keep finding you!'];
+  'The barriers keep finding you!', 'Thread the needle — aim for the gaps!', 'Those walls are brutal — say NITRO to bust through one!'];
 const LAST = ['You slipped to last — floor it and climb back!', "Don't give up — you can catch them!",
-  'Last place, but plenty of race left!'];
-const LEAD = ['You\'ve got the lead! Hold it!', 'Out in front — go go go!', 'First place is yours — keep it!'];
+  'Last place, but plenty of race left!', 'Dead last — time for a comeback, keep saying boost!', 'You can still win this — climb!'];
+const LEAD = ['You\'ve got the lead! Hold it!', 'Out in front — go go go!', 'First place is yours — keep it!',
+  'You\'re leading the pack — don\'t let up!', 'Nobody\'s catching you — floor it!'];
+// A NITRO dash blasting through a barrier — the special move paying off. Big, hype, spoken to the caller.
+const SMASH = ['BOOM! You SMASHED right through that barrier!', 'NITRO POWER — you plowed straight through!',
+  'YES! That barrier never stood a chance!', 'Demolished it! Nitro dash for the win!', 'Straight THROUGH it — incredible!'];
 
 /** What to SAY (if anything) for a game event, from THIS caller's perspective. Returns null when the
  *  event shouldn't be spoken to THIS caller. `myPlayerId` is the caller's bound player id, so we only
@@ -51,6 +55,8 @@ export function lineForEvent(ev: GameEvent, myPlayerId: string | null, seq = 0):
       return mine(ev.playerId) ? pick(LAST, seq) : null;
     case 'lead_change':
       return mine(ev.playerId) ? pick(LEAD, seq) : null;
+    case 'barrier_smashed':
+      return mine(ev.playerId) ? pick(SMASH, seq) : null;   // NITRO paid off — hype it up
     // hit / boost_taken / race_over → not spoken to the caller (screen announcer covers them).
     default:
       return null;
@@ -62,7 +68,7 @@ const pick = (arr: string[], seq: number): string => arr[Math.abs(seq) % arr.len
 /** Which event kinds are the mid-race "arcade" lines — the adapter throttles these so spoken audio
  *  doesn't step on the caller's own commands. Countdown/go/finish are key moments, always spoken. */
 export function isChattyEvent(kind: GameEvent['kind']): boolean {
-  return kind === 'hit_streak' || kind === 'fell_to_last' || kind === 'lead_change';
+  return kind === 'hit_streak' || kind === 'fell_to_last' || kind === 'lead_change' || kind === 'barrier_smashed';
 }
 
 /** A result callout by finishing place. First place is BIG — this is the scripted fallback (when the

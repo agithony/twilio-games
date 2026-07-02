@@ -56,6 +56,21 @@ describe('voice-lines', () => {
     expect(placeLine(5)).toContain('5th');
   });
 
+  it('speaks a HYPE line when the caller NITRO-smashes a barrier (showcases the special move)', () => {
+    const line = lineForEvent({ kind: 'barrier_smashed', playerId: 'p1', itemId: 7 }, 'p1');
+    expect(line).toBeTruthy();
+    expect(line!.toLowerCase()).toMatch(/smash|through|nitro|bust|demolish|plow/);
+    // not spoken for another player's smash
+    expect(lineForEvent({ kind: 'barrier_smashed', playerId: 'p2', itemId: 7 }, 'p1')).toBeNull();
+  });
+
+  it('varies arcade phrasing by seq (not the same line every time)', () => {
+    const a = lineForEvent({ kind: 'lead_change', playerId: 'p1', name: 'Me' }, 'p1', 0);
+    const b = lineForEvent({ kind: 'lead_change', playerId: 'p1', name: 'Me' }, 'p1', 1);
+    const c = lineForEvent({ kind: 'lead_change', playerId: 'p1', name: 'Me' }, 'p1', 2);
+    expect(new Set([a, b, c]).size).toBeGreaterThan(1);
+  });
+
   it('ordinal handles the tricky cases', () => {
     expect(ordinal(1)).toBe('1st');
     expect(ordinal(2)).toBe('2nd');
