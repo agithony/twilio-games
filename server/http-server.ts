@@ -392,7 +392,11 @@ export class HttpServer {
         const clean = name.trim().slice(0, 20);
         if (!clean) return null;
         this.game.voiceSetName(room.code, playerId, clean);
-        return `Nice to meet you, ${clean}!`;
+        // Always chain into the NEXT step so a bare tool call never leaves dead air (the "it just said
+        // 'nice to meet you' and stopped" issue). In the lobby, point them at getting into the race.
+        return room.phase === 'lobby'
+          ? `Nice to meet you, ${clean}! Others can still call in — say "start" whenever you're ready to pick your car.`
+          : `Nice to meet you, ${clean}!`;
       },
       selectCarByName: (name) => {
         const i = matchChoice(name, cars);

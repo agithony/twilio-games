@@ -56,10 +56,10 @@ export function buildSystemPrompt(ctx: HostContext): string {
   // Onboarding sequence: proactively drive name → car → map → start, ONE step at a time. Always get
   // the NAME first (any phase) if it's still unset.
   if (!ctx.myName) {
-    lines.push("The caller has NOT given their name yet. Your FIRST job: ask their name, and the moment they say it, CALL set_name with it, then move on to the car.");
+    lines.push("The caller has NOT given their name yet. Your FIRST job: ask their name, and the moment they say it, CALL set_name. In the SAME reply, greet them BY NAME and tell them what happens next — do NOT just say 'nice to meet you' and stop. Immediately guide them into picking a car (see the phase note below).");
   }
   if (ctx.phase === 'lobby') {
-    lines.push('SCREEN: the LOBBY (room code + who has joined). Once you have their name, tell them you are starting and CALL start_race to move to CAR selection. Do not mention cars or tracks as chosen yet — nothing is picked.');
+    lines.push("SCREEN: the LOBBY (players call in to join; the shared screen shows who's in). Once you have their name: greet them, say they can wait a moment for other players to call in OR jump right in, and that you'll take them to pick their car — then CALL start_race to advance to CAR selection. NEVER end a turn on a bare 'nice to meet you'; always tell them the next step. Nothing is picked yet, so don't mention specific cars/tracks.");
   }
   if (ctx.phase === 'car_select') {
     lines.push(`SCREEN: CAR SELECT — a grid of cars is on the display right now. The ONLY cars that exist are, in order: ${numberedList(ctx.cars)}. These names are EXACT — only ever say a car from THIS list, never invent or rename one, and if unsure read the number. Callers can pick by number ("car 2") or name.`);
@@ -70,8 +70,9 @@ export function buildSystemPrompt(ctx: HostContext): string {
     }
   }
   if (ctx.phase === 'map_select') {
-    lines.push(`SCREEN: TRACK VOTE — the tracks are on the display. This is a VOTE (each player votes; most votes wins, ties broken randomly). The ONLY tracks that exist are, in order: ${numberedList(ctx.maps)}. These names are EXACT — only ever say a track from THIS list, NEVER make up or guess a track name. If you are not sure of a name, say its number. Callers can vote by number or name.`);
-    lines.push(`${ctx.selectedMap ? `Currently leading: ${ctx.selectedMap}. ` : ''}Ask which track they want and CALL select_map to cast THEIR vote; tell them it is a vote. Only CALL start_race once they say they are ready to race.`);
+    lines.push(`SCREEN: TRACK VOTE — the tracks are on the display. This is a VOTE (each player votes; most votes wins, ties broken randomly). The ONLY tracks that exist are, in order: ${numberedList(ctx.maps)}.`);
+    lines.push('CRITICAL — TRACK NAMES: say each track name EXACTLY as written above, word-for-word — do NOT translate it, spell it out, add flavor words, or invent a fancier name. If a name looks odd or you are unsure how to say it, refer to it by its NUMBER instead ("track two"). Never speak a track name that is not verbatim in the list. Prefer numbers — it is a shared screen and numbers are unambiguous.');
+    lines.push(`${ctx.selectedMap ? `Currently leading: ${ctx.selectedMap}. ` : ''}Ask which track they want (you can say "say a track name or number") and CALL select_map to cast THEIR vote; tell them it is a vote. Only CALL start_race once they say they are ready to race.`);
   }
   if (ctx.phase === 'racing' || ctx.phase === 'countdown') {
     lines.push('A race is LIVE — the caller should be DRIVING (shouting left/right/boost/brake/nitro), and the scripted announcer handles the play-by-play. Do NOT narrate unprompted. But if they ASK you something mid-race ("what place am I?", "how do I use nitro?"), answer in a SNAPPY few words so it does not bury their next command. Otherwise stay quiet.');

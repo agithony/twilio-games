@@ -221,12 +221,13 @@ export class BattleRenderer {
       this.drawMonster('b', 108, 42, 46, 'front');   // platform center (x, groundY), sprite size
       this.drawMonster('a', 44, 82, 52, 'back');
       this.attackFx.draw(ctx, S, this.tick);   // typed attack FX OVER the monsters (never below y88)
-      // Win/faint flourish: a bobbing trophy over the victor, sleepy Z's over the fainted loser.
-      // Anchors above each sprite (b up-right at x108, a down-left at x44).
-      if (this.winnerSide === 'b') this.drawTrophy(108, 4);
-      else if (this.winnerSide === 'a') this.drawTrophy(44, 44);
-      if (this.faintedSide === 'b') this.drawZzz(122, 8);
-      else if (this.faintedSide === 'a') this.drawZzz(58, 48);
+      // Win/faint flourish: a bobbing trophy over the VICTOR, a "K.O." badge over the fainted loser.
+      // Anchored ABOVE each sprite's head (b's top ≈ y-4 up-right at x108; a's top ≈ y30 down-left at
+      // x44), so neither overlaps the monster's body.
+      if (this.winnerSide === 'b') this.drawTrophy(108, 2);
+      else if (this.winnerSide === 'a') this.drawTrophy(44, 14);
+      if (this.faintedSide === 'b') this.drawKO(108, 2);
+      else if (this.faintedSide === 'a') this.drawKO(44, 14);
       this.drawHpBox('b', this.snap.b, 6, 8, false);   // enemy: top-left
       this.drawHpBox('a', this.snap.a, 84, 58, true);  // you: bottom-right (with HP numbers)
       // Turn indicator: a bobbing arrow to the SIDE of whoever is acting, pointing at it. To the RIGHT
@@ -437,20 +438,29 @@ export class BattleRenderer {
     if (Math.floor(this.tick * 0.1) % 2 === 0) ctx.fillRect(cx - 2, ty + 1, 1, 1);
   }
 
-  /** Sleepy "Z z z" drifting up above a fainted monster (start near cx,y). */
-  private drawZzz(cx: number, y: number): void {
+  /** A "K.O." badge above a fainted monster — a red pill with white "K.O." + spinning faint stars, the
+   *  classic "knocked out" read. Bobs down into place. Centered on cx, top near y. */
+  private drawKO(cx: number, y: number): void {
     const ctx = this.ctx;
-    ctx.fillStyle = '#cdd6e6';
-    ctx.font = '7px monospace';
+    const drop = Math.max(0, 4 - this.tick * 0.2);   // small settle-in from above (decays over ~20 frames)
+    const by = y + drop;
+    // red pill background
+    const w = 22, h = 11, px = cx - w / 2;
+    ctx.fillStyle = '#0a0a0a'; ctx.fillRect(px - 1, by - 1, w + 2, h + 2);   // dark outline
+    ctx.fillStyle = '#e5533c'; ctx.fillRect(px, by, w, h);                    // red fill
+    // "K.O." text
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 8px monospace';
     ctx.textBaseline = 'top';
-    // three Z's of increasing size drifting up + right, gently bobbing on a loop
-    const t = this.tick * 0.04;
-    const zs = [{ dx: 0, dy: 6, s: 5 }, { dx: 5, dy: 1, s: 7 }, { dx: 11, dy: -4, s: 9 }];
-    zs.forEach((z, i) => {
-      const bob = Math.sin(t + i) * 1.2;
-      ctx.font = `${z.s}px monospace`;
-      ctx.fillText('Z', cx + z.dx, y + z.dy + bob);
-    });
+    ctx.fillText('K.O.', px + 3, by + 2);
+    // two little faint-stars circling above the badge
+    ctx.fillStyle = '#ffd23f';
+    for (let i = 0; i < 2; i++) {
+      const a = this.tick * 0.15 + i * Math.PI;
+      const sx = Math.round(cx + Math.cos(a) * 8);
+      const sy = Math.round(by - 4 + Math.sin(a) * 2);
+      ctx.fillRect(sx, sy, 2, 2);
+    }
   }
 
   dispose(): void { cancelAnimationFrame(this.raf); this.canvas.remove(); this.spriteLayer.remove(); }
