@@ -60,6 +60,8 @@ conn.onState((m) => {
   state = m;
   // A fresh turn (back to choosing) clears the last locked move + resets the menu to the root actions.
   if (m.snapshot?.phase === 'choosing' && !chosenForMe(m)) { lockedMoveName = null; menuLevel = 'root'; }
+  // Leaving results (rematch / reset) drops any pending continue-hold so it can't strand the stage.
+  if (m.phase !== 'results') awaitingContinue = false;
   // First time we enter a battle, spin up the 3D arena behind the GB overlay (lazy — no 3D in menus).
   // Pull the editor-authored config from /api/arena; fall back to sensible defaults on any failure.
   if (m.phase === 'battle' && !arenaLoaded) {
@@ -129,6 +131,7 @@ function queueEvents(events: BattleEvent[]): void {
 }
 let movesSeenThisTurn = 0;      // how many attacks played so far this turn (resets on turn_start)
 let pendingHandoff: 'a' | 'b' | null = null;   // a synthetic "▶ X'S TURN" card to show before next move
+let awaitingContinue = false;   // battle ended → holding on the arena until the player acknowledges
 
 function drainNext(): void {
   // A queued handoff card takes priority: show it as its own slow beat, THEN continue to the attack.
@@ -140,7 +143,13 @@ function drainNext(): void {
     return;
   }
   const ev = eventQ.shift();
-  if (!ev) { draining = false; movesSeenThisTurn = 0; renderer.setActiveSide(null); paintBattle(); renderOverlay(); return; }
+  if (!ev) {
+    draining = false; movesSeenThisTurn = 0; renderer.setActiveSide(null);
+    // Battle just ended? Don't jump straight to the results modal — hold on the arena with a
+    // "▶ Continue" prompt so the win lands, and wait for the player to acknowledge.
+    if (state?.phase === 'results') { awaitingContinue = true; renderer.setEventBanner(`${state.result?.winnerName ?? 'Winner'} wins!  ▶ Press Enter / tap`); renderOverlay(); return; }
+    paintBattle(); renderOverlay(); return;
+  }
 
   if (ev.kind === 'turn_start') movesSeenThisTurn = 0;
   // Before the SECOND attack of a turn, inject a handoff card announcing the other side's turn.
@@ -213,7 +222,8 @@ function renderOverlay(): void {
   const phase = state?.phase ?? 'connecting';
   // The battle STAGE (GB canvas + 3D arena) must only show during an actual battle. Otherwise its
   // "Waiting…" canvas rendered ON TOP of the lobby/select overlays (covering the buttons — the bug).
-  const inBattle = phase === 'battle' || draining;
+  // Also keep it up while AWAITING CONTINUE (battle ended, holding on the win before the results modal).
+  const inBattle = phase === 'battle' || draining || awaitingContinue;
   stageEl.style.display = inBattle ? '' : 'none';
   // During battle (incl. resolving), the GB canvas owns the screen — no overlay.
   if (inBattle || phase === 'connecting') {
@@ -361,12 +371,23 @@ else { conn.join(roomCode, name); joinedHere = true; }
 //   fight: 1–4 pick a move, 0 goes back to root.
 // Enter advances the lobby/select/results flow.
 addEventListener('keydown', (e) => {
+  if (awaitingContinue) { dismissContinue(); return; }   // battle-end hold → any key continues
   if (state?.phase === 'battle' && currentUiPhase() === 'awaiting-input') {
     handleMenuKey(e.key);
   } else if (e.key === 'Enter' && isDisplay && state?.phase !== 'battle') {
     conn.advance();
   }
 });
+// Tap/click the stage to continue past the battle-end hold (phone-friendly, no keyboard needed).
+stageEl.addEventListener('click', () => { if (awaitingContinue) dismissContinue(); });
+
+/** Player acknowledged the win → drop the hold + clear the banner so the results modal appears. */
+function dismissContinue(): void {
+  awaitingContinue = false;
+  renderer.setEventBanner('');
+  lastOverlayKey = '';   // force the results overlay to (re)build now that the stage is hidden
+  renderOverlay();
+}
 
 /** Drive the two-level command menu from a keypress. Thin: it maps keys → the SAME menu-action shape
  *  voice produces (openFight/back/guard/item/taunt/fight-move), then hands off to applyMenuAction so
