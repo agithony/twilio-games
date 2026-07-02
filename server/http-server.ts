@@ -18,7 +18,7 @@ import { appendResults, parseLeaderboard, topEntries } from '../shared/leaderboa
 import { SmsConcierge, type ConciergeRoom } from './sms-concierge';
 import { OpenAiClient, NullLlmClient, type LlmClient, type LlmTurn } from './llm';
 import { hostTurn, matchChoice, clearSelectionIndex, type HostContext } from './game-host';
-import { BattleVoiceSession, parseSpokenName, type BattleVoiceSnapshot } from './battle-voice';
+import { BattleVoiceSession, parseSpokenName, isAdvanceWord, type BattleVoiceSnapshot } from './battle-voice';
 import { battleHostTurn, type BattleHostContext } from './battle-host';
 import { monsterById, rosterEntries } from '../shared/monster-roster';
 import type { Room } from './room';
@@ -386,15 +386,37 @@ export class HttpServer {
     }
     if (room.phase === 'car_select') {
       const i = clearSelectionIndex(utterance, this.roomConfigCache.carNames);
-      if (i === null) return null;
-      this.game.voiceSelectCar(room.code, playerId, i);
-      return `Locked in — the ${room.carName(i)}! Say "next" when you're ready for the track.`;
+      if (i !== null) {
+        this.game.voiceSelectCar(room.code, playerId, i);
+        return `Locked in — the ${room.carName(i)}! Say "next" when you're ready for the track.`;
+      }
+      // "next"/"start" advances to the track — but only once they've actually picked a car.
+      if (isAdvanceWord(utterance)) {
+        const me = room.lobbyPlayers().find(p => p.playerId === playerId);
+        if ((me?.carIndex ?? null) === null) return 'Pick your car first — say a car name or number.';
+        return this.game.voiceAdvance(room.code) ? 'On to the track — say a track name or number!' : null;
+      }
+      return null;
     }
     if (room.phase === 'map_select') {
       const i = clearSelectionIndex(utterance, room.mapChoices);
       if (i === null) return null;
       this.game.voiceSelectMap(room.code, room.mapChoices[i]!, playerId);
       return `Your vote's in for ${room.mapChoices[i]}! Say "start" when you're ready to race.`;
+    }
+    // ADVANCE / REMATCH (deterministic, LLM-independent): "start"/"go"/"next"/"race"/"rematch" moves the
+    // flow forward — this was previously LLM-only, so "start" did nothing when the model was off/slow.
+    if (isAdvanceWord(utterance)) {
+      const me = room.lobbyPlayers().find(p => p.playerId === playerId);
+      // (car_select is handled by its own branch above; reaching here means lobby/map_select/results.)
+      const ok = this.game.voiceAdvance(room.code);
+      if (!ok) return null;
+      // room.phase is now the NEW phase we advanced INTO — describe that screen.
+      const landed = String(room.phase);
+      void me;
+      return landed === 'car_select' ? 'Choose your car — say a name or number!'
+        : landed === 'map_select' ? 'On to the track — say a track name or number!'
+        : "Here we go — let's race!";
     }
     return null;
   }

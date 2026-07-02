@@ -96,25 +96,38 @@ export class BattleVoiceSession {
     const snap = this.deps.snapshot(this.code!, this.playerId!);
     if (!snap) { void this.converse(text); return; }
 
-    // NAME CAPTURE (deterministic, LLM-independent): while the caller still has no real name — which is
-    // the very first thing we ask — treat a short reply as their name, set it, and confirm + guide to
-    // the next step. This must NOT rely on the LLM (the "I gave my name but nothing happened" bug).
+    // Every REQUIRED step of the flow has a deterministic, LLM-INDEPENDENT path here, so the game is
+    // fully playable by voice even with the LLM off/slow. The LLM is only a fallback for chat/questions.
+
+    // NAME CAPTURE: the first thing we ask. While the caller has no real name, a name-like reply sets it.
     if (!snap.myName && snap.phase !== 'battle') {
       const name = parseSpokenName(text);
       if (name) {
         this.deps.setName(this.code!, this.playerId!, name);
-        this.deps.say(`Nice to meet you, ${name}! Others can still call in — say "start" when you're ready to pick your monster.`);
+        const next = snap.phase === 'lobby' ? 'say "start" when you\'re ready to pick your monster' : 'now pick your monster — say its name';
+        this.deps.say(`Nice to meet you, ${name}! ${next[0]!.toUpperCase()}${next.slice(1)}.`);
         return;
       }
+    }
+
+    // ADVANCE / REMATCH: "start"/"go"/"battle"/"next"/"ready"/"rematch"/"again" moves the flow forward.
+    // This is what was missing — advancing between screens silently depended on the LLM before.
+    if (isAdvanceWord(text)) {
+      if (snap.phase === 'lobby') { this.deps.advance(this.code!); this.deps.say('Choose your monster — say its name!'); return; }
+      if (snap.phase === 'monster_select') {
+        if (!snap.myMonsterId) { this.deps.say('Pick a monster first — say its name or a number.'); return; }
+        this.deps.advance(this.code!); this.deps.say(`Here we go — ${snap.myMonsterName} is ready to battle!`); return;
+      }
+      if (snap.phase === 'results') { this.deps.advance(this.code!); this.deps.say('Rematch! Pick your monster.'); return; }
     }
 
     // MONSTER SELECT: a clear name/number picks a monster immediately (no LLM latency).
     if (snap.phase === 'monster_select') {
       const idx = matchNameOrNumber(text, snap.monsterNames);
       if (idx >= 0) {
-        // Map display-name index → the roster id the sim expects (lowercased, spaces→''): the ids are
-        // the lowercased single-word names (sparkmouse, embertail…), so derive from the name.
-        this.deps.selectMonster(this.code!, this.playerId!, snap.monsterNames[idx]!.toLowerCase().replace(/\s+/g, ''));
+        const name = snap.monsterNames[idx]!;
+        this.deps.selectMonster(this.code!, this.playerId!, name.toLowerCase().replace(/\s+/g, ''));
+        this.deps.say(`${name}! Great pick — say "battle" when you're ready.`);
         return;
       }
     }
@@ -123,7 +136,7 @@ export class BattleVoiceSession {
     if (snap.phase === 'battle' && snap.whoseTurn === 'me') {
       const res = matchBattleAction(text, { moves: snap.myMoves, potions: snap.myPotions, level: this.menuLevel });
       if (res) {
-        if (res.kind === 'openFight') { this.menuLevel = 'fight'; return; }
+        if (res.kind === 'openFight') { this.menuLevel = 'fight'; this.deps.say('Which move? Say its name or a number.'); return; }
         if (res.kind === 'back') { this.menuLevel = 'root'; return; }
         this.menuLevel = 'root';
         this.deps.chooseAction(this.code!, this.playerId!, res);
@@ -164,6 +177,11 @@ export class BattleVoiceSession {
     if (this.code && this.playerId) this.deps.leave(this.code, this.playerId);
     this.code = null; this.playerId = null;
   }
+}
+
+/** True when the caller is asking to move the flow FORWARD (start the battle / rematch / continue). */
+export function isAdvanceWord(spoken: string): boolean {
+  return /\b(start|begin|go|battle|fight now|ready|next|continue|rematch|again|play again|run it back|let'?s go)\b/i.test(spoken.trim());
 }
 
 /** Match a spoken phrase to a choice index by NAME (fuzzy) or NUMBER ("two", "monster 3"), or -1. */

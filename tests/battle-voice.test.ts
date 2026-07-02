@@ -2,7 +2,7 @@
 // spoken turns (via the voice matcher + LLM host) into battle actions, and speaks commentary from
 // battle events. Tested against a fake battle backend + fake LLM (no WS/Twilio).
 import { describe, it, expect } from 'vitest';
-import { BattleVoiceSession, parseSpokenName, type BattleVoiceDeps } from '../server/battle-voice';
+import { BattleVoiceSession, parseSpokenName, isAdvanceWord, type BattleVoiceDeps } from '../server/battle-voice';
 import type { BattleEvent } from '../shared/battle-world';
 
 describe('parseSpokenName', () => {
@@ -18,6 +18,18 @@ describe('parseSpokenName', () => {
     expect(parseSpokenName('which monster is best?')).toBeNull();
     expect(parseSpokenName('what do I do?')).toBeNull();
     expect(parseSpokenName('')).toBeNull();
+  });
+});
+
+describe('isAdvanceWord', () => {
+  it('recognizes the ways a caller says "move forward"', () => {
+    for (const w of ['start', 'go', 'begin', 'battle', "let's go", 'ready', 'next', 'rematch', 'again', 'run it back']) {
+      expect(isAdvanceWord(w)).toBe(true);
+    }
+  });
+  it('does not fire on unrelated speech', () => {
+    expect(isAdvanceWord('Sparkmouse')).toBe(false);
+    expect(isAdvanceWord('what is this?')).toBe(false);
   });
 });
 
@@ -90,6 +102,37 @@ describe('BattleVoiceSession', () => {
     s.handleMessage(setup());
     s.handleMessage(prompt('Embertail'));
     expect(log.some(l => l === 'monster embertail')).toBe(true);
+  });
+
+  it('"start" advances the flow deterministically (no LLM) — lobby → select', () => {
+    const { deps, log } = fakeDeps({
+      snapshot: () => ({
+        phase: 'lobby', mySide: 'a', monsterNames: ['Sparkmouse'],
+        myName: 'Ada', myMonsterId: null, myMonsterName: null,
+        foeMonsterName: null, myHp: null, myMaxHp: null, foeHp: null, foeMaxHp: null,
+        myPotions: 2, whoseTurn: null, myMoves: [], winnerName: null,
+      }),
+    });
+    const s = new BattleVoiceSession(deps);
+    s.handleMessage(setup());
+    s.handleMessage(prompt('start'));
+    expect(log.filter(l => l === 'advance').length).toBe(1);
+  });
+
+  it('"battle" in monster-select is REFUSED until a monster is picked (no LLM)', () => {
+    const { deps, log, said } = fakeDeps({
+      snapshot: () => ({
+        phase: 'monster_select', mySide: 'a', monsterNames: ['Sparkmouse'],
+        myName: 'Ada', myMonsterId: null, myMonsterName: null,
+        foeMonsterName: null, myHp: null, myMaxHp: null, foeHp: null, foeMaxHp: null,
+        myPotions: 2, whoseTurn: null, myMoves: [], winnerName: null,
+      }),
+    });
+    const s = new BattleVoiceSession(deps);
+    s.handleMessage(setup()); said.length = 0;
+    s.handleMessage(prompt('battle'));
+    expect(log.some(l => l === 'advance')).toBe(false);      // did NOT advance
+    expect(said.some(t => /pick a monster first/i.test(t))).toBe(true);
   });
 
   it('a spoken battle action during battle commits it', async () => {
