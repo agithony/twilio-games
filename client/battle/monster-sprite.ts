@@ -55,6 +55,15 @@ const TYPE_ACCENT: Record<MonsterType, string> = {
   psychic: '#f7b8ec',
 };
 
+/** VIVID per-type signature color (matches the CSS --tc palette) — used for move-power pips and the
+ *  per-attack FX so type identity reads at a glance. One source of truth for "the color of fire". */
+const TYPE_COLOR: Record<MonsterType, string> = {
+  normal: '#c8d4e6', fire: '#ff6b3d', water: '#3f9be0', grass: '#4fc44a',
+  electric: '#ffd23f', rock: '#b89a6a', ground: '#d0a45a', flying: '#7ec0ff',
+  psychic: '#d861c9',
+};
+export function typeColor(type: string): string { return TYPE_COLOR[type as MonsterType] ?? '#c8d4e6'; }
+
 /** Draw a creature to a fresh canvas. Uses the hand-authored grid for its id; falls back to a simple
  *  filled blob only for an unknown id (should never happen for the fixed roster). */
 export function drawMonsterSprite(opts: SpriteOpts): HTMLCanvasElement {

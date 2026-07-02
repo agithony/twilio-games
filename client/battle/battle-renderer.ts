@@ -9,9 +9,10 @@
 // at an integer scale for crisp pixels.
 import type { MonsterType } from '../../shared/monster-types';
 import type { BattleSnapshot, BattleEvent } from '../../shared/battle-world';
-import { GB_SHADES, drawMonsterSprite } from './monster-sprite';
+import { GB_SHADES, drawMonsterSprite, typeColor } from './monster-sprite';
 import { spriteCandidateUrls } from './sprite-sources';
 import { ResolutionHp } from './resolution-hp';
+import { powerPips, fitMoveName } from './move-menu';
 import { hpFraction, hpZone, hpColor } from './hp-bar';
 
 // Logical GB resolution (160×144); we scale up to fill the element with nearest-neighbor crispness.
@@ -180,12 +181,14 @@ export class BattleRenderer {
       : (this.statusLine || (this.snap ? '' : 'Waiting…'));
     this.drawText(line, 11, 101);
     if (this.uiPhase === 'awaiting-input') {
-      // 4 moves in two columns under the prompt: "1 Ember   fir·50"
+      // 4 moves in two columns under the prompt. Each cell: "1 Ember" + a 5-pip power rating drawn as
+      // little filled/empty squares (NOT the meaningless raw base-power number). Name is truncated so
+      // nothing clips the 160px window. Command window spans x 4..156; two columns at 11 and 87.
       this.menuMoves.slice(0, 4).forEach((m, i) => {
         const col = i % 2, row = Math.floor(i / 2);
-        const x = 11 + col * 76, y = 116 + row * 12;
-        this.drawText(`${i + 1} ${m.name}`, x, y, true);
-        this.drawText(m.power > 0 ? `${m.type.slice(0, 3)}·${m.power}` : m.type.slice(0, 3), x + 54, y, true);
+        const x = 11 + col * 73, y = 117 + row * 12;
+        this.drawText(`${i + 1} ${fitMoveName(m.name, 9)}`, x, y, true);
+        this.drawPips(x, y + 6, powerPips(m.power), typeColor(m.type));   // rating row under the name
       });
     }
     ctx.restore();
@@ -271,6 +274,17 @@ export class BattleRenderer {
     ctx.font = `${small ? 6 : 8}px monospace`;
     ctx.textBaseline = 'top';
     ctx.fillText(text, x, y);
+  }
+
+  /** A move's power rating as up to 5 tiny squares: `filled` in the type color, the rest an empty
+   *  outline. Reads as "how hard does this hit" without the misleading raw base-power number. */
+  private drawPips(x: number, y: number, filled: number, color: string): void {
+    const ctx = this.ctx;
+    for (let i = 0; i < 5; i++) {
+      const px = x + i * 4;
+      if (i < filled) { ctx.fillStyle = color; ctx.fillRect(px, y, 3, 3); }
+      else { ctx.fillStyle = DARK; ctx.fillRect(px, y, 3, 3); ctx.fillStyle = PAPER; ctx.fillRect(px + 1, y + 1, 1, 1); }
+    }
   }
 
   dispose(): void { cancelAnimationFrame(this.raf); this.canvas.remove(); this.spriteLayer.remove(); }
