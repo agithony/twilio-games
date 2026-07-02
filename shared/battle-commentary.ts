@@ -14,6 +14,18 @@ export interface CommentaryCtx {
   bName: string;   // side 'b' monster display name
 }
 
+/** A dramatic "it's X versus Y!" scene-setter spoken when a battle kicks off. `mine`/`foe` are the two
+ *  monster display names. Varied + hype, one punchy line. */
+export function battleIntro(mine: string, foe: string, seq = 0): string {
+  return pick(INTROS, seq).replace('{me}', mine).replace('{foe}', foe);
+}
+const INTROS = [
+  "It's {me} versus {foe} — the arena is set, let the battle begin!",
+  'Here we go — {me} squares off against {foe}! This is going to be good!',
+  '{me} steps into the arena to face {foe} — may the best monster win!',
+  'The crowd roars as {me} and {foe} face off — battle stations!',
+];
+
 /** A spoken/shown line for a battle event (or null when this event shouldn't be narrated). `seq` picks
  *  a phrase-bank variant so repeated events don't read identically — pass a per-battle counter. */
 export function commentaryForBattleEvent(ev: BattleEvent, ctx: CommentaryCtx, seq = 0): string | null {

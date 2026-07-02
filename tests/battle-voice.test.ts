@@ -152,6 +152,22 @@ describe('BattleVoiceSession', () => {
     expect(log.some(l => l.includes('"kind":"guard"'))).toBe(true);
   });
 
+  it('on the first turn, speaks a dramatic X-vs-Y intro + how-to-act recap', () => {
+    const { deps, said } = fakeDeps({
+      snapshot: () => ({
+        phase: 'battle', mySide: 'a', monsterNames: ['Sparkmouse'],
+        myName: 'Ada', myMonsterId: 'sparkmouse', myMonsterName: 'Sparkmouse',
+        foeMonsterName: 'Galecoil', myHp: 70, myMaxHp: 70, foeHp: 98, foeMaxHp: 98,
+        myPotions: 2, whoseTurn: 'me', myMoves: [], winnerName: null,
+      }),
+    });
+    const s = new BattleVoiceSession(deps);
+    s.handleMessage(setup()); said.length = 0;
+    s.onBattleEvent({ kind: 'turn_start', turn: 1 });
+    expect(said.some(t => t.includes('Sparkmouse') && t.includes('Galecoil'))).toBe(true);   // X vs Y
+    expect(said.some(t => /fight/i.test(t) && /guard|item|taunt/i.test(t))).toBe(true);        // how-to recap
+  });
+
   it('speaks commentary for a battle event (super-effective)', () => {
     const { deps, said } = fakeDeps();
     const s = new BattleVoiceSession(deps);

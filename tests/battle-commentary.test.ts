@@ -2,11 +2,22 @@
 // + informative (explains type matchups, crits, guard/taunt) without rambling. This is the scripted
 // fallback the voice layer speaks when the LLM host is off; the LLM path gets its own prompt.
 import { describe, it, expect } from 'vitest';
-import { commentaryForBattleEvent, type CommentaryCtx } from '../shared/battle-commentary';
+import { commentaryForBattleEvent, battleIntro, type CommentaryCtx } from '../shared/battle-commentary';
 import type { BattleEvent } from '../shared/battle-world';
 
 const ctx = (over: Partial<CommentaryCtx> = {}): CommentaryCtx => ({
   aName: 'Sparkmouse', bName: 'Galecoil', ...over,
+});
+
+describe('battleIntro', () => {
+  it('names both fighters dramatically', () => {
+    const line = battleIntro('Sparkmouse', 'Galecoil', 0);
+    expect(line).toContain('Sparkmouse');
+    expect(line).toContain('Galecoil');
+  });
+  it('varies by seq', () => {
+    expect(new Set([0, 1, 2, 3].map(i => battleIntro('A', 'B', i))).size).toBeGreaterThan(1);
+  });
 });
 
 describe('commentaryForBattleEvent', () => {

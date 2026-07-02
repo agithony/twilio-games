@@ -8,7 +8,7 @@
 // unit-tests with fakes and has no direct WS/BattleServer dependency.
 import { parseCrMessage } from './conversation-relay';
 import { matchBattleAction } from '../shared/battle-intent';
-import { commentaryForBattleEvent } from '../shared/battle-commentary';
+import { commentaryForBattleEvent, battleIntro } from '../shared/battle-commentary';
 import type { BattleEvent, BattleAction } from '../shared/battle-world';
 
 /** A snapshot of the caller's live battle state, flattened for voice routing + the LLM host context. */
@@ -156,6 +156,7 @@ export class BattleVoiceSession {
       .catch(() => { /* LLM failure → stay quiet, never break the call */ });
   }
 
+  private introDone = false;   // one dramatic "X vs Y" intro + how-to-play recap per battle
   /** Speak scripted commentary for a battle event (super-effective/crit/miss/faint/win, etc.). */
   onBattleEvent(ev: BattleEvent): void {
     if (!this.code || !this.playerId) return;
@@ -167,10 +168,23 @@ export class BattleVoiceSession {
     const mine = snap?.myMonsterName ?? 'Your monster';
     const foe = snap?.foeMonsterName ?? 'the rival';
     const [aName, bName] = snap?.mySide === 'b' ? [foe, mine] : [mine, foe];
+
+    // BATTLE INTRO: on the first turn, set the scene dramatically (X vs Y + a bit of type flavor) and
+    // give a quick how-to-act recap ("say Fight, then a move"). Then let the normal commentary flow.
+    if (ev.kind === 'turn_start' && !this.introDone && snap) {
+      this.introDone = true;
+      this.menuLevel = 'root';
+      this.deps.say(battleIntro(mine, foe));
+      this.deps.say('On your turn, say FIGHT and then a move name to attack — or GUARD, ITEM, or TAUNT.');
+      return;   // don't also read the "Turn 1" tick this beat
+    }
+
     const line = commentaryForBattleEvent(ev, { aName, bName }, this.lineSeq);
     if (line) { this.lineSeq++; this.deps.say(line); }
     // A new turn resets the caller's voice menu level so "one/two…" re-map to root actions.
     if (ev.kind === 'turn_start') this.menuLevel = 'root';
+    // A finished battle re-arms the intro for the next (rematch) battle.
+    if (ev.kind === 'battle_over') this.introDone = false;
   }
 
   handleClose(): void {

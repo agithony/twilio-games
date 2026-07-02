@@ -36,11 +36,21 @@ const ctx = (over: Partial<BattleHostContext> = {}): BattleHostContext => ({
 });
 
 describe('buildBattleSystemPrompt', () => {
-  it('states the current phase + the caller name + the monster list', () => {
+  it('states the current screen (human-readable, NOT the raw phase id) + name + monster list', () => {
     const p = buildBattleSystemPrompt(ctx());
-    expect(p).toContain('monster_select');
+    expect(p).toMatch(/monster-picking screen/);   // readable label
+    expect(p).not.toContain('monster_select');      // NEVER the underscore id (it gets read aloud)
     expect(p).toContain('Ada');
     expect(p).toMatch(/Sparkmouse.*Embertail.*Shellback/);
+  });
+
+  it('the prose NEVER contains an underscore token the model could read aloud', () => {
+    for (const phase of ['lobby', 'monster_select', 'battle', 'results'] as const) {
+      const p = buildBattleSystemPrompt(ctx({ phase, myMonster: 'Sparkmouse', foeMonster: 'Galecoil',
+        moves: ['Thunder Jolt'], whoseTurn: 'me' }));
+      // No snake_case tokens like select_monster / choose_action / monster_select in the spoken prose.
+      expect(p).not.toMatch(/[a-z]+_[a-z]+/);
+    }
   });
 
   it('forbids speaking code tokens / underscores (the "reads a variable" bug)', () => {
