@@ -21,7 +21,10 @@
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--ink); font-family: var(--text); }
 #app { position: relative; height: 100vh; display: flex; align-items: center; justify-content: center;
-  background: radial-gradient(120% 90% at 50% 35%, #0c1738 0%, var(--bg) 60%, #00081c 100%); }
+  background: #00060f; }
+/* The AmbientFx canvas (z-index 0) paints the living/flashing background over #app's flat fill; the
+   stage + overlay sit above it. */
+#stage, #overlay { z-index: 1; }
 
 /* The GB battle stage: a positioning context holding the 3D arena + the transparent GB overlay canvas
    (z-index 2). Hidden except during a battle (monsters.ts toggles display). */
