@@ -32,64 +32,71 @@ export const ROSTER: Monster[] = [
     id: 'sparkmouse', name: 'Sparkmouse', type: 'electric',
     blurb: 'A pint-sized live wire — fast and shocking.',
     maxHp: 70, attack: 62, defense: 45, speed: 95,
+    // Fair spread: weak 50, medium 65 + 78, strong 88 (its signature Thunder Jolt).
     moves: [
-      mv('sparkmouse', 'jolt', 'Thunder Jolt', 'electric', 55),
-      mv('sparkmouse', 'zap', 'Static Zap', 'electric', 40),
-      mv('sparkmouse', 'tackle', 'Tackle', 'normal', 40),
-      mv('sparkmouse', 'quickbite', 'Quick Bite', 'normal', 45),
+      mv('sparkmouse', 'jolt', 'Thunder Jolt', 'electric', 88),
+      mv('sparkmouse', 'zap', 'Static Zap', 'electric', 65),
+      mv('sparkmouse', 'quickbite', 'Quick Bite', 'normal', 78),
+      mv('sparkmouse', 'tackle', 'Tackle', 'normal', 50),
     ],
   },
   {
     id: 'embertail', name: 'Embertail', type: 'fire',
     blurb: 'A hot-headed drakeling with a blazing temper.',
     maxHp: 78, attack: 84, defense: 58, speed: 74,
+    // Fair spread: weak Scratch 50, medium Ember 65 + Rock Throw 78, strong Flame Whip 88.
     moves: [
-      mv('embertail', 'ember', 'Ember', 'fire', 50),
-      mv('embertail', 'flamewhip', 'Flame Whip', 'fire', 75),
-      mv('embertail', 'scratch', 'Scratch', 'normal', 40),
-      mv('embertail', 'rockthrow', 'Rock Throw', 'rock', 50),
+      mv('embertail', 'ember', 'Ember', 'fire', 65),
+      mv('embertail', 'flamewhip', 'Flame Whip', 'fire', 88),
+      mv('embertail', 'scratch', 'Scratch', 'normal', 50),
+      mv('embertail', 'rockthrow', 'Rock Throw', 'rock', 78),
     ],
   },
   {
     id: 'shellback', name: 'Shellback', type: 'water',
     blurb: 'A stout turtle-beast — soaks up hits, hits back wet.',
     maxHp: 92, attack: 60, defense: 88, speed: 43,
+    // Fair spread: weak Bubble Blast 50, medium Shell Slam 65 + Aqua Pulse 78, strong Tidal Crash 88.
+    // (Harden, a 0-power status move, became a damaging move so the spread holds — no status system yet.)
     moves: [
       mv('shellback', 'bubble', 'Bubble Blast', 'water', 50),
-      mv('shellback', 'aquapulse', 'Aqua Pulse', 'water', 70),
-      mv('shellback', 'shellslam', 'Shell Slam', 'normal', 60),
-      mv('shellback', 'harden', 'Harden', 'normal', 0),
+      mv('shellback', 'aquapulse', 'Aqua Pulse', 'water', 78),
+      mv('shellback', 'shellslam', 'Shell Slam', 'normal', 65),
+      mv('shellback', 'tidalcrash', 'Tidal Crash', 'water', 88),
     ],
   },
   {
     id: 'thornling', name: 'Thornling', type: 'grass',
     blurb: 'A vine-wrapped sprout that drains and lashes.',
     maxHp: 80, attack: 68, defense: 66, speed: 62,
+    // Fair spread: weak Tackle 50, medium Sap Bite 65 + Vine Lash 78, strong Leaf Storm 88.
     moves: [
-      mv('thornling', 'vinelash', 'Vine Lash', 'grass', 55),
-      mv('thornling', 'leafstorm', 'Leaf Storm', 'grass', 80),
-      mv('thornling', 'tackle', 'Tackle', 'normal', 40),
-      mv('thornling', 'sap', 'Sap Bite', 'grass', 45),
+      mv('thornling', 'vinelash', 'Vine Lash', 'grass', 78),
+      mv('thornling', 'leafstorm', 'Leaf Storm', 'grass', 88),
+      mv('thornling', 'tackle', 'Tackle', 'normal', 50),
+      mv('thornling', 'sap', 'Sap Bite', 'grass', 65),
     ],
   },
   {
     id: 'galecoil', name: 'Galecoil', type: 'water',
     blurb: 'A tempest serpent — a raging leviathan when provoked.',
     maxHp: 98, attack: 92, defense: 79, speed: 55,
+    // Fair spread: weak Crunch 50, medium Thrash 65 + Aqua Tail 78, strong Hydro Blast 88.
     moves: [
-      mv('galecoil', 'aquatail', 'Aqua Tail', 'water', 75),
-      mv('galecoil', 'hydroblast', 'Hydro Blast', 'water', 90),
+      mv('galecoil', 'aquatail', 'Aqua Tail', 'water', 78),
+      mv('galecoil', 'hydroblast', 'Hydro Blast', 'water', 88),
       mv('galecoil', 'thrash', 'Thrash', 'normal', 65),
-      mv('galecoil', 'bite', 'Crunch', 'normal', 60),
+      mv('galecoil', 'bite', 'Crunch', 'normal', 50),
     ],
   },
   {
     id: 'voltcrest', name: 'Voltcrest', type: 'electric',
     blurb: 'A crackling thunderbird — a storm on the wing.',
     maxHp: 74, attack: 88, defense: 58, speed: 100,
+    // Fair spread: weak Gust 50, medium Drill Peck 65 + Spark Arc 78, strong Thunderbolt 88.
     moves: [
-      mv('voltcrest', 'thunderbolt', 'Thunderbolt', 'electric', 80),
-      mv('voltcrest', 'sparkarc', 'Spark Arc', 'electric', 55),
+      mv('voltcrest', 'thunderbolt', 'Thunderbolt', 'electric', 88),
+      mv('voltcrest', 'sparkarc', 'Spark Arc', 'electric', 78),
       mv('voltcrest', 'drillpeck', 'Drill Peck', 'flying', 65),
       mv('voltcrest', 'gust', 'Gust', 'flying', 50),
     ],
@@ -98,21 +105,23 @@ export const ROSTER: Monster[] = [
     id: 'dazeduck', name: 'Dazeduck', type: 'water',
     blurb: 'A migraine-prone waterfowl — dazed, but weirdly powerful.',
     maxHp: 82, attack: 76, defense: 66, speed: 60,
+    // Fair spread: weak Headbutt 50, medium Water Gun 65 + Confusion 78, strong Scald 88.
     moves: [
-      mv('dazeduck', 'watergun', 'Water Gun', 'water', 55),
-      mv('dazeduck', 'scald', 'Scald', 'water', 70),
-      mv('dazeduck', 'confusion', 'Confusion', 'psychic', 60),
-      mv('dazeduck', 'headache', 'Headbutt', 'normal', 45),
+      mv('dazeduck', 'watergun', 'Water Gun', 'water', 65),
+      mv('dazeduck', 'scald', 'Scald', 'water', 88),
+      mv('dazeduck', 'confusion', 'Confusion', 'psychic', 78),
+      mv('dazeduck', 'headache', 'Headbutt', 'normal', 50),
     ],
   },
   {
     id: 'psyclone', name: 'Psyclone', type: 'psychic',
     blurb: 'A lab-born mind-force — engineered, immense, unblinking.',
     maxHp: 88, attack: 96, defense: 72, speed: 92,
+    // Fair spread: weak Focus 50, medium Psybeam 65 + Mind Blast 78, strong Psystrike 88.
     moves: [
-      mv('psyclone', 'psystrike', 'Psystrike', 'psychic', 85),
-      mv('psyclone', 'psybeam', 'Psybeam', 'psychic', 60),
-      mv('psyclone', 'mindblast', 'Mind Blast', 'psychic', 75),
+      mv('psyclone', 'psystrike', 'Psystrike', 'psychic', 88),
+      mv('psyclone', 'psybeam', 'Psybeam', 'psychic', 65),
+      mv('psyclone', 'mindblast', 'Mind Blast', 'psychic', 78),
       mv('psyclone', 'recover', 'Focus', 'normal', 50),
     ],
   },

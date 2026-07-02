@@ -4,6 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import { ROSTER, moveById, monsterById } from '../shared/monster-roster';
 import { MONSTER_TYPES } from '../shared/monster-types';
+import { powerPips } from '../client/battle/move-menu';
 
 describe('monster roster', () => {
   it('has 8 creatures with unique ids + display names', () => {
@@ -52,6 +53,21 @@ describe('monster roster', () => {
 
   it('the roster spans several distinct types (variety, not all one element)', () => {
     expect(new Set(ROSTER.map(m => m.type)).size).toBeGreaterThanOrEqual(5);
+  });
+
+  it('every creature has a FAIR move spread: one weak (1-2 pips), two medium (3-4), one strong (5)', () => {
+    // Balance rule: each monster's 4 damaging moves span the pip tiers the same way, so no creature is
+    // all-nukes or all-chip. Tier a move by its power pips: weak = 1-2, medium = 3-4, strong = 5.
+    for (const m of ROSTER) {
+      const tiers = m.moves.map(mv => {
+        const p = powerPips(mv.power);
+        return p <= 2 ? 'weak' : p <= 4 ? 'medium' : 'strong';
+      });
+      const count = (t: string) => tiers.filter(x => x === t).length;
+      expect(count('weak'), `${m.name} weak-move count`).toBe(1);
+      expect(count('medium'), `${m.name} medium-move count`).toBe(2);
+      expect(count('strong'), `${m.name} strong-move count`).toBe(1);
+    }
   });
 
   it('monsterById / moveById look things up (and return null for unknown)', () => {

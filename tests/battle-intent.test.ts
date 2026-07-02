@@ -6,18 +6,18 @@ import { matchMove } from '../shared/battle-intent';
 import { monsterById } from '../shared/monster-roster';
 
 const moves = monsterById('sparkmouse')!.moves;
-// sparkmouse moves: 0 Thunder Jolt, 1 Static Zap, 2 Tackle, 3 Quick Bite
+// sparkmouse moves: 0 Thunder Jolt, 1 Static Zap, 2 Quick Bite, 3 Tackle
 const names = moves.map(m => m.name);
 
 describe('matchMove', () => {
   it('matches a full move name', () => {
     expect(matchMove('Thunder Jolt', names)).toBe(0);
-    expect(matchMove('quick bite', names)).toBe(3);
+    expect(matchMove('quick bite', names)).toBe(2);
   });
 
   it('matches a distinctive partial / single keyword', () => {
     expect(matchMove('jolt', names)).toBe(0);
-    expect(matchMove('use tackle!', names)).toBe(2);
+    expect(matchMove('use tackle!', names)).toBe(3);
     expect(matchMove('zap them', names)).toBe(1);
   });
 

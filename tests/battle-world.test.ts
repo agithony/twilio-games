@@ -118,35 +118,33 @@ describe('move accuracy (risk/reward)', () => {
   // A high-power move can MISS (emitting a miss event + dealing no damage); a low-power move is
   // reliable. This is what makes a weaker move worth picking.
 
-  it('a strong move sometimes misses — emitting a miss event and dealing no damage that swing', () => {
+  // Helper: miss RATE for a given move index of `attacker` across many seeds.
+  function missRate(attacker: string, moveIdx: number, samples = 400): number {
     let swings = 0, misses = 0;
-    // psyclone Psystrike is pow 85 (~77% acc) → should whiff a meaningful minority across seeds.
-    for (let seed = 1; seed <= 300; seed++) {
-      const w = newBattle('psyclone', 'shellback', seed);
-      const strong = w.snapshot().a.moves[0]!;   // Psystrike (85)
-      w.chooseMove('a', strong.id);
+    for (let seed = 1; seed <= samples; seed++) {
+      const w = newBattle(attacker, 'shellback', seed);
+      w.chooseMove('a', w.snapshot().a.moves[moveIdx]!.id);
       w.chooseMove('b', w.snapshot().b.moves[0]!.id);
       for (const ev of w.drainEvents()) {
         if (ev.kind === 'move_used' && ev.by === 'a') swings++;
         if (ev.kind === 'miss' && ev.by === 'a') misses++;
       }
     }
-    expect(misses).toBeGreaterThan(0);            // it DOES miss sometimes
-    expect(misses / swings).toBeGreaterThan(0.05);
-    expect(misses / swings).toBeLessThan(0.45);   // but mostly lands
+    return misses / swings;
+  }
+
+  it('a strong move sometimes misses — emitting a miss event and dealing no damage that swing', () => {
+    // psyclone Psystrike is the strong move (pow 88, ~76% acc) → whiffs a meaningful minority.
+    const rate = missRate('psyclone', 0);
+    expect(rate).toBeGreaterThan(0.05);   // it DOES miss sometimes
+    expect(rate).toBeLessThan(0.45);      // but mostly lands
   });
 
-  it('a 100%-accuracy weak move never misses', () => {
-    // sparkmouse Static Zap is pow 40 → 100% accurate → zero misses across many seeds.
-    let misses = 0;
-    for (let seed = 1; seed <= 200; seed++) {
-      const w = newBattle('sparkmouse', 'shellback', seed);
-      const weak = w.snapshot().a.moves[1]!;   // Static Zap (40)
-      w.chooseMove('a', weak.id);
-      w.chooseMove('b', w.snapshot().b.moves[0]!.id);
-      for (const ev of w.drainEvents()) if (ev.kind === 'miss' && ev.by === 'a') misses++;
-    }
-    expect(misses).toBe(0);
+  it('a WEAKER move is more reliable than a STRONGER one (the risk/reward)', () => {
+    // psyclone: Focus (idx 3, weak pow 50) should miss LESS often than Psystrike (idx 0, strong 88).
+    const weakMiss = missRate('psyclone', 3);
+    const strongMiss = missRate('psyclone', 0);
+    expect(weakMiss).toBeLessThan(strongMiss);
   });
 });
 
