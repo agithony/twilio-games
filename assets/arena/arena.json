@@ -1,0 +1,8 @@
+{
+  "file": "arena.glb",
+  "pos": [0, 0, 0],
+  "rotDeg": [0, 0, 0],
+  "scale": 1,
+  "spinSpeed": 0.18,
+  "cam": { "pos": [0, 3, 8], "lookAt": [0, 0, 0], "fov": 45 }
+}

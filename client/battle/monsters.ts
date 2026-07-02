@@ -50,9 +50,12 @@ conn.onState((m) => {
   // A fresh turn (back to choosing) clears the last locked move so the menu returns.
   if (m.snapshot?.phase === 'choosing' && !chosenForMe(m)) lockedMoveName = null;
   // First time we enter a battle, spin up the 3D arena behind the GB overlay (lazy — no 3D in menus).
+  // Pull the editor-authored config from /api/arena; fall back to sensible defaults on any failure.
   if (m.phase === 'battle' && !arenaLoaded) {
     arenaLoaded = true;
-    arena.load({ file: 'arena.glb', spinSpeed: 0.18 });
+    fetch('/api/arena').then(r => r.ok ? r.json() : null).then((cfg) => {
+      arena.load(cfg && typeof cfg === 'object' ? cfg : { file: 'arena.glb', spinSpeed: 0.18 });
+    }).catch(() => arena.load({ file: 'arena.glb', spinSpeed: 0.18 }));
   }
   paintBattle();
   renderOverlay();

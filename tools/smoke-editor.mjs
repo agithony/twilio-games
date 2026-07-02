@@ -21,7 +21,8 @@ page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text(
 page.on('pageerror', (e) => pageErrors.push(String(e)));
 page.on('response', (r) => { if (r.url().endsWith('.glb')) glb.set(r.url().split('/').pop(), r.status()); });
 
-await page.goto(`${CLIENT}/editor/index.html`, { waitUntil: 'networkidle2', timeout: 30000 });
+// /editor is now a multi-game hub (picker); the racer level editor is at ?game=racer.
+await page.goto(`${CLIENT}/editor/index.html?game=racer`, { waitUntil: 'networkidle2', timeout: 30000 });
 // Wait for the scene tree to actually populate (map + gantry GLB load + Draco decode) instead of a
 // fixed sleep — the big map GLB can take >5s under SwiftShader, which flaked the old fixed wait.
 await page.waitForFunction(

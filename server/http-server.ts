@@ -34,6 +34,9 @@ export class HttpServer {
   /** Image-bundled default levels, copied into `mapsPath` ONCE on first boot (when the persistent
    *  file is absent/blank/corrupt). Unset in tests + local dev so no seeding happens there. */
   private readonly bundledMapsPath?: string;
+  /** LIVE Voice Monsters arena config (transform/camera/spin); persistent-mount default. */
+  private readonly arenaPath: string;
+  private readonly bundledArenaPath?: string;
   private readonly leaderboardPath: string;
   private readonly editorToken?: string;
   /** The Vite-built client directory served in production (one-process container). */
@@ -74,6 +77,8 @@ export class HttpServer {
     manifestPath?: string;   // injectable so tests don't clobber the real assets/manifest.json
     mapsPath?: string;       // injectable; LIVE level configs (default data/maps.json on the persistent mount)
     bundledMapsPath?: string;// image-bundled default levels; seeded into mapsPath once on first boot
+    arenaPath?: string;      // injectable; LIVE Voice Monsters arena config (default data/arena.json)
+    bundledArenaPath?: string;// image-bundled default arena config; seeds arenaPath on first boot
     leaderboardPath?: string;// injectable; persistent global leaderboard JSON (default data/leaderboard.json)
     editorToken?: string;    // when set, /api writes require ?token= or x-editor-token; open if unset
     clientDir?: string;      // the Vite-built client to serve (prod single-process); default client/dist
@@ -88,6 +93,8 @@ export class HttpServer {
     // editor-authored levels survive redeploys. The image's committed levels are the SEED source.
     this.mapsPath = opts.mapsPath ?? 'data/maps.json';
     this.bundledMapsPath = opts.bundledMapsPath;
+    this.arenaPath = opts.arenaPath ?? 'data/arena.json';
+    this.bundledArenaPath = opts.bundledArenaPath;
     this.leaderboardPath = opts.leaderboardPath ?? 'data/leaderboard.json';
     this.editorToken = opts.editorToken;
     this.clientDir = opts.clientDir ?? 'client/dist';
@@ -465,6 +472,28 @@ export class HttpServer {
       await this.writeFileAtomic(this.mapsPath, JSON.stringify(all, null, 2));
       res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
       res.end(JSON.stringify(all));
+      return;
+    }
+    // ---- Voice Monsters arena config (transform/camera/spin), authored in the multi-game editor ----
+    if (path === '/api/arena' && req.method === 'GET') {
+      let body = '';
+      // Prefer the LIVE (persistent) config; fall back to the bundled default so a fresh env works.
+      for (const p of [this.arenaPath, this.bundledArenaPath ?? 'assets/arena/arena.json']) {
+        try { body = await readFile(p, 'utf8'); if (body.trim()) break; } catch { /* try next */ }
+      }
+      if (!body.trim()) body = JSON.stringify({ file: 'arena.glb', pos: [0, 0, 0], rotDeg: [0, 0, 0], scale: 1, spinSpeed: 0.18 });
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(body);
+      return;
+    }
+    if (path === '/api/arena' && req.method === 'POST') {
+      if (!this.authorizeWrite(req, res)) return;
+      let cfg: unknown;
+      try { cfg = JSON.parse(await readBody(req)); } catch { res.writeHead(400).end('invalid JSON'); return; }
+      if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) { res.writeHead(400).end('arena config must be an object'); return; }
+      await this.writeFileAtomic(this.arenaPath, JSON.stringify(cfg, null, 2));
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify(cfg));
       return;
     }
     // ---- global leaderboard (best finish times, all-time) ----

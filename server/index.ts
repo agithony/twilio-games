@@ -24,6 +24,9 @@ const srv = new HttpServer({
   port, publicBaseUrl, authToken, validateSignatures, editorToken,
   mapsPath: process.env.MAPS_PATH ?? 'data/maps.json',
   bundledMapsPath: process.env.BUNDLED_MAPS_PATH ?? 'assets/maps/maps.json',
+  // Voice Monsters arena config — live on the persistent mount, seeded from the committed default.
+  arenaPath: process.env.ARENA_PATH ?? 'data/arena.json',
+  bundledArenaPath: process.env.BUNDLED_ARENA_PATH ?? 'assets/arena/arena.json',
   // The number players call to join (shown + QR-encoded on the lobby screen). Unset → placeholder.
   gamePhoneNumber: process.env.GAME_PHONE_NUMBER,
 });

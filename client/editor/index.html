@@ -36,6 +36,16 @@
   input[type=range]{flex:1}
   input[type=number]{width:74px;background:#232b45;color:#fff;border:1px solid #4d5777;border-radius:6px;padding:3px 6px}
   input[type=color]{width:36px;height:24px;border:0;background:none}
+  /* Multi-game editor hub picker (no ?game). */
+  .hub{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:24px}
+  .hub-title{font-size:28px;font-weight:800}
+  .hub-sub{color:#9aa0b4;font-size:14px;margin-bottom:18px}
+  .hub-cards{display:flex;gap:18px;flex-wrap:wrap;justify-content:center}
+  .hub-card{display:block;width:280px;padding:22px;border-radius:14px;text-decoration:none;color:#e8ecf6;
+    background:rgba(16,22,40,.92);border:1px solid rgba(255,255,255,.12);border-top:3px solid #f22f46;transition:transform .12s,border-color .12s}
+  .hub-card:hover{transform:translateY(-3px);border-color:#8bac0f}
+  .hub-card-name{font-size:20px;font-weight:800}
+  .hub-card-desc{color:#9aa0b4;font-size:13px;margin-top:6px;line-height:1.4}
 </style>
 </head>
 <body>
@@ -59,6 +69,8 @@
   <!-- Edge tabs: collapse/expand each side panel independently. -->
   <button id="treeTab" class="edge-tab" title="Collapse / expand the scene tree">⟨</button>
   <button id="panelTab" class="edge-tab" title="Collapse / expand the inspector">⟩</button>
-  <script type="module" src="../level.ts"></script>
+  <!-- The HUB routes: no ?game → picker; ?game=racer → the level editor (loads ../level.ts against
+       the chrome above); ?game=battler → the arena editor. -->
+  <script type="module" src="./hub.ts"></script>
 </body>
 </html>
