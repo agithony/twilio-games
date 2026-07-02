@@ -113,6 +113,8 @@ export class BattleRenderer {
     this.uiPhase = uiPhase;
     this.statusLine = statusLine;
     this.foeType = foeType;   // the opponent's type → menu pips show effectiveness vs THIS foe
+    // A live, unfinished battle with both sides up → clear any prior faint/win flourish (rematch).
+    if (snap && !snap.winner && snap.a.hp > 0 && snap.b.hp > 0) { this.faintedSide = null; this.winnerSide = null; }
     if (snap) { this.ensureSprite(snap.a.monsterId, snap.a.type, 'back'); this.ensureSprite(snap.b.monsterId, snap.b.type, 'front'); }
   }
 
@@ -143,9 +145,15 @@ export class BattleRenderer {
       if (ev.crit) this.shake = 1;   // extra punch on a critical hit
     } else if (ev.kind === 'heal') {
       this.resHp.hit(ev.on, ev.hpLeft);   // guard/potion heal → the bar rises to the new HP mid-resolution
+    } else if (ev.kind === 'faint') {
+      this.faintedSide = ev.side;   // the KO'd monster slumps + gets sleepy Z's
+    } else if (ev.kind === 'battle_over') {
+      this.winnerSide = ev.winner;   // the victor gets a bobbing trophy
     }
   }
   private lastMoveType: string = 'normal';   // type of the most recent move_used → drives the impact FX
+  private faintedSide: 'a' | 'b' | null = null;   // the defeated monster (slumped + Z's)
+  private winnerSide: 'a' | 'b' | null = null;    // the victor (trophy)
 
   /** Load a real sprite if present, else keep the synthesized placeholder. Cached per id+view. Tries
    *  an animated GIF first, then a static PNG (spriteCandidateUrls order); the first that loads wins.
@@ -213,6 +221,12 @@ export class BattleRenderer {
       this.drawMonster('b', 108, 42, 46, 'front');   // platform center (x, groundY), sprite size
       this.drawMonster('a', 44, 82, 52, 'back');
       this.attackFx.draw(ctx, S, this.tick);   // typed attack FX OVER the monsters (never below y88)
+      // Win/faint flourish: a bobbing trophy over the victor, sleepy Z's over the fainted loser.
+      // Anchors above each sprite (b up-right at x108, a down-left at x44).
+      if (this.winnerSide === 'b') this.drawTrophy(108, 4);
+      else if (this.winnerSide === 'a') this.drawTrophy(44, 44);
+      if (this.faintedSide === 'b') this.drawZzz(122, 8);
+      else if (this.faintedSide === 'a') this.drawZzz(58, 48);
       this.drawHpBox('b', this.snap.b, 6, 8, false);   // enemy: top-left
       this.drawHpBox('a', this.snap.a, 84, 58, true);  // you: bottom-right (with HP numbers)
       // Turn indicator: a bobbing arrow to the SIDE of whoever is acting, pointing at it. To the RIGHT
@@ -402,6 +416,41 @@ export class BattleRenderer {
       if (i < filled) { ctx.fillStyle = color; ctx.fillRect(px, y, 3, 3); }
       else { ctx.fillStyle = DARK; ctx.fillRect(px, y, 3, 3); ctx.fillStyle = PAPER; ctx.fillRect(px + 1, y + 1, 1, 1); }
     }
+  }
+
+  /** A little gold TROPHY bobbing above the victor (centered on cx, top near y). Chunky GB pixels. */
+  private drawTrophy(cx: number, y: number): void {
+    const ctx = this.ctx;
+    const bob = Math.round(Math.sin(this.tick * 0.12) * 1.5);
+    const ty = y + bob;
+    const GOLD = '#ffd23f', GOLD_DK = '#c99a1e';
+    // cup bowl (6 wide), handles, stem, base
+    ctx.fillStyle = GOLD;
+    ctx.fillRect(cx - 3, ty, 7, 4);          // bowl
+    ctx.fillRect(cx - 5, ty + 1, 2, 2);      // left handle
+    ctx.fillRect(cx + 4, ty + 1, 2, 2);      // right handle
+    ctx.fillStyle = GOLD_DK;
+    ctx.fillRect(cx - 1, ty + 4, 3, 2);      // stem
+    ctx.fillRect(cx - 3, ty + 6, 7, 2);      // base
+    // sparkle
+    ctx.fillStyle = '#fff';
+    if (Math.floor(this.tick * 0.1) % 2 === 0) ctx.fillRect(cx - 2, ty + 1, 1, 1);
+  }
+
+  /** Sleepy "Z z z" drifting up above a fainted monster (start near cx,y). */
+  private drawZzz(cx: number, y: number): void {
+    const ctx = this.ctx;
+    ctx.fillStyle = '#cdd6e6';
+    ctx.font = '7px monospace';
+    ctx.textBaseline = 'top';
+    // three Z's of increasing size drifting up + right, gently bobbing on a loop
+    const t = this.tick * 0.04;
+    const zs = [{ dx: 0, dy: 6, s: 5 }, { dx: 5, dy: 1, s: 7 }, { dx: 11, dy: -4, s: 9 }];
+    zs.forEach((z, i) => {
+      const bob = Math.sin(t + i) * 1.2;
+      ctx.font = `${z.s}px monospace`;
+      ctx.fillText('Z', cx + z.dx, y + z.dy + bob);
+    });
   }
 
   dispose(): void { cancelAnimationFrame(this.raf); this.canvas.remove(); this.spriteLayer.remove(); }

@@ -10,6 +10,7 @@ import { BattleConnection, type BattleStateMsg } from './battle-net';
 import { BattleRenderer, type UiPhase, type MenuMove } from './battle-renderer';
 import { ArenaBackground } from './arena-background';
 import { AmbientFx } from './ambient-fx';
+import { battleControlsLegendHtml } from './battle-controls-legend';
 import { drawMonsterSprite, typeColor } from './monster-sprite';
 import { moveById } from '../../shared/monster-roster';
 import { spriteCandidateUrls } from './sprite-sources';
@@ -276,6 +277,7 @@ function lobbyHtml(): string {
     ${brandHead('VOICE MONSTERS', 'Call in to battle')}
     <div class="vm-chips">${chips}</div>
     ${action}
+    ${battleControlsLegendHtml()}
   </div>`;
 }
 
