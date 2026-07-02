@@ -289,6 +289,9 @@ export class GameServer {
   stepRoomForTest(room: Room, dt: number): void { this.stepRoom(room, dt); }
   /** Number of live rooms (test/diagnostic hook for the room-leak fix). */
   get roomCount(): number { return this.rooms.count; }
+  /** Live WS connections (displays + device players). Used by the voice router to auto-join a caller
+   *  to whichever game currently has an open display. */
+  get connectionCount(): number { return this.conns.size; }
 
   /**
    * Drop a room once nothing references it — no players AND no connections (spectators included)

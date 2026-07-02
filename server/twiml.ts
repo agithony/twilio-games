@@ -32,12 +32,18 @@ export function twimlConnectRelay(opts: {
   ttsProvider?: string; voice?: string;
   // Spoken the instant the call connects (before the game WS binds) — a quick intro.
   welcomeGreeting?: string;
+  // Which game this call joins ('racer' | 'monsters'), passed to the WS so it routes correctly.
+  game?: string;
+  // ASR biasing hints — the game's key spoken words (commands / move names) for better recognition.
+  hints?: string;
 }): string {
   // Only emit tts attrs when a voice is configured (an empty voice="" would be invalid).
   const ttsAttrs = opts.voice
     ? ` ttsProvider="${esc(opts.ttsProvider ?? 'ElevenLabs')}" voice="${esc(opts.voice)}"`
     : '';
   const greeting = esc(opts.welcomeGreeting ?? '');
+  const hints = esc(opts.hints ?? 'left, right, boost, go, brake, slow, stop, nitro, power');
+  const gameParam = opts.game ? `\n      <Parameter name="game" value="${esc(opts.game)}" />` : '';
   // Interruption (barge-in) is a headline Conversation Relay feature and central to this app:
   //  - interruptible="speech": the caller's SPEECH cuts the TTS immediately (say "left" over the host).
   //  - reportInputDuringAgentSpeech="speech": we RECEIVE the caller's words while TTS plays (default
@@ -48,8 +54,8 @@ export function twimlConnectRelay(opts: {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Connect action="${esc(opts.sessionEndedUrl)}">
-    <ConversationRelay url="${esc(opts.wsUrl)}"${ttsAttrs} transcriptionProvider="Deepgram" speechModel="flux" partialPrompts="true" transcriptionLanguage="en-US" interruptible="speech" reportInputDuringAgentSpeech="speech" interruptSensitivity="medium" ignoreBackchannel="true" dtmfDetection="true" hints="left, right, boost, go, brake, slow, stop, nitro, power" speechTimeout="600" eotThreshold="0.6" welcomeGreeting="${greeting}">
-      <Parameter name="roomCode" value="${esc(opts.roomCode)}" />
+    <ConversationRelay url="${esc(opts.wsUrl)}"${ttsAttrs} transcriptionProvider="Deepgram" speechModel="flux" partialPrompts="true" transcriptionLanguage="en-US" interruptible="speech" reportInputDuringAgentSpeech="speech" interruptSensitivity="medium" ignoreBackchannel="true" dtmfDetection="true" hints="${hints}" speechTimeout="600" eotThreshold="0.6" welcomeGreeting="${greeting}">
+      <Parameter name="roomCode" value="${esc(opts.roomCode)}" />${gameParam}
     </ConversationRelay>
   </Connect>
 </Response>`;

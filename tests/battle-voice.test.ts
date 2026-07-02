@@ -1,0 +1,95 @@
+// The Voice Monsters CALL session — binds a Conversation Relay caller to a battle room, routes their
+// spoken turns (via the voice matcher + LLM host) into battle actions, and speaks commentary from
+// battle events. Tested against a fake battle backend + fake LLM (no WS/Twilio).
+import { describe, it, expect } from 'vitest';
+import { BattleVoiceSession, type BattleVoiceDeps } from '../server/battle-voice';
+import type { BattleEvent } from '../shared/battle-world';
+
+// A fake battle backend capturing the actions the session drives.
+function fakeDeps(over: Partial<BattleVoiceDeps> = {}): { deps: BattleVoiceDeps; log: string[]; said: string[] } {
+  const log: string[] = [];
+  const said: string[] = [];
+  const deps: BattleVoiceDeps = {
+    join: (code, name) => { log.push(`join ${code} ${name}`); return 'p1'; },
+    leave: (code, id) => log.push(`leave ${code} ${id}`),
+    setName: (_c, _id, n) => log.push(`name ${n}`),
+    selectMonster: (_c, _id, m) => log.push(`monster ${m}`),
+    chooseAction: (_c, _id, a) => log.push(`action ${JSON.stringify(a)}`),
+    advance: (_c) => log.push('advance'),
+    say: (t) => said.push(t),
+    snapshot: () => ({
+      phase: 'monster_select',
+      monsterNames: ['Sparkmouse', 'Embertail', 'Shellback'],
+      myName: null, myMonsterId: null, myMonsterName: null,
+      foeMonsterName: null, myHp: null, myMaxHp: null, foeHp: null, foeMaxHp: null,
+      myPotions: 2, whoseTurn: null, myMoves: [], winnerName: null,
+    }),
+    converse: async () => null,   // LLM off by default → scripted/deterministic paths
+    ...over,
+  };
+  return { deps, log, said };
+}
+
+const setup = (code = '4821') => JSON.stringify({ type: 'setup', callSid: 'CA1', customParameters: { roomCode: code } });
+const prompt = (text: string, last = true) => JSON.stringify({ type: 'prompt', voicePrompt: text, last });
+
+describe('BattleVoiceSession', () => {
+  it('binds the caller to the room on setup + greets', () => {
+    const { deps, log, said } = fakeDeps();
+    const s = new BattleVoiceSession(deps);
+    s.handleMessage(setup('4821'));
+    expect(log.some(l => l.startsWith('join 4821'))).toBe(true);
+    expect(said.length).toBeGreaterThan(0);   // greeting spoken
+  });
+
+  it('a spoken monster name during select picks it (deterministic, no LLM)', () => {
+    const { deps, log } = fakeDeps();
+    const s = new BattleVoiceSession(deps);
+    s.handleMessage(setup());
+    s.handleMessage(prompt('Embertail'));
+    expect(log.some(l => l === 'monster embertail')).toBe(true);
+  });
+
+  it('a spoken battle action during battle commits it', async () => {
+    const { deps, log } = fakeDeps({
+      snapshot: () => ({
+        phase: 'battle', monsterNames: ['Sparkmouse'],
+        myName: 'Ada', myMonsterId: 'sparkmouse', myMonsterName: 'Sparkmouse',
+        foeMonsterName: 'Galecoil', myHp: 40, myMaxHp: 70, foeHp: 55, foeMaxHp: 98,
+        myPotions: 2, whoseTurn: 'me',
+        myMoves: [{ id: 'sparkmouse.jolt', name: 'Thunder Jolt' }, { id: 'sparkmouse.zap', name: 'Static Zap' }],
+        winnerName: null,
+      }),
+    });
+    const s = new BattleVoiceSession(deps);
+    s.handleMessage(setup());
+    s.handleMessage(prompt('guard'));
+    expect(log.some(l => l.includes('"kind":"guard"'))).toBe(true);
+  });
+
+  it('speaks commentary for a battle event (super-effective)', () => {
+    const { deps, said } = fakeDeps();
+    const s = new BattleVoiceSession(deps);
+    s.handleMessage(setup());
+    said.length = 0;   // clear greeting
+    const ev: BattleEvent = { kind: 'effectiveness', on: 'b', multiplier: 2, label: "It's super effective!" };
+    s.onBattleEvent(ev);
+    expect(said.length).toBe(1);
+    expect(said[0]!.toLowerCase()).toMatch(/super|effective|weak/);
+  });
+
+  it('stays silent (no crash) on an unbound event before setup', () => {
+    const { deps, said } = fakeDeps();
+    const s = new BattleVoiceSession(deps);
+    s.onBattleEvent({ kind: 'faint', side: 'b', monsterName: 'Galecoil' });
+    expect(said.length).toBe(0);
+  });
+
+  it('removes the caller from the room on close', () => {
+    const { deps, log } = fakeDeps();
+    const s = new BattleVoiceSession(deps);
+    s.handleMessage(setup('4821'));
+    s.handleClose();
+    expect(log.some(l => l.startsWith('leave 4821'))).toBe(true);
+  });
+});

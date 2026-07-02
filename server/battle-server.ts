@@ -9,7 +9,7 @@ import type { Duplex } from 'stream';
 import { BattleRoom } from './battle-room';
 import { parseBattleClientMessage, type BattleServerMessage } from '../shared/battle-protocol';
 import { rosterEntries } from '../shared/monster-roster';
-import type { BattleEvent } from '../shared/battle-world';
+import type { BattleEvent, BattleAction } from '../shared/battle-world';
 
 interface Conn { ws: WebSocket; roomCode?: string; playerId?: string; isAlive: boolean; }
 
@@ -61,6 +61,9 @@ export class BattleServer {
     return r;
   }
   findRoom(code: string): BattleRoom | undefined { return this.rooms.get(code); }
+  /** Live WS connections (displays + device players). The voice router uses this to auto-join a caller
+   *  to Voice Monsters when its display is the one that's open. */
+  get connectionCount(): number { return this.conns.size; }
 
   private onConnection(ws: WebSocket): void {
     const conn: Conn = { ws, isAlive: true };
@@ -195,6 +198,43 @@ export class BattleServer {
     if (!events.length) return;
     for (const c of this.conns) if (c.roomCode === room.code) this.send(c, { type: 'battle_events', events });
     this.onRoomEvents?.(room.code, events);
+  }
+
+  // ── VOICE API ──────────────────────────────────────────────────────────────────────────────────
+  // Callable from the HTTP server's Conversation Relay adapter so a phone caller drives a battle by
+  // voice. Each mutates the room + broadcasts to the display EXACTLY like the equivalent WS message,
+  // so a voice pick/action shows on screen identically. Room is created on demand (the caller may
+  // arrive before any browser opens the display).
+  getOrCreateRoom(code: string): BattleRoom { return this.room(code); }
+
+  /** A caller joins `code` as a player. Returns the new playerId, or null if the room is full. */
+  voiceJoin(code: string, name: string): string | null {
+    const room = this.room(code);
+    const res = room.addPlayer(name);
+    if ('error' in res) return null;
+    this.pushState(code);
+    return res.playerId;
+  }
+  voiceLeave(code: string, playerId: string): void {
+    const room = this.rooms.get(code); if (!room) return;
+    room.removePlayer(playerId); this.pushState(code); this.reapIfEmpty(code);
+  }
+  voiceSetName(code: string, playerId: string, name: string): void {
+    const room = this.rooms.get(code); if (!room) return;
+    room.setPlayerInfo(playerId, { name }); this.pushState(code);
+  }
+  voiceSelectMonster(code: string, playerId: string, monsterId: string): void {
+    const room = this.rooms.get(code); if (!room) return;
+    room.selectMonster(playerId, monsterId); this.pushState(code);
+  }
+  /** Commit a voice-driven turn action; resolves + schedules the AI beat exactly like the WS path. */
+  voiceChooseAction(code: string, playerId: string, action: BattleAction): void {
+    const room = this.rooms.get(code); if (!room) return;
+    this.commitTurn(room, () => room.chooseAction(playerId, action));
+  }
+  voiceAdvance(code: string): void {
+    const room = this.rooms.get(code); if (!room) return;
+    room.advance(); this.flushEvents(room); this.pushState(code);
   }
 
   private reapIfEmpty(roomCode: string): void {

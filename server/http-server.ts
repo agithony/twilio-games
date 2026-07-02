@@ -18,6 +18,9 @@ import { appendResults, parseLeaderboard, topEntries } from '../shared/leaderboa
 import { SmsConcierge, type ConciergeRoom } from './sms-concierge';
 import { OpenAiClient, NullLlmClient, type LlmClient, type LlmTurn } from './llm';
 import { hostTurn, matchChoice, clearSelectionIndex, type HostContext } from './game-host';
+import { BattleVoiceSession, type BattleVoiceSnapshot } from './battle-voice';
+import { battleHostTurn, type BattleHostContext } from './battle-host';
+import { monsterById, rosterEntries } from '../shared/monster-roster';
 import type { Room } from './room';
 
 export class HttpServer {
@@ -64,6 +67,9 @@ export class HttpServer {
    *  The game loop's per-room events (onRoomEvents) are fanned to these so callers hear countdown/
    *  go/their finish. Each adapter speaks the caller-relevant subset. */
   private voiceAdapters = new Map<string, Set<ConversationRelayAdapter>>();
+  /** Voice Monsters talk-back registry: roomCode → live battle call sessions, fed battle events so
+   *  callers hear commentary (super-effective/crit/faint/win). Parallel to voiceAdapters (the racer). */
+  private battleVoice = new Map<string, Set<BattleVoiceSession>>();
   /** The conversational AI host (OpenAI, or a null no-op when OPENAI_API_KEY is unset → scripted
    *  fallback). Turns a caller's natural-language menu utterances into spoken replies + game actions. */
   private llm: LlmClient;
@@ -131,6 +137,12 @@ export class HttpServer {
       const set = this.voiceAdapters.get(roomCode);
       if (!set) return;
       for (const ev of events) for (const a of set) a.onGameEvent(ev);
+    });
+    // Fan Voice Monsters battle events to any voice callers in that room (commentary talk-back).
+    this.battle.setOnRoomEvents((roomCode, events) => {
+      const set = this.battleVoice.get(roomCode);
+      if (!set) return;
+      for (const ev of events) for (const s of set) s.onBattleEvent(ev);
     });
     // SMS concierge: resolves a room code to a live Room wrapped as a ConciergeRoom (adds car names).
     this.concierge = new SmsConcierge({ findRoom: (code) => this.conciergeRoom(code) });
@@ -253,8 +265,87 @@ export class HttpServer {
         return reply;
       },
     });
-    ws.on('message', (d) => adapter.handleMessage(d.toString()));
-    ws.on('close', () => { console.log('[CR] voice WebSocket closed'); adapter.handleClose(); });
+
+    // MULTI-GAME ROUTING: one number serves both games. We don't know which the caller is joining until
+    // the `setup` frame. Peek it: route to Voice Monsters when the call targets the battler (an explicit
+    // `game=monsters` Relay parameter, or — with none — auto-detect the battler as the game with a live
+    // display and the racer idle). Otherwise the racer adapter (default, unchanged). Decided once, on
+    // the first message; thereafter all frames go to the chosen handler.
+    let route: 'racer' | 'battle' | null = null;
+    let battle: BattleVoiceSession | null = null;
+    const say = (text: string) => { if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ type: 'text', token: text, last: true })); };
+    ws.on('message', (d) => {
+      const raw = d.toString();
+      if (route === null) route = this.pickVoiceGame(raw);
+      if (route === 'battle') {
+        if (!battle) battle = this.makeBattleSession(say);
+        battle.handleMessage(raw);
+      } else {
+        adapter.handleMessage(raw);
+      }
+    });
+    ws.on('close', () => {
+      console.log('[CR] voice WebSocket closed');
+      if (battle) battle.handleClose(); else adapter.handleClose();
+    });
+  }
+
+  /** Decide which game a voice call joins, from its first frame. Explicit `game=monsters|racer` Relay
+   *  parameter wins; otherwise auto-detect: the battler if ITS display is open and the racer's isn't
+   *  (so whichever game is on the shared screen is the one the caller joins). Default: the racer. */
+  private pickVoiceGame(firstFrame: string): 'racer' | 'battle' {
+    try {
+      const o = JSON.parse(firstFrame);
+      const g = String(o?.customParameters?.game ?? '').toLowerCase();
+      if (g === 'monsters' || g === 'battle') return 'battle';
+      if (g === 'racer' || g === 'race') return 'racer';
+    } catch { /* fall through to auto-detect */ }
+    // Auto-detect: battler active (has a display) AND racer idle → battle; else racer.
+    if (this.battle.connectionCount > 0 && this.game.connectionCount === 0) return 'battle';
+    return 'racer';
+  }
+
+  /** Build a Voice Monsters call session wired to the live BattleServer + the battle LLM host. The
+   *  session registers itself in `battleVoice` on join (so it hears battle-event commentary) and
+   *  unregisters on leave. */
+  private makeBattleSession(say: (t: string) => void): BattleVoiceSession {
+    const history: LlmTurn[] = [];
+    let session: BattleVoiceSession;   // captured so join/leave can (un)register it for events
+    const deps = {
+      say,
+      join: (code: string, name: string) => {
+        this.battle.getOrCreateRoom(code);
+        const id = this.battle.voiceJoin(code, name);
+        if (id) {
+          let set = this.battleVoice.get(code);
+          if (!set) { set = new Set(); this.battleVoice.set(code, set); }
+          set.add(session);
+        }
+        return id;
+      },
+      leave: (code: string, id: string) => {
+        const set = this.battleVoice.get(code);
+        if (set) { set.delete(session); if (set.size === 0) this.battleVoice.delete(code); }
+        this.battle.voiceLeave(code, id);
+      },
+      setName: (code: string, id: string, n: string) => this.battle.voiceSetName(code, id, n),
+      selectMonster: (code: string, id: string, m: string) => this.battle.voiceSelectMonster(code, id, m),
+      chooseAction: (code: string, id: string, a: import('../shared/battle-world').BattleAction) => this.battle.voiceChooseAction(code, id, a),
+      advance: (code: string) => this.battle.voiceAdvance(code),
+      snapshot: (code: string, id: string) => this.battleVoiceSnapshot(code, id),
+      converse: async (code: string, id: string, utterance: string) => {
+        if (!this.llm.enabled) return null;
+        const ctx = this.battleHostContext(code, id);
+        if (!ctx) return null;
+        history.push({ role: 'user', content: utterance });
+        const reply = await battleHostTurn(this.llm, ctx, history);
+        if (reply) history.push({ role: 'assistant', content: reply });
+        if (history.length > 12) history.splice(0, history.length - 12);
+        return reply;
+      },
+    };
+    session = new BattleVoiceSession(deps);
+    return session;
   }
 
   /** Deterministic selection fast-path for the conversational layer: in car/map select, if the caller
@@ -332,6 +423,96 @@ export class HttpServer {
     };
   }
 
+  // ── Voice Monsters voice helpers: flatten a battle room for one caller ────────────────────────────
+  /** Which side (a/b) the caller's playerId is, or null (spectator / not in this battle). */
+  private battleSideOf(room: import('./battle-room').BattleRoom, playerId: string): 'a' | 'b' | null {
+    const snap = room.snapshot();
+    if (!snap) return null;
+    if (snap.a.id === playerId) return 'a';
+    if (snap.b.id === playerId) return 'b';
+    return null;
+  }
+
+  /** Flatten a battle room into the voice session's snapshot (for deterministic routing). */
+  private battleVoiceSnapshot(code: string, playerId: string): BattleVoiceSnapshot | null {
+    const room = this.battle.findRoom(code);
+    if (!room) return null;
+    const monsterNames = rosterEntries().map(m => m.name);
+    const player = room.lobbyPlayers().find(p => p.playerId === playerId);
+    const rawName = player?.name ?? '';
+    const myName = /^(Challenger|Player)(\s|$)/.test(rawName) ? null : (rawName || null);
+    const snap = room.snapshot();
+    const res = room.result();
+    if (!snap) {
+      return {
+        phase: room.phase, monsterNames, myName,
+        myMonsterId: player?.monsterId ?? null,
+        myMonsterName: player?.monsterId ? (monsterById(player.monsterId)?.name ?? null) : null,
+        foeMonsterName: null, myHp: null, myMaxHp: null, foeHp: null, foeMaxHp: null,
+        myPotions: 2, whoseTurn: null, myMoves: [], winnerName: res?.winnerName ?? null,
+      };
+    }
+    const side = this.battleSideOf(room, playerId) ?? 'a';
+    const me = side === 'a' ? snap.a : snap.b;
+    const foe = side === 'a' ? snap.b : snap.a;
+    const iChose = side === 'a' ? snap.chosen.a : snap.chosen.b;
+    return {
+      phase: room.phase, monsterNames, myName,
+      myMonsterId: me.monsterId, myMonsterName: me.monsterName,
+      foeMonsterName: foe.monsterName,
+      myHp: me.hp, myMaxHp: me.maxHp, foeHp: foe.hp, foeMaxHp: foe.maxHp,
+      myPotions: side === 'a' ? snap.potions.a : snap.potions.b,
+      whoseTurn: room.phase === 'battle' ? (iChose ? 'foe' : 'me') : null,
+      myMoves: me.moves.map(m => ({ id: m.id, name: m.name })),
+      winnerName: res?.winnerName ?? null,
+    };
+  }
+
+  /** Build the battle LLM host's context for one caller (delegating actions to the BattleServer). */
+  private battleHostContext(code: string, playerId: string): BattleHostContext | null {
+    const room = this.battle.findRoom(code);
+    if (!room) return null;
+    const s = this.battleVoiceSnapshot(code, playerId);
+    if (!s) return null;
+    return {
+      phase: s.phase, monsters: s.monsterNames, myName: s.myName,
+      myMonster: s.myMonsterName, foeMonster: s.foeMonsterName,
+      myHp: s.myHp, myMaxHp: s.myMaxHp, foeHp: s.foeHp, foeMaxHp: s.foeMaxHp,
+      myPotions: s.myPotions, whoseTurn: s.whoseTurn, moves: s.myMoves.map(m => m.name),
+      winnerName: s.winnerName,
+      setName: (name) => { const c = name.trim().slice(0, 20); if (!c) return null; this.battle.voiceSetName(code, playerId, c); return `Nice to meet you, ${c}!`; },
+      selectMonster: (name) => {
+        const i = matchChoice(name, s.monsterNames);
+        if (i < 0 || room.phase !== 'monster_select') return null;
+        const id = s.monsterNames[i]!.toLowerCase().replace(/\s+/g, '');
+        this.battle.voiceSelectMonster(code, playerId, id);
+        return `Locked in — ${s.monsterNames[i]}!`;
+      },
+      chooseAction: (action) => {
+        if (room.phase !== 'battle') return null;
+        const parsed = this.parseVoiceHostAction(action, s.myMoves);
+        if (!parsed) return null;
+        this.battle.voiceChooseAction(code, playerId, parsed);
+        return null;   // the model's own words carry the reply; avoid double-speak
+      },
+      advance: () => { this.battle.voiceAdvance(code); return null; },
+    };
+  }
+
+  /** Parse the LLM's `choose_action` string ('guard'|'item'|'taunt'|'fight:<move>') into a BattleAction. */
+  private parseVoiceHostAction(action: string, moves: { id: string; name: string }[]): import('../shared/battle-world').BattleAction | null {
+    const a = action.trim().toLowerCase();
+    if (a === 'guard') return { kind: 'guard' };
+    if (a === 'item' || a === 'potion') return { kind: 'item', item: 'potion' };
+    if (a === 'taunt') return { kind: 'taunt' };
+    if (a.startsWith('fight')) {
+      const moveName = action.split(':').slice(1).join(':').trim() || action.replace(/^fight\s*/i, '').trim();
+      const i = matchChoice(moveName, moves.map(m => m.name));
+      if (i >= 0) return { kind: 'fight', moveId: moves[i]!.id };
+    }
+    return null;
+  }
+
   private async onRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     const path = (req.url ?? '').split('?')[0] ?? '';
     // Unauthenticated liveness probe for the ACA deploy smoke + container health checks.
@@ -368,14 +549,23 @@ export class HttpServer {
       const roomCode = path === '/voice/join'
         ? ((params['Digits'] ?? '').trim() || DEFAULT_ROOM)
         : DEFAULT_ROOM;
+      // MULTI-GAME: one number, both games. Auto-route to whichever game's display is currently open
+      // (battler if it's up + the racer idle; else the racer). The call carries this as a `game` param.
+      const toBattle = this.battle.connectionCount > 0 && this.game.connectionCount === 0;
       const xml = twimlConnectRelay({
         wsUrl: `${this.publicBaseUrl.replace(/^http/, 'ws')}/voice`,
         sessionEndedUrl: `${this.publicBaseUrl}/voice/session-ended`,
         roomCode,
-        // ElevenLabs voice for the race-announcer talk-back; swap via the CR_TTS_VOICE env.
+        // ElevenLabs voice for the announcer talk-back; swap via the CR_TTS_VOICE env.
         ttsProvider: 'ElevenLabs',
         voice: this.crVoice,
-        welcomeGreeting: this.crVoice ? "Welcome to Voice Racer! You're in the race." : '',
+        game: toBattle ? 'monsters' : 'racer',
+        hints: toBattle
+          ? 'fight, guard, item, potion, taunt, attack, heal, sparkmouse, embertail, shellback, thornling, galecoil, voltcrest, dazeduck, psyclone, ember, thunder, jolt, water, vine, psystrike'
+          : 'left, right, boost, go, brake, slow, stop, nitro, power',
+        welcomeGreeting: this.crVoice
+          ? (toBattle ? "Welcome to Voice Monsters! You're in the arena." : "Welcome to Voice Racer! You're in the race.")
+          : '',
       });
       res.writeHead(200, { 'Content-Type': 'text/xml' }).end(xml);
       return;
