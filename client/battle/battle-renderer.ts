@@ -111,67 +111,69 @@ export class BattleRenderer {
     ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
     ctx.save(); ctx.scale(S, S);
 
+    // ── Fixed battle layout on the 160×144 screen, designed so NOTHING overlaps ──
+    //  scene area  : y 0..92  (monsters on platforms + HP boxes in opposite corners)
+    //  command box : y 94..144
+    // Enemy (b): front-facing, up-RIGHT on a platform; its HP box up-LEFT.
+    // You (a):    back view,   down-LEFT on a platform; your HP box down-RIGHT (above the command box).
     if (this.snap) {
-      // Enemy (b): front-facing, upper-right. You (a): back view, lower-left. Sprites are 60px so the
-      // hand-authored detail reads; placed in opposite corners like the originals.
-      this.drawMonster('b', 96, 14, 'front');
-      this.drawMonster('a', 8, 58, 'back');
-      // HP boxes: enemy top-left, you bottom-right (classic placement).
-      this.drawHpBox(this.snap.b, 8, 12, false);
-      this.drawHpBox(this.snap.a, 84, 58, true);
+      this.drawMonster('b', 108, 42, 46, 'front');   // platform center (x, groundY), sprite size
+      this.drawMonster('a', 44, 82, 52, 'back');
+      this.drawHpBox(this.snap.b, 6, 8, false);       // enemy: top-left
+      this.drawHpBox(this.snap.a, 84, 58, true);      // you: bottom-right (with HP numbers)
     }
 
-    // Bottom command / text window — branches on the TURN STATE so the game reads as turn-based:
-    //  • resolving  → just the event banner (a move/hit is animating), no menu
-    //  • awaiting-input → the prompt + the 4 moves (name · type · power) — YOUR turn to pick
-    //  • command-locked → "waiting for opponent…" (you already chose), no menu
-    //  • finished/idle  → the status line only
-    this.drawWindow(4, 96, GB_W - 8, GB_H - 100);
+    // Bottom command / text window — branches on the TURN STATE so the game reads as turn-based.
+    this.drawWindow(4, 94, GB_W - 8, 46);
     const line = this.uiPhase === 'resolving'
       ? (this.eventBanner || this.statusLine)
       : (this.statusLine || (this.snap ? '' : 'Waiting…'));
-    this.drawText(line, 12, 108);
-
+    this.drawText(line, 11, 101);
     if (this.uiPhase === 'awaiting-input') {
-      // 4 moves in two columns: "1 Ember  fire·50"
+      // 4 moves in two columns under the prompt: "1 Ember   fir·50"
       this.menuMoves.slice(0, 4).forEach((m, i) => {
         const col = i % 2, row = Math.floor(i / 2);
-        const x = 10 + col * 74, y = 120 + row * 11;
+        const x = 11 + col * 76, y = 116 + row * 12;
         this.drawText(`${i + 1} ${m.name}`, x, y, true);
-        this.drawText(m.power > 0 ? `${m.type.slice(0, 3)}·${m.power}` : m.type.slice(0, 3), x + 52, y, true);
+        this.drawText(m.power > 0 ? `${m.type.slice(0, 3)}·${m.power}` : m.type.slice(0, 3), x + 54, y, true);
       });
     }
     ctx.restore();
   }
 
-  private drawMonster(side: 'a' | 'b', x: number, y: number, view: 'front' | 'back'): void {
+  /** Draw a monster centered horizontally on `cx`, standing ON the platform at `groundY` (its feet
+   *  sit there). A small elliptical shadow anchors it to the arena so it doesn't float. */
+  private drawMonster(side: 'a' | 'b', cx: number, groundY: number, size: number, view: 'front' | 'back'): void {
     const st = side === 'a' ? this.snap!.a : this.snap!.b;
     const spr = this.sprites.get(`${st.monsterId}:${view}`);
     if (!spr) return;
     const ctx = this.ctx;
-    const size = 60;
-    // lunge: shove toward the opponent (enemy lunges down-left, you lunge up-right)
-    const lg = this.lunge[side];
+    const lg = this.lunge[side];                       // attack lunge toward the opponent
     const dx = (side === 'a' ? 1 : -1) * lg * 6;
-    const dy = (side === 'a' ? -1 : 1) * lg * 6;
+    const dy = (side === 'a' ? -1 : 1) * lg * 4;
+    // shadow platform (drawn first, under the sprite) so the creature reads as standing on the arena.
     ctx.save();
-    // hit flash: blink the defender by skipping the draw on alternating frames while flashing
+    ctx.fillStyle = 'rgba(15,30,15,0.4)';
+    ctx.beginPath(); ctx.ellipse(cx + dx, groundY + 2, size * 0.38, size * 0.12, 0, 0, Math.PI * 2); ctx.fill();
+    // hit flash: blink the defender while it's flashing.
     if (this.flash[side] > 0 && Math.floor(this.flash[side] * 10) % 2 === 0) { ctx.restore(); return; }
-    ctx.drawImage(spr.canvas, x + dx, y + dy, size, size);
+    // anchor the sprite's FEET on groundY, centered on cx.
+    ctx.drawImage(spr.canvas, cx - size / 2 + dx, groundY - size + dy, size, size);
     ctx.restore();
   }
 
   private drawHpBox(st: BattleSnapshot['a'], x: number, y: number, showNumbers: boolean): void {
     const ctx = this.ctx;
-    this.drawWindow(x, y, 68, 26);
-    this.drawText(st.monsterName.slice(0, 9), x + 4, y + 4, true);
-    // HP bar
+    const w = 70, h = showNumbers ? 26 : 20;
+    this.drawWindow(x, y, w, h);
+    this.drawText(st.monsterName.slice(0, 11), x + 5, y + 4, true);
+    // HP label + bar
     const frac = hpFraction(st.hp, st.maxHp);
-    const barX = x + 4, barY = y + 15, barW = 52, barH = 4;
+    const barX = x + 5, barY = y + 13, barW = w - 10, barH = 4;
     ctx.fillStyle = DARK; ctx.fillRect(barX - 1, barY - 1, barW + 2, barH + 2);   // frame
     ctx.fillStyle = PAPER; ctx.fillRect(barX, barY, barW, barH);
     ctx.fillStyle = hpColor(hpZone(frac)); ctx.fillRect(barX, barY, Math.round(barW * frac), barH);
-    if (showNumbers) this.drawText(`${st.hp}/${st.maxHp}`, x + 30, y + 4, true);
+    if (showNumbers) this.drawText(`${st.hp}/${st.maxHp}`, x + 5, y + 19, true);
   }
 
   /** A GB-style window: light fill + a dark inner/outer border. */
@@ -179,7 +181,7 @@ export class BattleRenderer {
     const ctx = this.ctx;
     ctx.fillStyle = INK;  ctx.fillRect(x, y, w, h);
     ctx.fillStyle = PAPER; ctx.fillRect(x + 2, y + 2, w - 4, h - 4);
-    ctx.fillStyle = DARK; ctx.strokeStyle = DARK;
+    ctx.fillStyle = DARK;
     ctx.fillRect(x + 3, y + 3, w - 6, 1);   // top inner rule (decorative)
   }
 
