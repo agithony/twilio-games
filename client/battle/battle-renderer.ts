@@ -13,7 +13,6 @@ import type { BattleSnapshot, BattleEvent } from '../../shared/battle-world';
 import { accuracyPercent } from '../../shared/move-stats';
 import { GB_SHADES, drawMonsterSprite, typeColor } from './monster-sprite';
 import { AttackFx } from './attack-fx';
-import { Backdrop } from './backdrop';
 import { spriteCandidateUrls } from './sprite-sources';
 import { ResolutionHp } from './resolution-hp';
 import { effectivePips } from './move-menu';
@@ -51,9 +50,6 @@ export class BattleRenderer {
   private shake = 0;   // screen-shake intensity (0..1, eased) — spiked by a crit hit
   private activeSide: 'a' | 'b' | null = null;   // whose turn it is → bobbing arrow over that monster
   private tick = 0;   // frame counter for cheap time-based bob/pulse animations
-  /** Ambient pixel-art atmosphere drawn BEHIND the monsters (sky/clouds/dust/vignette) so the stage
-   *  is alive at rest — see backdrop.ts. */
-  private backdrop = new Backdrop();
   /** Per-type attack FX layer drawn OVER the monsters (typed projectile on move_used + impact burst on
    *  damage) — see attack-fx.ts. Self-contained; the renderer just feeds it events + draws it. */
   private attackFx = new AttackFx();
@@ -212,7 +208,8 @@ export class BattleRenderer {
     // Enemy (b): front-facing, up-RIGHT on a platform; its HP box up-LEFT.
     // You (a):    back view,   down-LEFT on a platform; your HP box down-RIGHT (above the command box).
     if (this.snap) {
-      this.backdrop.draw(ctx, this.tick);   // ambient sky/clouds/dust BEHIND the monsters (scene band only)
+      // NOTE: no in-stage backdrop — the 3D arena is the stage's background and must show through
+      // untouched. Only the monsters, attack FX, and HUD draw on this transparent canvas.
       this.drawMonster('b', 108, 42, 46, 'front');   // platform center (x, groundY), sprite size
       this.drawMonster('a', 44, 82, 52, 'back');
       this.attackFx.draw(ctx, S, this.tick);   // typed attack FX OVER the monsters (never below y88)
