@@ -140,14 +140,21 @@ export class BattleWorld {
     if (label) this.events.push({ kind: 'effectiveness', on: onSide, multiplier: mult, label });
   }
 
-  /** Damage formula (Pokémon-STYLE, simplified + original): scales with attacker ATK vs defender DEF,
-   *  the move's power, a same-type-attack bonus (STAB 1.5x), the type multiplier, and ±15% variance.
-   *  Always ≥1 so an attack never whiffs to zero. */
+  /** Damage formula (Pokémon-STYLE, original + TUNED for pacing). Goal: a battle lasts ~3–4 hits
+   *  typically (range 1–6), and NEVER a one-shot. The old formula let the multipliers compound
+   *  (base ~40-60 × STAB 1.5 × super-effective 2 = 150+ vs ~80 HP → instant KO). Fixes:
+   *   - clamp the ATK/DEF ratio so a glass-cannon-vs-tank can't explode,
+   *   - a low base coefficient so a NEUTRAL hit is ~1/4 of a health bar (~4 hits),
+   *   - gentler STAB (1.3),
+   *   - a HARD CAP at half the defender's max HP per hit, so even STAB+super-effective takes ≥2 hits. */
   private damage(atkMon: Monster, defMon: Monster, move: Move, typeMult: number): number {
-    const stab = move.type === atkMon.type ? 1.5 : 1;
-    const base = (atkMon.attack / Math.max(20, defMon.defense)) * move.power * 0.5 + 2;
+    const stab = move.type === atkMon.type ? 1.3 : 1;
+    const ratio = Math.min(1.7, Math.max(0.5, atkMon.attack / defMon.defense));   // bounded
+    const base = move.power * ratio * 0.13 + 3;        // tuned (roster sim): ~3–4 hits to KO
     const variance = 0.85 + this.rng.next() * 0.30;   // 0.85–1.15
-    return Math.max(1, Math.round(base * stab * typeMult * variance));
+    const raw = base * stab * typeMult * variance;
+    const cap = Math.ceil(defMon.maxHp * 0.38);        // never > ~1/3 a bar → no one-shots, ≥3 hits
+    return Math.max(1, Math.min(cap, Math.round(raw)));
   }
 
   private faint(f: Fighter): void {

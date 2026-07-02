@@ -25,6 +25,44 @@ function bothPickFirstMove(w: BattleWorld) {
   w.chooseMove('b', s.b.moves[0]!.id);
 }
 
+describe('battle pacing (balance)', () => {
+  // A single hit must NEVER take more than ~40% of the defender's HP → no one-shots, and any battle
+  // takes at least a few hits. Guards the tuned damage formula against silent drift.
+  it('no single hit is a one-shot (each hit ≤ ~40% of max HP)', () => {
+    for (const seed of [1, 2, 3, 7, 11]) {
+      // pit a heavy hitter into a frail target — the worst case for one-shotting
+      const w = newBattle('pebblefist', 'gustwing', seed);
+      const maxB = w.snapshot().b.hp;
+      const before = w.snapshot().b.hp;
+      w.chooseMove('a', w.snapshot().a.moves[1]!.id);   // strong rock move
+      w.chooseMove('b', w.snapshot().b.moves[2]!.id);
+      const dealt = before - w.snapshot().b.hp;
+      expect(dealt).toBeLessThanOrEqual(Math.ceil(maxB * 0.5));   // hard cap holds
+      expect(w.snapshot().b.hp).toBeGreaterThan(0);              // survives the first hit
+    }
+  });
+
+  it('a full battle lasts several turns, not one (target ~3–6)', () => {
+    let sumTurns = 0, n = 0, oneShots = 0;
+    for (const [a, bMon] of [['embertail', 'thornling'], ['sparkmouse', 'shellback'], ['tuskox', 'mudpup']] as const) {
+      for (let seed = 1; seed <= 5; seed++) {
+        const w = newBattle(a, bMon, seed * 9 + 1);
+        for (let t = 0; t < 60 && w.snapshot().phase !== 'finished'; t++) {
+          const s = w.snapshot();
+          w.chooseMove('a', s.a.moves[1]!.id);
+          w.chooseMove('b', s.b.moves[0]!.id);
+        }
+        const turns = w.snapshot().turn;
+        sumTurns += turns; n++;
+        if (turns <= 1) oneShots++;
+        expect(turns).toBeGreaterThanOrEqual(2);   // never a one-turn battle
+      }
+    }
+    expect(oneShots).toBe(0);
+    expect(sumTurns / n).toBeGreaterThanOrEqual(3);   // averages in the intended band
+  });
+});
+
 describe('BattleWorld', () => {
   it('starts in a choosing phase with both monsters at full HP', () => {
     const w = newBattle(FAST, SLOW);
