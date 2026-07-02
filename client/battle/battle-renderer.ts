@@ -11,6 +11,7 @@ import type { MonsterType } from '../../shared/monster-types';
 import type { BattleSnapshot, BattleEvent } from '../../shared/battle-world';
 import { GB_SHADES, drawMonsterSprite } from './monster-sprite';
 import { spriteCandidateUrls } from './sprite-sources';
+import { ResolutionHp } from './resolution-hp';
 import { hpFraction, hpZone, hpColor } from './hp-bar';
 
 // Logical GB resolution (160×144); we scale up to fill the element with nearest-neighbor crispness.
@@ -39,6 +40,10 @@ export class BattleRenderer {
   /** Transient per-side attack lunge (0..1 eased), keyed by side. Drives the "step forward" animation. */
   private lunge: { a: number; b: number } = { a: 0, b: 0 };
   private flash: { a: number; b: number } = { a: 0, b: 0 };   // hit-flash timer per side
+  /** Per-side displayed HP during a paced resolution (so the two bars drop one hit at a time instead
+   *  of both snapping to the settled snapshot at once). */
+  private resHp = new ResolutionHp();
+  private wasResolving = false;   // detects the idle↔resolving transition to begin/end the tracker
   private raf = 0;
   /** A DOM layer overlaid EXACTLY on the GB canvas that holds the real sprite <img> elements. Animated
    *  GIFs only advance their frames while the browser composits them as a VISIBLE <img> — drawing one
@@ -82,6 +87,14 @@ export class BattleRenderer {
    *  the persistent status line. The bottom window branches on uiPhase (menu only when it's your
    *  turn; a "waiting" line when locked; just the event banner while resolving). */
   setState(snap: BattleSnapshot | null, myMoves: MenuMove[], uiPhase: UiPhase, statusLine: string): void {
+    // Begin/end the paced-HP tracker on the resolving transition. Seed pre-turn HP from the CURRENT
+    // snapshot (still pre-turn: events arrive before the settled state), so bars start where the turn
+    // began and step down per damage event instead of snapping to the settled HP together.
+    const resolving = uiPhase === 'resolving';
+    if (resolving && !this.wasResolving && this.snap) this.resHp.begin(this.snap.a.hp, this.snap.b.hp);
+    else if (!resolving && this.wasResolving) this.resHp.end();
+    this.wasResolving = resolving;
+
     this.snap = snap;
     this.menuMoves = myMoves;
     this.uiPhase = uiPhase;
@@ -92,10 +105,11 @@ export class BattleRenderer {
   /** Transient event text (move name / super-effective / faint); cleared when resolution settles. */
   setEventBanner(text: string): void { this.eventBanner = text; }
 
-  /** Play an event's animation cue: attacker lunges, defender flashes on damage. */
+  /** Play an event's animation cue: attacker lunges, defender flashes + its HP bar steps down to this
+   *  hit's remaining HP (so the two bars drop one hit at a time during resolution). */
   playEvent(ev: BattleEvent): void {
     if (ev.kind === 'move_used') this.lunge[ev.by] = 1;
-    else if (ev.kind === 'damage') this.flash[ev.on] = 1;
+    else if (ev.kind === 'damage') { this.flash[ev.on] = 1; this.resHp.hit(ev.on, ev.hpLeft); }
   }
 
   /** Load a real sprite if present, else keep the synthesized placeholder. Cached per id+view. Tries
@@ -153,8 +167,8 @@ export class BattleRenderer {
     if (this.snap) {
       this.drawMonster('b', 108, 42, 46, 'front');   // platform center (x, groundY), sprite size
       this.drawMonster('a', 44, 82, 52, 'back');
-      this.drawHpBox(this.snap.b, 6, 8, false);       // enemy: top-left
-      this.drawHpBox(this.snap.a, 84, 58, true);      // you: bottom-right (with HP numbers)
+      this.drawHpBox('b', this.snap.b, 6, 8, false);   // enemy: top-left
+      this.drawHpBox('a', this.snap.a, 84, 58, true);  // you: bottom-right (with HP numbers)
     } else {
       this.hideSpriteImg('a'); this.hideSpriteImg('b');   // no battle → clear any lingering sprite <img>
     }
@@ -226,18 +240,19 @@ export class BattleRenderer {
     if (cur && cur !== keep) { cur.remove(); this.shownImg[side] = null; }
   }
 
-  private drawHpBox(st: BattleSnapshot['a'], x: number, y: number, showNumbers: boolean): void {
+  private drawHpBox(side: 'a' | 'b', st: BattleSnapshot['a'], x: number, y: number, showNumbers: boolean): void {
     const ctx = this.ctx;
     const w = 70, h = showNumbers ? 26 : 20;
     this.drawWindow(x, y, w, h);
     this.drawText(st.monsterName.slice(0, 11), x + 5, y + 4, true);
-    // HP label + bar
-    const frac = hpFraction(st.hp, st.maxHp);
+    // HP: during a paced resolution show the tracker's value (drops one hit at a time); else snapshot.
+    const hp = this.resHp.display(side, st.hp);
+    const frac = hpFraction(hp, st.maxHp);
     const barX = x + 5, barY = y + 13, barW = w - 10, barH = 4;
     ctx.fillStyle = DARK; ctx.fillRect(barX - 1, barY - 1, barW + 2, barH + 2);   // frame
     ctx.fillStyle = PAPER; ctx.fillRect(barX, barY, barW, barH);
     ctx.fillStyle = hpColor(hpZone(frac)); ctx.fillRect(barX, barY, Math.round(barW * frac), barH);
-    if (showNumbers) this.drawText(`${st.hp}/${st.maxHp}`, x + 5, y + 19, true);
+    if (showNumbers) this.drawText(`${hp}/${st.maxHp}`, x + 5, y + 19, true);
   }
 
   /** A GB-style window: light fill + a dark inner/outer border. */
