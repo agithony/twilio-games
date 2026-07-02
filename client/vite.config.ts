@@ -41,7 +41,7 @@ export default defineConfig({
       '/assets': {
         target: 'http://localhost:8080', changeOrigin: true,
         bypass: (req) => {
-          const url = (req.url ?? '').split('?')[0];
+          const url = (req.url ?? '').split('?')[0] ?? '';
           return url.startsWith('/assets/monsters/') ? url : undefined;   // Vite serves; else proxy
         },
       },

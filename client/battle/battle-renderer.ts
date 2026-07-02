@@ -17,7 +17,9 @@ import { hpFraction, hpZone, hpColor } from './hp-bar';
 const GB_W = 160, GB_H = 144;
 const [INK, DARK, LITE, PAPER] = GB_SHADES;   // darkest → lightest
 
-interface LoadedSprite { canvas: CanvasImageSource; w: number; h: number; }
+// A sprite is either a procedural placeholder (drawn to the canvas) or a real loaded file (an <img>,
+// which may be an animated GIF — shown as a live DOM element on the sprite layer, not canvas-drawn).
+interface LoadedSprite { canvas: CanvasImageSource; w: number; h: number; img?: HTMLImageElement; }
 
 /** The client-derived turn state that drives the bottom window (set by monsters.ts). */
 export type UiPhase = 'idle' | 'awaiting-input' | 'command-locked' | 'resolving' | 'finished';
@@ -38,9 +40,14 @@ export class BattleRenderer {
   private lunge: { a: number; b: number } = { a: 0, b: 0 };
   private flash: { a: number; b: number } = { a: 0, b: 0 };   // hit-flash timer per side
   private raf = 0;
-  /** Offscreen container holding loaded sprite <img>s so animated GIFs keep their animation clock
-   *  running (a fully-detached <img> can freeze on frame 1 in some browsers). */
-  private animAttic: HTMLElement;
+  /** A DOM layer overlaid EXACTLY on the GB canvas that holds the real sprite <img> elements. Animated
+   *  GIFs only advance their frames while the browser composits them as a VISIBLE <img> — drawing one
+   *  to a canvas freezes it on frame 1. So real sprites live here as live <img>s positioned to match
+   *  the canvas layout; only procedural placeholders take the canvas path. Sits above the canvas
+   *  (z-index 3); sprites never overlap the HP boxes/command window, so no occlusion is lost. */
+  private spriteLayer: HTMLElement;
+  /** The <img> currently shown on screen per side (so we can reposition/replace it each frame). */
+  private shownImg: { a: HTMLImageElement | null; b: HTMLImageElement | null } = { a: null, b: null };
 
   constructor(private host: HTMLElement) {
     this.canvas = document.createElement('canvas');
@@ -49,10 +56,10 @@ export class BattleRenderer {
     // opaque panels drawn over it. z-index sits above the arena.
     this.canvas.style.cssText = 'image-rendering:pixelated;position:absolute;inset:0;margin:auto;z-index:2';
     host.appendChild(this.canvas);
-    // Offscreen attic for animated-GIF <img>s (kept in the DOM so their frames advance).
-    this.animAttic = document.createElement('div');
-    this.animAttic.style.cssText = 'position:absolute;width:0;height:0;overflow:hidden;pointer-events:none';
-    host.appendChild(this.animAttic);
+    // Sprite layer: same absolute-centering as the canvas so device-pixel coords line up 1:1.
+    this.spriteLayer = document.createElement('div');
+    this.spriteLayer.style.cssText = 'position:absolute;inset:0;margin:auto;z-index:3;pointer-events:none;overflow:visible';
+    host.appendChild(this.spriteLayer);
     this.ctx = this.canvas.getContext('2d')!;
     this.resize();
     window.addEventListener('resize', () => this.resize());
@@ -66,6 +73,9 @@ export class BattleRenderer {
     this.canvas.width = GB_W * this.scale;
     this.canvas.height = GB_H * this.scale;
     this.ctx.imageSmoothingEnabled = false;
+    // Match the sprite layer to the canvas's on-screen box so GB-logical coords map 1:1 to CSS px.
+    this.spriteLayer.style.width = `${GB_W * this.scale}px`;
+    this.spriteLayer.style.height = `${GB_H * this.scale}px`;
   }
 
   /** Point the renderer at the current battle state, the local player's moves, the turn state, and
@@ -102,18 +112,15 @@ export class BattleRenderer {
     this.tryLoadCandidates(key, spriteCandidateUrls(id, view), 0);
   }
 
-  /** Walk the candidate URLs in order: on load, adopt the image (parking it offscreen so a GIF keeps
-   *  animating); on error, try the next; if none load, the placeholder stays. */
+  /** Walk the candidate URLs in order: on load, adopt the <img> as the real sprite (rendered as a live
+   *  DOM element on the sprite layer so an animated GIF actually animates); on error, try the next; if
+   *  none load, the canvas placeholder stays. */
   private tryLoadCandidates(key: string, urls: string[], i: number): void {
     if (i >= urls.length) return;   // exhausted → keep the placeholder
     const img = new Image();
     img.onload = () => {
-      // Park offscreen in the DOM so browsers keep the GIF's animation clock ticking (a purely
-      // detached <img> can freeze on the first frame). Hidden from layout + a11y.
-      img.setAttribute('aria-hidden', 'true');
-      img.style.cssText = 'position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;left:-9999px;top:0';
-      this.animAttic.appendChild(img);
-      this.sprites.set(key, { canvas: img, w: img.width, h: img.height });
+      img.style.cssText = 'position:absolute;image-rendering:pixelated;pointer-events:none';
+      this.sprites.set(key, { canvas: img, w: img.width, h: img.height, img });
     };
     img.onerror = () => this.tryLoadCandidates(key, urls, i + 1);   // 404 → next candidate
     img.src = urls[i]!;
@@ -148,6 +155,8 @@ export class BattleRenderer {
       this.drawMonster('a', 44, 82, 52, 'back');
       this.drawHpBox(this.snap.b, 6, 8, false);       // enemy: top-left
       this.drawHpBox(this.snap.a, 84, 58, true);      // you: bottom-right (with HP numbers)
+    } else {
+      this.hideSpriteImg('a'); this.hideSpriteImg('b');   // no battle → clear any lingering sprite <img>
     }
 
     // Bottom command / text window — branches on the TURN STATE so the game reads as turn-based.
@@ -169,11 +178,13 @@ export class BattleRenderer {
   }
 
   /** Draw a monster centered horizontally on `cx`, standing ON the platform at `groundY` (its feet
-   *  sit there). A small elliptical shadow anchors it to the arena so it doesn't float. */
+   *  sit there). A small elliptical shadow anchors it to the arena so it doesn't float. A REAL sprite
+   *  (loaded <img>, possibly an animated GIF) is placed on the DOM sprite layer so it animates; a
+   *  procedural placeholder is drawn straight to the canvas as before. */
   private drawMonster(side: 'a' | 'b', cx: number, groundY: number, size: number, view: 'front' | 'back'): void {
     const st = side === 'a' ? this.snap!.a : this.snap!.b;
     const spr = this.sprites.get(`${st.monsterId}:${view}`);
-    if (!spr) return;
+    if (!spr) { this.hideSpriteImg(side); return; }
     const ctx = this.ctx;
     const lg = this.lunge[side];                       // attack lunge toward the opponent
     const dx = (side === 'a' ? 1 : -1) * lg * 6;
@@ -182,11 +193,37 @@ export class BattleRenderer {
     ctx.save();
     ctx.fillStyle = 'rgba(15,30,15,0.4)';
     ctx.beginPath(); ctx.ellipse(cx + dx, groundY + 2, size * 0.38, size * 0.12, 0, 0, Math.PI * 2); ctx.fill();
-    // hit flash: blink the defender while it's flashing.
-    if (this.flash[side] > 0 && Math.floor(this.flash[side] * 10) % 2 === 0) { ctx.restore(); return; }
-    // anchor the sprite's FEET on groundY, centered on cx.
-    ctx.drawImage(spr.canvas, cx - size / 2 + dx, groundY - size + dy, size, size);
     ctx.restore();
+    // hit flash: blink the sprite (canvas OR DOM) while it's flashing.
+    const blink = this.flash[side] > 0 && Math.floor(this.flash[side] * 10) % 2 === 0;
+    if (spr.img) {
+      // Real sprite → live DOM <img> on the sprite layer, positioned to match the canvas layout.
+      this.hideSpriteImg(side, spr.img);   // swap element if the monster/view changed
+      this.placeSpriteImg(side, spr.img, cx + dx, groundY + dy, size, blink);
+    } else {
+      // Placeholder → canvas draw (feet anchored on groundY, centered on cx).
+      this.hideSpriteImg(side);            // ensure no stale <img> lingers
+      if (!blink) ctx.drawImage(spr.canvas, cx - size / 2 + dx, groundY - size + dy, size, size);
+    }
+  }
+
+  /** Position a real sprite <img> on the DOM layer using the SAME GB-logical layout the canvas uses
+   *  (converted to device px via `scale`), feet anchored on groundY, centered on cx. */
+  private placeSpriteImg(side: 'a' | 'b', img: HTMLImageElement, cx: number, groundY: number, size: number, blink: boolean): void {
+    const S = this.scale;
+    if (img.parentElement !== this.spriteLayer) this.spriteLayer.appendChild(img);
+    this.shownImg[side] = img;
+    img.style.left = `${(cx - size / 2) * S}px`;
+    img.style.top = `${(groundY - size) * S}px`;
+    img.style.width = `${size * S}px`;
+    img.style.height = `${size * S}px`;
+    img.style.visibility = blink ? 'hidden' : 'visible';
+  }
+
+  /** Remove the currently-shown <img> for a side (unless it's `keep`, the one we're about to place). */
+  private hideSpriteImg(side: 'a' | 'b', keep?: HTMLImageElement): void {
+    const cur = this.shownImg[side];
+    if (cur && cur !== keep) { cur.remove(); this.shownImg[side] = null; }
   }
 
   private drawHpBox(st: BattleSnapshot['a'], x: number, y: number, showNumbers: boolean): void {
@@ -221,5 +258,5 @@ export class BattleRenderer {
     ctx.fillText(text, x, y);
   }
 
-  dispose(): void { cancelAnimationFrame(this.raf); this.canvas.remove(); this.animAttic.remove(); }
+  dispose(): void { cancelAnimationFrame(this.raf); this.canvas.remove(); this.spriteLayer.remove(); }
 }

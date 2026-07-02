@@ -10,6 +10,7 @@ import { BattleConnection, type BattleStateMsg } from './battle-net';
 import { BattleRenderer, type UiPhase, type MenuMove } from './battle-renderer';
 import { ArenaBackground } from './arena-background';
 import { drawMonsterSprite } from './monster-sprite';
+import { spriteCandidateUrls } from './sprite-sources';
 import type { RosterEntry } from '../../shared/battle-protocol';
 import type { BattleEvent } from '../../shared/battle-world';
 import { effectivenessLabel } from '../../shared/monster-types';
@@ -155,6 +156,7 @@ function renderOverlay(): void {
   else if (phase === 'monster_select') overlay.innerHTML = monsterSelectHtml();
   else if (phase === 'results') overlay.innerHTML = resultsHtml();
   wireOverlay();
+  if (phase === 'monster_select') upgradeSelectPortraits();   // swap placeholders → real GIF/PNG
 }
 /** A stable fingerprint of the overlay's meaningful inputs — only a change here rebuilds the DOM. */
 function overlayKey(phase: string): string {
@@ -189,7 +191,7 @@ function lobbyHtml(): string {
     action = '<div class="vm-dim">Waiting for the host to start…</div>';
   }
   return `<div class="vm-card">
-    ${brandHead('VOICE MONSTERS', 'Call in to battle — or play on this device')}
+    ${brandHead('VOICE MONSTERS', 'Call in to battle')}
     <div class="vm-chips">${chips}</div>
     ${action}
   </div>`;
@@ -205,9 +207,10 @@ function brandHead(title: string, sub: string): string {
   </div>`;
 }
 
-/** A creature portrait (rendered pixel sprite) as a data-URL, cached per monster id. */
+/** The procedural placeholder portrait as a data-URL, cached per monster id. Used as the <img> src
+ *  fallback when no real sprite file exists. */
 const portraitCache = new Map<string, string>();
-function portrait(id: string, type: string): string {
+function placeholderPortrait(id: string, type: string): string {
   let url = portraitCache.get(id);
   if (!url) {
     try { url = drawMonsterSprite({ id, type: type as never, view: 'front', size: 128 }).toDataURL(); }
@@ -217,12 +220,32 @@ function portrait(id: string, type: string): string {
   return url;
 }
 
+/** After the select grid mounts, upgrade each portrait <img> to the REAL sprite if one exists: try
+ *  the animated GIF, then the static PNG, and leave the procedural placeholder in place if neither
+ *  loads. Loading the file directly into an <img> means an animated GIF ANIMATES on the card (unlike
+ *  a canvas snapshot). */
+function upgradeSelectPortraits(): void {
+  overlay.querySelectorAll<HTMLImageElement>('img[data-mon-portrait]').forEach((img) => {
+    const id = img.dataset.monPortrait!;
+    const urls = spriteCandidateUrls(id, 'front');
+    const tryNext = (i: number): void => {
+      if (i >= urls.length) return;   // exhausted → keep the placeholder already in src
+      const probe = new Image();
+      probe.onload = () => { img.src = urls[i]!; };   // real file exists → show it (animates if GIF)
+      probe.onerror = () => tryNext(i + 1);
+      probe.src = urls[i]!;
+    };
+    tryNext(0);
+  });
+}
+
 function monsterSelectHtml(): string {
   const mine = state ? (state.players.find(p => p.playerId === myId)?.monsterId ?? null) : null;
   // MINIMAL cards: portrait + name + type only. (Stats/moves were too much info crammed on a tile.)
+  // Portrait starts as the placeholder; upgradeSelectPortraits() swaps in a real GIF/PNG post-mount.
   const cards = roster.map(m => `
     <button class="vm-mon t-${m.type}${mine === m.id ? ' sel' : ''}" data-mon="${m.id}">
-      <div class="portrait"><img src="${portrait(m.id, m.type)}" alt=""></div>
+      <div class="portrait"><img data-mon-portrait="${m.id}" src="${placeholderPortrait(m.id, m.type)}" alt=""></div>
       <div class="vm-mon-name">${esc(m.name)}</div>
       <div class="vm-type t-${m.type}">${m.type}</div>
     </button>`).join('');
