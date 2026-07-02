@@ -5,6 +5,7 @@ import { createReadStream } from 'node:fs';
 import { readFile, writeFile, readdir, rename, mkdir, stat } from 'node:fs/promises';
 import { WebSocketServer, WebSocket } from 'ws';
 import { GameServer } from './game-server';
+import { BattleServer } from './battle-server';
 import { ConversationRelayAdapter } from './conversation-relay';
 import { twimlConnectRelay, twimlMessage, twimlEmpty } from './twiml';
 import { validateTwilioSignature } from './twilio-signature';
@@ -22,6 +23,7 @@ import type { Room } from './room';
 export class HttpServer {
   private server: http.Server;
   private game: GameServer;
+  private battle: BattleServer;
   private voiceWss: WebSocketServer;
   private readonly port: number;
   private readonly authToken?: string;
@@ -106,6 +108,9 @@ export class HttpServer {
       });
     });
     this.game = new GameServer({ server: this.server, broadcastHz: opts.broadcastHz });
+    // Voice Monsters lives on its own /battle WebSocket (turn-based, event-driven — separate from the
+    // racer's continuous-sim GameServer). Mounted on the same HTTP host so one number serves both.
+    this.battle = new BattleServer({ server: this.server });
     // Feed newly-created rooms the selectable cars (manifest) + maps (maps.json). Reads are async
     // and the provider is sync, so keep a cache refreshed at startup + on an interval; rooms read
     // the cache. Empty until the first refresh resolves (rooms then reconfigure on next create).
@@ -130,6 +135,8 @@ export class HttpServer {
         this.voiceWss.handleUpgrade(req, socket, head, (ws) => this.onVoiceConnection(ws));
       } else if (path === '/game') {
         this.game.handleUpgrade(req, socket, head);
+      } else if (path === '/battle') {
+        this.battle.handleUpgrade(req, socket, head);
       } else {
         socket.destroy();
       }
@@ -646,6 +653,7 @@ export class HttpServer {
       if (this.roomConfigTimer) { clearInterval(this.roomConfigTimer); this.roomConfigTimer = null; }
       if (this.smsSweepTimer) { clearInterval(this.smsSweepTimer); this.smsSweepTimer = null; }
       this.game.stopLoopOnly();
+      this.battle.stopLoopOnly();
       this.server.close(() => resolve());
     });
   }

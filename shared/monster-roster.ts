@@ -125,3 +125,12 @@ const MOVES_BY_ID = new Map(ROSTER.flatMap(m => m.moves).map(mvv => [mvv.id, mvv
 export function monsterById(id: string): Monster | null { return BY_ID.get(id) ?? null; }
 /** Look up a move by its globally-unique id, or null. */
 export function moveById(id: string): Move | null { return MOVES_BY_ID.get(id) ?? null; }
+
+/** Flatten the roster for the wire (the monster-select screen). Plain data — no methods, JSON-safe. */
+export function rosterEntries() {
+  return ROSTER.map(m => ({
+    id: m.id, name: m.name, type: m.type as string, blurb: m.blurb,
+    maxHp: m.maxHp, attack: m.attack, defense: m.defense, speed: m.speed,
+    moves: m.moves.map(mv => ({ id: mv.id, name: mv.name, type: mv.type as string, power: mv.power })),
+  }));
+}
