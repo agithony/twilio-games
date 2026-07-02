@@ -73,6 +73,24 @@ describe('BattleServer', () => {
     ws.close();
   });
 
+  it('heartbeat: an idle joined player survives many ping cycles (stays in the room)', async () => {
+    // Reproduces the "select screen reverts to play-here" bug: on an idle socket the heartbeat must
+    // keep the connection alive AND the player in their slot. A responsive ws client auto-pongs, so
+    // across several fast sweeps it should never be terminated or dropped. (heartbeatMs tiny for speed.)
+    server = new BattleServer({ port: 0, heartbeatMs: 20 });
+    const port = await server.start();
+    const { ws, msgs } = await connectCollect(port);
+    send(ws, { type: 'join', roomCode: '4821', name: 'Ada' });
+    await wait(40);
+    send(ws, { type: 'advance' });   // → monster_select, then sit idle
+    await wait(300);                 // ~15 heartbeat sweeps with no app traffic
+    expect(ws.readyState).toBe(WebSocket.OPEN);                         // socket stayed up
+    const state = msgs.filter(m => m.type === 'battle_state').at(-1)!;
+    expect(state.phase).toBe('monster_select');                        // did NOT revert to lobby
+    expect((state.players as unknown[]).length).toBe(1);               // still in their slot
+    ws.close();
+  });
+
   it('two players in the same room both appear in the roster state', async () => {
     server = new BattleServer({ port: 0 });
     const port = await server.start();

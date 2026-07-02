@@ -11,20 +11,30 @@ import { parseBattleClientMessage, type BattleServerMessage } from '../shared/ba
 import { rosterEntries } from '../shared/monster-roster';
 import type { BattleEvent } from '../shared/battle-world';
 
-interface Conn { ws: WebSocket; roomCode?: string; playerId?: string; }
+interface Conn { ws: WebSocket; roomCode?: string; playerId?: string; isAlive: boolean; }
+
+// How often we ping idle battle sockets. Battle traffic is event-driven (a push only on a change), so
+// a player sitting on the monster-select screen sends/receives nothing — without a heartbeat an idle
+// proxy/browser closes the socket after ~60s, the server drops the player, the room resets to lobby,
+// and the reconnect lands in an empty lobby (the "select screen reverts to play-here" bug). 30s keeps
+// it comfortably under typical idle-timeout windows.
+const HEARTBEAT_MS = 30_000;
 
 export class BattleServer {
   private wss: WebSocketServer | null = null;
   private conns = new Set<Conn>();
   private rooms = new Map<string, BattleRoom>();
+  private heartbeat: ReturnType<typeof setInterval> | null = null;
   private seedCounter = 0x1234abcd;
   private readonly port: number | undefined;
+  private readonly heartbeatMs: number;
   /** Fired with a room's drained battle events (super-effective/faint/win) so the voice layer speaks
    *  the caller-relevant ones — mirrors the racer's onRoomEvents seam. */
   private onRoomEvents: ((roomCode: string, events: BattleEvent[]) => void) | null = null;
 
-  constructor(opts: { port?: number; server?: HttpServer }) {
+  constructor(opts: { port?: number; server?: HttpServer; heartbeatMs?: number }) {
     this.port = opts.port;
+    this.heartbeatMs = opts.heartbeatMs ?? HEARTBEAT_MS;   // overridable so tests can drive fast sweeps
     if (opts.server) this.attach(opts.server);
   }
 
@@ -53,11 +63,15 @@ export class BattleServer {
   findRoom(code: string): BattleRoom | undefined { return this.rooms.get(code); }
 
   private onConnection(ws: WebSocket): void {
-    const conn: Conn = { ws };
+    const conn: Conn = { ws, isAlive: true };
     this.conns.add(conn);
+    this.ensureHeartbeat();
+    // A pong (reply to our ping) marks the socket live for the next sweep. Some clients also send an
+    // unsolicited ping — reply so we keep THEM alive too.
+    ws.on('pong', () => { conn.isAlive = true; });
     // The select screen needs the roster immediately (client renders creature cards from it).
     this.send(conn, { type: 'roster', monsters: rosterEntries() });
-    ws.on('message', (d) => this.onMessage(conn, d.toString()));
+    ws.on('message', (d) => { conn.isAlive = true; this.onMessage(conn, d.toString()); });
     ws.on('error', () => { /* don't crash on a socket error; close handler cleans up */ });
     ws.on('close', () => {
       const code = conn.roomCode;
@@ -65,6 +79,22 @@ export class BattleServer {
       this.conns.delete(conn);
       if (code) { this.pushState(code); this.reapIfEmpty(code); }
     });
+  }
+
+  /** Start the liveness sweep once (on the first connection). Every HEARTBEAT_MS: terminate any socket
+   *  that didn't pong since the last sweep (truly dead), then ping the rest — the ping is also what
+   *  keeps idle intermediaries from closing the connection. */
+  private ensureHeartbeat(): void {
+    if (this.heartbeat) return;
+    this.heartbeat = setInterval(() => {
+      for (const c of this.conns) {
+        if (!c.isAlive) { c.ws.terminate(); continue; }   // missed the previous ping → drop it
+        c.isAlive = false;
+        try { c.ws.ping(); } catch { /* terminating socket; close handler cleans up */ }
+      }
+    }, this.heartbeatMs);
+    // Don't let the heartbeat keep the process alive on its own (Node): unref if available.
+    (this.heartbeat as { unref?: () => void }).unref?.();
   }
 
   private onMessage(conn: Conn, raw: string): void {
@@ -170,12 +200,17 @@ export class BattleServer {
     if (conn.ws.readyState === conn.ws.OPEN) conn.ws.send(JSON.stringify(msg));
   }
 
+  private stopHeartbeat(): void {
+    if (this.heartbeat) { clearInterval(this.heartbeat); this.heartbeat = null; }
+  }
   stopLoopOnly(): void {
+    this.stopHeartbeat();
     for (const c of this.conns) c.ws.close();
     this.conns.clear();
   }
   stop(): Promise<void> {
     return new Promise((resolve) => {
+      this.stopHeartbeat();
       for (const c of this.conns) c.ws.close();
       this.conns.clear();
       if (this.wss) this.wss.close(() => resolve()); else resolve();
