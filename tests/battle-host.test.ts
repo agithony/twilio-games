@@ -43,6 +43,22 @@ describe('buildBattleSystemPrompt', () => {
     expect(p).toMatch(/Sparkmouse.*Embertail.*Shellback/);
   });
 
+  it('forbids speaking code tokens / underscores (the "reads a variable" bug)', () => {
+    const p = buildBattleSystemPrompt(ctx()).toLowerCase();
+    expect(p).toMatch(/underscore|code|slug|id/);   // explicitly told not to say code-like tokens
+    expect(p).toMatch(/read aloud|spoken/);
+  });
+
+  it('after taking the name it guides the next step (no dead air)', () => {
+    const p = buildBattleSystemPrompt(ctx({ myName: null })).toLowerCase();
+    expect(p).toMatch(/next|do not just say|nice to meet/);
+  });
+
+  it('on monster-select it tells the caller to PICK a monster', () => {
+    const p = buildBattleSystemPrompt(ctx()).toLowerCase();
+    expect(p).toMatch(/pick|choose/);
+  });
+
   it('during battle it exposes HP + whose turn + the 4 moves so it can commentate intelligently', () => {
     const p = buildBattleSystemPrompt(ctx({
       phase: 'battle', myMonster: 'Sparkmouse', foeMonster: 'Galecoil',

@@ -62,20 +62,20 @@ export function buildBattleSystemPrompt(ctx: BattleHostContext): string {
   ];
 
   if (!ctx.myName) {
-    lines.push("The caller has NOT given their name yet. FIRST job: ask their name, and the moment they say it, CALL set_name, then move on to picking a monster.");
+    lines.push("The caller has NOT given their name yet. FIRST job: ask their name. The moment they say it, CALL set_name AND in the SAME reply greet them by name and tell them what's next — do NOT just say 'nice to meet you' and stop. Immediately move them into picking a monster (see the phase note).");
   }
   if (ctx.phase === 'lobby') {
-    lines.push('SCREEN: the LOBBY. Once you have their name, tell them you are starting and CALL advance to go to MONSTER SELECT.');
+    lines.push("SCREEN: the LOBBY (players call in; the shared screen shows who's in). Once you have their name: greet them, say others can still call in OR they can jump right in, and that you'll take them to pick their monster — then CALL advance to go to MONSTER SELECT. NEVER end a turn on a bare 'nice to meet you'; always say the next step.");
   }
   if (ctx.phase === 'monster_select') {
-    lines.push(`SCREEN: MONSTER SELECT — a grid of creatures is on the display. The ONLY monsters are, in order: ${numberedList(ctx.monsters)}. These names are EXACT — only ever say one from THIS list, never invent one; if unsure, say its number.`);
-    if (ctx.myMonster) lines.push(`The caller picked ${ctx.myMonster}. If happy, CALL advance to start the battle; to change, CALL select_monster again.`);
-    else lines.push('The caller has NOT picked yet. Suggest one (a fun one-liner about its type is great) and CALL select_monster when they choose. Do NOT advance until they have a monster.');
+    lines.push(`SCREEN: MONSTER SELECT — a grid of creatures is on the display RIGHT NOW. Tell the caller to PICK their monster (say a name or a number). The ONLY monsters are, in order: ${numberedList(ctx.monsters)}. These names are EXACT — only ever say one from THIS list, never invent one; if unsure, say its number.`);
+    if (ctx.myMonster) lines.push(`The caller picked ${ctx.myMonster} (their square is highlighted on screen). If they're happy, tell them to say "battle" / "start" and CALL advance; to change, CALL select_monster again.`);
+    else lines.push('The caller has NOT picked yet. Prompt them to choose — suggest one with a fun one-liner about its type — and CALL select_monster when they name one. Do NOT advance until they have a monster.');
   }
   if (ctx.phase === 'battle') {
     const hp = (h: number | null, m: number | null) => (h !== null && m !== null ? `${h}/${m}` : '?');
     lines.push(`A BATTLE is LIVE. ${ctx.myMonster ?? 'Your monster'} (HP ${hp(ctx.myHp, ctx.myMaxHp)}) vs ${ctx.foeMonster ?? 'the rival'} (HP ${hp(ctx.foeHp, ctx.foeMaxHp)}).`);
-    if (ctx.moves.length) lines.push(`The caller's moves are: ${numberedList(ctx.moves)}. To attack, CALL choose_action with 'fight:<one of these exact move names>'.`);
+    if (ctx.moves.length) lines.push(`The caller's moves are: ${numberedList(ctx.moves)}. When they pick one, CALL choose_action to attack. In your SPOKEN reply, say the move's plain English name only (e.g. "Thunder Jolt!") — NEVER say the tool format, a colon, an underscore, or any code-like token out loud.`);
     if (ctx.whoseTurn === 'me') lines.push(`It is the CALLER'S turn — help them choose. If they name a move, GUARD, ITEM, or TAUNT, CALL choose_action. Give a quick tactical nudge (e.g. suggest a super-effective move, or GUARD/ITEM when low on HP) but keep it to one short sentence.`);
     else if (ctx.whoseTurn === 'foe') lines.push('It is the RIVAL\'S turn — briefly commentate what is happening; do not take an action for the caller.');
     else lines.push('Mid-resolution — commentate the action briefly and excitedly (one short line).');
@@ -88,7 +88,7 @@ export function buildBattleSystemPrompt(ctx: BattleHostContext): string {
   }
 
   lines.push('',
-    'RULES: Never invent monster or move names — use ONLY the exact lists above. Do NOT advance past the current step unless it is done AND the caller is ready. Never mention being an AI language model. Stay in character. No emojis (spoken aloud).');
+    'RULES: Never invent monster or move names — use ONLY the exact lists above. SPOKEN OUTPUT IS READ ALOUD: say only natural English — NEVER speak ids, slugs, underscores, colons, the word "underscore", or any code/variable/tool token (say "Thunder Jolt", never "sparkmouse_jolt" or "fight colon"). Do NOT advance past the current step unless it is done AND the caller is ready. Never mention being an AI language model. Stay in character. No emojis.');
   return lines.join('\n');
 }
 

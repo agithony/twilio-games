@@ -117,6 +117,9 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); c
 .vm-type { display: inline-block; margin-top: 6px; font-family: var(--mono); font-size: 10px; text-transform: uppercase;
   letter-spacing: .06em; padding: 3px 10px; border-radius: 999px; color: #06110a; font-weight: 700; background: var(--tc, #c8d4e6); }
 .vm-win { color: var(--red); }
+/* "picked by <name>" tag on a selected monster tile (shows a voice-caller's pick on the shared screen). */
+.vm-picked-by { margin-top: 5px; font-family: var(--mono); font-size: 10px; letter-spacing: .04em; color: var(--red);
+  background: rgba(239,34,58,.16); border-radius: 999px; padding: 2px 8px; display: inline-block; }
 
 /* ── Lobby join flow (QR + numbered steps) — mirrors the racer's lobby so both games onboard the same. ── */
 .vm-join { display: flex; align-items: center; gap: 30px; justify-content: center; margin: 20px 0 8px; flex-wrap: wrap; }

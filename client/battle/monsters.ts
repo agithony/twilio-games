@@ -371,20 +371,31 @@ function upgradeSelectPortraits(): void {
 }
 
 function monsterSelectHtml(): string {
-  const mine = state ? (state.players.find(p => p.playerId === myId)?.monsterId ?? null) : null;
-  // MINIMAL cards: portrait + name + type only. (Stats/moves were too much info crammed on a tile.)
-  // Portrait starts as the placeholder; upgradeSelectPortraits() swaps in a real GIF/PNG post-mount.
-  const cards = roster.map(m => `
-    <button class="vm-mon t-${m.type}${mine === m.id ? ' sel' : ''}" data-mon="${m.id}">
+  const players = state?.players ?? [];
+  // Highlight ANY player's current pick (this is a shared screen — a caller who picked by VOICE must
+  // see their square light up even though they have no browser + no local myId). Map monsterId → who
+  // picked it, so a voice pick highlights just like a tap.
+  const pickedBy = new Map<string, string>();   // monsterId → picker display name
+  for (const p of players) if (p.monsterId) pickedBy.set(p.monsterId, p.name);
+  const anyPick = players.some(p => p.monsterId);
+  // MINIMAL cards: portrait + name + type + (who picked it). Portrait starts as the placeholder;
+  // upgradeSelectPortraits() swaps in a real GIF/PNG post-mount.
+  const cards = roster.map(m => {
+    const picker = pickedBy.get(m.id);
+    const selected = picker !== undefined;
+    return `
+    <button class="vm-mon t-${m.type}${selected ? ' sel' : ''}" data-mon="${m.id}">
       <div class="portrait"><img data-mon-portrait="${m.id}" src="${placeholderPortrait(m.id, m.type)}" alt=""></div>
       <div class="vm-mon-name">${esc(m.name)}</div>
       <div class="vm-type t-${m.type}">${m.type}</div>
-    </button>`).join('');
+      ${picker ? `<div class="vm-picked-by">${esc(picker)}</div>` : ''}
+    </button>`;
+  }).join('');
   return `<div class="vm-card wide">
     ${brandHead('CHOOSE YOUR MONSTER', 'Pick your fighter — say its name or tap it')}
     <div class="vm-grid">${cards}</div>
     ${canDrive()
-      ? `<button class="vm-btn" data-act="advance">Battle ▶</button>${mine ? '' : '<div class="vm-dim">Pick a monster first (say its name or tap it)</div>'}`
+      ? `<button class="vm-btn" data-act="advance">Battle ▶</button>${anyPick ? '' : '<div class="vm-dim">Pick a monster first (say its name or tap it)</div>'}`
       : '<div class="vm-dim">Say a monster\'s name or tap it.</div>'}
   </div>`;
 }
