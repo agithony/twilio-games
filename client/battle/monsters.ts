@@ -137,8 +137,12 @@ function bannerFor(ev: BattleEvent): string | null {
 let lastOverlayKey = '';
 function renderOverlay(): void {
   const phase = state?.phase ?? 'connecting';
+  // The battle STAGE (GB canvas + 3D arena) must only show during an actual battle. Otherwise its
+  // "Waiting…" canvas rendered ON TOP of the lobby/select overlays (covering the buttons — the bug).
+  const inBattle = phase === 'battle' || draining;
+  stageEl.style.display = inBattle ? '' : 'none';
   // During battle (incl. resolving), the GB canvas owns the screen — no overlay.
-  if (phase === 'battle' || phase === 'connecting' || draining) {
+  if (inBattle || phase === 'connecting') {
     if (lastOverlayKey !== 'hidden') { overlay.innerHTML = ''; overlay.style.display = 'none'; lastOverlayKey = 'hidden'; }
     return;
   }
