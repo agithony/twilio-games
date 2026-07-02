@@ -96,6 +96,18 @@ export class BattleVoiceSession {
     const snap = this.deps.snapshot(this.code!, this.playerId!);
     if (!snap) { void this.converse(text); return; }
 
+    // NAME CAPTURE (deterministic, LLM-independent): while the caller still has no real name — which is
+    // the very first thing we ask — treat a short reply as their name, set it, and confirm + guide to
+    // the next step. This must NOT rely on the LLM (the "I gave my name but nothing happened" bug).
+    if (!snap.myName && snap.phase !== 'battle') {
+      const name = parseSpokenName(text);
+      if (name) {
+        this.deps.setName(this.code!, this.playerId!, name);
+        this.deps.say(`Nice to meet you, ${name}! Others can still call in — say "start" when you're ready to pick your monster.`);
+        return;
+      }
+    }
+
     // MONSTER SELECT: a clear name/number picks a monster immediately (no LLM latency).
     if (snap.phase === 'monster_select') {
       const idx = matchNameOrNumber(text, snap.monsterNames);
@@ -172,4 +184,26 @@ function matchNameOrNumber(spoken: string, choices: string[]): number {
 function playerName(from?: string): string {
   if (from && from.length >= 4) return `Player ${from.slice(-4)}`;
   return 'Challenger';
+}
+
+/** Extract a caller's NAME from a spoken reply, or null if it doesn't look like a name (a question, a
+ *  command, or empty). Handles "I'm Ada" / "my name is Rex" / "this is Bo" / bare "Ada". Kept simple +
+ *  deterministic so name capture never depends on the LLM. */
+export function parseSpokenName(spoken: string): string | null {
+  let q = spoken.trim().replace(/[.!?,]+$/, '');
+  if (!q) return null;
+  const low = q.toLowerCase();
+  // Not a name: obvious questions or game commands (so "start"/"which one?" don't become the name).
+  if (/[?]/.test(spoken)) return null;
+  if (/^(start|go|next|fight|guard|item|potion|taunt|yes|no|ready|help|what|which|who|how|why|when|where)\b/.test(low)) return null;
+  // Strip a lead-in ("my name is", "i'm", "i am", "this is", "it's", "call me").
+  const m = low.match(/^(?:my name is|i am|i'm|im|this is|it's|its|call me|the name's|name's)\s+(.*)$/);
+  if (m && m[1]) q = q.slice(q.length - m[1].length);
+  // Take the first 1-2 words, letters/hyphen/apostrophe only; reject if nothing name-like remains.
+  const words = q.split(/\s+/).filter(w => /^[A-Za-z][A-Za-z'’-]*$/.test(w)).slice(0, 2);
+  if (!words.length) return null;
+  const name = words.join(' ');
+  if (name.length < 2 || name.length > 20) return null;
+  // Title-case for display.
+  return name.replace(/\b[a-z]/g, c => c.toUpperCase());
 }

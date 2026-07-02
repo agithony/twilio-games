@@ -2,8 +2,24 @@
 // spoken turns (via the voice matcher + LLM host) into battle actions, and speaks commentary from
 // battle events. Tested against a fake battle backend + fake LLM (no WS/Twilio).
 import { describe, it, expect } from 'vitest';
-import { BattleVoiceSession, type BattleVoiceDeps } from '../server/battle-voice';
+import { BattleVoiceSession, parseSpokenName, type BattleVoiceDeps } from '../server/battle-voice';
 import type { BattleEvent } from '../shared/battle-world';
+
+describe('parseSpokenName', () => {
+  it('extracts a name from common phrasings', () => {
+    expect(parseSpokenName("I'm Ada")).toBe('Ada');
+    expect(parseSpokenName('my name is rex')).toBe('Rex');
+    expect(parseSpokenName('this is Bo')).toBe('Bo');
+    expect(parseSpokenName('Ada')).toBe('Ada');
+    expect(parseSpokenName('call me Max')).toBe('Max');
+  });
+  it('rejects questions + game commands (so they are not taken as a name)', () => {
+    expect(parseSpokenName('start')).toBeNull();
+    expect(parseSpokenName('which monster is best?')).toBeNull();
+    expect(parseSpokenName('what do I do?')).toBeNull();
+    expect(parseSpokenName('')).toBeNull();
+  });
+});
 
 // A fake battle backend capturing the actions the session drives.
 function fakeDeps(over: Partial<BattleVoiceDeps> = {}): { deps: BattleVoiceDeps; log: string[]; said: string[] } {
@@ -43,8 +59,33 @@ describe('BattleVoiceSession', () => {
     expect(said.length).toBeGreaterThan(0);   // greeting spoken
   });
 
+  it('captures the caller name in the lobby BEFORE anything else (deterministic, no LLM)', () => {
+    const { deps, log, said } = fakeDeps({
+      snapshot: () => ({
+        phase: 'lobby', mySide: 'a', monsterNames: ['Sparkmouse', 'Embertail', 'Shellback'],
+        myName: null, myMonsterId: null, myMonsterName: null,
+        foeMonsterName: null, myHp: null, myMaxHp: null, foeHp: null, foeMaxHp: null,
+        myPotions: 2, whoseTurn: null, myMoves: [], winnerName: null,
+      }),
+    });
+    const s = new BattleVoiceSession(deps);
+    s.handleMessage(setup());
+    said.length = 0;
+    s.handleMessage(prompt("I'm Ada"));
+    expect(log.some(l => l === 'name Ada')).toBe(true);          // name was set
+    expect(said.some(t => /nice to meet you, ada/i.test(t))).toBe(true);   // confirmed + guided
+  });
+
   it('a spoken monster name during select picks it (deterministic, no LLM)', () => {
-    const { deps, log } = fakeDeps();
+    // A name is already set, so "Embertail" is treated as a monster pick, not a name.
+    const { deps, log } = fakeDeps({
+      snapshot: () => ({
+        phase: 'monster_select', mySide: 'a', monsterNames: ['Sparkmouse', 'Embertail', 'Shellback'],
+        myName: 'Ada', myMonsterId: null, myMonsterName: null,
+        foeMonsterName: null, myHp: null, myMaxHp: null, foeHp: null, foeMaxHp: null,
+        myPotions: 2, whoseTurn: null, myMoves: [], winnerName: null,
+      }),
+    });
     const s = new BattleVoiceSession(deps);
     s.handleMessage(setup());
     s.handleMessage(prompt('Embertail'));

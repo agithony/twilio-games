@@ -18,7 +18,7 @@ import { appendResults, parseLeaderboard, topEntries } from '../shared/leaderboa
 import { SmsConcierge, type ConciergeRoom } from './sms-concierge';
 import { OpenAiClient, NullLlmClient, type LlmClient, type LlmTurn } from './llm';
 import { hostTurn, matchChoice, clearSelectionIndex, type HostContext } from './game-host';
-import { BattleVoiceSession, type BattleVoiceSnapshot } from './battle-voice';
+import { BattleVoiceSession, parseSpokenName, type BattleVoiceSnapshot } from './battle-voice';
 import { battleHostTurn, type BattleHostContext } from './battle-host';
 import { monsterById, rosterEntries } from '../shared/monster-roster';
 import type { Room } from './room';
@@ -369,6 +369,21 @@ export class HttpServer {
    *  Returns null when it's not a clear pick (a question, chit-chat, or wrong phase) → the LLM handles
    *  it. Makes numeric/name picks reliable regardless of the model, and works with the LLM disabled. */
   private directSelection(room: Room, playerId: string, utterance: string): string | null {
+    // NAME CAPTURE (deterministic, LLM-independent): the FIRST thing we ask is the caller's name, so in
+    // the LOBBY, while they still have the auto placeholder name, treat a name-like reply as their name
+    // + confirm and guide forward. Without this, giving your name relied entirely on the LLM (dead air
+    // if it's off/slow). Only in the lobby — in car_select a car pick must win over a name guess.
+    if (room.phase === 'lobby') {
+      const me = room.lobbyPlayers().find(p => p.playerId === playerId);
+      const hasRealName = me && !/^Racer(\s|$)/.test(me.name);
+      if (!hasRealName) {
+        const name = parseSpokenName(utterance);
+        if (name) {
+          this.game.voiceSetName(room.code, playerId, name);
+          return `Nice to meet you, ${name}! Say "start" when you're ready to pick your car.`;
+        }
+      }
+    }
     if (room.phase === 'car_select') {
       const i = clearSelectionIndex(utterance, this.roomConfigCache.carNames);
       if (i === null) return null;
@@ -590,9 +605,10 @@ export class HttpServer {
         hints: toBattle
           ? 'fight, guard, item, potion, taunt, attack, heal, sparkmouse, embertail, shellback, thornling, galecoil, voltcrest, dazeduck, psyclone, ember, thunder, jolt, water, vine, psystrike'
           : 'left, right, boost, go, brake, slow, stop, nitro, power',
-        welcomeGreeting: this.crVoice
-          ? (toBattle ? "Welcome to Voice Monsters! You're in the arena." : "Welcome to Voice Racer! You're in the race.")
-          : '',
+        // NO welcomeGreeting here on purpose: the game's WS `setup` handler speaks the greeting (and
+        // asks the caller's name) as its FIRST utterance. Setting it here too made the caller hear
+        // "Welcome to Voice Monsters" TWICE (TwiML greeting + the WS greeting).
+        welcomeGreeting: '',
       });
       res.writeHead(200, { 'Content-Type': 'text/xml' }).end(xml);
       return;
