@@ -44,6 +44,7 @@ function fakeDeps(over: Partial<BattleVoiceDeps> = {}): { deps: BattleVoiceDeps;
     selectMonster: (_c, _id, m) => log.push(`monster ${m}`),
     chooseAction: (_c, _id, a) => log.push(`action ${JSON.stringify(a)}`),
     advance: (_c) => log.push('advance'),
+    setTimer: (fn: () => void) => { fn(); },   // synchronous in tests → paced commentary drains at once
     say: (t) => said.push(t),
     snapshot: () => ({
       phase: 'monster_select',
@@ -177,6 +178,27 @@ describe('BattleVoiceSession', () => {
     s.onBattleEvent(ev);
     expect(said.length).toBe(1);
     expect(said[0]!.toLowerCase()).toMatch(/super|effective|weak/);
+  });
+
+  it('narrates a full turn\'s events IN ORDER on the paced clock (screen-sync)', () => {
+    // The server hands the whole turn at once; the session must narrate move → super-effective in the
+    // order they occurred (paced via setTimer), not scrambled or all-at-once with the wrong sequence.
+    const { deps, said } = fakeDeps({
+      snapshot: () => ({
+        phase: 'battle', mySide: 'a', monsterNames: ['Sparkmouse'],
+        myName: 'Ada', myMonsterId: 'sparkmouse', myMonsterName: 'Sparkmouse',
+        foeMonsterName: 'Galecoil', myHp: 70, myMaxHp: 70, foeHp: 40, foeMaxHp: 98,
+        myPotions: 2, whoseTurn: 'foe', myMoves: [], winnerName: null,
+      }),
+    });
+    const s = new BattleVoiceSession(deps);
+    s.handleMessage(setup()); said.length = 0;
+    s.onBattleEvent({ kind: 'move_used', by: 'a', moveId: 'x', moveName: 'Vine Lash' });
+    s.onBattleEvent({ kind: 'effectiveness', on: 'b', multiplier: 2, label: "It's super effective!" });
+    const moveIdx = said.findIndex(t => /vine lash/i.test(t));
+    const effIdx = said.findIndex(t => /super|effective/i.test(t));
+    expect(moveIdx).toBeGreaterThanOrEqual(0);
+    expect(effIdx).toBeGreaterThan(moveIdx);   // effectiveness narrated AFTER the move that caused it
   });
 
   it('names monsters correctly for a side-b caller (event sides are absolute)', () => {

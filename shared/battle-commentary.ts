@@ -83,9 +83,9 @@ const MISS = [
   'Dodged it! {move} sails wide.',
 ];
 const CRIT = [
-  'CRITICAL HIT! {who} takes a monster of a blow!',
-  "A CRITICAL HIT — that one really stung {who}!",
-  'CRITICAL! {who} reels from the impact!',
+  'A critical hit! {who} takes a monster of a blow.',
+  'A critical hit — that one really stung {who}.',
+  "Critical! {who} reels from the impact.",
 ];
 const SUPER = [
   "It's super effective! {who}'s type is weak to that!",
@@ -119,8 +119,8 @@ const FAINT = [
 ];
 const WIN = [
   '{who} takes the win — what a battle!',
-  'Victory for {who}! Incredible!',
-  "{who} stands tall — {who} WINS!",
+  'Victory for {who}! What a finish.',
+  '{who} stands tall — {who} wins it!',
 ];
 
 /** Deterministic phrase-bank pick by seq (mirrors voice-lines' pick). */

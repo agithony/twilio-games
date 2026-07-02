@@ -9,6 +9,7 @@
 import { parseCrMessage } from './conversation-relay';
 import { matchBattleAction } from '../shared/battle-intent';
 import { commentaryForBattleEvent, battleIntro } from '../shared/battle-commentary';
+import { dwellForEvent, HANDOFF_PAUSE_MS } from '../shared/battle-timing';
 import type { BattleEvent, BattleAction } from '../shared/battle-world';
 
 /** A snapshot of the caller's live battle state, flattened for voice routing + the LLM host context. */
@@ -36,6 +37,8 @@ export interface BattleVoiceDeps {
   chooseAction(code: string, playerId: string, action: BattleAction): void;
   advance(code: string): void;
   say(text: string): void;                            // speak a line to THIS caller (Relay TTS)
+  /** Schedule `fn` after `ms` (injected so tests can drive the paced-commentary clock synchronously). */
+  setTimer(fn: () => void, ms: number): void;
   snapshot(code: string, playerId: string): BattleVoiceSnapshot | null;
   /** Conversational LLM turn (host brain). Returns what to say, or null → scripted fallback / silence. */
   converse(code: string, playerId: string, utterance: string): Promise<string | null>;
@@ -100,43 +103,53 @@ export class BattleVoiceSession {
     // fully playable by voice even with the LLM off/slow. The LLM is only a fallback for chat/questions.
 
     // NAME CAPTURE: the first thing we ask. While the caller has no real name, a name-like reply sets it.
+    // In the LOBBY we DON'T tell them to "pick a monster" — the screen is still the lobby. We tell them
+    // to wait for others OR say "start" to move to the monster screen (screen + words stay in sync).
     if (!snap.myName && snap.phase !== 'battle') {
       const name = parseSpokenName(text);
       if (name) {
         this.deps.setName(this.code!, this.playerId!, name);
-        const next = snap.phase === 'lobby' ? 'say "start" when you\'re ready to pick your monster' : 'now pick your monster — say its name';
-        this.deps.say(`Nice to meet you, ${name}! ${next[0]!.toUpperCase()}${next.slice(1)}.`);
+        this.deps.say(snap.phase === 'lobby'
+          ? `Nice to meet you, ${name}! Other players can call in to join — or when you're ready, just say "start" and we'll head to monster select.`
+          : `Nice to meet you, ${name}! Pick your monster — say a name from the screen.`);
         return;
       }
     }
 
-    // ADVANCE / REMATCH: "start"/"go"/"battle"/"next"/"ready"/"rematch"/"again" moves the flow forward.
-    // This is what was missing — advancing between screens silently depended on the LLM before.
+    // ADVANCE / REMATCH: an intent to move forward ("start"/"go"/"choose a monster"/"next"/"rematch")
+    // advances the screen — so a spoken action drives the display. Deterministic (no LLM dependency).
     if (isAdvanceWord(text)) {
-      if (snap.phase === 'lobby') { this.deps.advance(this.code!); this.deps.say('Choose your monster — say its name!'); return; }
+      if (snap.phase === 'lobby') { this.deps.advance(this.code!); this.deps.say('Off to monster select! Say a monster\'s name to pick your fighter.'); return; }
       if (snap.phase === 'monster_select') {
-        if (!snap.myMonsterId) { this.deps.say('Pick a monster first — say its name or a number.'); return; }
-        this.deps.advance(this.code!); this.deps.say(`Here we go — ${snap.myMonsterName} is ready to battle!`); return;
+        if (!snap.myMonsterId) { this.deps.say('Pick a monster first — say a name from the screen, or a number.'); return; }
+        this.deps.advance(this.code!); return;   // battle starts → the paced battle-intro handles the talking
       }
       if (snap.phase === 'results') { this.deps.advance(this.code!); this.deps.say('Rematch! Pick your monster.'); return; }
     }
 
-    // MONSTER SELECT: a clear name/number picks a monster immediately (no LLM latency).
+    // MONSTER SELECT: a clear name/number picks a monster. Calm confirmation + a quick background on it,
+    // then guidance about what's next (wait for players, or say "battle").
     if (snap.phase === 'monster_select') {
       const idx = matchNameOrNumber(text, snap.monsterNames);
       if (idx >= 0) {
         const name = snap.monsterNames[idx]!;
         this.deps.selectMonster(this.code!, this.playerId!, name.toLowerCase().replace(/\s+/g, ''));
-        this.deps.say(`${name}! Great pick — say "battle" when you're ready.`);
+        this.deps.say(`${name} — ${monsterBlurb(name)} Whenever you're ready, say "battle" to begin.`);
         return;
       }
     }
 
-    // BATTLE (caller's turn): a clear action word/number/move commits it.
+    // BATTLE (caller's turn): FIGHT opens the move menu AND reads the moves aloud (so a phone-only caller
+    // knows their options); then a move name/number commits the attack. GUARD/ITEM/TAUNT commit directly.
     if (snap.phase === 'battle' && snap.whoseTurn === 'me') {
       const res = matchBattleAction(text, { moves: snap.myMoves, potions: snap.myPotions, level: this.menuLevel });
       if (res) {
-        if (res.kind === 'openFight') { this.menuLevel = 'fight'; this.deps.say('Which move? Say its name or a number.'); return; }
+        if (res.kind === 'openFight') {
+          this.menuLevel = 'fight';
+          const list = snap.myMoves.map((m, i) => `${i + 1}, ${m.name}`).join('; ');
+          this.deps.say(`Your moves are: ${list}. Say a move name or its number.`);
+          return;
+        }
         if (res.kind === 'back') { this.menuLevel = 'root'; return; }
         this.menuLevel = 'root';
         this.deps.chooseAction(this.code!, this.playerId!, res);
@@ -157,34 +170,49 @@ export class BattleVoiceSession {
   }
 
   private introDone = false;   // one dramatic "X vs Y" intro + how-to-play recap per battle
-  /** Speak scripted commentary for a battle event (super-effective/crit/miss/faint/win, etc.). */
+  private evQ: BattleEvent[] = [];   // events queued to narrate, drained on the SAME clock as the screen
+  private draining = false;
+
+  /** Receive a battle event. The server hands us a whole turn's events at once, but the SCREEN plays
+   *  them one at a time on the dwellForEvent clock — so we QUEUE them and narrate on that same clock,
+   *  keeping the spoken commentary in sync with the on-screen animation (not all dumped at once). */
   onBattleEvent(ev: BattleEvent): void {
     if (!this.code || !this.playerId) return;
-    const snap = this.deps.snapshot(this.code, this.playerId);
-    // Battle events carry ABSOLUTE sides (a/b); commentary maps side 'a'→aName, 'b'→bName. But the
-    // snapshot's my/foe are RELATIVE to the caller, so map back to absolute: if the caller is side 'b',
-    // THEY are 'b' and their foe is 'a'. Without this, a 2nd caller (side 'b') hears every line naming
-    // the wrong monster.
+    this.evQ.push(ev);
+    if (!this.draining) { this.draining = true; this.drainEvents(); }
+  }
+
+  /** Narrate the next queued event, then schedule the following one after its on-screen dwell. */
+  private drainEvents(): void {
+    const ev = this.evQ.shift();
+    if (!ev) { this.draining = false; return; }
+    this.speakEvent(ev);
+    // Match the screen: hold for this event's dwell (+ the handoff pause before a 2nd attacker's move).
+    const next = this.evQ[0];
+    const handoff = next?.kind === 'move_used' && ev.kind !== 'turn_start' ? HANDOFF_PAUSE_MS : 0;
+    this.deps.setTimer(() => this.drainEvents(), dwellForEvent(ev) + handoff);
+  }
+
+  /** Speak the commentary for ONE event (intro on turn 1, else the scripted line). */
+  private speakEvent(ev: BattleEvent): void {
+    const snap = this.deps.snapshot(this.code!, this.playerId!);
+    // Events carry ABSOLUTE sides; commentary maps 'a'→aName/'b'→bName. Map the caller-relative snapshot
+    // back to absolute (a side-'b' caller's monster is side 'b').
     const mine = snap?.myMonsterName ?? 'Your monster';
     const foe = snap?.foeMonsterName ?? 'the rival';
     const [aName, bName] = snap?.mySide === 'b' ? [foe, mine] : [mine, foe];
 
-    // BATTLE INTRO: on the first turn, set the scene dramatically (X vs Y + a bit of type flavor) and
-    // give a quick how-to-act recap ("say Fight, then a move"). Then let the normal commentary flow.
     if (ev.kind === 'turn_start' && !this.introDone && snap) {
-      this.introDone = true;
-      this.menuLevel = 'root';
+      // Dramatic scene-set on turn 1 + a quick how-to-act recap. Then normal commentary flows.
+      this.introDone = true; this.menuLevel = 'root';
       this.deps.say(battleIntro(mine, foe));
-      this.deps.say('On your turn, say FIGHT and then a move name to attack — or GUARD, ITEM, or TAUNT.');
-      return;   // don't also read the "Turn 1" tick this beat
+      this.deps.say('On your turn, say FIGHT to see your moves, then say a move — or say GUARD, ITEM, or TAUNT.');
+      return;
     }
-
     const line = commentaryForBattleEvent(ev, { aName, bName }, this.lineSeq);
     if (line) { this.lineSeq++; this.deps.say(line); }
-    // A new turn resets the caller's voice menu level so "one/two…" re-map to root actions.
     if (ev.kind === 'turn_start') this.menuLevel = 'root';
-    // A finished battle re-arms the intro for the next (rematch) battle.
-    if (ev.kind === 'battle_over') this.introDone = false;
+    if (ev.kind === 'battle_over') this.introDone = false;   // re-arm the intro for a rematch
   }
 
   handleClose(): void {
@@ -193,10 +221,32 @@ export class BattleVoiceSession {
   }
 }
 
-/** True when the caller is asking to move the flow FORWARD (start the battle / rematch / continue). */
+/** True when the caller is asking to move the flow FORWARD (start / pick a monster / rematch / continue).
+ *  Includes intent phrasings like "I want to choose a monster" / "let's play" so a spoken ACTION moves
+ *  the on-screen flow, not just the bare keyword "start". */
 export function isAdvanceWord(spoken: string): boolean {
-  return /\b(start|begin|go|battle|fight now|ready|next|continue|rematch|again|play again|run it back|let'?s go)\b/i.test(spoken.trim());
+  const q = spoken.trim().toLowerCase();
+  if (/\b(start|begin|go|battle|fight now|ready|next|continue|rematch|again|play again|run it back|let'?s (go|play|battle)|i'?m ready)\b/.test(q)) return true;
+  // "choose/pick a monster", "let me pick", "choose my fighter" → advance to monster select.
+  if (/\b(choose|pick|select|show me)\b/.test(q) && /\b(monster|fighter|creature|character)\b/.test(q)) return true;
+  return false;
 }
+
+/** A one-line background blurb for a monster (spoken after a pick), keyed by roster id → its flavor. */
+function monsterBlurb(name: string): string {
+  const key = name.toLowerCase().replace(/\s+/g, '');
+  return MONSTER_BLURBS[key] ?? 'a fierce contender!';
+}
+const MONSTER_BLURBS: Record<string, string> = {
+  sparkmouse: 'a lightning-fast electric rodent — quick and shocking!',
+  embertail: 'a hot-headed fire drake with a blazing temper!',
+  shellback: 'a sturdy water turtle — soaks up hits and strikes back!',
+  thornling: 'a vine-wrapped grass sprout that drains and lashes!',
+  galecoil: 'a raging water serpent — a leviathan when provoked!',
+  voltcrest: 'a crackling electric thunderbird — a storm on the wing!',
+  dazeduck: 'a dazed water fowl — clumsy, but weirdly powerful!',
+  psyclone: 'a lab-born psychic powerhouse — immense and unblinking!',
+};
 
 /** Match a spoken phrase to a choice index by NAME (fuzzy) or NUMBER ("two", "monster 3"), or -1. */
 function matchNameOrNumber(spoken: string, choices: string[]): number {

@@ -16,6 +16,7 @@ import { moveById } from '../../shared/monster-roster';
 import { spriteCandidateUrls } from './sprite-sources';
 import type { RosterEntry } from '../../shared/battle-protocol';
 import type { BattleEvent, BattleAction } from '../../shared/battle-world';
+import { dwellForEvent, HANDOFF_PAUSE_MS } from '../../shared/battle-timing';
 import { effectivenessLabel } from '../../shared/monster-types';
 import { matchBattleAction } from '../../shared/battle-intent';
 
@@ -166,7 +167,7 @@ function drainNext(): void {
     const who = pendingHandoff; pendingHandoff = null;
     renderer.setEventBanner(handoffText(who));
     renderer.setActiveSide(who);
-    setTimeout(drainNext, 1900);   // hold the "their turn" card so the ping-pong is unmistakable
+    setTimeout(drainNext, HANDOFF_PAUSE_MS);   // hold the "their turn" card so the ping-pong is unmistakable
     return;
   }
   const ev = eventQ.shift();
@@ -201,25 +202,9 @@ function handoffText(side: 'a' | 'b'): string {
   return `▶ ${actorName(side).toUpperCase()}'S TURN`;
 }
 
-/** How long to hold on `ev` before playing the next one — slow, so each beat reads as its own step:
- *  "X used Move!" sits on screen BEFORE its hit lands, and hits/outcomes linger. The between-attack
- *  handoff is a separate injected card (see drainNext), so we don't pad here for it. */
-function dwellFor(ev: BattleEvent): number {
-  switch (ev.kind) {
-    case 'turn_start':   return 1400;                    // "— Turn N —" title card
-    case 'move_used':    return 1800;                    // announce the move, THEN it hits
-    case 'miss':         return 1700;                    // "But it missed!" lands
-    case 'damage':       return ev.crit ? 2200 : 1650;   // the hit + HP drop registers
-    case 'effectiveness':return 2100;                    // "It's super effective!" lands
-    case 'guard':        return 1600;                    // "braced for impact!"
-    case 'item':         return 1700;                    // "used a Potion!"
-    case 'taunt':        return 1800;                    // "taunts X!"
-    case 'heal':         return 1100;                    // HP bar rises (no banner)
-    case 'faint':        return 2300;
-    case 'battle_over':  return 2400;
-    default:             return 1500;
-  }
-}
+/** How long to hold on `ev` before playing the next one — SHARED with the voice layer (battle-timing)
+ *  so the screen animation + spoken commentary stay on the same clock. */
+const dwellFor = dwellForEvent;
 /** The monster name for a side, from the current snapshot (for "X used Move!" banners). */
 function actorName(side: 'a' | 'b'): string {
   const snap = state?.snapshot; if (!snap) return side === 'a' ? 'You' : 'Foe';
