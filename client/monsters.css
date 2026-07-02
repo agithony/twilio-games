@@ -38,9 +38,19 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); c
 /* Overlay: lobby / monster-select / results — a full-screen Twilio glass panel over the navy bg.
    Everything must fit ON SCREEN (no scrolling) with margin top+bottom: the card is capped to the
    viewport height and its inner content shrinks to fit (see .vm-card.wide + the grid sizing). */
+/* Monster-sprite collage behind the menu overlays (lively rendered backdrop, matches the racer). Tiled
+   front sprites, darkened + slowly drifting; sits above the ambient canvas (z0), below the overlay. */
+#vm-collage {
+  position: absolute; inset: 0; z-index: 1; pointer-events: none; overflow: hidden;
+  display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; padding: 12px;
+  opacity: .16; filter: saturate(1.1); animation: vm-collage-drift 40s linear infinite;
+}
+#vm-collage img { width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; }
+@keyframes vm-collage-drift { 0% { transform: translateY(0); } 100% { transform: translateY(-8%); } }
+
 #overlay {
   position: absolute; inset: 0; display: none; flex-direction: column; align-items: center; justify-content: center;
-  background: rgba(0,8,28,.72); backdrop-filter: blur(10px); padding: 24px;
+  background: rgba(0,8,28,.62); backdrop-filter: blur(6px); padding: 24px;
 }
 
 /* ── Twilio brand header (matches Voice Racer's eyebrow → red wordmark → state) ── */
@@ -106,6 +116,18 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); c
 .vm-type { display: inline-block; margin-top: 6px; font-family: var(--mono); font-size: 10px; text-transform: uppercase;
   letter-spacing: .06em; padding: 3px 10px; border-radius: 999px; color: #06110a; font-weight: 700; background: var(--tc, #c8d4e6); }
 .vm-win { color: var(--red); }
+
+/* ── Lobby join flow (QR + numbered steps) — mirrors the racer's lobby so both games onboard the same. ── */
+.vm-join { display: flex; align-items: center; gap: 22px; justify-content: center; margin: 18px 0 6px; flex-wrap: wrap; }
+.vm-join-qr { text-align: center; }
+.vm-join-qr img { width: 132px; height: 132px; border-radius: 12px; background: #fff; padding: 6px; image-rendering: pixelated; }
+.vm-join-cap { font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-dim); margin-top: 6px; }
+.vm-join-steps { list-style: none; margin: 0; padding: 0; text-align: left; font-size: 15px; color: var(--ink); display: grid; gap: 10px; }
+.vm-join-steps li { display: flex; align-items: center; gap: 10px; }
+.vm-step-n { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; flex: 0 0 22px;
+  background: rgba(239,34,58,.18); border: 1px solid rgba(239,34,58,.5); border-radius: 999px; font-family: var(--disp); font-weight: 800; font-size: 13px; }
+.vm-num { color: var(--red); font-weight: 800; text-decoration: none; }
+.vm-num-unset { color: var(--ink-mute); font-family: var(--mono); font-size: 13px; }
 
 /* ── How-to-battle controls legend (mirrors the racer's controls-legend so both games teach the same
    way). Shown in the lobby. Uses the vm palette. ── */

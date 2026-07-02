@@ -37,6 +37,25 @@ const appEl = document.getElementById('app')!;
 // whole screen. Separate from the 3D arena/stage (those are untouched).
 const ambient = new AmbientFx(appEl);
 
+// A COLLAGE of all the monster sprites tiled behind the MENU overlays (lobby / select / results), so
+// the menus have a lively rendered background instead of flat navy — matches the racer's rendered
+// menu backdrop. Darkened + drifting so the glass card + text stay readable. Only shown in menus
+// (hidden during a battle, when the 3D arena owns the screen). Built once; toggled by renderOverlay.
+const collage = document.createElement('div');
+collage.id = 'vm-collage';
+collage.setAttribute('aria-hidden', 'true');
+appEl.appendChild(collage);   // z-index (1) layers it above the ambient canvas (0), below stage/overlay
+function buildCollage(): void {
+  if (collage.childElementCount || roster.length === 0) return;   // build once, after the roster arrives
+  // 5 columns × enough rows to fill; cycle the 8 front sprites so the pattern reads as "all of them".
+  const cells = 40;
+  collage.innerHTML = Array.from({ length: cells }, (_, i) => {
+    const m = roster[i % roster.length]!;
+    return `<img src="${spriteCandidateUrls(m.id, 'front')[0]}"
+      onerror="this.onerror=null;this.src='${spriteCandidateUrls(m.id, 'front')[1]}'" alt="">`;
+  }).join('');
+}
+
 const conn = new BattleConnection(wsUrl);
 // The 3D spinning arena sits BEHIND the GB battle canvas (both live in #stage). Created first so its
 // canvas is under the renderer's. Loaded lazily when a battle actually starts (no 3D cost in menus).
@@ -50,6 +69,13 @@ let state: BattleStateMsg | null = null;
 let draining = false;                 // events currently animating
 let lockedMoveName: string | null = null;   // the move I committed this turn (for the "locked" beat)
 let menuLevel: 'root' | 'fight' = 'root';   // two-level command menu: root actions → FIGHT's moves
+let phoneNumber = '';   // the number players call to join (from /api/config) — shown in the lobby join flow
+
+// Fetch the join phone number so the lobby QR + copy show the real number (matches the racer). Fire-
+// and-forget: the lobby renders immediately with a placeholder, then re-renders when this lands.
+void fetch('/api/config').then(r => r.ok ? r.json() : null).then((cfg) => {
+  if (cfg && typeof cfg.phoneNumber === 'string') { phoneNumber = cfg.phoneNumber; lastOverlayKey = ''; renderOverlay(); }
+}).catch(() => { /* keep the placeholder */ });
 
 conn.onRoster((m) => { roster = m; renderOverlay(); });
 conn.onJoined((id) => { myId = id; });
@@ -226,6 +252,9 @@ function renderOverlay(): void {
   // Also keep it up while AWAITING CONTINUE (battle ended, holding on the win before the results modal).
   const inBattle = phase === 'battle' || draining || awaitingContinue;
   stageEl.style.display = inBattle ? '' : 'none';
+  // The monster collage backs the MENU overlays only (hidden during a battle, where the arena owns it).
+  buildCollage();
+  collage.style.display = inBattle || phase === 'connecting' ? 'none' : '';
   // During battle (incl. resolving), the GB canvas owns the screen — no overlay.
   if (inBattle || phase === 'connecting') {
     if (lastOverlayKey !== 'hidden') { overlay.innerHTML = ''; overlay.style.display = 'none'; lastOverlayKey = 'hidden'; }
@@ -273,8 +302,26 @@ function lobbyHtml(): string {
   } else {
     action = '<div class="vm-dim">Waiting for the host to start…</div>';
   }
-  return `<div class="vm-card">
+  // JOIN FLOW (matches the racer's lobby): scan the QR → it dials the number → you're in. The number
+  // comes from /api/config (placeholder until it lands).
+  const num = phoneNumber
+    ? `<a class="vm-num" href="tel:${esc(phoneNumber)}">${esc(phoneNumber)}</a>`
+    : `<span class="vm-num vm-num-unset">set GAME_PHONE_NUMBER</span>`;
+  const joinFlow = `
+    <div class="vm-join">
+      <div class="vm-join-qr">
+        <img src="/brand/join-qr.png?v=2" alt="Scan to call and join" onerror="this.style.display='none'">
+        <div class="vm-join-cap">Scan to join</div>
+      </div>
+      <ol class="vm-join-steps">
+        <li><span class="vm-step-n">1</span> Scan the code with your phone</li>
+        <li><span class="vm-step-n">2</span> Tap to call ${num}</li>
+        <li><span class="vm-step-n">3</span> You're in — pick a monster and battle by voice!</li>
+      </ol>
+    </div>`;
+  return `<div class="vm-card wide">
     ${brandHead('VOICE MONSTERS', 'Call in to battle')}
+    ${joinFlow}
     <div class="vm-chips">${chips}</div>
     ${action}
     ${battleControlsLegendHtml()}
