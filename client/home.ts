@@ -1,6 +1,8 @@
 // Home / lobby page logic: render the game lineup, wire the join form, theme toggle.
 // URL building + input sanitation live in the pure (tested) home-nav module.
 import { buildPlayUrl } from './home-nav';
+import { getMusicManager } from './music-manager';
+import { injectMusicToggle } from './music-toggle';
 
 interface GameCard { id: string; title: string; blurb: string; status: 'active' | 'soon';
   /** The page an ACTIVE card launches (shared-screen mode). Racer → play.html; battler → monsters.html. */
@@ -54,6 +56,15 @@ function go(mode: 'screen' | 'device'): void {
 }
 
 function wireForm(): void {
+  // Enable autoplay on first user interaction
+  const enableAutoplay = () => {
+    getMusicManager().switchContext('lobby');
+    document.removeEventListener('click', enableAutoplay);
+    document.removeEventListener('keydown', enableAutoplay);
+  };
+  document.addEventListener('click', enableAutoplay);
+  document.addEventListener('keydown', enableAutoplay);
+
   document.getElementById('screenBtn')!.addEventListener('click', () => go('screen'));
   document.getElementById('deviceBtn')!.addEventListener('click', () => go('device'));
   // Enter in the room field opens the shared screen (the primary path); Enter in the name field
@@ -83,3 +94,6 @@ function wireTheme(): void {
 renderGames();
 wireForm();
 wireTheme();
+
+// Add music toggle button
+injectMusicToggle('header-controls');

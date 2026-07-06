@@ -56,8 +56,17 @@
     filter: brightness(0) saturate(100%) invert(20%) sepia(90%) saturate(5000%) hue-rotate(338deg) brightness(95%);
   }
   .brand .name { font-family: 'Twilio Sans Display'; font-weight: 800; font-size: 20px; letter-spacing: .02em; }
-  #themeToggle { background: var(--th-raised); color: var(--th-text); border: 1px solid var(--th-card-border);
-    border-radius: 8px; padding: 7px 12px; cursor: pointer; font: inherit; font-size: 13px; }
+  header > div { display: flex; align-items: center; gap: 8px; }
+  .music-toggle, #themeToggle { background: var(--th-raised); color: var(--th-text); border: 1px solid var(--th-card-border);
+    border-radius: 8px; padding: 7px 12px; cursor: pointer; font: inherit; font-size: 13px; transition: background-color .15s ease;
+    display: flex; align-items: center; gap: 6px; font-weight: 600; letter-spacing: .03em; text-decoration: none;
+    outline: none; }
+  .music-toggle:hover, #themeToggle:hover { background: var(--th-card-border); }
+  .music-toggle:active, #themeToggle:active { transform: scale(0.98); }
+  .music-toggle:focus, #themeToggle:focus { outline: none; }
+  .music-toggle-icon { display: flex; align-items: center; justify-content: center; line-height: 0; }
+  .music-toggle-icon svg { color: var(--th-text); text-decoration: none; }
+   .music-toggle-label { text-decoration: none; }
 
   /* ---- hero ---- */
   .hero { width: 100%; max-width: 1080px; padding: 18px 24px 8px; }
@@ -117,7 +126,9 @@
       <img src="/brand/Twilio_Logo_Bug_White.svg" alt="Twilio" class="sidebar-logo" />
       <span class="name">Twilio&nbsp;Games</span>
     </div>
-    <button id="themeToggle" title="Toggle theme">Light theme</button>
+    <div id="header-controls">
+      <button id="themeToggle" title="Toggle theme">Light theme</button>
+    </div>
   </header>
 
   <section class="hero">

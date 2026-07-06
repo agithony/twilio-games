@@ -164,7 +164,7 @@ export class Screens {
             <ol class="join-steps">
               <li><span class="step-n">1</span> <span class="step-t">Scan the code with your phone</span></li>
               <li><span class="step-n">2</span> <span class="step-t">Tap to call ${num}</span></li>
-              <li><span class="step-n">3</span> <span class="step-t">You're in — shout to drive!</span></li>
+              <li><span class="step-n">3</span> <span class="step-t">You're in, talk to the AI!</span></li>
             </ol>
           </div>
           ${this.chips(players)}

@@ -348,6 +348,7 @@ export class HttpServer {
       selectMonster: (code: string, id: string, m: string) => this.battle.voiceSelectMonster(code, id, m),
       chooseAction: (code: string, id: string, a: import('../shared/battle-world').BattleAction) => this.battle.voiceChooseAction(code, id, a),
       advance: (code: string) => this.battle.voiceAdvance(code),
+      setTimer: (fn: () => void, ms: number) => { setTimeout(fn, ms); },
       snapshot: (code: string, id: string) => this.battleVoiceSnapshot(code, id),
       converse: async (code: string, id: string, utterance: string) => {
         if (!this.llm.enabled) return null;

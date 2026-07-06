@@ -19,6 +19,9 @@ import type { BattleEvent, BattleAction } from '../../shared/battle-world';
 import { dwellForEvent, HANDOFF_PAUSE_MS } from '../../shared/battle-timing';
 import { effectivenessLabel } from '../../shared/monster-types';
 import { matchBattleAction } from '../../shared/battle-intent';
+import { getMusicManager } from '../music-manager';
+import { injectMusicToggle } from '../music-toggle';
+import { getSoundEffectsManager } from '../sound-effects';
 
 const params = new URLSearchParams(location.search);
 const isDisplay = params.get('display') === '1';
@@ -33,6 +36,9 @@ const wsUrl = params.get('ws')
 const overlay = document.getElementById('overlay')!;
 const stageEl = document.getElementById('stage')!;
 const appEl = document.getElementById('app')!;
+
+// Inject music toggle button
+injectMusicToggle('music-toggle-container');
 
 // The OUTER background FX layer: fills #app AROUND the stage + flashes the attack's color across the
 // whole screen. Separate from the 3D arena/stage (those are untouched).
@@ -85,7 +91,25 @@ conn.onEvents((events) => queueEvents(events));
 
 conn.onState((m) => {
   const prevPhase = state?.phase;
+  const prevPlayerCount = state?.players?.length ?? 0;
+  const prevMonsterSelections = state?.players?.filter(p => p.monsterId).length ?? 0;
   state = m;
+  
+  // Play select sound on new player join or monster selection
+  const currentPlayerCount = m.players?.length ?? 0;
+  const currentMonsterSelections = m.players?.filter(p => p.monsterId).length ?? 0;
+  if ((currentPlayerCount > prevPlayerCount && prevPlayerCount > 0) ||
+      (currentMonsterSelections > prevMonsterSelections && prevMonsterSelections > 0)) {
+    getSoundEffectsManager().playSelect();
+  }
+
+  // Switch music context based on phase
+  if (m.phase === 'lobby' && prevPhase !== 'lobby') {
+    getMusicManager().switchContext('lobby');
+  } else if (m.phase === 'battle' && prevPhase !== 'battle') {
+    getMusicManager().switchContext('monsters');
+  }
+  
   // A fresh turn (back to choosing) clears the last locked move + resets the menu to the root actions.
   if (m.snapshot?.phase === 'choosing' && !chosenForMe(m)) { lockedMoveName = null; menuLevel = 'root'; }
   // Leaving results (rematch / reset) drops any pending continue-hold so it can't strand the stage.
@@ -186,7 +210,18 @@ function drainNext(): void {
     if (movesSeenThisTurn === 2) { pendingHandoff = ev.by; eventQ.unshift(ev); setTimeout(drainNext, 0); return; }
     renderer.setActiveSide(ev.by);
     // Flash the OUTER background in the move's element color (leaves the 3D stage untouched).
-    ambient.flash(typeColor(moveById(ev.moveId)?.type ?? 'normal'));
+    const moveType = moveById(ev.moveId)?.type ?? 'normal';
+    ambient.flash(typeColor(moveType));
+    // Play attack SFX based on element type
+    getSoundEffectsManager().playAttack(moveType);
+  } else if (ev.kind === 'guard') {
+    getSoundEffectsManager().playGuard();
+  } else if (ev.kind === 'item') {
+    getSoundEffectsManager().playItem();
+  } else if (ev.kind === 'taunt') {
+    getSoundEffectsManager().playTaunt();
+  } else if (ev.kind === 'battle_over') {
+    getMusicManager().switchContext('leaderboard');
   }
 
   renderer.playEvent(ev);

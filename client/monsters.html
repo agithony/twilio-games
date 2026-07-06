@@ -5,6 +5,31 @@
   <title>Voice Monsters</title>
   <link rel="icon" href="/brand/Twilio_Logo_Bug_White.svg" />
   <link rel="stylesheet" href="./monsters.css" />
+  <style>
+    .music-toggle {
+      position: absolute; right: 16px; bottom: 16px; z-index: 20;
+      background: rgba(12, 18, 40, 0.72); border: 1px solid rgba(255, 255, 255, 0.10); border-radius: 12px;
+      padding: 9px 14px; color: rgba(174, 182, 204, 1); font-family: 'Twilio Sans Text', ui-sans-serif, system-ui, sans-serif;
+      font-size: 13px; font-weight: 600; cursor: pointer; transition: all .2s ease; letter-spacing: .03em;
+      display: flex; align-items: center; gap: 6px; text-decoration: none; outline: none;
+      backdrop-filter: blur(10px);
+    }
+    .music-toggle:hover { color: #FFFFFF; border-color: rgba(255, 255, 255, 0.16); }
+    .music-toggle:active { transform: scale(0.96); }
+    .music-toggle:focus { outline: none; }
+    .music-toggle-icon { display: flex; align-items: center; justify-content: center; line-height: 0; }
+    .music-toggle-icon svg { width: 14px; height: 14px; stroke: currentColor; text-decoration: none; }
+    .music-toggle-label { text-decoration: none; }
+    #vm-hud {
+      position: fixed; top: 16px; left: 16px; z-index: 20;
+      display: flex; align-items: center; gap: 10px; padding: 10px 14px;
+      background: rgba(12, 18, 40, 0.72); border: 1px solid rgba(255, 255, 255, 0.10); border-radius: 14px;
+      backdrop-filter: blur(10px);
+    }
+    #vm-hud .brandbug { width: 22px; height: 22px; }
+    #vm-hud .htitle { font-family: 'Twilio Sans Display', ui-sans-serif, system-ui, sans-serif;
+      font-weight: 800; color: #FFFFFF; letter-spacing: .02em; font-size: 15px; }
+  </style>
 </head>
 <body>
   <div id="app">
@@ -13,6 +38,14 @@
     <!-- Lobby / monster-select / results overlay (hidden during a live battle). -->
     <div id="overlay"></div>
   </div>
+
+  <div id="vm-hud">
+    <img class="brandbug" src="/brand/Twilio_Logo_Bug_White.svg" alt="" />
+    <span class="htitle">Voice Monsters</span>
+  </div>
+
+  <!-- Music toggle button container -->
+  <div id="music-toggle-container"></div>
   <script type="module" src="./battle/monsters.ts"></script>
 </body>
 </html>

@@ -8,7 +8,7 @@
 interface Row { say: string; action: string; hint?: string | string[]; accent?: 'power' }
 
 const ROWS: Row[] = [
-  { say: '“Left” · “Right”', action: 'Change lane' },
+  { say: '“Left” · “Right”', action: 'Change lanes' },
   { say: '“Boost” / “Go”', action: 'Go faster', hint: 'keep saying it to build speed' },
   { say: '“Brake” / “Slow”', action: 'Slow down' },
   // NITRO's explanation is the longest — split it across lines so it never runs off one line.

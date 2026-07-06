@@ -15,6 +15,9 @@ import { mergeLevel, resolveCarScale, resolveItemScale, resolveCamera } from '..
 import type { GantryOffset } from '../shared/level';
 import { hudStateFor } from './hud-state';
 import { BOOST_MAX, BOOST_MIN, DEFAULT_ROOM } from '../shared/constants';
+import { getMusicManager } from './music-manager';
+import { injectMusicToggle } from './music-toggle';
+import { getSoundEffectsManager } from './sound-effects';
 
 // Game WebSocket URL. In production the page is served by the same origin as the game server
 // (behind one HTTPS tunnel), so use the page's protocol+host — wss:// over https avoids a
@@ -43,6 +46,9 @@ if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
 const buffer = new InterpolationBuffer(150);
 const big = document.getElementById('big')!;
 const lobbyEl = document.getElementById('lobby')!;
+
+// Inject music toggle button
+injectMusicToggle('music-toggle-container');
 
 // ── Personal in-race gauge (power charge + boost/brake bar) ──────────────────────────────────────
 // Painted each frame from the LOCAL player's car (hud-state.ts decides show/hide). On a shared
@@ -103,6 +109,8 @@ const isGarage = new URLSearchParams(location.search).get('garage') === '1';
 
 let started = false;
 let raceLive = false;
+let countdownSoundPlayed = false;  // Track if countdown sound has been played this race
+let lastLobbyPlayerCount = 0;     // Track player count to detect new joins
 // Shared screen only: whether the operator has opted IN to also play on this keyboard (P toggle).
 // Default false = pure spectator display.
 let displayIsPlaying = false;
@@ -152,11 +160,6 @@ const announcer = new Announcer({ sink: browserSpeechSink(), onLine: pushLine })
 announcer.setMuted(true);
 let hostOn = false;
 function enableHost() { if (!hostOn) { hostOn = true; announcer.setMuted(false); } }
-const muteBtn = document.getElementById('mute') as HTMLButtonElement;
-muteBtn.addEventListener('click', () => {
-  hostOn = !hostOn; announcer.setMuted(!hostOn);
-  muteBtn.textContent = hostOn ? 'Host: on' : 'Host: off';
-});
 
 // Bumped on every phase change so an in-flight async (e.g. the leaderboard fetch) can tell whether
 // the flow has moved on before it resolves — preventing a stale render from resurrecting a screen.
@@ -214,6 +217,9 @@ conn.onItems((items, map) => {
 });
 conn.onSnapshot((s) => {
   raceLive = true; flowPhase = 'other'; flowEpoch++; stopAttract();   // real race takes over the canvas
+  if (s.phase === 'racing' && !started) {
+    getMusicManager().switchContext('racer');
+  }
   started = true; buffer.push(s, performance.now());
   // The moment the game STARTS (countdown or racing), drop the menu overlay entirely so the 3-2-1
   // plays full-screen and unobstructed. The controls legend lives in the LOBBY (pre-start) only —
@@ -224,6 +230,12 @@ conn.onSnapshot((s) => {
 conn.onLobby((m) => {
   if (raceLive) return;                       // race already running; ignore stale lobby
   flowPhase = 'lobby'; flowEpoch++; big.textContent = '';
+  getMusicManager().switchContext('lobby');
+  // Play select sound when a new player joins
+  if (m.players.length > lastLobbyPlayerCount && lastLobbyPlayerCount > 0) {
+    getSoundEffectsManager().playSelect();
+  }
+  lastLobbyPlayerCount = m.players.length;
   screens.renderLobby(m.roomCode, m.players); startAttract();
 });
 conn.onSelectState((m) => {
@@ -240,6 +252,7 @@ conn.onSelectState((m) => {
 let lastBoard: { map: string | null; entries: GlobalEntry[] } | null = null;
 conn.onResults((m) => {
   raceLive = false; flowPhase = 'other'; const epoch = ++flowEpoch; big.textContent = '';
+  getMusicManager().switchContext('leaderboard');
   startAttract();
   // Render with the cached board if it's for THIS map (so a repeat broadcast doesn't strip it back to
   // the race-only view); otherwise show race-only until the fetch lands the board (one fold-in).
@@ -256,11 +269,28 @@ conn.onResults((m) => {
 });
 conn.onEvent((e) => {
   announcer.handle(e);
-  if (e.kind === 'countdown') big.textContent = String(e.n);
-  else if (e.kind === 'go') { big.textContent = 'GO!'; setTimeout(() => (big.textContent = ''), 900); }
-  // On the host display, tell the operator how to start a FRESH race (a new procedural course).
-  // Enter and R both reroll the per-race seed; mid-race those are ignored by the server.
-  else if (e.kind === 'race_over') big.textContent = isDisplay ? 'Finish — press ENTER for a new course' : 'Finish';
+  const sfx = getSoundEffectsManager();
+
+  if (e.kind === 'countdown') {
+    big.textContent = String(e.n);
+    // Only play countdown sound once at the start (when countdown first begins, usually at 3)
+    if (!countdownSoundPlayed) {
+      countdownSoundPlayed = true;
+      sfx.playCountdown();
+    }
+  } else if (e.kind === 'go') {
+    big.textContent = 'GO!';
+    setTimeout(() => (big.textContent = ''), 900);
+  } else if (e.kind === 'hit') {
+    sfx.playCrash();
+  } else if (e.kind === 'boost_taken') {
+    sfx.playPowerUp();
+  } else if (e.kind === 'car_picked' || e.kind === 'map_picked') {
+    sfx.playSelect();
+  } else if (e.kind === 'race_over') {
+    big.textContent = isDisplay ? 'Finish — press ENTER for a new course' : 'Finish';
+    countdownSoundPlayed = false;  // Reset for next race
+  }
 });
 conn.onError((code, message) => {
   console.error(`Server error [${code}]: ${message}`);
@@ -423,6 +453,8 @@ function boot() {
   // the race only needs these once someone starts, and the car grid fills in progressively.
   void loadAssetsInBackground();
 
+  let lastPowerActive: Set<string> = new Set();  // Track which cars have active power for SFX
+
   function frame() {
     requestAnimationFrame(frame);
     // Attract mode owns the canvas while it runs (its own rAF renders the demo) — don't double-render.
@@ -433,6 +465,19 @@ function boot() {
       // Keep the big countdown number visible even though the "Get Ready" overlay is up; clear it
       // once racing starts (GO! is set by the event handler and self-clears).
       if (snap.phase === 'countdown') big.textContent = snap.countdown > 0 ? String(Math.ceil(snap.countdown)) : '';
+
+      // Detect power/nitro activation for SFX — play turbo sound for any car that just activated
+      for (const car of snap.cars) {
+        if (car.powerActive > 0 && !lastPowerActive.has(car.id)) {
+          getSoundEffectsManager().playTurbo();
+          break; // One sound per frame is enough
+        }
+      }
+      const nowActive = new Set<string>();
+      for (const car of snap.cars) {
+        if (car.powerActive > 0) nowActive.add(car.id);
+      }
+      lastPowerActive = nowActive;
     }
     // Before the first server message (and before attract starts), show a branded waiting beat.
     else if (!started && !screens.isVisible) big.textContent = 'Connecting…';

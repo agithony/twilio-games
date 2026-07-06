@@ -292,12 +292,15 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); c
 #ticker { position: absolute; left: 16px; bottom: 16px; width: 340px; display: flex; flex-direction: column-reverse; gap: 6px; pointer-events: none; z-index: 20; }
 #ticker > div { background: var(--glass-2); border: 1px solid var(--glass-brd); border-left: 3px solid var(--red);
   border-radius: 10px; padding: 8px 12px; font-size: 13px; color: var(--ink); animation: chip-in .25s ease both; }
-#mute {
+#music-toggle-container .music-toggle {
   position: absolute; right: 16px; bottom: 16px; z-index: 20; cursor: pointer;
   background: var(--glass-2); border: 1px solid var(--glass-brd); border-radius: 12px;
   padding: 9px 14px; color: var(--ink-dim); font-family: var(--text); font-size: 13px; backdrop-filter: blur(10px);
+  display: flex; align-items: center; gap: 6px; text-decoration: none; outline: none;
 }
-#mute:hover { color: var(--ink); border-color: var(--glass-brd-2); }
+#music-toggle-container .music-toggle:hover { color: var(--ink); border-color: var(--glass-brd-2); }
+#music-toggle-container .music-toggle-icon { display: flex; align-items: center; line-height: 0; }
+#music-toggle-container .music-toggle-icon svg { width: 14px; height: 14px; stroke: currentColor; }
 
 /* ── Personal in-race gauge: power (nitro) charge + boost/brake bar ──
    Hidden by default; main.ts adds .show only for a genuine local player (never on a shared
@@ -355,4 +358,9 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); c
 @keyframes stun-flash { 0%,100% { border-color: var(--glass-brd); } 50% { border-color: var(--red); box-shadow: 0 0 16px rgba(239,34,58,.5); } }
 
 /* Hide HUD chrome while a menu screen is up — the menu is the focus, not the keyboard hint. */
-body.in-menu #hud, body.in-menu #hint, body.in-menu #ticker, body.in-menu #gauge { opacity: 0; pointer-events: none; transition: opacity .3s; }
+body.in-menu #hud, body.in-menu #hint, body.in-menu #ticker, body.in-menu #gauge, body.in-menu #music-toggle-container { opacity: 0; pointer-events: none; transition: opacity .3s; }
+
+
+
+
+

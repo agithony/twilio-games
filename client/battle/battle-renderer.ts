@@ -221,15 +221,14 @@ export class BattleRenderer {
       this.drawMonster('b', 108, 42, 46, 'front');   // platform center (x, groundY), sprite size
       this.drawMonster('a', 44, 82, 52, 'back');
       this.attackFx.draw(ctx, S, this.tick);   // typed attack FX OVER the monsters (never below y88)
-      // Win/faint flourish: a bobbing trophy over the VICTOR, a "K.O." badge over the fainted loser.
-      // Anchored ABOVE each sprite's head (b's top ≈ y-4 up-right at x108; a's top ≈ y30 down-left at
-      // x44), so neither overlaps the monster's body.
+      this.drawHpBox('b', this.snap.b, 6, 8, false);   // enemy: top-left
+      this.drawHpBox('a', this.snap.a, 84, 58, true);  // you: bottom-right (with HP numbers)
+      // Win/faint flourish: drawn LAST so they render ON TOP of sprites and HP boxes.
+      // Trophy bobs above the VICTOR; K.O. badge above the fainted loser.
       if (this.winnerSide === 'b') this.drawTrophy(108, 2);
       else if (this.winnerSide === 'a') this.drawTrophy(44, 14);
       if (this.faintedSide === 'b') this.drawKO(108, 2);
       else if (this.faintedSide === 'a') this.drawKO(44, 14);
-      this.drawHpBox('b', this.snap.b, 6, 8, false);   // enemy: top-left
-      this.drawHpBox('a', this.snap.a, 84, 58, true);  // you: bottom-right (with HP numbers)
       // Turn indicator: a bobbing arrow to the SIDE of whoever is acting, pointing at it. To the RIGHT
       // of the top monster (b, points left) and to the LEFT of the bottom monster (a, points right).
       if (this.activeSide === 'b') this.drawTurnArrow(136, 20, 'left');    // right of b's sprite (~x131)
