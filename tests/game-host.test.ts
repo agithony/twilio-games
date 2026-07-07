@@ -5,7 +5,7 @@ import type { LlmClient, LlmReply } from '../server/llm';
 function ctx(over: Partial<HostContext> = {}): HostContext {
   return {
     phase: 'car_select', cars: ['Batmobile', 'McLaren Senna', 'Lotus Elise'],
-    maps: ['Silver Lake', 'Desert Dash'], selectedMap: null, myName: 'Ada', myCar: null, myPlace: null, racerCount: 2,
+    maps: ['Silver Lake', 'Desert Dash'], selectedMap: null, myName: 'Ada', myCar: null, myPlace: null, myFinishTime: null, racerCount: 2,
     setName: () => 'ok-name', selectCarByName: () => 'ok-car', selectMapByName: () => 'ok-map', startRace: () => 'ok-start',
     ...over,
   };
@@ -122,8 +122,13 @@ describe('buildSystemPrompt', () => {
   it('on results, recaps the race + overviews the current-track leaderboard (not a full readout)', () => {
     const p = buildSystemPrompt(ctx({
       phase: 'results', myPlace: 2, selectedMap: 'Silver Lake',
-      raceStandings: [{ name: 'Rex', place: 1 }, { name: 'Ada', place: 2 }, { name: 'Bo', place: 3 }],
-      allTimeTop: ['Rex', 'Ada', 'Bo'], allTimeBest: { name: 'Rex', time: 42.3 },
+      raceStandings: [
+        { name: 'Rex', place: 1, time: 39.12, finished: true },
+        { name: 'Ada', place: 2, time: 41.34, finished: true },
+        { name: 'Bo', place: 3, time: null, finished: false },
+      ],
+      leaderboardTop: [{ name: 'Rex', time: 33.01 }, { name: 'Ada', time: 35.2 }],
+      allTimeTop: ['Rex', 'Ada'], allTimeBest: { name: 'Rex', time: 33.01 },
     })).toLowerCase();
     expect(p).toMatch(/recap/);
     expect(p).toContain('rex');            // names the podium / record holder
@@ -131,6 +136,9 @@ describe('buildSystemPrompt', () => {
     expect(p).toContain('current track');
     expect(p).toContain('silver lake');
     expect(p).toContain('use only this track-specific leaderboard data');
+    expect(p).toContain('41.34 seconds');
+    expect(p).toContain('33.01 seconds');
+    expect(p).toContain('do not invent or estimate times');
     expect(p).toMatch(/summariz|overview|not.*(list|readout|every)/);   // summary, not a full readout
   });
 

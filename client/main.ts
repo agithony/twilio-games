@@ -290,7 +290,7 @@ conn.onEvent((e) => {
   } else if (e.kind === 'car_picked' || e.kind === 'map_picked') {
     sfx.playSelect();
   } else if (e.kind === 'race_over') {
-    big.textContent = isDisplay ? 'Finish — press ENTER for a new course' : 'Finish';
+    big.textContent = isDisplay ? '' : '';
     countdownSoundPlayed = false;  // Reset for next race
   }
 });

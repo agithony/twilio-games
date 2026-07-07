@@ -10,7 +10,7 @@ import { countdownCue } from '../shared/countdown';
 export function greetingLines(): string[] {
   return [
     'Welcome to Twilio Voice Racer!',
-    'It is powered by Twilio Conversation Relay, so you control the game with your voice.',
+    'A game powered by Twilio Conversation Relay, so you control the game with your voice.',
     "First up, what's your name?",
   ];
 }

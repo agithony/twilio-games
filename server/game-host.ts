@@ -15,9 +15,11 @@ export interface HostContext {
   myName: string | null;          // the caller's chosen display name (null until they give one)
   myCar: string | null;           // the caller's currently-picked car name, if any
   myPlace: number | null;         // during/after a race, the caller's place
+  myFinishTime?: number | null;   // results screen: caller's finish time in seconds (null/0 = DNF/unknown)
   racerCount: number;
   // ── results-screen extras (for the post-race recap) ──
-  raceStandings?: { name: string; place: number }[];   // this race's finishing order (for a recap)
+  raceStandings?: { name: string; place: number; time: number | null; finished: boolean }[];   // current race results
+  leaderboardTop?: { name: string; time: number }[];    // current track's historical best times
   allTimeTop?: string[];                                // a few top all-time names (fastest-first)
   allTimeBest?: { name: string; time: number } | null;  // the all-time fastest run (name + seconds)
   // Actions (each returns a short confirmation the caller can be told, or null if it couldn't act):
@@ -54,7 +56,7 @@ export function buildSystemPrompt(ctx: HostContext): string {
     'BARGE-IN: the caller can interrupt you at ANY time — that is a feature (Conversation Relay). If they cut you off with a new question or command, drop what you were saying and respond to the NEW thing. Never scold them for interrupting.',
     'ABOUT THE TECH (for "how does this work / how is this built"): built on Twilio Conversation Relay. The voice call streams live to a server over a WebSocket; Twilio transcribes the caller\'s speech in real time (Deepgram) and speaks your replies with text-to-speech (ElevenLabs). Conversation Relay handles low-latency, INTERRUPTIBLE voice — the caller can talk over you any time and you hear them mid-sentence — plus DTMF keypad input. The game logic + this AI host run on a Node server; a big shared screen shows the race. Keep tech answers short + in-character (a hype host who happens to know the stack), not a lecture.',
     '',
-    `CURRENT STATE: phase=${ctx.phase}; players in room=${ctx.racerCount}; caller name=${ctx.myName ?? 'NOT SET YET'}${ctx.myCar ? `; their car=${ctx.myCar}` : ''}.`,
+    `CURRENT STATE: phase=${ctx.phase}; players in room=${ctx.racerCount}; caller name=${ctx.myName ?? 'NOT SET YET'}${ctx.myCar ? `; their car=${ctx.myCar}` : ''}${ctx.myPlace ? `; caller result=${ctx.myPlace}${ctx.myFinishTime ? ` in ${ctx.myFinishTime.toFixed(2)} seconds` : ''}` : ''}.`,
     'The big screen is SHOWING the same phase you are in right now. Refer to what is on their screen; do NOT talk about a step they are not on yet.',
   ];
   // Onboarding sequence: proactively drive name → car → map → start, ONE step at a time. Always get
@@ -85,12 +87,17 @@ export function buildSystemPrompt(ctx: HostContext): string {
     if (ctx.myPlace === 1) lines.push('The caller won the race. Congratulate them warmly, but keep it calm and concise.');
     else lines.push(`The race is over — the caller finished ${ctx.myPlace ? `in place ${ctx.myPlace}` : 'the race'}. Encourage them to try again, without sounding disappointed or overly dramatic.`);
     // A proactive RECAP + leaderboard OVERVIEW — this is the results screen, don't just wait silently.
-    if (ctx.raceStandings && ctx.raceStandings.length > 1) {
-      const order = ctx.raceStandings.slice(0, 3).map(s => `${s.place}) ${s.name}`).join(', ');
-      lines.push(`RECAP: give a quick 1-2 sentence recap of how the race played out — the podium was: ${order}. Mention the winner + any close/notable finish. Do NOT list every position robotically; summarize like a broadcaster.`);
+    if (ctx.raceStandings && ctx.raceStandings.length > 0) {
+      const order = ctx.raceStandings.slice(0, 5)
+        .map(s => `${s.place}) ${s.name} — ${s.finished && s.time ? `${s.time.toFixed(2)} seconds` : 'DNF'}`)
+        .join(', ');
+      lines.push(`RACE RECAP / CURRENT RACE RESULTS (${ctx.selectedMap ?? 'current track'}): ${order}. If the caller asks for their score, use their place and finish time from this list. Do NOT invent or estimate times.`);
     }
-    if (ctx.allTimeBest) {
-      lines.push(`CURRENT TRACK LEADERBOARD (${ctx.selectedMap ?? 'this track'}): the record is ${ctx.allTimeBest.name} at ${ctx.allTimeBest.time.toFixed(1)} seconds${ctx.allTimeTop && ctx.allTimeTop.length > 1 ? ` (top names: ${ctx.allTimeTop.slice(0, 3).join(', ')})` : ''}. Use ONLY this track-specific leaderboard data when discussing high scores. A one-line overview, NOT a full readout.`);
+    if (ctx.leaderboardTop && ctx.leaderboardTop.length > 0) {
+      const top = ctx.leaderboardTop.slice(0, 5).map((e, i) => `${i + 1}) ${e.name} — ${e.time.toFixed(2)} seconds`).join(', ');
+      lines.push(`CURRENT TRACK LEADERBOARD (${ctx.selectedMap ?? 'this track'}): ${top}. Use ONLY this track-specific leaderboard data when discussing high scores or leaderboard history. Give a concise overview, not a full readout, unless the caller asks for details. Do NOT use global records or other tracks.`);
+    } else if (ctx.allTimeBest) {
+      lines.push(`CURRENT TRACK LEADERBOARD (${ctx.selectedMap ?? 'this track'}): the record is ${ctx.allTimeBest.name} at ${ctx.allTimeBest.time.toFixed(2)} seconds. Use ONLY this track-specific leaderboard data when discussing high scores.`);
     }
     lines.push('Then invite them to race again (say "rematch" or "go again").');
   }

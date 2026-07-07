@@ -23,6 +23,7 @@ import { BattleVoiceSession, parseSpokenName, isAdvanceWord, type BattleVoiceSna
 import { battleHostTurn, type BattleHostContext } from './battle-host';
 import { monsterById, rosterEntries } from '../shared/monster-roster';
 import type { Room } from './room';
+import type { RaceResult } from '../shared/types';
 
 const VOICE_RACER_CONTROLS_INTRO = 'Before you start, check the controls on the screen: say left or right to steer, boost to speed up, brake to slow down, and nitro to break through a wall.';
 
@@ -444,15 +445,18 @@ export class HttpServer {
     // "no real name yet" so the host asks for one and displays what they actually say.
     const rawName = me?.name ?? '';
     const realName = /^Racer(\s|$)/.test(rawName) ? null : rawName || null;
-    const board = this.leaderboardSummaryForMap(room.selectedMap);
+    const board = this.leaderboardSummaryForMap(room.selectedMap, room.results());
+    const myResult = room.results().find(r => r.playerId === playerId) ?? null;
     return {
       phase: room.phase as HostContext['phase'],
       cars, maps: room.mapChoices, selectedMap: room.selectedMap,
       myName: realName,
       myCar: myCarIdx !== null ? room.carName(myCarIdx) : null,
-      myPlace: room.results().find(r => r.name === me?.name)?.place ?? null,
+      myPlace: myResult?.place ?? null,
+      myFinishTime: myResult && myResult.finished && myResult.finishT > 0 ? myResult.finishT : null,
       racerCount: room.playerCount,
-      raceStandings: room.results().map(r => ({ name: r.name, place: r.place })),
+      raceStandings: room.results().map(r => ({ name: r.name, place: r.place, time: r.finished && r.finishT > 0 ? r.finishT : null, finished: r.finished })),
+      leaderboardTop: board.top,
       allTimeTop: board.topNames,
       allTimeBest: board.bestName !== null && board.bestTime !== null
         ? { name: board.bestName, time: board.bestTime } : null,
@@ -497,10 +501,22 @@ export class HttpServer {
     };
   }
 
-  private leaderboardSummaryForMap(map: string | null): { topNames: string[]; bestName: string | null; bestTime: number | null } {
-    if (!map) return { topNames: [], bestName: null, bestTime: null };
-    const top = topEntries(this.leaderboardEntriesCache, { map, limit: 5 });
+  private leaderboardSummaryForMap(map: string | null, currentResults: RaceResult[] = []): { top: { name: string; time: number }[]; topNames: string[]; bestName: string | null; bestTime: number | null } {
+    if (!map) return { top: [], topNames: [], bestName: null, bestTime: null };
+    const currentEntries: LeaderboardEntry[] = currentResults
+      .filter(r => r.finished && r.finishT > 0)
+      .map(r => ({ name: r.name, map, carIndex: r.carIndex, finishT: r.finishT, at: Number.MAX_SAFE_INTEGER }));
+    const ranked = topEntries([...currentEntries, ...this.leaderboardEntriesCache], { map, limit: 20 });
+    const seen = new Set<string>();
+    const top: LeaderboardEntry[] = [];
+    for (const entry of ranked) {
+      const key = `${entry.name}|${entry.finishT}`;
+      if (seen.has(key)) continue;
+      seen.add(key); top.push(entry);
+      if (top.length >= 5) break;
+    }
     return {
+      top: top.map(e => ({ name: e.name, time: e.finishT })),
       topNames: top.map(e => e.name),
       bestName: top[0]?.name ?? null,
       bestTime: top[0]?.finishT ?? null,

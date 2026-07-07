@@ -265,6 +265,7 @@ describe('HttpServer voice routing seams', () => {
     await writeFile(LB, JSON.stringify([
       { name: 'Wrong Track Test', map: 'Neon City', carIndex: 0, finishT: 39, at: 1 },
       { name: 'Real Leader', map: 'Silver Lake', carIndex: 0, finishT: 33, at: 2 },
+      { name: 'Second Place History', map: 'Silver Lake', carIndex: 1, finishT: 36, at: 3 },
     ]));
     http = new HttpServer({
       port: 0, publicBaseUrl: 'http://localhost', validateSignatures: false,
@@ -282,6 +283,12 @@ describe('HttpServer voice routing seams', () => {
 
     expect(ctx.selectedMap).toBe('Silver Lake');
     expect(ctx.allTimeBest).toEqual({ name: 'Real Leader', time: 33 });
-    expect(ctx.allTimeTop).toEqual(['Real Leader']);
+    expect(ctx.allTimeTop).toEqual(['Real Leader', 'Second Place History', 'Ada']);
+    expect(ctx.leaderboardTop?.slice(0, 2)).toEqual([{ name: 'Real Leader', time: 33 }, { name: 'Second Place History', time: 36 }]);
+    expect(ctx.leaderboardTop?.some(e => e.name === 'Ada' && e.time > 0)).toBe(true);
+    expect(ctx.raceStandings?.[0]).toMatchObject({ name: 'Ada', place: 1, finished: true });
+    expect(ctx.raceStandings?.[0]?.time).toBeGreaterThan(0);
+    expect(ctx.myPlace).toBe(1);
+    expect(ctx.myFinishTime).toBeGreaterThan(0);
   });
 });
