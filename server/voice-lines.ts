@@ -8,8 +8,8 @@ import type { GameEvent } from '../shared/types';
  *  pauses between them — one long run-on string was read without breaths (the "no pause" issue). */
 export function greetingLines(): string[] {
   return [
-    'Welcome to Voice Racer!',
-    "First up — what's your name?",
+    'Welcome to Twilio Voice Racer!',
+    "First up, what's your name?",
   ];
 }
 /** Back-compat single-line greeting (kept for any caller that wants one string). */

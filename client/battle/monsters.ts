@@ -335,8 +335,8 @@ function lobbyHtml(): string {
           <div class="vm-join-cap">Scan to join</div>
         </div>
         <ol class="vm-join-steps">
-          <li><span class="vm-step-n">1</span> Scan the code with your phone</li>
-          <li><span class="vm-step-n">2</span> Tap to call ${num}</li>
+          <li><span class="vm-step-n">1</span> Scan the QR code with your phone</li>
+          <li><span class="vm-step-n">2</span> Call ${num}</li>
           <li><span class="vm-step-n">3</span> You're in — pick a monster and battle by voice!</li>
         </ol>
       </div>

@@ -150,7 +150,7 @@ export class Screens {
       ? `<a class="num" href="tel:${esc(this.phoneNumber)}">${esc(this.phoneNumber)}</a>`
       : `<span class="num num-unset">set GAME_PHONE_NUMBER</span>`;
     const foot = n === 0
-      ? `<span>Everyone can join — the more the merrier</span>`
+      ? `<span>Everyone can join</span>`
       : `<span>Say <span class="say">“start”</span> when everyone's in</span>`;
     this.root.innerHTML = `
       ${this.head('Lobby', sub)}
@@ -162,8 +162,8 @@ export class Screens {
               <div class="join-qr-cap">Scan to join</div>
             </div>
             <ol class="join-steps">
-              <li><span class="step-n">1</span> <span class="step-t">Scan the code with your phone</span></li>
-              <li><span class="step-n">2</span> <span class="step-t">Tap to call ${num}</span></li>
+              <li><span class="step-n">1</span> <span class="step-t">Scan the QR code with your phone</span></li>
+              <li><span class="step-n">2</span> <span class="step-t">Call ${num}</span></li>
               <li><span class="step-n">3</span> <span class="step-t">You're in, talk to the AI!</span></li>
             </ol>
           </div>
