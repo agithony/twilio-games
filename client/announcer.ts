@@ -1,4 +1,5 @@
 import type { GameEvent } from '../shared/types';
+import { speechSafeText } from '../shared/speech-text';
 import { commentaryFor } from './commentary';
 
 export interface SpeechSink { speak(text: string, opts: { priority: boolean }): void; }
@@ -37,12 +38,14 @@ export function browserSpeechSink(): SpeechSink | null {
   return {
     speak(text, opts) {
       try {
+        const spoken = speechSafeText(text);
+        if (!spoken) return;
         const now = performance.now();
         // priority lines cancel the queue; normal lines respect a small min-gap
         if (opts.priority) synth.cancel();
         else if (now - lastAt < 700) return;
         lastAt = now;
-        const u = new SpeechSynthesisUtterance(text);
+        const u = new SpeechSynthesisUtterance(spoken);
         u.rate = 1.05; u.pitch = 1.0;
         synth.speak(u);
       } catch { /* ignore */ }

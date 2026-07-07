@@ -3,7 +3,7 @@ import type { GameEvent } from '../shared/types';
 const pick = (arr: string[], seq: number): string => arr[Math.abs(seq) % arr.length]!;
 
 // Pre-race host lines (menus) — keep the AI talking through car/map select, not just the race.
-const CAR_SELECT = ['Pick your ride, racers!', 'Choose your machine!', 'Time to pick a car — text your number!'];
+const CAR_SELECT = ['Pick your ride, racers!', 'Choose your machine!', 'Time to pick a car — say its name or number!'];
 const MAP_SELECT = ['Now choose your track!', 'Pick the course — where are we racing?', 'Select your battleground!'];
 const CAR_PICKED = ['nice choice!', 'great pick!', 'bold choice!', 'oh, a classic!', 'solid ride!'];
 const MAP_PICKED = ['Great track!', 'Ooh, that\'s a fun one!', 'Locked in — this\'ll be good!'];

@@ -54,11 +54,21 @@ describe('twimlConnectRelay', () => {
   it('emits ElevenLabs tts + welcome greeting when a voice is configured', () => {
     const x = twimlConnectRelay({
       wsUrl: 'wss://x.test/voice', sessionEndedUrl: 'https://x.test/e', roomCode: 'ABCD',
-      ttsProvider: 'ElevenLabs', voice: 'voice-123', welcomeGreeting: 'Welcome to Voice Racer!',
+      ttsProvider: 'ElevenLabs', voice: 'voice-123', welcomeGreeting: 'Welcome to Twilio Voice Racer!',
     });
     expect(x).toContain('ttsProvider="ElevenLabs"');
     expect(x).toContain('voice="voice-123"');
-    expect(x).toContain('welcomeGreeting="Welcome to Voice Racer!"');
+    expect(x).toContain('welcomeGreeting="Welcome to Twilio Voice Racer!"');
+  });
+  it('sanitizes the Relay welcome greeting before XML escaping', () => {
+    const x = twimlConnectRelay({
+      wsUrl: 'wss://x.test/voice', sessionEndedUrl: 'https://x.test/e', roomCode: 'ABCD',
+      welcomeGreeting: 'Load `18_mclaren_senna.glb` <fast> & say “go”…',
+    });
+    expect(x).toContain('welcomeGreeting="Load 18 mclaren senna &amp; say &quot;go&quot;."');
+    expect(x).not.toContain('glb');
+    expect(x).not.toContain('`');
+    expect(x).not.toContain('<fast>');
   });
   it('passes the room code as a Parameter', () => {
     expect(xml).toContain('<Parameter name="roomCode" value="ABCD"');

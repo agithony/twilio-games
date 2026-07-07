@@ -15,6 +15,7 @@ import { mergeMapConfig } from '../shared/maps-store';
 import { seedMapsPlan } from './maps-seed';
 import { DEFAULT_ROOM } from '../shared/constants';
 import { appendResults, parseLeaderboard, topEntries } from '../shared/leaderboard-store';
+import { speechSafeText } from '../shared/speech-text';
 import { SmsConcierge, type ConciergeRoom } from './sms-concierge';
 import { OpenAiClient, NullLlmClient, type LlmClient, type LlmTurn } from './llm';
 import { hostTurn, matchChoice, clearSelectionIndex, type HostContext } from './game-host';
@@ -248,7 +249,7 @@ export class HttpServer {
       findOrCreateRoom: (code) => this.game.getOrCreateRoom(code),
       // SPEAK to the caller: Conversation Relay TTS-synthesizes {type:'text'} tokens onto the call.
       // `last:true` marks a complete utterance so Relay flushes it promptly.
-      say: (text) => { if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ type: 'text', token: text, last: true })); },
+      say: (text) => sendRelayText(ws, text),
       register: (roomCode, a) => {
         let set = this.voiceAdapters.get(roomCode);
         if (!set) { set = new Set(); this.voiceAdapters.set(roomCode, set); }
@@ -289,7 +290,7 @@ export class HttpServer {
     // the first message; thereafter all frames go to the chosen handler.
     let route: 'racer' | 'battle' | null = null;
     let battle: BattleVoiceSession | null = null;
-    const say = (text: string) => { if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ type: 'text', token: text, last: true })); };
+    const say = (text: string) => sendRelayText(ws, text);
     ws.on('message', (d) => {
       const raw = d.toString();
       if (route === null) route = this.pickVoiceGame(raw);
@@ -942,6 +943,12 @@ export class HttpServer {
       this.server.close(() => resolve());
     });
   }
+}
+
+function sendRelayText(ws: WebSocket, text: string): void {
+  const token = speechSafeText(text);
+  if (!token || ws.readyState !== ws.OPEN) return;
+  ws.send(JSON.stringify({ type: 'text', token, last: true }));
 }
 
 /** Map a filename to a Content-Type for the static server (covers the built client + GLB models). */

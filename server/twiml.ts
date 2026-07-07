@@ -1,3 +1,5 @@
+import { speechSafeText } from '../shared/speech-text';
+
 function esc(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
           .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
@@ -19,7 +21,7 @@ export function twimlGatherRoomCode(opts: { actionUrl: string }): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Gather input="dtmf" numDigits="4" timeout="8" action="${esc(opts.actionUrl)}" method="POST">
-    <Say>Welcome to Voice Racer. Enter your four digit room code.</Say>
+    <Say>Welcome to Twilio Voice Racer. Enter your four digit room code.</Say>
   </Gather>
   <Say>No code received. Goodbye.</Say>
 </Response>`;
@@ -41,7 +43,7 @@ export function twimlConnectRelay(opts: {
   const ttsAttrs = opts.voice
     ? ` ttsProvider="${esc(opts.ttsProvider ?? 'ElevenLabs')}" voice="${esc(opts.voice)}"`
     : '';
-  const greeting = esc(opts.welcomeGreeting ?? '');
+  const greeting = esc(speechSafeText(opts.welcomeGreeting ?? ''));
   const hints = esc(opts.hints ?? 'left, right, boost, go, brake, slow, stop, nitro, power');
   const gameParam = opts.game ? `\n      <Parameter name="game" value="${esc(opts.game)}" />` : '';
   // Interruption (barge-in) is a headline Conversation Relay feature and central to this app:
