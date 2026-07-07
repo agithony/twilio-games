@@ -78,11 +78,24 @@
 
   /* ---- game cards ---- */
   .section-title { margin: 26px 0 14px; font-size: 14px; color: var(--th-text-label); font-weight: 700; }
-  .games { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
+  .games-wrapper { position: relative; border-radius: 20px; overflow: hidden; }
+  .games-wrapper .video-bg { position: absolute; inset: 0; z-index: 0; overflow: hidden; border-radius: 20px; }
+  .games-wrapper .video-bg video { width: 100%; height: 100%; object-fit: cover; opacity: 0;
+    transition: opacity .6s ease; position: absolute; inset: 0; }
+  .games-wrapper .video-bg video.active { opacity: 1; }
+  .games-wrapper .video-bg::after { content: ''; position: absolute; inset: 0;
+    background: linear-gradient(180deg, rgba(0,13,37,.45) 0%, rgba(0,13,37,.55) 100%);
+    pointer-events: none; }
+  html[data-theme="light"] .games-wrapper .video-bg::after {
+    background: linear-gradient(180deg, rgba(255,255,255,.5) 0%, rgba(255,255,255,.6) 100%); }
+  .games { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px;
+    position: relative; z-index: 1; padding: 20px; }
   .game { background: var(--th-card); border: 1px solid var(--th-card-border); border-radius: 16px;
-    padding: 20px; transition: box-shadow .15s ease, transform .15s ease; position: relative; overflow: hidden; }
-  .game.active { cursor: default; }
+    padding: 20px; transition: box-shadow .15s ease, transform .15s ease, border-color .15s ease;
+    position: relative; overflow: hidden; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+  .game.active { cursor: pointer; }
   .game.active:hover { box-shadow: 0 8px 28px -6px rgba(0,0,0,.45); transform: translateY(-2px); }
+  .game.active.selected { border-color: var(--twilio-red); box-shadow: 0 0 0 2px var(--twilio-red); transform: translateY(-2px); }
   .game.soon { opacity: .55; }
   .game .badge { position: absolute; top: 14px; right: 14px; font-family: 'Twilio Sans Mono', monospace;
     font-size: 10px; letter-spacing: .06em; text-transform: uppercase; padding: 3px 8px; border-radius: 999px; }
@@ -91,33 +104,16 @@
   .game h3 { font-size: 22px; margin-bottom: 6px; }
   .game p { color: var(--th-text-dim); font-size: 14px; margin: 0; }
 
-  /* ---- join panel ---- */
-  .join { margin-top: 30px; background: var(--th-card); border: 1px solid var(--th-card-border);
-    border-radius: 16px; padding: 24px; display: grid; gap: 18px;
-    grid-template-columns: 1fr 1fr; }
-  .join .full { grid-column: 1 / -1; }
-  /* Two side-by-side role cards: "shared screen" (primary) and "play on this device". */
-  .role { background: var(--th-raised); border: 1px solid var(--th-card-border); border-radius: 12px;
-    padding: 18px; display: flex; flex-direction: column; gap: 8px; }
-  .role h3 { font-size: 18px; }
-  .role p { color: var(--th-text-dim); font-size: 13px; margin: 0; flex: 1; }
-  button.btn.full { width: 100%; margin-top: 8px; }
-  label { display: block; font-size: 13px; font-weight: 700; color: var(--th-text-label); margin-bottom: 6px; }
-  input { width: 100%; background: var(--th-input); color: var(--th-text); border: 1px solid var(--th-input-border);
-    border-radius: 10px; padding: 11px 13px; font: inherit; font-size: 15px; }
-  input:focus { outline: 2px solid var(--twilio-red); outline-offset: 1px; }
-  .hint { color: var(--th-text-muted); font-size: 12px; margin-top: 6px; }
-  .actions { display: flex; gap: 12px; flex-wrap: wrap; }
-  button.btn { font: inherit; font-weight: 700; border-radius: 10px; padding: 12px 20px; cursor: pointer;
-    border: 1px solid transparent; font-size: 15px; }
-  .btn-primary { background: var(--twilio-red); color: #fff; }
-  .btn-primary:hover { background: #DB132A; }
-  .btn-secondary { background: transparent; color: var(--th-text); border-color: var(--th-input-border); }
-  .btn-secondary:hover { background: var(--th-raised); }
-  .editor-link { display: inline-block; margin-top: 22px; color: var(--th-text-dim); font-size: 13px; text-decoration: none; }
-  .editor-link:hover { color: var(--twilio-red); }
+  /* ---- play button ---- */
+  #playBtn { display: block; width: 100%; margin-top: 20px; padding: 14px 24px; font: inherit;
+    font-family: 'Twilio Sans Display', ui-sans-serif, system-ui, sans-serif;
+    font-weight: 800; font-size: 17px; letter-spacing: .02em; border: none; border-radius: 12px;
+    background: var(--twilio-red); color: #fff; cursor: pointer; transition: opacity .15s ease, transform .1s ease; }
+  #playBtn:hover { opacity: .9; }
+  #playBtn:active { transform: scale(0.98); }
+  #playBtn:disabled { opacity: .35; cursor: not-allowed; transform: none; }
+
   footer { color: var(--th-text-muted); font-size: 12px; padding: 0 24px 30px; max-width: 1080px; width: 100%; }
-  @media (max-width: 560px) { .join { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
@@ -133,45 +129,20 @@
 
   <section class="hero">
     <div class="eyebrow">Voice-controlled party games · powered by Twilio</div>
-    <h1>Race with your <span class="accent">voice.</span></h1>
-    <p>Up to eight players control real cars on one big screen — by calling in and shouting
-      “left!”, “right!”, “boost!”. An AI host calls the race live. Pick a game to begin.</p>
+    <h1>Play with your <span class="accent">voice.</span></h1>
+    <p>Multiplayer party games controlled entirely by voice. <br>Players call in from any phone and shout commands to play.</p>
   </section>
 
   <main>
     <div class="section-title">Choose a game</div>
-    <div class="games" id="games"></div>
-
-    <div class="section-title">Start playing</div>
-    <div class="join">
-      <div class="full">
-        <label for="room">Room code</label>
-        <input id="room" type="text" inputmode="numeric" maxlength="4" placeholder="4821" />
-        <div class="hint">4 digits. The shared screen and every player use this same code — just call in to join.</div>
+    <div class="games-wrapper">
+      <div class="video-bg" id="videoBg">
+        <video src="/video/vr-demo.mp4" loop muted playsinline data-game="racer"></video>
+        <video src="/video/vm-demo.mp4" loop muted playsinline data-game="battler"></video>
       </div>
-
-      <!-- Role 1: the big shared screen. The primary, recommended way to run a session. -->
-      <div class="role">
-        <h3>Open the shared screen</h3>
-        <p>Put this on the TV or projector. It shows the room code, the live race, and the scoreboard.
-          Players join by <strong>calling or texting</strong> the number — no setup on their end.</p>
-        <button class="btn btn-primary full" id="screenBtn">Open shared screen</button>
-      </div>
-
-      <!-- Role 2: play in this browser (also the local testing path). -->
-      <div class="role">
-        <h3>Play on this device</h3>
-        <p>Join the race right here in the browser — handy for playing along without calling in.</p>
-        <label for="name" style="margin-top:4px">Your racer name</label>
-        <input id="name" type="text" maxlength="20" placeholder="Ada" autocomplete="off" />
-        <button class="btn btn-secondary full" id="deviceBtn" style="margin-top:12px">Play on this device</button>
-      </div>
-
-      <div class="full">
-        <a class="editor-link" href="editor">Open the Level Editor</a>
-        <a class="editor-link" href="garage" style="margin-left:18px">Garage (models)</a>
-      </div>
+      <div class="games" id="games"></div>
     </div>
+    <button id="playBtn" disabled>Select a game to play</button>
   </main>
 
   <footer>
