@@ -5,6 +5,7 @@ import { HttpServer } from '../server/http-server';
 let srv: HttpServer;
 afterEach(async () => { await srv?.stop(); });
 const wait = (ms: number) => new Promise(r => setTimeout(r, ms));
+const closeWs = (ws: WebSocket) => { if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) ws.close(); };
 
 describe('voice integration (fake Conversation Relay client)', () => {
   it('a CR socket joins a room by code and a spoken command moves the car', async () => {
@@ -44,7 +45,10 @@ describe('voice integration (fake Conversation Relay client)', () => {
   });
 
   it('voice setup flows name → car → track vote → start without asking for the name again', async () => {
-    srv = new HttpServer({ port: 0, publicBaseUrl: 'http://localhost', validateSignatures: false });
+    srv = new HttpServer({
+      port: 0, publicBaseUrl: 'http://localhost', validateSignatures: false,
+      mapsPath: 'assets/maps/maps.json',
+    });
     const port = await srv.start();
 
     const spec = new WebSocket(`ws://127.0.0.1:${port}/game`);
@@ -64,33 +68,35 @@ describe('voice integration (fake Conversation Relay client)', () => {
       type: 'setup', callSid: 'CA2', from: '+15551230001',
       customParameters: { roomCode: '7331' },
     }));
-    await wait(50);
+    try {
+      await wait(50);
 
-    voice.send(JSON.stringify({ type: 'prompt', voicePrompt: 'Ada', last: true }));
-    await wait(50);
-    voice.send(JSON.stringify({ type: 'prompt', voicePrompt: 'start', last: true }));
-    await wait(50);
-    voice.send(JSON.stringify({ type: 'prompt', voicePrompt: 'one', last: true }));
-    await wait(50);
-    voice.send(JSON.stringify({ type: 'prompt', voicePrompt: 'next', last: true }));
-    await wait(50);
-    spoken.length = 0;
-    voice.send(JSON.stringify({ type: 'prompt', voicePrompt: 'one', last: true }));
-    await wait(100);
+      voice.send(JSON.stringify({ type: 'prompt', voicePrompt: 'Ada', last: true }));
+      await wait(50);
+      voice.send(JSON.stringify({ type: 'prompt', voicePrompt: 'start', last: true }));
+      await wait(50);
+      voice.send(JSON.stringify({ type: 'prompt', voicePrompt: 'one', last: true }));
+      await wait(50);
+      voice.send(JSON.stringify({ type: 'prompt', voicePrompt: 'next', last: true }));
+      await wait(50);
+      spoken.length = 0;
+      voice.send(JSON.stringify({ type: 'prompt', voicePrompt: 'one', last: true }));
+      await wait(300);
 
-    expect(spoken.join(' ').toLowerCase()).toContain("vote's in");
-    expect(spoken.join(' ').toLowerCase()).not.toMatch(/what'?s your name|first up.*name/);
-    expect(inbox.some(m => m.type === 'items')).toBe(false);
+      expect(spoken.join(' ').toLowerCase()).toContain("vote's in");
+      expect(spoken.join(' ').toLowerCase()).not.toMatch(/what'?s your name|first up.*name/);
+      expect(inbox.some(m => m.type === 'items')).toBe(false);
 
-    spoken.length = 0;
-    voice.send(JSON.stringify({ type: 'prompt', voicePrompt: 'start', last: true }));
-    await wait(300);
+      spoken.length = 0;
+      voice.send(JSON.stringify({ type: 'prompt', voicePrompt: 'start', last: true }));
+      await wait(300);
 
-    expect(spoken.join(' ').toLowerCase()).toContain('here we go');
-    expect(spoken.join(' ').toLowerCase()).not.toMatch(/what'?s your name|first up.*name/);
-    expect(inbox.some(m => m.type === 'items')).toBe(true);
-
-    voice.close();
-    spec.close();
+      expect(spoken.join(' ').toLowerCase()).toContain('here we go');
+      expect(spoken.join(' ').toLowerCase()).not.toMatch(/what'?s your name|first up.*name/);
+      expect(inbox.some(m => m.type === 'items')).toBe(true);
+    } finally {
+      closeWs(voice);
+      closeWs(spec);
+    }
   });
 });
