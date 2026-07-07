@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { greetingLine, lineForEvent, placeLine, ordinal } from '../server/voice-lines';
+import { greetingLine, lineForEvent, placeLine, raceOverLine, ordinal } from '../server/voice-lines';
 
 describe('voice-lines', () => {
   it('greeting welcomes + asks the caller\'s name (voice onboarding starts here)', () => {
@@ -9,14 +9,14 @@ describe('voice-lines', () => {
   });
 
   it('countdown speaks the number, but not n=0', () => {
-    expect(lineForEvent({ kind: 'countdown', n: 3 }, 'p1')).toBe('3...');
+    expect(lineForEvent({ kind: 'countdown', n: 3 }, 'p1')).toBe('3');
     expect(lineForEvent({ kind: 'countdown', n: 0 }, 'p1')).toBeNull();
   });
 
-  it('go event is spoken AND primes the controls — especially NITRO (the missed move)', () => {
+  it('go event is short and does not bury the first commands with control hints', () => {
     const go = lineForEvent({ kind: 'go' }, 'p1')!;
-    expect(go).toContain('Go');
-    expect(go.toLowerCase()).toContain('nitro');   // the control players most often forget
+    expect(go).toBe('Go!');
+    expect(go.toLowerCase()).not.toMatch(/left|right|boost|brake|nitro/);
   });
 
   it('finish is spoken only for the caller\'s own player, and a win is HYPE', () => {
@@ -54,6 +54,11 @@ describe('voice-lines', () => {
     expect(placeLine(2).toLowerCase()).toContain('second');
     expect(placeLine(3).toLowerCase()).toContain('third');
     expect(placeLine(5)).toContain('5th');
+  });
+
+  it('raceOverLine congratulates winners and encourages non-winners', () => {
+    expect(raceOverLine(1).toLowerCase()).toMatch(/congrat|won|leaderboard/);
+    expect(raceOverLine(3).toLowerCase()).toMatch(/try again|finished 3rd|leaderboard/);
   });
 
   it('speaks a HYPE line when the caller NITRO-smashes a barrier (showcases the special move)', () => {

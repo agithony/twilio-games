@@ -42,11 +42,9 @@ export function lineForEvent(ev: GameEvent, myPlayerId: string | null, seq = 0):
     case 'car_picked':       return mine(ev.playerId) ? `${pick(CAR_PICKED, seq)} The ${ev.car}!` : null;
     case 'map_picked':       return null;   // the screen host covers the map pick; don't double up
     case 'countdown':
-      return ev.n > 0 ? `${ev.n}...` : null;
+      return ev.n > 0 ? String(ev.n) : null;
     case 'go':
-      // Spoken once at the start — prime the caller on the controls, especially NITRO (the move
-      // players most often miss). Keep it short so TTS doesn't bury their first commands.
-      return 'Go! Shout left, right, boost or brake — and say NITRO to smash through barriers!';
+      return 'Go!';
     case 'finish':
       return mine(ev.playerId) ? placeLine(ev.place) : null;
     case 'hit_streak':
@@ -80,6 +78,12 @@ export function placeLine(place: number): string {
     case 3: return 'Third place — on the podium! Nice driving! One more?';
     default: return `You finished ${ordinal(place)} — good hustle out there! Run it back?`;
   }
+}
+
+export function raceOverLine(place: number | null): string {
+  if (place === 1) return 'Race over — congratulations, you won! Check the results and leaderboard on the big screen.';
+  if (place && place > 1) return `Race over — you finished ${ordinal(place)}. Good run, and try again for the win! Check the results and leaderboard on the big screen.`;
+  return 'Race over. Check the results and leaderboard on the big screen, then run it back!';
 }
 
 /** 1→"1st", 2→"2nd", 3→"3rd", 4→"4th", … (spoken form). */

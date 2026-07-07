@@ -1,6 +1,6 @@
 import type { Intent, GameEvent } from '../shared/types';
 import { intentsFromTranscript } from './voice-intent';
-import { greetingLines, lineForEvent, isChattyEvent } from './voice-lines';
+import { greetingLines, lineForEvent, isChattyEvent, raceOverLine } from './voice-lines';
 
 export type CrMessage =
   | { type:'setup'; callSid:string; from?:string; customParameters: Record<string,string> }
@@ -101,10 +101,14 @@ export class ConversationRelayAdapter {
   private lastChattyAt = -1e9;
   private clockMs = 0;   // advanced from event cadence; monotonic enough for throttling
   private recapDone = false;   // one proactive results recap per race (reset on a new countdown/go)
+  private myFinishPlace: number | null = null;
   private lastMenuPrompt: { kind: 'enter_car_select' | 'enter_map_select'; at: number } | null = null;
   onGameEvent(ev: GameEvent): void {
     this.clockMs += 50;   // events arrive on the ~20Hz broadcast; approx a wall clock for throttling
-    if (ev.kind === 'go' || ev.kind === 'countdown') this.recapDone = false;   // fresh race → allow a new recap
+    if (ev.kind === 'go' || ev.kind === 'countdown') {
+      this.recapDone = false;
+      this.myFinishPlace = null;
+    }
     if (ev.kind === 'enter_car_select' || ev.kind === 'enter_map_select') {
       if (this.lastMenuPrompt?.kind === ev.kind && this.clockMs - this.lastMenuPrompt.at < 1000) return;
       this.lastMenuPrompt = { kind: ev.kind, at: this.clockMs };
@@ -115,18 +119,22 @@ export class ConversationRelayAdapter {
       if (line) { this.lastChattyAt = this.clockMs; this.lineSeq++; this.deps.say?.(line); }
       return;
     }
-    // THE CALLER FINISHED: prefer a proactive LLM RECAP (celebration + race recap + leaderboard
-    // overview) over the scripted one-liner, so the host actually TALKS over the scoreboard. Falls
-    // back to the scripted placeLine when the LLM host isn't wired. Only once per race.
-    if (ev.kind === 'finish' && this.playerId && ev.playerId === this.playerId && !this.recapDone) {
+    if (ev.kind === 'finish' && this.playerId && ev.playerId === this.playerId) {
+      this.myFinishPlace = ev.place;
+    }
+    // The final recap waits for race_over so the room is on the results screen and hostContext has the
+    // actual standings. A finish event can fire earlier while other racers are still driving.
+    if (ev.kind === 'race_over' && this.playerId && !this.recapDone) {
       this.recapDone = true;
       if (this.deps.converse && this.roomCode) {
         const epoch = ++this.turnEpoch;
-        void this.deps.converse(this.roomCode, this.playerId, '(You just crossed the finish line — give a quick spoken recap of the race and a short overview of the all-time leaderboard, then invite a rematch.)')
-          .then(reply => { if (reply && epoch === this.turnEpoch) this.deps.say?.(reply); })
-          .catch(() => { const l = lineForEvent(ev, this.playerId, this.lineSeq); if (l) this.deps.say?.(l); });
+        void this.deps.converse(this.roomCode, this.playerId, '(The race is over. Congratulate the caller if they won, or encourage them if they lost. Then give a quick spoken recap of the race results and a short overview of the all-time leaderboard, and invite a rematch.)')
+          .then(reply => { if (epoch === this.turnEpoch) this.deps.say?.(reply || raceOverLine(this.myFinishPlace)); })
+          .catch(() => { this.deps.say?.(raceOverLine(this.myFinishPlace)); });
         return;
       }
+      this.deps.say?.(raceOverLine(this.myFinishPlace));
+      return;
     }
     const line = lineForEvent(ev, this.playerId, this.lineSeq);
     if (line) { this.lineSeq++; this.deps.say?.(line); }

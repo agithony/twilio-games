@@ -154,7 +154,7 @@ describe('ConversationRelayAdapter', () => {
     expect(a.boundPlayerId).toBe('p1');
   });
 
-  it('speaks countdown + go events to the caller', () => {
+  it('speaks countdown + short go events to the caller', () => {
     const room = fakeRoom(); const said: string[] = [];
     const a = new ConversationRelayAdapter({ findOrCreateRoom: () => room, say: (t) => said.push(t) });
     a.handleMessage(JSON.stringify({ type:'setup', callSid:'CA1', customParameters:{ roomCode:'4821' } }));
@@ -162,10 +162,26 @@ describe('ConversationRelayAdapter', () => {
     a.onGameEvent({ kind:'countdown', n:3 });
     a.onGameEvent({ kind:'go' });
     expect(said).toHaveLength(2);
-    expect(said[0]).toBe('3...');
-    // The GO line primes controls (incl. NITRO); assert the behavior, not the exact wording.
-    expect(said[1]).toContain('Go');
-    expect(said[1]!.toLowerCase()).toContain('nitro');
+    expect(said[0]).toBe('3');
+    expect(said[1]).toBe('Go!');
+  });
+
+  it('speaks a race-over recap fallback when the LLM host returns nothing', async () => {
+    const room = fakeRoom(); const said: string[] = [];
+    const a = new ConversationRelayAdapter({
+      findOrCreateRoom: () => room,
+      say: (t) => said.push(t),
+      converse: async () => null,
+    });
+    a.handleMessage(JSON.stringify({ type:'setup', callSid:'CA1', customParameters:{ roomCode:'4821' } }));
+    said.length = 0;
+
+    a.onGameEvent({ kind:'finish', playerId:'p1', name:'Me', place:1 });
+    a.onGameEvent({ kind:'race_over' });
+    await new Promise(r => setTimeout(r, 0));
+
+    expect(said.join(' ').toLowerCase()).toMatch(/first place|congrat|won/);
+    expect(said.join(' ').toLowerCase()).toContain('leaderboard');
   });
 
   it('does not speak repeated menu-entry prompts back to back', () => {
@@ -258,6 +274,25 @@ describe('ConversationRelayAdapter', () => {
     await new Promise(r => setTimeout(r, 0));
     expect(conversed).toBe(false);
     expect(room.applied).toEqual([{ id:'p1', intent:'MOVE_LEFT' }]);
+  });
+
+  it('during a RACE, handles a burst of spoken commands in one utterance', () => {
+    const room = fakeRoom();
+    const a = new ConversationRelayAdapter({
+      findOrCreateRoom: () => room,
+      phaseOf: () => 'racing',
+      converse: async () => 'should not be called',
+    });
+    a.handleMessage(JSON.stringify({ type:'setup', callSid:'CA1', customParameters:{ roomCode:'4821' } }));
+    a.handleMessage(JSON.stringify({ type:'prompt', voicePrompt:'left right boost nitro brake', last:true }));
+
+    expect(room.applied).toEqual([
+      { id:'p1', intent:'MOVE_LEFT' },
+      { id:'p1', intent:'MOVE_RIGHT' },
+      { id:'p1', intent:'BOOST' },
+      { id:'p1', intent:'USE_POWER' },
+      { id:'p1', intent:'BRAKE' },
+    ]);
   });
 
   it('only converses on the FINAL transcript, not interim partials', async () => {
