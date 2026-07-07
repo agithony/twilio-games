@@ -168,6 +168,35 @@ describe('ConversationRelayAdapter', () => {
     expect(said[1]!.toLowerCase()).toContain('nitro');
   });
 
+  it('does not speak repeated menu-entry prompts back to back', () => {
+    const room = fakeRoom(); const said: string[] = [];
+    const a = new ConversationRelayAdapter({ findOrCreateRoom: () => room, say: (t) => said.push(t) });
+    a.handleMessage(JSON.stringify({ type:'setup', callSid:'CA1', customParameters:{ roomCode:'4821' } }));
+    said.length = 0;
+
+    a.onGameEvent({ kind:'enter_car_select' });
+    a.onGameEvent({ kind:'enter_car_select' });
+    a.onGameEvent({ kind:'enter_map_select' });
+    a.onGameEvent({ kind:'enter_map_select' });
+
+    expect(said).toHaveLength(2);
+    expect(said[0]!.toLowerCase()).toMatch(/car|ride|machine/);
+    expect(said[1]!.toLowerCase()).toMatch(/track|course/);
+  });
+
+  it('allows the same menu prompt again after a later phase cycle', () => {
+    const room = fakeRoom(); const said: string[] = [];
+    const a = new ConversationRelayAdapter({ findOrCreateRoom: () => room, say: (t) => said.push(t) });
+    a.handleMessage(JSON.stringify({ type:'setup', callSid:'CA1', customParameters:{ roomCode:'4821' } }));
+    said.length = 0;
+
+    a.onGameEvent({ kind:'enter_car_select' });
+    for (let i = 0; i < 25; i++) a.onGameEvent({ kind:'countdown', n:3 });
+    a.onGameEvent({ kind:'enter_car_select' });
+
+    expect(said.filter(s => /car|ride|machine/i.test(s))).toHaveLength(2);
+  });
+
   it('announces the caller\'s OWN finish only, not other players\'', () => {
     const room = fakeRoom(); const said: string[] = [];
     const a = new ConversationRelayAdapter({ findOrCreateRoom: () => room, say: (t) => said.push(t) });

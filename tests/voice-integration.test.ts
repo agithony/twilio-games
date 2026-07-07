@@ -42,4 +42,55 @@ describe('voice integration (fake Conversation Relay client)', () => {
     voice.close();
     spec.close();
   });
+
+  it('voice setup flows name → car → track vote → start without asking for the name again', async () => {
+    srv = new HttpServer({ port: 0, publicBaseUrl: 'http://localhost', validateSignatures: false });
+    const port = await srv.start();
+
+    const spec = new WebSocket(`ws://127.0.0.1:${port}/game`);
+    const inbox: any[] = [];
+    spec.on('message', d => inbox.push(JSON.parse(d.toString())));
+    await new Promise<void>(r => spec.on('open', () => r()));
+    spec.send(JSON.stringify({ type: 'spectate', roomCode: '7331' }));
+
+    const voice = new WebSocket(`ws://127.0.0.1:${port}/voice`);
+    const spoken: string[] = [];
+    voice.on('message', d => {
+      const msg = JSON.parse(d.toString());
+      if (msg.type === 'text') spoken.push(String(msg.token));
+    });
+    await new Promise<void>(r => voice.on('open', () => r()));
+    voice.send(JSON.stringify({
+      type: 'setup', callSid: 'CA2', from: '+15551230001',
+      customParameters: { roomCode: '7331' },
+    }));
+    await wait(50);
+
+    voice.send(JSON.stringify({ type: 'prompt', voicePrompt: 'Ada', last: true }));
+    await wait(50);
+    voice.send(JSON.stringify({ type: 'prompt', voicePrompt: 'start', last: true }));
+    await wait(50);
+    voice.send(JSON.stringify({ type: 'prompt', voicePrompt: 'one', last: true }));
+    await wait(50);
+    voice.send(JSON.stringify({ type: 'prompt', voicePrompt: 'next', last: true }));
+    await wait(50);
+    spoken.length = 0;
+    voice.send(JSON.stringify({ type: 'prompt', voicePrompt: 'one', last: true }));
+    await wait(100);
+
+    expect(spoken.join(' ').toLowerCase()).toContain("vote's in");
+    expect(spoken.join(' ').toLowerCase()).not.toMatch(/what'?s your name|first up.*name/);
+    expect(inbox.some(m => m.type === 'items')).toBe(false);
+
+    spoken.length = 0;
+    voice.send(JSON.stringify({ type: 'prompt', voicePrompt: 'start', last: true }));
+    await wait(300);
+
+    expect(spoken.join(' ').toLowerCase()).toContain('here we go');
+    expect(spoken.join(' ').toLowerCase()).not.toMatch(/what'?s your name|first up.*name/);
+    expect(inbox.some(m => m.type === 'items')).toBe(true);
+
+    voice.close();
+    spec.close();
+  });
 });

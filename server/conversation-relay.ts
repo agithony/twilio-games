@@ -101,9 +101,14 @@ export class ConversationRelayAdapter {
   private lastChattyAt = -1e9;
   private clockMs = 0;   // advanced from event cadence; monotonic enough for throttling
   private recapDone = false;   // one proactive results recap per race (reset on a new countdown/go)
+  private lastMenuPrompt: { kind: 'enter_car_select' | 'enter_map_select'; at: number } | null = null;
   onGameEvent(ev: GameEvent): void {
     this.clockMs += 50;   // events arrive on the ~20Hz broadcast; approx a wall clock for throttling
     if (ev.kind === 'go' || ev.kind === 'countdown') this.recapDone = false;   // fresh race → allow a new recap
+    if (ev.kind === 'enter_car_select' || ev.kind === 'enter_map_select') {
+      if (this.lastMenuPrompt?.kind === ev.kind && this.clockMs - this.lastMenuPrompt.at < 1000) return;
+      this.lastMenuPrompt = { kind: ev.kind, at: this.clockMs };
+    }
     if (isChattyEvent(ev.kind)) {
       if (this.clockMs - this.lastChattyAt < CHATTY_GAP_MS) return;   // too soon → stay quiet
       const line = lineForEvent(ev, this.playerId, this.lineSeq);

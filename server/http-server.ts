@@ -402,7 +402,11 @@ export class HttpServer {
     }
     if (room.phase === 'map_select') {
       const i = clearSelectionIndex(utterance, room.mapChoices);
-      if (i === null) return null;
+      if (i === null) {
+        if (!isAdvanceWord(utterance)) return null;
+        const ok = this.game.voiceAdvance(room.code);
+        return ok ? "Here we go — let's race!" : 'Pick a track first — say a track name or number.';
+      }
       this.game.voiceSelectMap(room.code, room.mapChoices[i]!, playerId);
       return `Your vote's in for ${room.mapChoices[i]}! Say "start" when you're ready to race.`;
     }
