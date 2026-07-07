@@ -3,12 +3,14 @@
 // (pick your car / track), reactions to the caller's own picks, the 3-2-1-GO countdown, mid-race
 // arcade quips (throttled), and their finish. No I/O here; the adapter decides WHEN to send these.
 import type { GameEvent } from '../shared/types';
+import { countdownCue } from '../shared/countdown';
 
 /** The connect greeting, as SEPARATE sentences. Sending each as its own TTS utterance gives natural
  *  pauses between them — one long run-on string was read without breaths (the "no pause" issue). */
 export function greetingLines(): string[] {
   return [
     'Welcome to Twilio Voice Racer!',
+    'It is powered by Twilio Conversation Relay, so you control the game with your voice.',
     "First up, what's your name?",
   ];
 }
@@ -19,15 +21,15 @@ const CAR_SELECT = ['Pick your ride! Say a car by name or number.', 'Choose your
 const MAP_SELECT = ['Now vote for the track — say its name or number!', 'Choose your course — say the number!'];
 const CAR_PICKED = ['Nice choice!', 'Great pick!', 'Ooh, bold choice!', 'Solid ride!'];
 
-const STREAK = ['Those barriers are magnetic! Find the gaps!', 'Ouch — watch the walls!',
-  'The barriers keep finding you!', 'Thread the needle — aim for the gaps!', 'Those walls are brutal — say NITRO to bust through one!'];
-const LAST = ['You slipped to last — floor it and climb back!', "Don't give up — you can catch them!",
-  'Last place, but plenty of race left!', 'Dead last — time for a comeback, keep saying boost!', 'You can still win this — climb!'];
-const LEAD = ['You\'ve got the lead! Hold it!', 'Out in front — go go go!', 'First place is yours — keep it!',
-  'You\'re leading the pack — don\'t let up!', 'Nobody\'s catching you — floor it!'];
+const STREAK = ['Watch the barriers — find the gaps.', 'Ouch, watch the walls.',
+  'The barriers keep finding you.', 'Thread the needle and aim for the gaps.', 'Say NITRO if you need to break through a wall.'];
+const LAST = ['You slipped to last — plenty of race left.', "Don't give up, you can catch them.",
+  'Last place for now, but there is time.', 'Time for a comeback — keep saying boost.', 'You can still climb back.'];
+const LEAD = ['You have the lead — hold it.', 'You are out in front.', 'First place is yours for now.',
+  'You are leading the pack.', 'Clean driving — stay ahead.'];
 // A NITRO dash blasting through a barrier — the special move paying off. Big, hype, spoken to the caller.
-const SMASH = ['BOOM! You SMASHED right through that barrier!', 'NITRO POWER — you plowed straight through!',
-  'YES! That barrier never stood a chance!', 'Demolished it! Nitro dash for the win!', 'Straight THROUGH it — incredible!'];
+const SMASH = ['Nice — nitro got you through that barrier.', 'Good nitro timing, straight through.',
+  'Barrier cleared with nitro.', 'You broke through cleanly.', 'Good move — right through it.'];
 
 /** What to SAY (if anything) for a game event, from THIS caller's perspective. Returns null when the
  *  event shouldn't be spoken to THIS caller. `myPlayerId` is the caller's bound player id, so we only
@@ -42,7 +44,7 @@ export function lineForEvent(ev: GameEvent, myPlayerId: string | null, seq = 0):
     case 'car_picked':       return mine(ev.playerId) ? `${pick(CAR_PICKED, seq)} The ${ev.car}!` : null;
     case 'map_picked':       return null;   // the screen host covers the map pick; don't double up
     case 'countdown':
-      return ev.n > 0 ? String(ev.n) : null;
+      return countdownCue(ev.n);
     case 'go':
       return 'Go!';
     case 'finish':
@@ -69,20 +71,19 @@ export function isChattyEvent(kind: GameEvent['kind']): boolean {
   return kind === 'hit_streak' || kind === 'fell_to_last' || kind === 'lead_change' || kind === 'barrier_smashed';
 }
 
-/** A result callout by finishing place. First place is BIG — this is the scripted fallback (when the
- *  LLM host is off); the LLM path gets its own maximum-hype prompt for a win. */
+/** A result callout by finishing place. Scripted fallback when the LLM host is off. */
 export function placeLine(place: number): string {
   switch (place) {
-    case 1: return "YES!! FIRST PLACE! You are the CHAMPION! Absolutely incredible driving — take a bow! Wanna run it back?";
-    case 2: return 'SO close — second place! What a race! Go again and take the crown?';
-    case 3: return 'Third place — on the podium! Nice driving! One more?';
-    default: return `You finished ${ordinal(place)} — good hustle out there! Run it back?`;
+    case 1: return 'Nice work — first place. You won the race.';
+    case 2: return 'Second place — close race. Try again and take the win.';
+    case 3: return 'Third place — on the podium. Nice driving.';
+    default: return `You finished ${ordinal(place)}. Try again and climb the board.`;
   }
 }
 
 export function raceOverLine(place: number | null): string {
-  if (place === 1) return 'Race over — congratulations, you won! Check the results and leaderboard on the big screen.';
-  if (place && place > 1) return `Race over — you finished ${ordinal(place)}. Good run, and try again for the win! Check the results and leaderboard on the big screen.`;
+  if (place === 1) return 'Race over. Congratulations, you won. Check the results and leaderboard on the big screen.';
+  if (place && place > 1) return `Race over. You finished ${ordinal(place)}. Try again next time, and check the results and leaderboard on the big screen.`;
   return 'Race over. Check the results and leaderboard on the big screen, then run it back!';
 }
 

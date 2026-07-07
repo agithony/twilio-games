@@ -39,7 +39,7 @@ describe('Room', () => {
     const a = room.addPlayer('You') as any;
     room.addPlayer('Ada');
     room.start();
-    for (let i = 0; i < 4 * 60; i++) { room.tick(STEP); if (room.phase === 'racing') break; }
+    for (let i = 0; i < 8 * 60; i++) { room.tick(STEP); if (room.phase === 'racing') break; }
     const before = room.snapshot()!.cars.find(c => c.id === a.playerId)!.targetLane;
     room.applyIntent(a.playerId, before === 0 ? 'MOVE_RIGHT' : 'MOVE_LEFT');
     const after = room.snapshot()!.cars.find(c => c.id === a.playerId)!.targetLane;
@@ -70,7 +70,7 @@ describe('Room', () => {
     const a = room.addPlayer('You') as any;
     const b = room.addPlayer('Ada') as any;
     room.start();
-    for (let i = 0; i < 4 * 60; i++) { room.tick(STEP); if (room.phase === 'racing') break; }
+    for (let i = 0; i < 8 * 60; i++) { room.tick(STEP); if (room.phase === 'racing') break; }
     expect(room.snapshot()!.cars.map(c => c.id).sort()).toEqual([a.playerId, b.playerId].sort());
     room.removePlayer(b.playerId);
     expect(room.snapshot()!.cars.map(c => c.id)).toEqual([a.playerId]);
@@ -87,7 +87,7 @@ describe('Room', () => {
   it('drains the countdown/go events', () => {
     room.addPlayer('You'); room.start();
     let sawGo = false;
-    for (let i = 0; i < 4 * 60; i++) {
+    for (let i = 0; i < 8 * 60; i++) {
       room.tick(STEP);
       if (room.drainEvents().some(e => e.kind === 'go')) sawGo = true;
       if (room.phase === 'racing') break;

@@ -5,10 +5,15 @@ describe('voice-lines', () => {
   it('greeting welcomes + asks the caller\'s name (voice onboarding starts here)', () => {
     const g = greetingLine().toLowerCase();
     expect(g).toContain('voice racer');
+    expect(g).toContain('conversation relay');
+    expect(g).toMatch(/voice.*control|control.*voice/);
     expect(g).toMatch(/name/);
   });
 
-  it('countdown speaks the number, but not n=0', () => {
+  it('countdown speaks staged racing cues and numbers', () => {
+    expect(lineForEvent({ kind: 'countdown', n: 6 }, 'p1')).toBe('On your mark');
+    expect(lineForEvent({ kind: 'countdown', n: 5 }, 'p1')).toBe('Get ready');
+    expect(lineForEvent({ kind: 'countdown', n: 4 }, 'p1')).toBe('Get set');
     expect(lineForEvent({ kind: 'countdown', n: 3 }, 'p1')).toBe('3');
     expect(lineForEvent({ kind: 'countdown', n: 0 }, 'p1')).toBeNull();
   });
@@ -19,10 +24,11 @@ describe('voice-lines', () => {
     expect(go.toLowerCase()).not.toMatch(/left|right|boost|brake|nitro/);
   });
 
-  it('finish is spoken only for the caller\'s own player, and a win is HYPE', () => {
+  it('finish is spoken only for the caller\'s own player, and a win is calm', () => {
     const win = lineForEvent({ kind: 'finish', playerId: 'p1', name: 'Me', place: 1 }, 'p1')!;
     expect(win.toLowerCase()).toContain('first place');
-    expect(win).toMatch(/CHAMPION|YES|!!/);   // maximum excitement for a win
+    expect(win.toLowerCase()).toContain('won');
+    expect(win).not.toMatch(/CHAMPION|YES|!!/);
     expect(lineForEvent({ kind: 'finish', playerId: 'p2', name: 'Them', place: 1 }, 'p1')).toBeNull();
     expect(lineForEvent({ kind: 'finish', playerId: 'p1', name: 'Me', place: 1 }, null)).toBeNull();
   });
@@ -61,10 +67,11 @@ describe('voice-lines', () => {
     expect(raceOverLine(3).toLowerCase()).toMatch(/try again|finished 3rd|leaderboard/);
   });
 
-  it('speaks a HYPE line when the caller NITRO-smashes a barrier (showcases the special move)', () => {
+  it('speaks a measured line when the caller clears a barrier with nitro', () => {
     const line = lineForEvent({ kind: 'barrier_smashed', playerId: 'p1', itemId: 7 }, 'p1');
     expect(line).toBeTruthy();
-    expect(line!.toLowerCase()).toMatch(/smash|through|nitro|bust|demolish|plow/);
+    expect(line!.toLowerCase()).toMatch(/nitro|barrier|through|cleared/);
+    expect(line).not.toMatch(/BOOM|YES|incredible|!!/);
     // not spoken for another player's smash
     expect(lineForEvent({ kind: 'barrier_smashed', playerId: 'p2', itemId: 7 }, 'p1')).toBeNull();
   });

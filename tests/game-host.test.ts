@@ -153,6 +153,13 @@ describe('buildSystemPrompt', () => {
     expect(p).toContain('twilio');
     expect(p).toMatch(/answer|question|ask/);   // it's allowed/encouraged to answer questions
   });
+
+  it('keeps the host tone measured, not over-the-top', () => {
+    const p = buildSystemPrompt(ctx({ phase: 'results', myPlace: 1 })).toLowerCase();
+    expect(p).toContain('measured');
+    expect(p).toMatch(/not over-the-top|calm/);
+    expect(p).not.toContain('maximum hype');
+  });
 });
 
 describe('hostTurn', () => {

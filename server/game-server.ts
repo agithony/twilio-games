@@ -359,7 +359,12 @@ export class GameServer {
     // transition) so the standings persist even if the player disconnects this very tick and the
     // room gets reaped before the next stepRoom. (Read fresh — phase changed during tick().)
     const phaseAfter: string = room.phase;
-    if (phaseAfter === 'results') this.reportFinishedOnce(room);
+    if (phaseAfter === 'results') {
+      // The final tick can queue finish/race_over and enter results before broadcastAll gets another
+      // racing-phase pass. Flush those events here so voice callers hear the race-end recap.
+      for (const ev of room.drainEvents()) this.emitEvent(room.code, ev);
+      this.reportFinishedOnce(room);
+    }
   }
 
   /** Fire onRaceFinished exactly once per finished race (the WeakSet clears when it leaves results). */

@@ -9,7 +9,7 @@ import type { Intent, Item, CarState, WorldSnapshot, Phase, GameEvent } from './
 
 interface PlayerInit { id: string; name: string; color: string; carIndex?: number; }
 
-const COUNTDOWN_SECONDS = 3.2;
+const COUNTDOWN_SECONDS = 6.2;
 const BOOST_RESPAWN = 0.5;   // seconds a collected boost stays gone before respawning for trailers
 
 export class RaceWorld {

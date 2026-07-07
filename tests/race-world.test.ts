@@ -9,7 +9,7 @@ const PLAYERS = [
 function newWorld() { return new RaceWorld(PLAYERS, 12345); }
 function startRacing(w: RaceWorld) {
   // run past the countdown
-  for (let i = 0; i < 4 * 60; i++) { w.step(STEP); if (w.phase === 'racing') break; }
+  for (let i = 0; i < 8 * 60; i++) { w.step(STEP); if (w.phase === 'racing') break; }
 }
 
 describe('RaceWorld', () => {

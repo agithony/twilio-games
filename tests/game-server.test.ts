@@ -212,4 +212,22 @@ describe('GameServer integration', () => {
     expect(reportedMap).toBe('Silver Lake');
     expect(reportedResults[0]).toMatchObject({ name: 'Solo', place: 1, carIndex: 4, finished: true });
   });
+
+  it('flushes final finish/race_over events when a race enters results', async () => {
+    server = new GameServer({ port: 0, broadcastHz: 30 });
+    server.setRoomConfigProvider(() => ({ carCount: 19, maps: ['Silver Lake'] }));
+    const heard: string[] = [];
+    server.setOnRoomEvents((_code, events) => heard.push(...events.map(e => e.kind)));
+    await server.start();
+
+    const room = server.getOrCreateRoom('VOICEEND');
+    room.addPlayer('Solo');
+    room.advance(); room.selectCar(room.lobbyPlayers()[0]!.playerId, 4);
+    room.advance(); room.selectMap('Silver Lake'); room.advance();
+    for (let i = 0; i < 2000 && room.phase !== 'results'; i++) server.stepRoomForTest(room, 0.1);
+
+    expect(room.phase).toBe('results');
+    expect(heard).toContain('finish');
+    expect(heard).toContain('race_over');
+  });
 });

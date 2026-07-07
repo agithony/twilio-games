@@ -2,6 +2,7 @@ import { GameConnection } from './net';
 import { KeyboardAdapter } from './input-keyboard';
 import { Renderer } from './renderer';
 import { InterpolationBuffer } from './interpolation';
+import { countdownDisplay } from '../shared/countdown';
 import { AssetLoader } from './asset-loader';
 import { Screens } from './screens';
 import type { GlobalEntry } from './screens';
@@ -272,8 +273,8 @@ conn.onEvent((e) => {
   const sfx = getSoundEffectsManager();
 
   if (e.kind === 'countdown') {
-    big.textContent = String(e.n);
-    // Only play countdown sound once at the start (when countdown first begins, usually at 3)
+    big.textContent = countdownDisplay(e.n);
+    // Only play countdown sound once at the start.
     if (!countdownSoundPlayed) {
       countdownSoundPlayed = true;
       sfx.playCountdown();
@@ -464,7 +465,7 @@ function boot() {
       renderer.render(snap);
       // Keep the big countdown number visible even though the "Get Ready" overlay is up; clear it
       // once racing starts (GO! is set by the event handler and self-clears).
-      if (snap.phase === 'countdown') big.textContent = snap.countdown > 0 ? String(Math.ceil(snap.countdown)) : '';
+      if (snap.phase === 'countdown') big.textContent = countdownDisplay(snap.countdown);
 
       // Detect power/nitro activation for SFX — play turbo sound for any car that just activated
       for (const car of snap.cars) {
