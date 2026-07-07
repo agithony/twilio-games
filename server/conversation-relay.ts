@@ -128,7 +128,7 @@ export class ConversationRelayAdapter {
       this.recapDone = true;
       if (this.deps.converse && this.roomCode) {
         const epoch = ++this.turnEpoch;
-        void this.deps.converse(this.roomCode, this.playerId, '(The race is over. In a calm, measured tone: congratulate the caller if they won, or encourage them if they lost. Then give a quick spoken recap of the race results and a short overview of the all-time leaderboard, and invite a rematch.)')
+        void this.deps.converse(this.roomCode, this.playerId, '(The race is over. In a calm, measured tone: congratulate the caller if they won, or encourage them if they lost. Then give a quick spoken recap of the race results and a short overview of the all-time leaderboard. Ask if they want another round.)')
           .then(reply => { if (epoch === this.turnEpoch) this.deps.say?.(reply || raceOverLine(this.myFinishPlace)); })
           .catch(() => { this.deps.say?.(raceOverLine(this.myFinishPlace)); });
         return;

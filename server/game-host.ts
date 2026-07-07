@@ -60,7 +60,7 @@ export function buildSystemPrompt(ctx: HostContext): string {
   // Onboarding sequence: proactively drive name → car → map → start, ONE step at a time. Always get
   // the NAME first (any phase) if it's still unset.
   if (!ctx.myName) {
-    lines.push("The caller has NOT given their name yet. Your FIRST job: ask their name, and the moment they say it, CALL set_name. In the SAME reply, greet them BY NAME and tell them what happens next — do NOT just say 'nice to meet you' and stop. Immediately guide them into picking a car (see the phase note below).");
+    lines.push("The caller has NOT given their name yet. Your FIRST job: ask their name, and the moment they say it, CALL set_name. In the SAME reply, greet them BY NAME, tell them to look at the controls on the screen, and briefly explain: say left/right to steer, boost to speed up, brake to slow down, and nitro to break through a wall. Then tell them to say start when ready to pick a car — do NOT just say 'nice to meet you' and stop.");
   }
   if (ctx.phase === 'lobby') {
     lines.push("SCREEN: the LOBBY (players call in to join; the shared screen shows who's in). Once you have their name: greet them, say they can wait a moment for other players to call in OR jump right in, and that you'll take them to pick their car — then CALL start_race to advance to CAR selection. NEVER end a turn on a bare 'nice to meet you'; always tell them the next step. Nothing is picked yet, so don't mention specific cars/tracks.");

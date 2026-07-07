@@ -24,6 +24,8 @@ import { battleHostTurn, type BattleHostContext } from './battle-host';
 import { monsterById, rosterEntries } from '../shared/monster-roster';
 import type { Room } from './room';
 
+const VOICE_RACER_CONTROLS_INTRO = 'Before you start, check the controls on the screen: say left or right to steer, boost to speed up, brake to slow down, and nitro to break through a wall.';
+
 export class HttpServer {
   private server: http.Server;
   private game: GameServer;
@@ -371,6 +373,11 @@ export class HttpServer {
    *  Returns null when it's not a clear pick (a question, chit-chat, or wrong phase) → the LLM handles
    *  it. Makes numeric/name picks reliable regardless of the model, and works with the LLM disabled. */
   private directSelection(room: Room, playerId: string, utterance: string): string | null {
+    // Internal prompts are wrapped in parentheses by the voice adapter. They are instructions to the
+    // host brain, not caller commands, so they must never drive room state (for example race-over
+    // recap prompts mentioning a rematch must not advance results back to car select).
+    if (utterance.trim().startsWith('(')) return null;
+
     // NAME CAPTURE (deterministic, LLM-independent): the FIRST thing we ask is the caller's name, so in
     // the LOBBY, while they still have the auto placeholder name, treat a name-like reply as their name
     // + confirm and guide forward. Without this, giving your name relied entirely on the LLM (dead air
@@ -382,7 +389,7 @@ export class HttpServer {
         const name = parseSpokenName(utterance);
         if (name) {
           this.game.voiceSetName(room.code, playerId, name);
-          return `Nice to meet you, ${name}! Say "start" when you're ready to pick your car.`;
+          return `Nice to meet you, ${name}! ${VOICE_RACER_CONTROLS_INTRO} Say "start" when you're ready to pick your car.`;
         }
       }
     }
@@ -427,6 +434,11 @@ export class HttpServer {
     return null;
   }
 
+  /** Test seam for deterministic voice routing without opening a WebSocket. */
+  directSelectionForTest(room: Room, playerId: string, utterance: string): string | null {
+    return this.directSelection(room, playerId, utterance);
+  }
+
   /** Build the AI host's view of a live room for one caller: what it can see + the actions it can take
    *  (pick a car/map by fuzzy name, start the race). Actions delegate to the same Room methods + the
    *  game-server broadcast, so a voice-driven pick shows up on the screen exactly like a texted one. */
@@ -456,7 +468,7 @@ export class HttpServer {
         // Always chain into the NEXT step so a bare tool call never leaves dead air (the "it just said
         // 'nice to meet you' and stopped" issue). In the lobby, point them at getting into the race.
         return room.phase === 'lobby'
-          ? `Nice to meet you, ${clean}! Others can still call in — say "start" whenever you're ready to pick your car.`
+          ? `Nice to meet you, ${clean}! ${VOICE_RACER_CONTROLS_INTRO} Others can still call in — say "start" whenever you're ready to pick your car.`
           : `Nice to meet you, ${clean}!`;
       },
       selectCarByName: (name) => {

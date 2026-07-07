@@ -44,7 +44,7 @@ export function lineForEvent(ev: GameEvent, myPlayerId: string | null, seq = 0):
     case 'car_picked':       return mine(ev.playerId) ? `${pick(CAR_PICKED, seq)} The ${ev.car}!` : null;
     case 'map_picked':       return null;   // the screen host covers the map pick; don't double up
     case 'countdown':
-      return countdownCue(ev.n);
+      return ev.n <= 3 ? countdownCue(ev.n) : null;
     case 'go':
       return 'Go!';
     case 'finish':

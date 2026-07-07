@@ -10,10 +10,10 @@ describe('voice-lines', () => {
     expect(g).toMatch(/name/);
   });
 
-  it('countdown speaks staged racing cues and numbers', () => {
-    expect(lineForEvent({ kind: 'countdown', n: 6 }, 'p1')).toBe('On your mark');
-    expect(lineForEvent({ kind: 'countdown', n: 5 }, 'p1')).toBe('Get ready');
-    expect(lineForEvent({ kind: 'countdown', n: 4 }, 'p1')).toBe('Get set');
+  it('countdown speaks only the numeric 3, 2, 1 beats', () => {
+    expect(lineForEvent({ kind: 'countdown', n: 6 }, 'p1')).toBeNull();
+    expect(lineForEvent({ kind: 'countdown', n: 5 }, 'p1')).toBeNull();
+    expect(lineForEvent({ kind: 'countdown', n: 4 }, 'p1')).toBeNull();
     expect(lineForEvent({ kind: 'countdown', n: 3 }, 'p1')).toBe('3');
     expect(lineForEvent({ kind: 'countdown', n: 0 }, 'p1')).toBeNull();
   });

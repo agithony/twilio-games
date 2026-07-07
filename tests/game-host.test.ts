@@ -136,6 +136,12 @@ describe('buildSystemPrompt', () => {
     expect(p).toMatch(/next step|nice to meet|do not just say|next/);
   });
 
+  it('after taking the name it tells callers to look at controls and gives voice commands', () => {
+    const p = buildSystemPrompt(ctx({ phase: 'lobby', myName: null })).toLowerCase();
+    expect(p).toContain('look at the controls on the screen');
+    for (const word of ['left', 'right', 'boost', 'brake', 'nitro']) expect(p).toContain(word);
+  });
+
   it('tells the host WHICH screen the players are looking at (screen awareness)', () => {
     expect(buildSystemPrompt(ctx({ phase: 'car_select' })).toLowerCase()).toMatch(/screen|display|showing/);
     expect(buildSystemPrompt(ctx({ phase: 'map_select' })).toLowerCase()).toMatch(/screen|display|showing/);

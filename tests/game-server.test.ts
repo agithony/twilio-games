@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { WebSocket } from 'ws';
 import { GameServer } from '../server/game-server';
+import { HttpServer } from '../server/http-server';
 import type { ServerMessage } from '../shared/types';
 
 let server: GameServer;
@@ -229,5 +230,30 @@ describe('GameServer integration', () => {
     expect(room.phase).toBe('results');
     expect(heard).toContain('finish');
     expect(heard).toContain('race_over');
+  });
+});
+
+describe('HttpServer voice routing seams', () => {
+  let http: HttpServer;
+  afterEach(async () => { await http?.stop(); });
+
+  it('does not treat internal race-over recap prompts as rematch commands', async () => {
+    http = new HttpServer({
+      port: 0, publicBaseUrl: 'http://localhost', validateSignatures: false,
+      mapsPath: 'assets/maps/maps.json',
+    });
+    await http.start();
+    const game = (http as unknown as { game: GameServer }).game;
+    game.setRoomConfigProvider(() => ({ carCount: 19, maps: ['Silver Lake'] }));
+    const room = game.getOrCreateRoom('NOAUTO');
+    const res = room.addPlayer('Ada') as { playerId: string };
+    room.advance(); room.selectCar(res.playerId, 0);
+    room.advance(); room.selectMap('Silver Lake'); room.advance();
+    for (let i = 0; i < 2000 && room.phase !== 'results'; i++) game.stepRoomForTest(room, 0.1);
+
+    const reply = http.directSelectionForTest(room, res.playerId, '(The race is over. Invite a rematch.)');
+
+    expect(reply).toBeNull();
+    expect(room.phase).toBe('results');
   });
 });

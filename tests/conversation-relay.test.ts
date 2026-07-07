@@ -154,7 +154,7 @@ describe('ConversationRelayAdapter', () => {
     expect(a.boundPlayerId).toBe('p1');
   });
 
-  it('speaks staged countdown + short go events to the caller', () => {
+  it('speaks only numeric countdown + short go events to the caller', () => {
     const room = fakeRoom(); const said: string[] = [];
     const a = new ConversationRelayAdapter({ findOrCreateRoom: () => room, say: (t) => said.push(t) });
     a.handleMessage(JSON.stringify({ type:'setup', callSid:'CA1', customParameters:{ roomCode:'4821' } }));
@@ -164,7 +164,7 @@ describe('ConversationRelayAdapter', () => {
     a.onGameEvent({ kind:'countdown', n:4 });
     a.onGameEvent({ kind:'countdown', n:3 });
     a.onGameEvent({ kind:'go' });
-    expect(said).toEqual(['On your mark', 'Get ready', 'Get set', '3', 'Go!']);
+    expect(said).toEqual(['3', 'Go!']);
   });
 
   it('speaks a race-over recap fallback when the LLM host returns nothing', async () => {

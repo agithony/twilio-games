@@ -73,6 +73,7 @@ describe('voice integration (fake Conversation Relay client)', () => {
 
       voice.send(JSON.stringify({ type: 'prompt', voicePrompt: 'Ada', last: true }));
       await wait(50);
+      expect(spoken.join(' ').toLowerCase()).toMatch(/controls on the screen|say left|nitro/);
       voice.send(JSON.stringify({ type: 'prompt', voicePrompt: 'start', last: true }));
       await wait(50);
       voice.send(JSON.stringify({ type: 'prompt', voicePrompt: 'one', last: true }));
