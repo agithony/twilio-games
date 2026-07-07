@@ -15,3 +15,7 @@ export function countdownDisplay(seconds: number): string {
   if (seconds <= 0) return '';
   return countdownCue(Math.min(6, Math.ceil(seconds))) ?? '';
 }
+
+export function isCountdownSoundCue(n: number): boolean {
+  return n === 3;
+}

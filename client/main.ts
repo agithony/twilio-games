@@ -2,7 +2,7 @@ import { GameConnection } from './net';
 import { KeyboardAdapter } from './input-keyboard';
 import { Renderer } from './renderer';
 import { InterpolationBuffer } from './interpolation';
-import { countdownDisplay } from '../shared/countdown';
+import { countdownDisplay, isCountdownSoundCue } from '../shared/countdown';
 import { AssetLoader } from './asset-loader';
 import { Screens } from './screens';
 import type { GlobalEntry } from './screens';
@@ -274,8 +274,9 @@ conn.onEvent((e) => {
 
   if (e.kind === 'countdown') {
     big.textContent = countdownDisplay(e.n);
-    // Only play countdown sound once at the start.
-    if (!countdownSoundPlayed) {
+    // The audio clip says "3, 2, 1, go", so start it on the visible numeric 3 beat,
+    // not during the staged "On your mark / Get ready / Get set" lead-in.
+    if (isCountdownSoundCue(e.n) && !countdownSoundPlayed) {
       countdownSoundPlayed = true;
       sfx.playCountdown();
     }

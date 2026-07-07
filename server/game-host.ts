@@ -90,7 +90,7 @@ export function buildSystemPrompt(ctx: HostContext): string {
       lines.push(`RECAP: give a quick 1-2 sentence recap of how the race played out — the podium was: ${order}. Mention the winner + any close/notable finish. Do NOT list every position robotically; summarize like a broadcaster.`);
     }
     if (ctx.allTimeBest) {
-      lines.push(`ALL-TIME LEADERBOARD: the overall record is ${ctx.allTimeBest.name} at ${ctx.allTimeBest.time.toFixed(1)} seconds${ctx.allTimeTop && ctx.allTimeTop.length > 1 ? ` (top names: ${ctx.allTimeTop.slice(0, 3).join(', ')})` : ''}. Work in a SHORT overview — e.g. whether the caller cracked the top times, or a nudge to beat the record. A one-line flavor mention, NOT a full readout.`);
+      lines.push(`CURRENT TRACK LEADERBOARD (${ctx.selectedMap ?? 'this track'}): the record is ${ctx.allTimeBest.name} at ${ctx.allTimeBest.time.toFixed(1)} seconds${ctx.allTimeTop && ctx.allTimeTop.length > 1 ? ` (top names: ${ctx.allTimeTop.slice(0, 3).join(', ')})` : ''}. Use ONLY this track-specific leaderboard data when discussing high scores. A one-line overview, NOT a full readout.`);
     }
     lines.push('Then invite them to race again (say "rematch" or "go again").');
   }

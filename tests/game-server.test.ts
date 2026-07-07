@@ -3,6 +3,7 @@ import { WebSocket } from 'ws';
 import { GameServer } from '../server/game-server';
 import { HttpServer } from '../server/http-server';
 import type { ServerMessage } from '../shared/types';
+import { mkdir, unlink, writeFile } from 'node:fs/promises';
 
 let server: GameServer;
 afterEach(async () => { await server?.stop(); });
@@ -235,7 +236,8 @@ describe('GameServer integration', () => {
 
 describe('HttpServer voice routing seams', () => {
   let http: HttpServer;
-  afterEach(async () => { await http?.stop(); });
+  let LB = '';
+  afterEach(async () => { await http?.stop(); if (LB) { try { await unlink(LB); } catch {} } });
 
   it('does not treat internal race-over recap prompts as rematch commands', async () => {
     http = new HttpServer({
@@ -255,5 +257,31 @@ describe('HttpServer voice routing seams', () => {
 
     expect(reply).toBeNull();
     expect(room.phase).toBe('results');
+  });
+
+  it('gives the voice host a leaderboard filtered to the current track', async () => {
+    await mkdir('data', { recursive: true });
+    LB = `data/_test-host-lb-${process.pid}.json`;
+    await writeFile(LB, JSON.stringify([
+      { name: 'Wrong Track Test', map: 'Neon City', carIndex: 0, finishT: 39, at: 1 },
+      { name: 'Real Leader', map: 'Silver Lake', carIndex: 0, finishT: 33, at: 2 },
+    ]));
+    http = new HttpServer({
+      port: 0, publicBaseUrl: 'http://localhost', validateSignatures: false,
+      mapsPath: 'assets/maps/maps.json', leaderboardPath: LB,
+    });
+    await http.start();
+    const game = (http as unknown as { game: GameServer }).game;
+    const room = game.getOrCreateRoom('CTXLB');
+    const res = room.addPlayer('Ada') as { playerId: string };
+    room.advance(); room.selectCar(res.playerId, 0);
+    room.advance(); room.selectMap('Silver Lake'); room.advance();
+    for (let i = 0; i < 2000 && room.phase !== 'results'; i++) game.stepRoomForTest(room, 0.1);
+
+    const ctx = http.hostContextForTest(room, res.playerId);
+
+    expect(ctx.selectedMap).toBe('Silver Lake');
+    expect(ctx.allTimeBest).toEqual({ name: 'Real Leader', time: 33 });
+    expect(ctx.allTimeTop).toEqual(['Real Leader']);
   });
 });

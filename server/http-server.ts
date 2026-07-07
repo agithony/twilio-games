@@ -14,7 +14,7 @@ import { parseManifest } from '../shared/asset-manifest';
 import { mergeMapConfig } from '../shared/maps-store';
 import { seedMapsPlan } from './maps-seed';
 import { DEFAULT_ROOM } from '../shared/constants';
-import { appendResults, parseLeaderboard, topEntries } from '../shared/leaderboard-store';
+import { appendResults, parseLeaderboard, topEntries, type LeaderboardEntry } from '../shared/leaderboard-store';
 import { speechSafeText } from '../shared/speech-text';
 import { SmsConcierge, type ConciergeRoom } from './sms-concierge';
 import { OpenAiClient, NullLlmClient, type LlmClient, type LlmTurn } from './llm';
@@ -57,9 +57,9 @@ export class HttpServer {
   /** Cached selectable cars/maps for the lobby (refreshed from manifest + maps.json periodically). */
   private roomConfigCache: { carCount: number; maps: string[]; carNames: string[] } = { carCount: 0, maps: [], carNames: [] };
   private roomConfigTimer: ReturnType<typeof setInterval> | null = null;
-  /** A short ALL-TIME leaderboard summary (top few overall, fastest-first) the AI host can reference on
-   *  the results screen — refreshed with the room config so hostContext stays sync. e.g. "Ada, Rex, Bo". */
-  private leaderboardSummary: { topNames: string[]; bestName: string | null; bestTime: number | null } = { topNames: [], bestName: null, bestTime: null };
+  /** Cached leaderboard rows. Host context filters this by the room's selected map, so the AI answers
+   *  with the same track-specific board shown on screen instead of a stale/global record. */
+  private leaderboardEntriesCache: LeaderboardEntry[] = [];
   /** Serializes leaderboard writes so two near-simultaneous race finishes can't clobber each other. */
   private leaderboardWrite: Promise<void> = Promise.resolve();
   /** SMS concierge (per-phone onboarding + car/map selection). */
@@ -186,17 +186,10 @@ export class HttpServer {
       carNames: carNames.length ? carNames : this.roomConfigCache.carNames,
     };
     if (carNames.length) this.carNamesCache = carNames;
-    // Refresh a tiny all-time leaderboard summary for the AI host's results recap (best overall + a
-    // few top names). Best-effort: a read failure just keeps the prior summary.
+    // Refresh leaderboard rows for the AI host. Best-effort: a read failure keeps prior rows.
     try {
-      const entries = parseLeaderboard(await readFile(this.leaderboardPath, 'utf8'));
-      const top = topEntries(entries, { limit: 5 });   // fastest-first across all maps
-      this.leaderboardSummary = {
-        topNames: top.map(e => e.name),
-        bestName: top[0]?.name ?? null,
-        bestTime: top[0]?.finishT ?? null,
-      };
-    } catch { /* keep prior summary */ }
+      this.leaderboardEntriesCache = parseLeaderboard(await readFile(this.leaderboardPath, 'utf8'));
+    } catch { /* keep prior rows */ }
   }
 
   /** Wrap a live game Room as a ConciergeRoom (adds car names/count from the cached manifest). */
@@ -228,6 +221,7 @@ export class HttpServer {
       try { existing = await readFile(this.leaderboardPath, 'utf8'); } catch { existing = ''; }
       const out = appendResults(existing, { map, results, at });
       if (!out.ok) { console.error('leaderboard append refused:', out.error); return; }
+      this.leaderboardEntriesCache = out.entries;
       try { await this.writeFileAtomic(this.leaderboardPath, JSON.stringify(out.entries)); }
       catch (e) { console.error('leaderboard write failed:', (e as Error).message); }
     }).catch((e) => console.error('leaderboard persist error:', e));
@@ -450,6 +444,7 @@ export class HttpServer {
     // "no real name yet" so the host asks for one and displays what they actually say.
     const rawName = me?.name ?? '';
     const realName = /^Racer(\s|$)/.test(rawName) ? null : rawName || null;
+    const board = this.leaderboardSummaryForMap(room.selectedMap);
     return {
       phase: room.phase as HostContext['phase'],
       cars, maps: room.mapChoices, selectedMap: room.selectedMap,
@@ -458,9 +453,9 @@ export class HttpServer {
       myPlace: room.results().find(r => r.name === me?.name)?.place ?? null,
       racerCount: room.playerCount,
       raceStandings: room.results().map(r => ({ name: r.name, place: r.place })),
-      allTimeTop: this.leaderboardSummary.topNames,
-      allTimeBest: this.leaderboardSummary.bestName !== null && this.leaderboardSummary.bestTime !== null
-        ? { name: this.leaderboardSummary.bestName, time: this.leaderboardSummary.bestTime } : null,
+      allTimeTop: board.topNames,
+      allTimeBest: board.bestName !== null && board.bestTime !== null
+        ? { name: board.bestName, time: board.bestTime } : null,
       setName: (name) => {
         const clean = name.trim().slice(0, 20);
         if (!clean) return null;
@@ -500,6 +495,21 @@ export class HttpServer {
         return ok ? "Here we go — let's race!" : null;
       },
     };
+  }
+
+  private leaderboardSummaryForMap(map: string | null): { topNames: string[]; bestName: string | null; bestTime: number | null } {
+    if (!map) return { topNames: [], bestName: null, bestTime: null };
+    const top = topEntries(this.leaderboardEntriesCache, { map, limit: 5 });
+    return {
+      topNames: top.map(e => e.name),
+      bestName: top[0]?.name ?? null,
+      bestTime: top[0]?.finishT ?? null,
+    };
+  }
+
+  /** Test seam for verifying voice host context. */
+  hostContextForTest(room: Room, playerId: string): HostContext {
+    return this.hostContext(room, playerId);
   }
 
   // ── Voice Monsters voice helpers: flatten a battle room for one caller ────────────────────────────
