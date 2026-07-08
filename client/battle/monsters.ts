@@ -111,7 +111,10 @@ conn.onState((m) => {
   }
   
   // A fresh turn (back to choosing) clears the last locked move + resets the menu to the root actions.
-  if (m.snapshot?.phase === 'choosing' && !chosenForMe(m)) { lockedMoveName = null; menuLevel = 'root'; }
+  if (m.snapshot?.phase === 'choosing') {
+    if (!chosenForMe(m)) lockedMoveName = null;
+    menuLevel = m.activeMenu ?? 'root';
+  }
   // Leaving results (rematch / reset) drops any pending continue-hold so it can't strand the stage.
   if (m.phase !== 'results') awaitingContinue = false;
   // First time we enter a battle, spin up the 3D arena behind the GB overlay (lazy — no 3D in menus).
@@ -137,7 +140,8 @@ function mySide(m: BattleStateMsg): 'a' | 'b' | null {
 }
 function mySideMoves(m: BattleStateMsg): MenuMove[] {
   const snap = m.snapshot; if (!snap) return [];
-  const cs = mySide(m) === 'b' ? snap.b : snap.a;   // display shows A's moves for reference
+  const side = mySide(m) ?? m.activeSide ?? 'a';   // shared display follows the active monster's menu
+  const cs = side === 'b' ? snap.b : snap.a;
   return cs.moves.map(mv => ({ name: mv.name, type: mv.type, power: mv.power }));
 }
 function chosenForMe(m: BattleStateMsg): boolean {
@@ -154,7 +158,14 @@ function currentUiPhase(): UiPhase {
   if (!state?.snapshot) return 'idle';
   if (draining) return 'resolving';
   if (state.snapshot.phase === 'finished') return 'finished';
-  if (state.snapshot.phase === 'choosing') return chosenForMe(state) ? 'command-locked' : 'awaiting-input';
+  if (state.snapshot.phase === 'choosing') {
+    const side = mySide(state);
+    if (!side) return isDisplay && state.activeSide ? 'awaiting-input' : 'idle';
+    if (lockedMoveName && (!state.activeSide || state.activeSide === side)) return 'command-locked';
+    if (chosenForMe(state)) return 'command-locked';
+    if (state.activeSide && state.activeSide !== side) return 'idle';
+    return 'awaiting-input';
+  }
   return 'resolving';
 }
 
@@ -163,16 +174,19 @@ function paintBattle(): void {
   if (!state) return;
   const uiPhase = currentUiPhase();
   let status = '';
+  const sideForMenu = mySide(state) ?? state.activeSide ?? 'a';
   if (state.snapshot) {
-    const myMon = (mySide(state) === 'b' ? state.snapshot.b : state.snapshot.a).monsterName;
+    const myMon = (sideForMenu === 'b' ? state.snapshot.b : state.snapshot.a).monsterName;
     if (uiPhase === 'awaiting-input') status = menuLevel === 'fight' ? `${myMon}'s moves:` : `What will ${myMon} do?`;
     else if (uiPhase === 'command-locked') status = `${lockedMoveName ? lockedMoveName + '! ' : ''}Waiting for ${opponentName(state)}…`;
+    else if (state.snapshot.phase === 'choosing' && state.activeSide) status = `${actorName(state.activeSide)} is choosing…`;
     else if (uiPhase === 'finished') status = state.result ? `${state.result.winnerName} wins!` : '';
   }
   // The foe's type → the renderer shows move pips as effectiveness vs THIS opponent.
-  const foeType = state.snapshot ? (mySide(state) === 'b' ? state.snapshot.a.type : state.snapshot.b.type) : null;
-  renderer.setMenu(menuLevel, mySide(state) ?? 'a');
+  const foeType = state.snapshot ? (sideForMenu === 'b' ? state.snapshot.a.type : state.snapshot.b.type) : null;
+  renderer.setMenu(menuLevel, sideForMenu);
   renderer.setState(state.snapshot, mySideMoves(state), uiPhase, status, foeType ?? null);
+  if (!draining) renderer.setActiveSide(state.activeSide ?? null);
 }
 
 // ── paced event playback ──────────────────────────────────────────────────────────────────────────
@@ -508,19 +522,8 @@ function handleMenuKey(key: string): void {
  *  the SAME nav/commit path as the keyboard: we run the pure `matchBattleAction` matcher against the
  *  live snapshot (my 4 moves + potions + current level), then hand its result to applyMenuAction.
  *
- *  ── WIRING SEAM ──────────────────────────────────────────────────────────────────────────────────
- *  This is EXPORTED as the client's voice entry point. Twilio ConversationRelay is NOT yet routed to
- *  the /battle rooms (the `/voice` WS in server/http-server.ts binds callers to the RACER game only —
- *  `findOrCreateRoom: (code) => this.game.getOrCreateRoom(code)`). To finish live voice, the server
- *  needs a battle-side transcript path that ultimately reaches THIS function for the shared-screen /
- *  device client. Two follow-up options (either is a small change, both out of scope here — and
- *  server/battle-room.ts must NOT be touched per the current task split):
- *    (a) Client-side speech: feed the browser's SpeechRecognition final transcript here directly, OR
- *    (b) Server relay: add a battle branch to the ConversationRelay adapter that forwards the caller's
- *        transcript over the /battle socket to the room's client(s), which then call this. That needs a
- *        new client→server "voice_utterance"/server→client passthrough message in battle-protocol.ts +
- *        battle-server.ts (NOT battle-room.ts). Until then, this hook is exercised by the pure tests +
- *        can be driven from the console (window.__battleVoice('guard')) for manual verification. */
+ *  The live phone flow is server-driven, but this hook remains useful for device/browser speech tests
+ *  and manual verification from the console (window.__battleVoice('guard')). */
 export function handleVoiceUtterance(text: string): boolean {
   if (state?.phase !== 'battle' || currentUiPhase() !== 'awaiting-input') return false;
   if (!state.snapshot) return false;
@@ -541,8 +544,8 @@ export function handleVoiceUtterance(text: string): boolean {
  *  so neither input path can spend a potion the player doesn't have. */
 function applyMenuAction(action: BattleAction | { kind: 'openFight' } | { kind: 'back' }): void {
   switch (action.kind) {
-    case 'openFight': menuLevel = 'fight'; paintBattle(); return;
-    case 'back':      menuLevel = 'root';  paintBattle(); return;
+    case 'openFight': menuLevel = 'fight'; conn.openFight(); paintBattle(); return;
+    case 'back':      menuLevel = 'root';  conn.backMenu(); paintBattle(); return;
     case 'guard':     commitAction({ kind: 'guard' }, 'Guard!'); return;
     case 'taunt':     commitAction({ kind: 'taunt' }, 'Taunt!'); return;
     case 'item':      if (myPotions() > 0) commitAction({ kind: 'item', item: 'potion' }, 'Potion!'); return;
@@ -558,13 +561,15 @@ function applyMenuAction(action: BattleAction | { kind: 'openFight' } | { kind: 
  *  matching mySideMoves). Shared by the keyboard + voice menu logic. */
 function mySnapMoves(): { id: string; name: string }[] {
   const snap = state?.snapshot; if (!snap) return [];
-  return (mySide(state!) === 'b' ? snap.b : snap.a).moves.map(m => ({ id: m.id, name: m.name }));
+  const side = mySide(state!) ?? state!.activeSide ?? 'a';
+  return (side === 'b' ? snap.b : snap.a).moves.map(m => ({ id: m.id, name: m.name }));
 }
 
 /** How many Potions the local player has left (greys out ITEM at 0). */
 function myPotions(): number {
   const snap = state?.snapshot; if (!snap) return 0;
-  return mySide(state!) === 'b' ? snap.potions.b : snap.potions.a;
+  const side = mySide(state!) ?? state!.activeSide ?? 'a';
+  return side === 'b' ? snap.potions.b : snap.potions.a;
 }
 
 /** Commit a turn action + show the "locked, waiting…" beat. */

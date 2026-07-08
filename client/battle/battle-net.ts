@@ -7,6 +7,7 @@ import type { BattleSnapshot, BattleEvent, BattleAction } from '../../shared/bat
 export interface BattleStateMsg {
   roomCode: string; phase: string; players: BattleLobbyPlayer[];
   snapshot: BattleSnapshot | null; result: { winner: string; winnerName: string } | null;
+  activeSide?: 'a' | 'b' | null; activeMenu?: 'root' | 'fight';
 }
 
 export class BattleConnection {
@@ -59,6 +60,8 @@ export class BattleConnection {
    *  replayed identity to spectator so a reconnect doesn't silently rejoin as a player. */
   leave(roomCode: string) { this.identity = { type: 'spectate', roomCode }; this.send({ type: 'leave' }); }
   selectMonster(monsterId: string) { this.send({ type: 'select_monster', monsterId }); }
+  openFight() { this.send({ type: 'open_fight' }); }
+  backMenu() { this.send({ type: 'back_menu' }); }
   chooseMove(moveId: string) { this.send({ type: 'choose_move', moveId }); }
   chooseAction(action: BattleAction) { this.send({ type: 'choose_action', action }); }
   advance() { this.send({ type: 'advance' }); }

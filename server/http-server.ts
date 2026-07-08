@@ -151,6 +151,11 @@ export class HttpServer {
       if (!set) return;
       for (const ev of events) for (const s of set) s.onBattleEvent(ev);
     });
+    this.battle.setOnRoomState((roomCode) => {
+      const set = this.battleVoice.get(roomCode);
+      if (!set) return;
+      for (const s of set) s.onBattleStateChanged();
+    });
     // SMS concierge: resolves a room code to a live Room wrapped as a ConciergeRoom (adds car names).
     this.concierge = new SmsConcierge({ findRoom: (code) => this.conciergeRoom(code) });
     this.smsSweepTimer = setInterval(() => this.concierge.sweep(), 5 * 60 * 1000);
@@ -344,6 +349,8 @@ export class HttpServer {
       },
       setName: (code: string, id: string, n: string) => this.battle.voiceSetName(code, id, n),
       selectMonster: (code: string, id: string, m: string) => this.battle.voiceSelectMonster(code, id, m),
+      openFight: (code: string, id: string) => this.battle.voiceOpenFight(code, id),
+      backMenu: (code: string, id: string) => this.battle.voiceBackMenu(code, id),
       chooseAction: (code: string, id: string, a: import('../shared/battle-world').BattleAction) => this.battle.voiceChooseAction(code, id, a),
       advance: (code: string) => this.battle.voiceAdvance(code),
       setTimer: (fn: () => void, ms: number) => { setTimeout(fn, ms); },
@@ -550,24 +557,31 @@ export class HttpServer {
     const res = room.result();
     const side = this.battleSideOf(room, playerId) ?? 'a';
     if (!snap) {
+      const mon = player?.monsterId ? monsterById(player.monsterId) : null;
       return {
         phase: room.phase, mySide: side, monsterNames, myName,
         myMonsterId: player?.monsterId ?? null,
-        myMonsterName: player?.monsterId ? (monsterById(player.monsterId)?.name ?? null) : null,
-        foeMonsterName: null, myHp: null, myMaxHp: null, foeHp: null, foeMaxHp: null,
-        myPotions: 2, whoseTurn: null, myMoves: [], winnerName: res?.winnerName ?? null,
+        myMonsterName: mon?.name ?? null,
+        myMonsterType: mon?.type ?? null,
+        foeMonsterName: null, foeMonsterType: null, myHp: null, myMaxHp: null, foeHp: null, foeMaxHp: null,
+        myPotions: 2, turn: null, activeSide: null, activeMenu: 'root', whoseTurn: null, myMoves: [], winnerName: res?.winnerName ?? null,
       };
     }
     const me = side === 'a' ? snap.a : snap.b;
     const foe = side === 'a' ? snap.b : snap.a;
-    const iChose = side === 'a' ? snap.chosen.a : snap.chosen.b;
+    const activeSide = room.activeSide();
     return {
       phase: room.phase, mySide: side, monsterNames, myName,
       myMonsterId: me.monsterId, myMonsterName: me.monsterName,
+      myMonsterType: me.type,
       foeMonsterName: foe.monsterName,
+      foeMonsterType: foe.type,
       myHp: me.hp, myMaxHp: me.maxHp, foeHp: foe.hp, foeMaxHp: foe.maxHp,
       myPotions: side === 'a' ? snap.potions.a : snap.potions.b,
-      whoseTurn: room.phase === 'battle' ? (iChose ? 'foe' : 'me') : null,
+      turn: snap.turn,
+      activeSide,
+      activeMenu: room.activeMenu(),
+      whoseTurn: room.phase === 'battle' && activeSide ? (activeSide === side ? 'me' : 'foe') : null,
       myMoves: me.moves.map(m => ({ id: m.id, name: m.name })),
       winnerName: res?.winnerName ?? null,
     };
@@ -594,9 +608,8 @@ export class HttpServer {
         return `Locked in — ${s.monsterNames[i]}!`;
       },
       chooseAction: (action) => {
-        // Gate on the caller's TURN, not just the phase: in single-player the AI beat is deferred
-        // ~700ms, so after the caller locks a move the room is still 'battle' but whoseTurn is 'foe'.
-        // Without this, an LLM choose_action in that window would OVERWRITE the caller's locked move.
+        // Gate on the caller's TURN, not just the phase: after the caller acts, the room may still be
+        // in battle while the other side/AI is active. Do not let the LLM act out of turn.
         if (room.phase !== 'battle' || s.whoseTurn !== 'me') return null;
         const parsed = this.parseVoiceHostAction(action, s.myMoves);
         if (!parsed) return null;

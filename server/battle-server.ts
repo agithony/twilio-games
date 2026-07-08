@@ -31,6 +31,7 @@ export class BattleServer {
   /** Fired with a room's drained battle events (super-effective/faint/win) so the voice layer speaks
    *  the caller-relevant ones — mirrors the racer's onRoomEvents seam. */
   private onRoomEvents: ((roomCode: string, events: BattleEvent[]) => void) | null = null;
+  private onRoomState: ((roomCode: string) => void) | null = null;
 
   constructor(opts: { port?: number; server?: HttpServer; heartbeatMs?: number }) {
     this.port = opts.port;
@@ -39,6 +40,7 @@ export class BattleServer {
   }
 
   setOnRoomEvents(fn: (roomCode: string, events: BattleEvent[]) => void): void { this.onRoomEvents = fn; }
+  setOnRoomState(fn: (roomCode: string) => void): void { this.onRoomState = fn; }
 
   // ── lifecycle: standalone vs mounted (parallels GameServer) ─────────────────────────────────────
   attach(_server: HttpServer): void { this.wss = new WebSocketServer({ noServer: true }); }
@@ -122,6 +124,12 @@ export class BattleServer {
       case 'select_monster':
         this.withRoom(conn, (room) => { if (conn.playerId) { room.selectMonster(conn.playerId, msg.monsterId); this.pushState(room.code); } });
         break;
+      case 'open_fight':
+        this.withRoom(conn, (room) => { if (conn.playerId) { room.openFightMenu(conn.playerId); this.pushState(room.code); } });
+        break;
+      case 'back_menu':
+        this.withRoom(conn, (room) => { if (conn.playerId) { room.backMenu(conn.playerId); this.pushState(room.code); } });
+        break;
       case 'choose_move':
         this.withRoom(conn, (room) => {
           if (conn.playerId) this.commitTurn(room, () => room.chooseMove(conn.playerId!, msg.moveId));
@@ -186,9 +194,11 @@ export class BattleServer {
     const msg: BattleServerMessage = {
       type: 'battle_state', roomCode, phase: room.phase,
       players: room.lobbyPlayers(), snapshot: room.snapshot(),
+      activeSide: room.activeSide(), activeMenu: room.activeMenu(),
       result: res ? { winner: res.winner, winnerName: res.winnerName } : null,
     };
     for (const c of this.conns) if (c.roomCode === roomCode) this.send(c, msg);
+    this.onRoomState?.(roomCode);
   }
 
   /** Drain the room's ordered battle events → screen (as battle_events) + voice layer. Sent BEFORE
@@ -226,6 +236,14 @@ export class BattleServer {
   voiceSelectMonster(code: string, playerId: string, monsterId: string): void {
     const room = this.rooms.get(code); if (!room) return;
     room.selectMonster(playerId, monsterId); this.pushState(code);
+  }
+  voiceOpenFight(code: string, playerId: string): void {
+    const room = this.rooms.get(code); if (!room) return;
+    room.openFightMenu(playerId); this.pushState(code);
+  }
+  voiceBackMenu(code: string, playerId: string): void {
+    const room = this.rooms.get(code); if (!room) return;
+    room.backMenu(playerId); this.pushState(code);
   }
   /** Commit a voice-driven turn action; resolves + schedules the AI beat exactly like the WS path. */
   voiceChooseAction(code: string, playerId: string, action: BattleAction): void {

@@ -19,10 +19,15 @@ export interface BattleVoiceSnapshot {
   monsterNames: string[];                 // selectable monsters (roster order) — for select + LLM
   myName: string | null;
   myMonsterId: string | null; myMonsterName: string | null;
+  myMonsterType: string | null;
   foeMonsterName: string | null;
+  foeMonsterType: string | null;
   myHp: number | null; myMaxHp: number | null;
   foeHp: number | null; foeMaxHp: number | null;
   myPotions: number;
+  turn: number | null;
+  activeSide: 'a' | 'b' | null;
+  activeMenu: 'root' | 'fight';
   whoseTurn: 'me' | 'foe' | null;
   myMoves: { id: string; name: string }[];   // the caller's 4 moves (battle)
   winnerName: string | null;
@@ -34,6 +39,8 @@ export interface BattleVoiceDeps {
   leave(code: string, playerId: string): void;
   setName(code: string, playerId: string, name: string): void;
   selectMonster(code: string, playerId: string, monsterId: string): void;
+  openFight(code: string, playerId: string): void;
+  backMenu(code: string, playerId: string): void;
   chooseAction(code: string, playerId: string, action: BattleAction): void;
   advance(code: string): void;
   say(text: string): void;                            // speak a line to THIS caller (Relay TTS)
@@ -141,16 +148,27 @@ export class BattleVoiceSession {
 
     // BATTLE (caller's turn): FIGHT opens the move menu AND reads the moves aloud (so a phone-only caller
     // knows their options); then a move name/number commits the attack. GUARD/ITEM/TAUNT commit directly.
+    if (snap.phase === 'battle' && snap.whoseTurn === 'foe') {
+      const actionish = matchBattleAction(text, { moves: snap.myMoves, potions: snap.myPotions, level: snap.activeMenu })
+        || /\b(fight|attack|move|guard|item|potion|taunt|go|hit|strike)\b/i.test(text);
+      if (actionish) {
+        const foe = snap.foeMonsterName ?? 'the other monster';
+        this.deps.say(`It's ${foe}'s turn — wait for ${foe} to choose, then I'll call your turn.`);
+        return;
+      }
+    }
     if (snap.phase === 'battle' && snap.whoseTurn === 'me') {
-      const res = matchBattleAction(text, { moves: snap.myMoves, potions: snap.myPotions, level: this.menuLevel });
+      const level = snap.activeMenu ?? this.menuLevel;
+      const res = matchBattleAction(text, { moves: snap.myMoves, potions: snap.myPotions, level });
       if (res) {
         if (res.kind === 'openFight') {
           this.menuLevel = 'fight';
+          this.deps.openFight(this.code!, this.playerId!);
           const list = snap.myMoves.map((m, i) => `${i + 1}, ${m.name}`).join('; ');
           this.deps.say(`Your moves are: ${list}. Say a move name or its number.`);
           return;
         }
-        if (res.kind === 'back') { this.menuLevel = 'root'; return; }
+        if (res.kind === 'back') { this.menuLevel = 'root'; this.deps.backMenu(this.code!, this.playerId!); return; }
         this.menuLevel = 'root';
         this.deps.chooseAction(this.code!, this.playerId!, res);
         return;
@@ -172,6 +190,16 @@ export class BattleVoiceSession {
   private introDone = false;   // one dramatic "X vs Y" intro + how-to-play recap per battle
   private evQ: BattleEvent[] = [];   // events queued to narrate, drained on the SAME clock as the screen
   private draining = false;
+  private pendingStateCue = false;
+  private lastTurnCueKey = '';
+
+  /** Receive a battle-state push. Used for proactive call guidance that is NOT part of the resolution
+   *  event stream: battle intro, opening controls, whose turn it is, and who should wait. */
+  onBattleStateChanged(): void {
+    if (!this.code || !this.playerId) return;
+    if (this.draining || this.evQ.length > 0) { this.pendingStateCue = true; return; }
+    this.speakStateCue();
+  }
 
   /** Receive a battle event. The server hands us a whole turn's events at once, but the SCREEN plays
    *  them one at a time on the dwellForEvent clock — so we QUEUE them and narrate on that same clock,
@@ -185,7 +213,11 @@ export class BattleVoiceSession {
   /** Narrate the next queued event, then schedule the following one after its on-screen dwell. */
   private drainEvents(): void {
     const ev = this.evQ.shift();
-    if (!ev) { this.draining = false; return; }
+    if (!ev) {
+      this.draining = false;
+      if (this.pendingStateCue) { this.pendingStateCue = false; this.speakStateCue(); }
+      return;
+    }
     this.speakEvent(ev);
     // Match the screen: hold for this event's dwell (+ the handoff pause before a 2nd attacker's move).
     const next = this.evQ[0];
@@ -213,6 +245,39 @@ export class BattleVoiceSession {
     if (line) { this.lineSeq++; this.deps.say(line); }
     if (ev.kind === 'turn_start') this.menuLevel = 'root';
     if (ev.kind === 'battle_over') this.introDone = false;   // re-arm the intro for a rematch
+  }
+
+  private speakStateCue(): void {
+    const snap = this.deps.snapshot(this.code!, this.playerId!);
+    if (!snap || snap.phase !== 'battle') {
+      this.lastTurnCueKey = '';
+      if (snap?.phase === 'monster_select' || snap?.phase === 'lobby') this.introDone = false;
+      return;
+    }
+    if (!this.introDone) {
+      this.introDone = true;
+      this.menuLevel = 'root';
+      this.deps.say(this.battleIntroFor(snap));
+      this.deps.say('How to play: on your turn, say FIGHT, then pick one of the four attacks. You can also say GUARD, ITEM, or TAUNT.');
+    }
+    const key = `${snap.turn ?? 0}:${snap.activeSide ?? 'none'}:${snap.whoseTurn ?? 'none'}`;
+    if (key === this.lastTurnCueKey) return;
+    this.lastTurnCueKey = key;
+    if (snap.whoseTurn === 'me') {
+      const first = (snap.turn ?? 0) === 0 ? 'You go first. ' : '';
+      this.deps.say(`${first}It's your turn. Say FIGHT to see your attacks, or say GUARD, ITEM, or TAUNT.`);
+    } else if (snap.whoseTurn === 'foe') {
+      const first = (snap.turn ?? 0) === 0 ? `${snap.foeMonsterName ?? 'The other monster'} goes first. ` : '';
+      this.deps.say(`${first}Wait for ${snap.foeMonsterName ?? 'the other monster'} to choose, then I'll call your turn.`);
+    }
+  }
+
+  private battleIntroFor(snap: BattleVoiceSnapshot): string {
+    const mine = snap.myMonsterName ?? 'your monster';
+    const foe = snap.foeMonsterName ?? 'the rival';
+    const myType = snap.myMonsterType ? `${snap.myMonsterType} type` : 'unknown type';
+    const foeType = snap.foeMonsterType ? `${snap.foeMonsterType} type` : 'unknown type';
+    return `${mine} is battling ${foe}: ${myType} versus ${foeType}. The arena is set.`;
   }
 
   handleClose(): void {

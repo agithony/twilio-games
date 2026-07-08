@@ -129,6 +129,33 @@ export class BattleWorld {
     this.chooseAction(playerId, { kind: 'fight', moveId });
   }
 
+  /** Resolve exactly ONE fighter's action immediately. This is the live Voice Monsters flow: the active
+   *  caller picks an action, it plays on screen, then the next monster gets prompted. The older
+   *  chooseAction path above is kept for pure-engine/back-compat tests that resolve paired choices. */
+  takeAction(playerId: string, action: BattleAction): void {
+    if (this._phase !== 'choosing') return;
+    const f = this.fighterOf(playerId);
+    if (!f || !this.isValidAction(f, action)) return;
+    const foe = f === this.a ? this.b : this.a;
+    this._phase = 'resolving';
+    f.action = action;
+    this.events.push({ kind: 'turn_start', turn: this._turn + 1 });
+    this.applySingleAction(f, foe);
+    f.action = null; f.committedAt = null;
+    this._turn++;
+    this._phase = this._winner ? 'finished' : 'choosing';
+  }
+
+  private applySingleAction(f: Fighter, foe: Fighter): void {
+    if (f.hp <= 0 || foe.hp <= 0) return;
+    if (f.action?.kind === 'fight') {
+      this.performMove(f, foe);
+      if (foe.hp <= 0) this.faint(foe);
+      return;
+    }
+    this.applyPreAction(f, foe);
+  }
+
   private isValidAction(f: Fighter, a: BattleAction): boolean {
     switch (a.kind) {
       case 'fight': return f.mon.moves.some(m => m.id === a.moveId);   // must own the move
@@ -245,12 +272,15 @@ export class BattleWorld {
     const acc = moveAccuracy(move.power) - (attacker.tauntedBy ? TAUNT_ACCURACY_PENALTY : 0);
     if (this.rng.next() > acc) {
       this.events.push({ kind: 'miss', by: this.sideOf(attacker), moveName: move.name });
+      attacker.tauntedBy = false;
       return;
     }
 
     const mult = typeMultiplier(move.type, defender.mon.type);
     const { amount, crit } = this.damage(attacker.mon, defender.mon, move, mult, defender.guarding);
     defender.hp = Math.max(0, defender.hp - amount);
+    if (defender.guarding) defender.guarding = false;
+    attacker.tauntedBy = false;
 
     const onSide = this.sideOf(defender);
     this.events.push({ kind: 'damage', on: onSide, amount, hpLeft: defender.hp, crit });

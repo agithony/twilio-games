@@ -30,6 +30,8 @@ export class BattleRoom {
   private _result: BattleResult | null = null;
   private events: BattleEvent[] = [];
   private aiRng: Rng;
+  private menu: Record<Side, 'root' | 'fight'> = { a: 'root', b: 'root' };
+  private active: Side | null = null;
 
   constructor(code: string, seed: number) {
     this.code = code;
@@ -118,6 +120,8 @@ export class BattleRoom {
       { id: bId, name: bName, monsterId: bMonster },
       this.seed,
     );
+    this.menu = { a: 'root', b: 'root' };
+    this.active = this.ai?.side === 'a' ? 'b' : 'a';
     this._phase = 'battle';
     this.captureEvents();
   }
@@ -127,32 +131,59 @@ export class BattleRoom {
     return pool[this.aiRng.int(pool.length)]!.id;
   }
 
-  /** A player chooses a move. The turn resolves once BOTH sides have chosen. In single-player the AI
-   *  does NOT commit here — the server calls resolveAiTurn() a beat later so the rival's move reads as
-   *  its own turn ("Waiting for Rival…" → rival attacks). captureEvents runs so the human's commit
-   *  (chosen flag) is reflected in the pushed state immediately. */
+  /** A player chooses a move. The active monster's action resolves immediately, then the room advances
+   *  to the other side so the next phone prompt/screen menu is unambiguous. */
   chooseMove(playerId: string, moveId: string): void {
     if (this._phase !== 'battle' || !this.world) return;
-    this.world.chooseMove(playerId, moveId);
+    if (!this.canChoose(playerId)) return;
+    this.resetMenuFor(playerId);
+    this.world.takeAction(playerId, { kind: 'fight', moveId });
     this.captureEvents();
+    this.advanceActiveSide();
   }
 
   /** A player commits a turn ACTION (fight/guard/item/taunt). Same resolution rules as chooseMove. */
   chooseAction(playerId: string, action: BattleAction): void {
     if (this._phase !== 'battle' || !this.world) return;
-    this.world.chooseAction(playerId, action);
+    if (!this.canChoose(playerId)) return;
+    this.resetMenuFor(playerId);
+    this.world.takeAction(playerId, action);
     this.captureEvents();
+    this.advanceActiveSide();
   }
 
-  /** True when it's single-player, we're mid-battle, and the AI still owes a move this turn (i.e. the
-   *  human has committed and we're waiting only on the CPU). The server polls this after a human pick
-   *  to schedule the deferred AI beat. */
+  /** The side whose command we are currently waiting for. In 2P this makes the phone UX sequential:
+   *  side A opens the turn, then side B responds, alternating who starts each new turn. In single-player
+   *  the human always opens the battle so the deferred AI beat can answer after the human acts. */
+  activeSide(): Side | null {
+    if (this._phase !== 'battle' || !this.world) return null;
+    const s = this.world.snapshot();
+    if (s.phase !== 'choosing') return null;
+    return this.active;
+  }
+
+  activeMenu(): 'root' | 'fight' {
+    const side = this.activeSide();
+    return side ? this.menu[side] : 'root';
+  }
+
+  openFightMenu(playerId: string): void {
+    const side = this.sideOfPlayer(playerId);
+    if (side && this.activeSide() === side) this.menu[side] = 'fight';
+  }
+
+  backMenu(playerId: string): void {
+    const side = this.sideOfPlayer(playerId);
+    if (side && this.activeSide() === side) this.menu[side] = 'root';
+  }
+
+  /** True when it's single-player, we're mid-battle, and the active side is the AI. The server polls
+   *  this after a human action to schedule the deferred AI beat. */
   aiPending(): boolean {
     if (!this.ai || this._phase !== 'battle' || !this.world) return false;
     if (this.world.phase !== 'choosing') return false;
     const s = this.world.snapshot();
-    // The AI owes a move when the HUMAN side has chosen but the AI side hasn't.
-    return this.ai.side === 'b' ? (s.chosen.a && !s.chosen.b) : (s.chosen.b && !s.chosen.a);
+    return this.activeSide() === this.ai.side;
   }
 
   /** Commit the AI's ACTION (type-aware: mostly FIGHT, but ITEM/GUARD/TAUNT when the situation calls
@@ -168,25 +199,30 @@ export class BattleRoom {
       this.ai.monster, self.hp, self.maxHp,
       monsterById(oppState.monsterId)!, potionsLeft, this.aiRng,
     );
-    this.world.chooseAction(self.id, action);
+    this.world.takeAction(self.id, action);
+    this.menu = { a: 'root', b: 'root' };
     this.captureEvents();
+    this.advanceActiveSide();
   }
 
   /** Pull resolution events out of the world into the room's queue + detect battle end. */
   private captureEvents(): void {
     if (!this.world) return;
     this.events.push(...this.world.drainEvents());
+    const snap = this.world.snapshot();
     if (this.world.phase === 'finished' && this._phase === 'battle') {
-      const s = this.world.snapshot();
-      const winnerSide = s.winner!;
-      const winnerName = winnerSide === 'a' ? s.a.name : s.b.name;
+      const winnerSide = snap.winner!;
+      const winnerName = winnerSide === 'a' ? snap.a.name : snap.b.name;
       this._result = { winner: winnerSide, winnerName };
+      this.active = null;
       this._phase = 'results';
     }
   }
 
   reset(): void {
     this.world = null; this.ai = null; this._result = null; this.events = [];
+    this.menu = { a: 'root', b: 'root' };
+    this.active = null;
     for (const s of this.slots) s.monsterId = null;
     this._phase = 'lobby';
   }
@@ -199,5 +235,31 @@ export class BattleRoom {
     const out = this.events;
     this.events = [];
     return out;
+  }
+
+  private sideOfPlayer(playerId: string): Side | null {
+    const snap = this.world?.snapshot();
+    if (!snap) return null;
+    if (snap.a.id === playerId) return 'a';
+    if (snap.b.id === playerId) return 'b';
+    return null;
+  }
+
+  private canChoose(playerId: string): boolean {
+    const side = this.sideOfPlayer(playerId);
+    return !!side && this.activeSide() === side;
+  }
+
+  private resetMenuFor(playerId: string): void {
+    const side = this.sideOfPlayer(playerId);
+    if (side) this.menu[side] = 'root';
+  }
+
+  private advanceActiveSide(): void {
+    if (this._phase !== 'battle' || !this.world) return;
+    const snap = this.world.snapshot();
+    if (snap.phase !== 'choosing') { this.active = null; return; }
+    this.active = this.active === 'a' ? 'b' : 'a';
+    this.menu = { a: 'root', b: 'root' };
   }
 }

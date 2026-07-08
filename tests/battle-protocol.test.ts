@@ -12,6 +12,8 @@ describe('parseBattleClientMessage', () => {
   it('parses the in-game actions', () => {
     expect(parseBattleClientMessage(JSON.stringify({ type: 'select_monster', monsterId: 'embertail' })))
       .toEqual({ type: 'select_monster', monsterId: 'embertail' });
+    expect(parseBattleClientMessage(JSON.stringify({ type: 'open_fight' })).type).toBe('open_fight');
+    expect(parseBattleClientMessage(JSON.stringify({ type: 'back_menu' })).type).toBe('back_menu');
     expect(parseBattleClientMessage(JSON.stringify({ type: 'choose_move', moveId: 'embertail.ember' })))
       .toEqual({ type: 'choose_move', moveId: 'embertail.ember' });
     expect(parseBattleClientMessage(JSON.stringify({ type: 'advance' })).type).toBe('advance');

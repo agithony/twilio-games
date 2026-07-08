@@ -50,24 +50,25 @@ describe('BattleRoom', () => {
     expect(s.b.id).not.toBe(a.playerId);         // opponent isn't the human
   });
 
-  it('SINGLE-PLAYER: human commits → AI is pending (a beat later) → resolveAiTurn resolves it', () => {
+  it('SINGLE-PLAYER: human action resolves immediately → AI is pending for the next beat', () => {
     const r = room();
     const a = r.addPlayer('Ada') as { playerId: string };
     r.advance(); r.selectMonster(a.playerId, M0); r.advance();
     const before = r.snapshot()!;
-    r.chooseMove(a.playerId, before.a.moves[0]!.id);   // human's action locks their move…
-    // …but the turn does NOT resolve yet — the AI takes a visible separate beat.
-    expect(r.snapshot()!.turn).toBe(before.turn);
-    expect(r.snapshot()!.chosen.a).toBe(true);
+    r.chooseMove(a.playerId, before.a.moves[0]!.id);   // human's action resolves now…
+    expect(r.snapshot()!.turn).toBe(before.turn + 1);
+    expect(r.snapshot()!.chosen.a).toBe(false);
+    expect(r.activeSide()).toBe('b');                   // …then the AI gets a separate beat.
     expect(r.aiPending()).toBe(true);
     r.resolveAiTurn();                                 // server calls this ~700ms later
     const after = r.snapshot()!;
-    expect(after.turn).toBe(before.turn + 1);
+    expect(after.turn).toBe(before.turn + 2);
     expect(after.b.hp).toBeLessThanOrEqual(before.b.hp);
+    expect(r.activeSide()).toBe('a');
     expect(r.aiPending()).toBe(false);
   });
 
-  it('TWO-PLAYER: both humans must choose before the turn resolves', () => {
+  it('TWO-PLAYER: each active human action resolves before the next player is prompted', () => {
     const r = room();
     const a = r.addPlayer('Ada') as { playerId: string };
     const b = r.addPlayer('Bo') as { playerId: string };
@@ -77,9 +78,51 @@ describe('BattleRoom', () => {
     expect(r.phase).toBe('battle');
     const before = r.snapshot()!;
     r.chooseMove(a.playerId, before.a.moves[0]!.id);
-    expect(r.snapshot()!.turn).toBe(before.turn);      // still waiting on Bo
+    expect(r.snapshot()!.turn).toBe(before.turn + 1);  // Ada's attack happened
+    expect(r.activeSide()).toBe('b');                  // now Bo's turn
     r.chooseMove(b.playerId, before.b.moves[0]!.id);
-    expect(r.snapshot()!.turn).toBe(before.turn + 1);  // now resolved
+    expect(r.snapshot()!.turn).toBe(before.turn + 2);  // Bo's attack happened
+    expect(r.activeSide()).toBe('a');                  // back to Ada
+  });
+
+  it('TWO-PLAYER: exposes one active chooser at a time and rejects out-of-turn commits', () => {
+    const r = room();
+    const a = r.addPlayer('Ada') as { playerId: string };
+    const b = r.addPlayer('Bo') as { playerId: string };
+    r.advance();
+    r.selectMonster(a.playerId, M0); r.selectMonster(b.playerId, M1);
+    r.advance();
+    const before = r.snapshot()!;
+
+    expect(r.activeSide()).toBe('a');
+    r.chooseMove(b.playerId, before.b.moves[0]!.id);   // Bo tries early — ignored
+    expect(r.snapshot()!.chosen.b).toBe(false);
+    expect(r.snapshot()!.turn).toBe(before.turn);
+
+    r.chooseMove(a.playerId, before.a.moves[0]!.id);
+    expect(r.activeSide()).toBe('b');
+    expect(r.snapshot()!.chosen.a).toBe(false);
+    expect(r.snapshot()!.turn).toBe(before.turn + 1);
+
+    r.chooseMove(b.playerId, before.b.moves[0]!.id);
+    expect(r.snapshot()!.turn).toBe(before.turn + 2);
+    expect(r.activeSide()).toBe('a');
+  });
+
+  it('server-synced fight menu only opens for the active side', () => {
+    const r = room();
+    const a = r.addPlayer('Ada') as { playerId: string };
+    const b = r.addPlayer('Bo') as { playerId: string };
+    r.advance();
+    r.selectMonster(a.playerId, M0); r.selectMonster(b.playerId, M1);
+    r.advance();
+
+    r.openFightMenu(b.playerId);
+    expect(r.activeMenu()).toBe('root');
+    r.openFightMenu(a.playerId);
+    expect(r.activeMenu()).toBe('fight');
+    r.backMenu(a.playerId);
+    expect(r.activeMenu()).toBe('root');
   });
 
   it('reaches results with a winner when a monster faints', () => {

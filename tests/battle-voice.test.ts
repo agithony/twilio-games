@@ -2,7 +2,7 @@
 // spoken turns (via the voice matcher + LLM host) into battle actions, and speaks commentary from
 // battle events. Tested against a fake battle backend + fake LLM (no WS/Twilio).
 import { describe, it, expect } from 'vitest';
-import { BattleVoiceSession, parseSpokenName, isAdvanceWord, type BattleVoiceDeps } from '../server/battle-voice';
+import { BattleVoiceSession, parseSpokenName, isAdvanceWord, type BattleVoiceDeps, type BattleVoiceSnapshot } from '../server/battle-voice';
 import type { BattleEvent } from '../shared/battle-world';
 
 describe('parseSpokenName', () => {
@@ -34,6 +34,32 @@ describe('isAdvanceWord', () => {
 });
 
 // A fake battle backend capturing the actions the session drives.
+function battleSnap(over: Partial<BattleVoiceSnapshot> = {}): BattleVoiceSnapshot {
+  return {
+    phase: 'monster_select',
+    mySide: 'a',
+    monsterNames: ['Sparkmouse', 'Embertail', 'Shellback'],
+    myName: null,
+    myMonsterId: null,
+    myMonsterName: null,
+    myMonsterType: null,
+    foeMonsterName: null,
+    foeMonsterType: null,
+    myHp: null,
+    myMaxHp: null,
+    foeHp: null,
+    foeMaxHp: null,
+    myPotions: 2,
+    turn: null,
+    activeSide: null,
+    activeMenu: 'root',
+    whoseTurn: null,
+    myMoves: [],
+    winnerName: null,
+    ...over,
+  };
+}
+
 function fakeDeps(over: Partial<BattleVoiceDeps> = {}): { deps: BattleVoiceDeps; log: string[]; said: string[] } {
   const log: string[] = [];
   const said: string[] = [];
@@ -42,18 +68,13 @@ function fakeDeps(over: Partial<BattleVoiceDeps> = {}): { deps: BattleVoiceDeps;
     leave: (code, id) => log.push(`leave ${code} ${id}`),
     setName: (_c, _id, n) => log.push(`name ${n}`),
     selectMonster: (_c, _id, m) => log.push(`monster ${m}`),
+    openFight: (_c, _id) => log.push('openFight'),
+    backMenu: (_c, _id) => log.push('backMenu'),
     chooseAction: (_c, _id, a) => log.push(`action ${JSON.stringify(a)}`),
     advance: (_c) => log.push('advance'),
     setTimer: (fn: () => void) => { fn(); },   // synchronous in tests → paced commentary drains at once
     say: (t) => said.push(t),
-    snapshot: () => ({
-      phase: 'monster_select',
-      mySide: 'a',
-      monsterNames: ['Sparkmouse', 'Embertail', 'Shellback'],
-      myName: null, myMonsterId: null, myMonsterName: null,
-      foeMonsterName: null, myHp: null, myMaxHp: null, foeHp: null, foeMaxHp: null,
-      myPotions: 2, whoseTurn: null, myMoves: [], winnerName: null,
-    }),
+    snapshot: () => battleSnap(),
     converse: async () => null,   // LLM off by default → scripted/deterministic paths
     ...over,
   };
@@ -74,12 +95,7 @@ describe('BattleVoiceSession', () => {
 
   it('captures the caller name in the lobby BEFORE anything else (deterministic, no LLM)', () => {
     const { deps, log, said } = fakeDeps({
-      snapshot: () => ({
-        phase: 'lobby', mySide: 'a', monsterNames: ['Sparkmouse', 'Embertail', 'Shellback'],
-        myName: null, myMonsterId: null, myMonsterName: null,
-        foeMonsterName: null, myHp: null, myMaxHp: null, foeHp: null, foeMaxHp: null,
-        myPotions: 2, whoseTurn: null, myMoves: [], winnerName: null,
-      }),
+      snapshot: () => battleSnap({ phase: 'lobby' }),
     });
     const s = new BattleVoiceSession(deps);
     s.handleMessage(setup());
@@ -92,12 +108,7 @@ describe('BattleVoiceSession', () => {
   it('a spoken monster name during select picks it (deterministic, no LLM)', () => {
     // A name is already set, so "Embertail" is treated as a monster pick, not a name.
     const { deps, log } = fakeDeps({
-      snapshot: () => ({
-        phase: 'monster_select', mySide: 'a', monsterNames: ['Sparkmouse', 'Embertail', 'Shellback'],
-        myName: 'Ada', myMonsterId: null, myMonsterName: null,
-        foeMonsterName: null, myHp: null, myMaxHp: null, foeHp: null, foeMaxHp: null,
-        myPotions: 2, whoseTurn: null, myMoves: [], winnerName: null,
-      }),
+      snapshot: () => battleSnap({ myName: 'Ada' }),
     });
     const s = new BattleVoiceSession(deps);
     s.handleMessage(setup());
@@ -107,12 +118,7 @@ describe('BattleVoiceSession', () => {
 
   it('"start" advances the flow deterministically (no LLM) — lobby → select', () => {
     const { deps, log } = fakeDeps({
-      snapshot: () => ({
-        phase: 'lobby', mySide: 'a', monsterNames: ['Sparkmouse'],
-        myName: 'Ada', myMonsterId: null, myMonsterName: null,
-        foeMonsterName: null, myHp: null, myMaxHp: null, foeHp: null, foeMaxHp: null,
-        myPotions: 2, whoseTurn: null, myMoves: [], winnerName: null,
-      }),
+      snapshot: () => battleSnap({ phase: 'lobby', monsterNames: ['Sparkmouse'], myName: 'Ada' }),
     });
     const s = new BattleVoiceSession(deps);
     s.handleMessage(setup());
@@ -122,12 +128,7 @@ describe('BattleVoiceSession', () => {
 
   it('"battle" in monster-select is REFUSED until a monster is picked (no LLM)', () => {
     const { deps, log, said } = fakeDeps({
-      snapshot: () => ({
-        phase: 'monster_select', mySide: 'a', monsterNames: ['Sparkmouse'],
-        myName: 'Ada', myMonsterId: null, myMonsterName: null,
-        foeMonsterName: null, myHp: null, myMaxHp: null, foeHp: null, foeMaxHp: null,
-        myPotions: 2, whoseTurn: null, myMoves: [], winnerName: null,
-      }),
+      snapshot: () => battleSnap({ monsterNames: ['Sparkmouse'], myName: 'Ada' }),
     });
     const s = new BattleVoiceSession(deps);
     s.handleMessage(setup()); said.length = 0;
@@ -138,13 +139,12 @@ describe('BattleVoiceSession', () => {
 
   it('a spoken battle action during battle commits it', async () => {
     const { deps, log } = fakeDeps({
-      snapshot: () => ({
-        phase: 'battle', mySide: 'a', monsterNames: ['Sparkmouse'],
-        myName: 'Ada', myMonsterId: 'sparkmouse', myMonsterName: 'Sparkmouse',
-        foeMonsterName: 'Galecoil', myHp: 40, myMaxHp: 70, foeHp: 55, foeMaxHp: 98,
-        myPotions: 2, whoseTurn: 'me',
+      snapshot: () => battleSnap({
+        phase: 'battle', monsterNames: ['Sparkmouse'],
+        myName: 'Ada', myMonsterId: 'sparkmouse', myMonsterName: 'Sparkmouse', myMonsterType: 'electric',
+        foeMonsterName: 'Galecoil', foeMonsterType: 'water', myHp: 40, myMaxHp: 70, foeHp: 55, foeMaxHp: 98,
+        myPotions: 2, turn: 0, activeSide: 'a', activeMenu: 'root', whoseTurn: 'me',
         myMoves: [{ id: 'sparkmouse.jolt', name: 'Thunder Jolt' }, { id: 'sparkmouse.zap', name: 'Static Zap' }],
-        winnerName: null,
       }),
     });
     const s = new BattleVoiceSession(deps);
@@ -155,11 +155,11 @@ describe('BattleVoiceSession', () => {
 
   it('on the first turn, speaks a dramatic X-vs-Y intro + how-to-act recap', () => {
     const { deps, said } = fakeDeps({
-      snapshot: () => ({
-        phase: 'battle', mySide: 'a', monsterNames: ['Sparkmouse'],
-        myName: 'Ada', myMonsterId: 'sparkmouse', myMonsterName: 'Sparkmouse',
-        foeMonsterName: 'Galecoil', myHp: 70, myMaxHp: 70, foeHp: 98, foeMaxHp: 98,
-        myPotions: 2, whoseTurn: 'me', myMoves: [], winnerName: null,
+      snapshot: () => battleSnap({
+        phase: 'battle', monsterNames: ['Sparkmouse'],
+        myName: 'Ada', myMonsterId: 'sparkmouse', myMonsterName: 'Sparkmouse', myMonsterType: 'electric',
+        foeMonsterName: 'Galecoil', foeMonsterType: 'water', myHp: 70, myMaxHp: 70, foeHp: 98, foeMaxHp: 98,
+        myPotions: 2, turn: 0, activeSide: 'a', activeMenu: 'root', whoseTurn: 'me',
       }),
     });
     const s = new BattleVoiceSession(deps);
@@ -167,6 +167,79 @@ describe('BattleVoiceSession', () => {
     s.onBattleEvent({ kind: 'turn_start', turn: 1 });
     expect(said.some(t => t.includes('Sparkmouse') && t.includes('Galecoil'))).toBe(true);   // X vs Y
     expect(said.some(t => /fight/i.test(t) && /guard|item|taunt/i.test(t))).toBe(true);        // how-to recap
+  });
+
+  it('on battle state start, tells the active caller they go first and includes the type matchup', () => {
+    const { deps, said } = fakeDeps({
+      snapshot: () => battleSnap({
+        phase: 'battle', myName: 'Ada', myMonsterId: 'sparkmouse', myMonsterName: 'Sparkmouse', myMonsterType: 'electric',
+        foeMonsterName: 'Shellback', foeMonsterType: 'water', myHp: 70, myMaxHp: 70, foeHp: 82, foeMaxHp: 82,
+        turn: 0, activeSide: 'a', activeMenu: 'root', whoseTurn: 'me',
+      }),
+    });
+    const s = new BattleVoiceSession(deps);
+    s.handleMessage(setup()); said.length = 0;
+
+    s.onBattleStateChanged();
+
+    expect(said.some(t => /sparkmouse.*shellback/i.test(t) && /electric.*water/i.test(t))).toBe(true);
+    expect(said.some(t => /you go first|your turn/i.test(t))).toBe(true);
+  });
+
+  it('on battle state start, tells the waiting caller the other monster goes first', () => {
+    const { deps, said } = fakeDeps({
+      snapshot: () => battleSnap({
+        phase: 'battle', mySide: 'b', myName: 'Bo', myMonsterId: 'shellback', myMonsterName: 'Shellback', myMonsterType: 'water',
+        foeMonsterName: 'Sparkmouse', foeMonsterType: 'electric', myHp: 82, myMaxHp: 82, foeHp: 70, foeMaxHp: 70,
+        turn: 0, activeSide: 'a', activeMenu: 'root', whoseTurn: 'foe',
+      }),
+    });
+    const s = new BattleVoiceSession(deps);
+    s.handleMessage(setup()); said.length = 0;
+
+    s.onBattleStateChanged();
+
+    expect(said.some(t => /sparkmouse goes first|wait for sparkmouse/i.test(t))).toBe(true);
+  });
+
+  it('saying FIGHT on your turn opens the server-synced fight menu and reads the four moves', () => {
+    const { deps, log, said } = fakeDeps({
+      snapshot: () => battleSnap({
+        phase: 'battle', myName: 'Ada', myMonsterId: 'sparkmouse', myMonsterName: 'Sparkmouse', myMonsterType: 'electric',
+        foeMonsterName: 'Shellback', foeMonsterType: 'water', myHp: 70, myMaxHp: 70, foeHp: 82, foeMaxHp: 82,
+        turn: 0, activeSide: 'a', activeMenu: 'root', whoseTurn: 'me',
+        myMoves: [
+          { id: 'sparkmouse.jolt', name: 'Thunder Jolt' },
+          { id: 'sparkmouse.zap', name: 'Static Zap' },
+          { id: 'sparkmouse.bite', name: 'Quick Bite' },
+          { id: 'sparkmouse.tackle', name: 'Tackle' },
+        ],
+      }),
+    });
+    const s = new BattleVoiceSession(deps);
+    s.handleMessage(setup()); said.length = 0;
+
+    s.handleMessage(prompt('fight'));
+
+    expect(log).toContain('openFight');
+    expect(said.some(t => /thunder jolt/i.test(t) && /static zap/i.test(t))).toBe(true);
+  });
+
+  it('refuses an out-of-turn battle command with a wait cue instead of committing it', () => {
+    const { deps, log, said } = fakeDeps({
+      snapshot: () => battleSnap({
+        phase: 'battle', mySide: 'b', myName: 'Bo', myMonsterId: 'shellback', myMonsterName: 'Shellback', myMonsterType: 'water',
+        foeMonsterName: 'Sparkmouse', foeMonsterType: 'electric', myHp: 82, myMaxHp: 82, foeHp: 70, foeMaxHp: 70,
+        turn: 0, activeSide: 'a', activeMenu: 'root', whoseTurn: 'foe',
+      }),
+    });
+    const s = new BattleVoiceSession(deps);
+    s.handleMessage(setup()); said.length = 0;
+
+    s.handleMessage(prompt('guard'));
+
+    expect(log.some(l => l.startsWith('action '))).toBe(false);
+    expect(said.some(t => /wait for sparkmouse/i.test(t))).toBe(true);
   });
 
   it('speaks commentary for a battle event (super-effective)', () => {
@@ -184,11 +257,11 @@ describe('BattleVoiceSession', () => {
     // The server hands the whole turn at once; the session must narrate move → super-effective in the
     // order they occurred (paced via setTimer), not scrambled or all-at-once with the wrong sequence.
     const { deps, said } = fakeDeps({
-      snapshot: () => ({
-        phase: 'battle', mySide: 'a', monsterNames: ['Sparkmouse'],
-        myName: 'Ada', myMonsterId: 'sparkmouse', myMonsterName: 'Sparkmouse',
-        foeMonsterName: 'Galecoil', myHp: 70, myMaxHp: 70, foeHp: 40, foeMaxHp: 98,
-        myPotions: 2, whoseTurn: 'foe', myMoves: [], winnerName: null,
+      snapshot: () => battleSnap({
+        phase: 'battle', monsterNames: ['Sparkmouse'],
+        myName: 'Ada', myMonsterId: 'sparkmouse', myMonsterName: 'Sparkmouse', myMonsterType: 'electric',
+        foeMonsterName: 'Galecoil', foeMonsterType: 'water', myHp: 70, myMaxHp: 70, foeHp: 40, foeMaxHp: 98,
+        myPotions: 2, turn: 0, activeSide: 'b', activeMenu: 'root', whoseTurn: 'foe',
       }),
     });
     const s = new BattleVoiceSession(deps);
@@ -201,15 +274,41 @@ describe('BattleVoiceSession', () => {
     expect(effIdx).toBeGreaterThan(moveIdx);   // effectiveness narrated AFTER the move that caused it
   });
 
+  it('queues the next-turn cue until current attack commentary has finished', () => {
+    let snap = battleSnap({
+      phase: 'battle', myName: 'Ada', myMonsterId: 'sparkmouse', myMonsterName: 'Sparkmouse', myMonsterType: 'electric',
+      foeMonsterName: 'Shellback', foeMonsterType: 'water', myHp: 70, myMaxHp: 70, foeHp: 82, foeMaxHp: 82,
+      turn: 0, activeSide: 'a', activeMenu: 'root', whoseTurn: 'me',
+    });
+    const timers: (() => void)[] = [];
+    const { deps, said } = fakeDeps({
+      snapshot: () => snap,
+      setTimer: (fn: () => void) => { timers.push(fn); },
+    });
+    const s = new BattleVoiceSession(deps);
+    s.handleMessage(setup()); said.length = 0;
+
+    s.onBattleEvent({ kind: 'move_used', by: 'a', moveId: 'sparkmouse.jolt', moveName: 'Thunder Jolt' });
+    snap = { ...snap, turn: 1, activeSide: 'b', activeMenu: 'root', whoseTurn: 'foe' };
+    s.onBattleStateChanged();
+
+    expect(said.some(t => /thunder jolt/i.test(t))).toBe(true);
+    expect(said.some(t => /wait for shellback/i.test(t))).toBe(false);
+
+    timers.shift()?.();
+
+    expect(said.some(t => /wait for shellback/i.test(t))).toBe(true);
+  });
+
   it('names monsters correctly for a side-b caller (event sides are absolute)', () => {
     // A 2nd caller is side 'b': their snapshot's my/foe is relative, but events carry absolute sides.
     // A super-effective hit on side 'a' (the side-b caller's FOE) must name the FOE, not themselves.
     const { deps, said } = fakeDeps({
-      snapshot: () => ({
+      snapshot: () => battleSnap({
         phase: 'battle', mySide: 'b', monsterNames: ['Sparkmouse'],
-        myName: 'Bo', myMonsterId: 'galecoil', myMonsterName: 'Galecoil',
-        foeMonsterName: 'Sparkmouse', myHp: 50, myMaxHp: 98, foeHp: 30, foeMaxHp: 70,
-        myPotions: 2, whoseTurn: 'foe', myMoves: [], winnerName: null,
+        myName: 'Bo', myMonsterId: 'galecoil', myMonsterName: 'Galecoil', myMonsterType: 'water',
+        foeMonsterName: 'Sparkmouse', foeMonsterType: 'electric', myHp: 50, myMaxHp: 98, foeHp: 30, foeMaxHp: 70,
+        myPotions: 2, turn: 0, activeSide: 'a', activeMenu: 'root', whoseTurn: 'foe',
       }),
     });
     const s = new BattleVoiceSession(deps);

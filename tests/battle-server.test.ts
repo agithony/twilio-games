@@ -60,16 +60,17 @@ describe('BattleServer', () => {
     const snap = state.snapshot as { a: { moves: { id: string }[] }, turn: number };
     const before = snap.turn;
     send(ws, { type: 'choose_move', moveId: snap.a.moves[0]!.id });
-    // The human's commit locks their move but does NOT resolve yet — the AI takes a separate beat
-    // (~700ms server-side). Wait past that, then the turn should have advanced.
+    // The human's action resolves immediately; the AI takes a separate beat (~700ms server-side).
     await wait(60);
     let mid = msgs.filter(m => m.type === 'battle_state').at(-1)!;
-    expect((mid.snapshot as { turn: number, chosen: { a: boolean } }).turn).toBe(before);   // not yet
-    expect((mid.snapshot as { chosen: { a: boolean } }).chosen.a).toBe(true);               // but locked
+    expect((mid.snapshot as { turn: number, chosen: { a: boolean } }).turn).toBe(before + 1);
+    expect((mid.snapshot as { chosen: { a: boolean } }).chosen.a).toBe(false);
+    expect((mid as { activeSide?: string }).activeSide).toBe('b');
+    expect(msgs.some(m => m.type === 'battle_events')).toBe(true);
     await wait(800);                                                     // AI beat fires
     state = msgs.filter(m => m.type === 'battle_state').at(-1)!;
-    expect((state.snapshot as { turn: number }).turn).toBe(before + 1);   // AI took its turn → resolved
-    expect(msgs.some(m => m.type === 'battle_events')).toBe(true);
+    expect((state.snapshot as { turn: number }).turn).toBe(before + 2);
+    expect((state as { activeSide?: string }).activeSide).toBe('a');
     ws.close();
   });
 
@@ -101,6 +102,51 @@ describe('BattleServer', () => {
     await wait(80);
     const state = am.filter(m => m.type === 'battle_state').at(-1)!;
     expect((state.players as unknown[]).length).toBe(2);
+    a.close(); b.close();
+  });
+
+  it('two-player battle broadcasts activeSide and activeMenu, and gates commands to that side', async () => {
+    server = new BattleServer({ port: 0 });
+    const port = await server.start();
+    const { ws: a, msgs: am } = await connectCollect(port);
+    const { ws: b } = await connectCollect(port);
+    send(a, { type: 'join', roomCode: '4821', name: 'Ada' });
+    send(b, { type: 'join', roomCode: '4821', name: 'Bo' });
+    await wait(60);
+    send(a, { type: 'advance' });
+    await wait(40);
+    send(a, { type: 'select_monster', monsterId: 'sparkmouse' });
+    send(b, { type: 'select_monster', monsterId: 'embertail' });
+    await wait(60);
+    send(a, { type: 'advance' });
+    await wait(60);
+    let state = am.filter(m => m.type === 'battle_state').at(-1)! as { activeSide: string; activeMenu: string; snapshot: { chosen: { a: boolean; b: boolean }; turn: number; a: { moves: { id: string }[] }; b: { moves: { id: string }[] } } };
+    const before = state.snapshot.turn;
+    expect(state.activeSide).toBe('a');
+    expect(state.activeMenu).toBe('root');
+
+    send(b, { type: 'open_fight' });
+    await wait(40);
+    state = am.filter(m => m.type === 'battle_state').at(-1)! as typeof state;
+    expect(state.activeMenu).toBe('root');
+
+    send(a, { type: 'open_fight' });
+    await wait(40);
+    state = am.filter(m => m.type === 'battle_state').at(-1)! as typeof state;
+    expect(state.activeMenu).toBe('fight');
+
+    send(b, { type: 'choose_move', moveId: state.snapshot.b.moves[0]!.id });
+    await wait(40);
+    state = am.filter(m => m.type === 'battle_state').at(-1)! as typeof state;
+    expect(state.snapshot.chosen.b).toBe(false);
+
+    send(a, { type: 'choose_move', moveId: state.snapshot.a.moves[0]!.id });
+    await wait(40);
+    state = am.filter(m => m.type === 'battle_state').at(-1)! as typeof state;
+    expect(state.snapshot.chosen.a).toBe(false);
+    expect(state.snapshot.turn).toBe(before + 1);
+    expect(state.activeSide).toBe('b');
+
     a.close(); b.close();
   });
 });

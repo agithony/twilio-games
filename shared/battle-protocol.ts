@@ -9,6 +9,8 @@ export type BattleClientMessage =
   | { type: 'join'; roomCode: string; name: string }        // become a player (max 2 humans)
   | { type: 'spectate'; roomCode: string }                  // the shared display (no slot)
   | { type: 'select_monster'; monsterId: string }           // during monster_select
+  | { type: 'open_fight' }                                  // battle: active side opens its 4 moves
+  | { type: 'back_menu' }                                   // battle: active side backs out to root menu
   | { type: 'choose_move'; moveId: string }                 // FIGHT shim (kept for back-compat)
   | { type: 'choose_action'; action: BattleAction }         // a turn action: fight/guard/item/taunt
   | { type: 'advance' }                                     // host: lobby→select→battle / rematch
@@ -31,6 +33,7 @@ export type BattleServerMessage =
   | { type: 'roster'; monsters: RosterEntry[] }             // sent on connect for the select screen
   | { type: 'battle_state'; roomCode: string; phase: string;
       players: BattleLobbyPlayer[]; snapshot: BattleSnapshot | null;
+      activeSide?: 'a' | 'b' | null; activeMenu?: 'root' | 'fight';
       result: { winner: string; winnerName: string } | null }
   | { type: 'battle_events'; events: BattleEvent[] }         // ordered — renderer/commentator replay
   | { type: 'error'; code: string; message: string };
@@ -53,6 +56,8 @@ export function parseBattleClientMessage(raw: string): ParseResult {
     case 'select_monster':
       if (typeof m.monsterId !== 'string') return err('bad_select', 'monsterId required');
       return { type: 'select_monster', monsterId: m.monsterId };
+    case 'open_fight': return { type: 'open_fight' };
+    case 'back_menu':  return { type: 'back_menu' };
     case 'choose_move':
       if (typeof m.moveId !== 'string') return err('bad_move', 'moveId required');
       return { type: 'choose_move', moveId: m.moveId };
