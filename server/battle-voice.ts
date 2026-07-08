@@ -56,7 +56,8 @@ export interface BattleVoiceDeps {
 const GREETING = [
   'Welcome to Voice Monsters!',
   'This is powered by Twilio Conversation Relay, so your voice controls the battle live over this call.',
-  'Quick rules: say start, pick a monster, then on your turn say fight and an attack, or say guard, item, or taunt.',
+  'Quick rules: say start, then pick a monster.',
+  'On your turn, say fight. Then say an attack. You can also say guard, item, or taunt.',
   "What's your name, challenger?",
 ];
 
@@ -251,7 +252,7 @@ export class BattleVoiceSession {
       // Dramatic scene-set on turn 1 + a quick how-to-act recap. Then normal commentary flows.
       this.introDone = true; this.menuLevel = 'root';
       this.deps.say(battleIntro(mine, foe));
-      this.deps.say('On your turn, say fight to see your moves, then say a move, or say guard, item, or taunt.');
+      this.deps.say('On your turn, say fight to see your moves. Then say a move. Or say guard, item, or taunt.');
       return;
     }
     if (ev.kind === 'battle_over') {
@@ -286,14 +287,14 @@ export class BattleVoiceSession {
       this.introDone = true;
       this.menuLevel = 'root';
       this.deps.say(this.battleIntroFor(snap));
-      this.deps.say('How to play: on your turn, say fight, then pick one of the four attacks. You can also say guard, item, or taunt.');
+      this.deps.say('How to play: on your turn, say fight. Then pick one of the four attacks. You can also say guard, item, or taunt.');
     }
     const key = `${snap.turn ?? 0}:${snap.activeSide ?? 'none'}:${snap.whoseTurn ?? 'none'}`;
     if (key === this.lastTurnCueKey) return;
     this.lastTurnCueKey = key;
     if (snap.whoseTurn === 'me') {
       const first = (snap.turn ?? 0) === 0 ? 'You go first. ' : '';
-      this.deps.say(`${first}It's your turn. Say fight to see your attacks, or say guard, item, or taunt.`);
+      this.deps.say(`${first}It's your turn. Say fight to see your attacks. Or say guard, item, or taunt.`);
     } else if (snap.whoseTurn === 'foe') {
       const first = (snap.turn ?? 0) === 0 ? `${snap.foeMonsterName ?? 'The other monster'} goes first. ` : '';
       this.deps.say(`${first}Wait for ${snap.foeMonsterName ?? 'the other monster'} to choose, then I'll call your turn.`);

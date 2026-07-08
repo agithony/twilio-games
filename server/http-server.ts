@@ -25,7 +25,7 @@ import { monsterById, rosterEntries } from '../shared/monster-roster';
 import type { Room } from './room';
 import type { RaceResult } from '../shared/types';
 
-const VOICE_RACER_CONTROLS_INTRO = 'Before you start, check the controls on the screen: say left or right to steer, boost to speed up, brake to slow down, and nitro to break through a wall.';
+const VOICE_RACER_CONTROLS_INTRO = 'Before you start, check the controls on the screen. Say left or right to steer. Say boost to speed up. Say brake to slow down. Say nitro to break through a wall.';
 
 export class HttpServer {
   private server: http.Server;
@@ -299,6 +299,10 @@ export class HttpServer {
     const say = (text: string) => sendRelayText(ws, text);
     ws.on('message', (d) => {
       const raw = d.toString();
+      try {
+        const type = JSON.parse(raw)?.type;
+        if (type === 'prompt' || type === 'interrupt') clearRelayTextQueue(ws);
+      } catch { /* adapter will ignore bad frames */ }
       if (route === null) route = this.pickVoiceGame(raw);
       if (route === 'battle') {
         if (!battle) battle = this.makeBattleSession(say);
@@ -1018,10 +1022,62 @@ export class HttpServer {
   }
 }
 
+const RELAY_CHUNK_GAP_MS = 420;
+const relayQueues = new WeakMap<WebSocket, { tail: Promise<void>; lastAt: number; generation: number }>();
+
 function sendRelayText(ws: WebSocket, text: string): void {
+  const chunks = relayTextChunks(text);
+  if (!chunks.length || ws.readyState !== ws.OPEN) return;
+  let queue = relayQueues.get(ws);
+  if (!queue) {
+    queue = { tail: Promise.resolve(), lastAt: 0, generation: 0 };
+    relayQueues.set(ws, queue);
+  }
+  const generation = queue.generation;
+  queue.tail = queue.tail.then(async () => {
+    for (const token of chunks) {
+      if (generation !== queue.generation) return;
+      const elapsed = queue.lastAt > 0 ? Date.now() - queue.lastAt : RELAY_CHUNK_GAP_MS;
+      if (elapsed < RELAY_CHUNK_GAP_MS) await sleep(RELAY_CHUNK_GAP_MS - elapsed);
+      if (generation !== queue.generation) return;
+      if (ws.readyState !== ws.OPEN) return;
+      ws.send(JSON.stringify({ type: 'text', token, last: true }));
+      queue.lastAt = Date.now();
+    }
+  }).catch(() => {
+    // TTS pacing must never break the game loop.
+  });
+}
+
+const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
+
+function clearRelayTextQueue(ws: WebSocket): void {
+  const queue = relayQueues.get(ws);
+  if (!queue) return;
+  queue.generation++;
+  queue.tail = Promise.resolve();
+  queue.lastAt = 0;
+}
+
+export function relayTextChunks(text: string): string[] {
   const token = speechSafeText(text);
-  if (!token || ws.readyState !== ws.OPEN) return;
-  ws.send(JSON.stringify({ type: 'text', token, last: true }));
+  if (!token) return [];
+  const controls = splitControlText(token);
+  return controls.length > 1 ? controls : [token];
+}
+
+function splitControlText(text: string): string[] {
+  const lower = text.toLowerCase();
+  const isInstruction = lower.includes('say ') || lower.includes('voice controls') || lower.includes('quick rules') || lower.includes('how to play') || lower.includes('controls on the screen');
+  if (!isInstruction || text.length < 90) return [];
+  return text
+    .replace(/:\s+/g, '. ')
+    .replace(/;\s+/g, '. ')
+    .replace(/\s+or\s+say\s+/gi, '. Or say ')
+    .replace(/\s+and\s+nitro\s+/gi, '. And nitro ')
+    .split(/(?<=[.!?])\s+/)
+    .map(s => s.trim())
+    .filter(Boolean);
 }
 
 /** Map a filename to a Content-Type for the static server (covers the built client + GLB models). */
