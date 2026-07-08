@@ -563,7 +563,7 @@ export class HttpServer {
         myMonsterId: player?.monsterId ?? null,
         myMonsterName: mon?.name ?? null,
         myMonsterType: mon?.type ?? null,
-        foeMonsterName: null, foeMonsterType: null, myHp: null, myMaxHp: null, foeHp: null, foeMaxHp: null,
+        foeName: null, foeMonsterName: null, foeMonsterType: null, myHp: null, myMaxHp: null, foeHp: null, foeMaxHp: null,
         myPotions: 2, turn: null, activeSide: null, activeMenu: 'root', whoseTurn: null, myMoves: [], winnerName: res?.winnerName ?? null,
       };
     }
@@ -574,6 +574,7 @@ export class HttpServer {
       phase: room.phase, mySide: side, monsterNames, myName,
       myMonsterId: me.monsterId, myMonsterName: me.monsterName,
       myMonsterType: me.type,
+      foeName: foe.name,
       foeMonsterName: foe.monsterName,
       foeMonsterType: foe.type,
       myHp: me.hp, myMaxHp: me.maxHp, foeHp: foe.hp, foeMaxHp: foe.maxHp,

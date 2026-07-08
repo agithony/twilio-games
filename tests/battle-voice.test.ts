@@ -43,6 +43,7 @@ function battleSnap(over: Partial<BattleVoiceSnapshot> = {}): BattleVoiceSnapsho
     myMonsterId: null,
     myMonsterName: null,
     myMonsterType: null,
+    foeName: null,
     foeMonsterName: null,
     foeMonsterType: null,
     myHp: null,
@@ -91,6 +92,17 @@ describe('BattleVoiceSession', () => {
     s.handleMessage(setup('4821'));
     expect(log.some(l => l.startsWith('join 4821'))).toBe(true);
     expect(said.length).toBeGreaterThan(0);   // greeting spoken
+  });
+
+  it('greets new callers with Conversation Relay and simple voice-control instructions', () => {
+    const { deps, said } = fakeDeps();
+    const s = new BattleVoiceSession(deps);
+    s.handleMessage(setup('4821'));
+    const joined = said.join(' ').toLowerCase();
+    expect(joined).toContain('conversation relay');
+    expect(joined).toContain('voice controls');
+    expect(joined).toMatch(/say start|pick a monster/);
+    expect(joined).toMatch(/fight.*attack|guard.*item.*taunt/);
   });
 
   it('captures the caller name in the lobby BEFORE anything else (deterministic, no LLM)', () => {
@@ -298,6 +310,26 @@ describe('BattleVoiceSession', () => {
     timers.shift()?.();
 
     expect(said.some(t => /wait for shellback/i.test(t))).toBe(true);
+  });
+
+  it('announces the winner and loser when the battle ends', () => {
+    const { deps, said } = fakeDeps({
+      snapshot: () => battleSnap({
+        phase: 'results', myName: 'Ada', myMonsterId: 'sparkmouse', myMonsterName: 'Sparkmouse', myMonsterType: 'electric',
+        foeName: 'Bo', foeMonsterName: 'Embertail', foeMonsterType: 'fire', winnerName: 'Ada',
+        turn: 3, activeSide: null, activeMenu: 'root', whoseTurn: null,
+      }),
+    });
+    const s = new BattleVoiceSession(deps);
+    s.handleMessage(setup()); said.length = 0;
+
+    s.onBattleEvent({ kind: 'battle_over', winner: 'a', winnerName: 'Ada' });
+
+    const line = said.join(' ');
+    expect(line).toMatch(/Ada wins/i);
+    expect(line).toMatch(/Bo loses/i);
+    expect(line).toMatch(/Sparkmouse/i);
+    expect(line).toMatch(/Embertail/i);
   });
 
   it('names monsters correctly for a side-b caller (event sides are absolute)', () => {

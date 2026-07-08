@@ -20,6 +20,7 @@ export interface BattleVoiceSnapshot {
   myName: string | null;
   myMonsterId: string | null; myMonsterName: string | null;
   myMonsterType: string | null;
+  foeName: string | null;
   foeMonsterName: string | null;
   foeMonsterType: string | null;
   myHp: number | null; myMaxHp: number | null;
@@ -53,6 +54,8 @@ export interface BattleVoiceDeps {
 
 const GREETING = [
   'Welcome to Voice Monsters!',
+  'This is powered by Twilio Conversation Relay, so your voice controls the battle live over this call.',
+  'Quick rules: say start, pick a monster, then on your turn say fight and an attack, or say guard, item, or taunt.',
   "What's your name, challenger?",
 ];
 
@@ -238,13 +241,28 @@ export class BattleVoiceSession {
       // Dramatic scene-set on turn 1 + a quick how-to-act recap. Then normal commentary flows.
       this.introDone = true; this.menuLevel = 'root';
       this.deps.say(battleIntro(mine, foe));
-      this.deps.say('On your turn, say FIGHT to see your moves, then say a move — or say GUARD, ITEM, or TAUNT.');
+      this.deps.say('On your turn, say fight to see your moves, then say a move, or say guard, item, or taunt.');
+      return;
+    }
+    if (ev.kind === 'battle_over') {
+      this.lineSeq++;
+      this.deps.say(this.battleOverLine(ev, snap, aName, bName));
+      this.introDone = false;
       return;
     }
     const line = commentaryForBattleEvent(ev, { aName, bName }, this.lineSeq);
     if (line) { this.lineSeq++; this.deps.say(line); }
     if (ev.kind === 'turn_start') this.menuLevel = 'root';
-    if (ev.kind === 'battle_over') this.introDone = false;   // re-arm the intro for a rematch
+  }
+
+  private battleOverLine(ev: Extract<BattleEvent, { kind: 'battle_over' }>, snap: BattleVoiceSnapshot | null, aName: string, bName: string): string {
+    const winnerMonster = ev.winner === 'a' ? aName : bName;
+    const loserMonster = ev.winner === 'a' ? bName : aName;
+    const loserPlayer = snap
+      ? (ev.winner === snap.mySide ? snap.foeName : snap.myName)
+      : null;
+    const loser = loserPlayer ? `${loserPlayer} loses as ${loserMonster} goes down` : `${loserMonster} goes down`;
+    return `${ev.winnerName} wins with ${winnerMonster}! ${loser}. What a finish!`;
   }
 
   private speakStateCue(): void {
@@ -258,14 +276,14 @@ export class BattleVoiceSession {
       this.introDone = true;
       this.menuLevel = 'root';
       this.deps.say(this.battleIntroFor(snap));
-      this.deps.say('How to play: on your turn, say FIGHT, then pick one of the four attacks. You can also say GUARD, ITEM, or TAUNT.');
+      this.deps.say('How to play: on your turn, say fight, then pick one of the four attacks. You can also say guard, item, or taunt.');
     }
     const key = `${snap.turn ?? 0}:${snap.activeSide ?? 'none'}:${snap.whoseTurn ?? 'none'}`;
     if (key === this.lastTurnCueKey) return;
     this.lastTurnCueKey = key;
     if (snap.whoseTurn === 'me') {
       const first = (snap.turn ?? 0) === 0 ? 'You go first. ' : '';
-      this.deps.say(`${first}It's your turn. Say FIGHT to see your attacks, or say GUARD, ITEM, or TAUNT.`);
+      this.deps.say(`${first}It's your turn. Say fight to see your attacks, or say guard, item, or taunt.`);
     } else if (snap.whoseTurn === 'foe') {
       const first = (snap.turn ?? 0) === 0 ? `${snap.foeMonsterName ?? 'The other monster'} goes first. ` : '';
       this.deps.say(`${first}Wait for ${snap.foeMonsterName ?? 'the other monster'} to choose, then I'll call your turn.`);
