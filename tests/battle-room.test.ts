@@ -50,6 +50,42 @@ describe('BattleRoom', () => {
     expect(s.b.id).not.toBe(a.playerId);         // opponent isn't the human
   });
 
+  it('rejects late joins during an active battle instead of corrupting the current matchup', () => {
+    const r = room();
+    const a = r.addPlayer('Ada') as { playerId: string };
+    r.advance();
+    r.selectMonster(a.playerId, M0);
+    r.advance();
+
+    const late = r.addPlayer('Late');
+
+    expect('error' in late).toBe(true);
+    expect(r.playerCount).toBe(1);
+    expect(r.phase).toBe('battle');
+  });
+
+  it('does not reset a full results room when a late player tries to join', () => {
+    const r = room();
+    const a = r.addPlayer('Ada') as { playerId: string };
+    const b = r.addPlayer('Bo') as { playerId: string };
+    r.advance();
+    r.selectMonster(a.playerId, 'embertail'); r.selectMonster(b.playerId, 'thornling');
+    r.advance();
+    for (let i = 0; i < 100 && r.phase === 'battle'; i++) {
+      const s = r.snapshot()!;
+      const active = r.activeSide();
+      if (active === 'a') r.chooseMove(a.playerId, s.a.moves[1]!.id);
+      else if (active === 'b') r.chooseMove(b.playerId, s.b.moves[0]!.id);
+    }
+    expect(r.phase).toBe('results');
+
+    const late = r.addPlayer('Late');
+
+    expect('error' in late).toBe(true);
+    expect(r.phase).toBe('results');
+    expect(r.playerCount).toBe(2);
+  });
+
   it('SINGLE-PLAYER: human action resolves immediately → AI is pending for the next beat', () => {
     const r = room();
     const a = r.addPlayer('Ada') as { playerId: string };
@@ -123,6 +159,23 @@ describe('BattleRoom', () => {
     expect(r.activeMenu()).toBe('fight');
     r.backMenu(a.playerId);
     expect(r.activeMenu()).toBe('root');
+  });
+
+  it('interrupts a 2P battle if an active participant leaves so the remaining player is not stuck', () => {
+    const r = room();
+    const a = r.addPlayer('Ada') as { playerId: string };
+    const b = r.addPlayer('Bo') as { playerId: string };
+    r.advance();
+    r.selectMonster(a.playerId, M0); r.selectMonster(b.playerId, M1);
+    r.advance();
+    expect(r.phase).toBe('battle');
+
+    r.removePlayer(a.playerId);
+
+    expect(r.phase).toBe('monster_select');
+    expect(r.playerCount).toBe(1);
+    expect(r.snapshot()).toBeNull();
+    expect(r.lobbyPlayers()[0]!.monsterId).toBeNull();
   });
 
   it('reaches results with a winner when a monster faints', () => {

@@ -139,7 +139,6 @@ export class BattleWorld {
     const foe = f === this.a ? this.b : this.a;
     this._phase = 'resolving';
     f.action = action;
-    this.events.push({ kind: 'turn_start', turn: this._turn + 1 });
     this.applySingleAction(f, foe);
     f.action = null; f.committedAt = null;
     this._turn++;

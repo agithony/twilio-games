@@ -77,6 +77,8 @@ export class HttpServer {
   /** Voice Monsters talk-back registry: roomCode → live battle call sessions, fed battle events so
    *  callers hear commentary (super-effective/crit/faint/win). Parallel to voiceAdapters (the racer). */
   private battleVoice = new Map<string, Set<BattleVoiceSession>>();
+  private lastGameWsAt = 0;
+  private lastBattleWsAt = 0;
   /** The conversational AI host (OpenAI, or a null no-op when OPENAI_API_KEY is unset → scripted
    *  fallback). Turns a caller's natural-language menu utterances into spoken replies + game actions. */
   private llm: LlmClient;
@@ -165,8 +167,10 @@ export class HttpServer {
       if (path === '/voice') {
         this.voiceWss.handleUpgrade(req, socket, head, (ws) => this.onVoiceConnection(ws));
       } else if (path === '/game') {
+        this.lastGameWsAt = Date.now();
         this.game.handleUpgrade(req, socket, head);
       } else if (path === '/battle') {
+        this.lastBattleWsAt = Date.now();
         this.battle.handleUpgrade(req, socket, head);
       } else {
         socket.destroy();
@@ -319,9 +323,16 @@ export class HttpServer {
       if (g === 'monsters' || g === 'battle') return 'battle';
       if (g === 'racer' || g === 'race') return 'racer';
     } catch { /* fall through to auto-detect */ }
-    // Auto-detect: battler active (has a display) AND racer idle → battle; else racer.
-    if (this.battle.connectionCount > 0 && this.game.connectionCount === 0) return 'battle';
+    // Auto-detect: route to the game whose screen most recently opened. This avoids a stale tab for one
+    // game stealing calls while the other game is currently on the projector.
+    if (this.shouldRouteVoiceToBattle()) return 'battle';
     return 'racer';
+  }
+
+  private shouldRouteVoiceToBattle(): boolean {
+    if (this.battle.connectionCount <= 0) return false;
+    if (this.game.connectionCount <= 0) return true;
+    return this.lastBattleWsAt >= this.lastGameWsAt;
   }
 
   /** Build a Voice Monsters call session wired to the live BattleServer + the battle LLM host. The
@@ -550,7 +561,12 @@ export class HttpServer {
     const room = this.battle.findRoom(code);
     if (!room) return null;
     const monsterNames = rosterEntries().map(m => m.name);
-    const player = room.lobbyPlayers().find(p => p.playerId === playerId);
+    const players = room.lobbyPlayers();
+    const player = players.find(p => p.playerId === playerId);
+    const pickedCount = players.filter(p => p.monsterId).length;
+    const canStartBattle = room.phase === 'monster_select'
+      ? (players.length >= 2 ? players.every(p => !!p.monsterId) : pickedCount === 1)
+      : false;
     const rawName = player?.name ?? '';
     const myName = /^(Challenger|Player)(\s|$)/.test(rawName) ? null : (rawName || null);
     const snap = room.snapshot();
@@ -563,6 +579,7 @@ export class HttpServer {
         myMonsterId: player?.monsterId ?? null,
         myMonsterName: mon?.name ?? null,
         myMonsterType: mon?.type ?? null,
+        canStartBattle,
         foeName: null, foeMonsterName: null, foeMonsterType: null, myHp: null, myMaxHp: null, foeHp: null, foeMaxHp: null,
         myPotions: 2, turn: null, activeSide: null, activeMenu: 'root', whoseTurn: null, myMoves: [], winnerName: res?.winnerName ?? null,
       };
@@ -574,6 +591,7 @@ export class HttpServer {
       phase: room.phase, mySide: side, monsterNames, myName,
       myMonsterId: me.monsterId, myMonsterName: me.monsterName,
       myMonsterType: me.type,
+      canStartBattle,
       foeName: foe.name,
       foeMonsterName: foe.monsterName,
       foeMonsterType: foe.type,
@@ -671,9 +689,8 @@ export class HttpServer {
       const roomCode = path === '/voice/join'
         ? ((params['Digits'] ?? '').trim() || DEFAULT_ROOM)
         : DEFAULT_ROOM;
-      // MULTI-GAME: one number, both games. Auto-route to whichever game's display is currently open
-      // (battler if it's up + the racer idle; else the racer). The call carries this as a `game` param.
-      const toBattle = this.battle.connectionCount > 0 && this.game.connectionCount === 0;
+      // MULTI-GAME: one number, both games. Auto-route to whichever game's screen most recently opened.
+      const toBattle = this.shouldRouteVoiceToBattle();
       const xml = twimlConnectRelay({
         wsUrl: `${this.publicBaseUrl.replace(/^http/, 'ws')}/voice`,
         sessionEndedUrl: `${this.publicBaseUrl}/voice/session-ended`,

@@ -50,7 +50,9 @@ export class BattleRoom {
 
   /** Add a human player. Battles are 1v1, so at most 2 humans. A finished battle reopens on a join. */
   addPlayer(name: string): { playerId: string } | { error: string } {
+    if (this._phase === 'results' && this.slots.length >= 2) return { error: 'room_full' };
     if (this._phase === 'results') this.reset();
+    if (this._phase === 'battle') return { error: 'battle_in_progress' };
     if (this.slots.length >= 2) return { error: 'room_full' };
     const id = `p${this.nextId++}`;
     this.slots.push({ id, name: name || `Player ${this.slots.length + 1}`, monsterId: null, isAi: false });
@@ -58,8 +60,10 @@ export class BattleRoom {
   }
 
   removePlayer(playerId: string): void {
+    const wasInBattle = this.isBattleParticipant(playerId);
     this.slots = this.slots.filter(s => s.id !== playerId);
     if (this.slots.length === 0 && this._phase !== 'lobby') this.reset();
+    else if (wasInBattle && this._phase === 'battle') this.interruptBattle();
   }
 
   setPlayerInfo(playerId: string, info: { name?: string }): void {
@@ -243,6 +247,19 @@ export class BattleRoom {
     if (snap.a.id === playerId) return 'a';
     if (snap.b.id === playerId) return 'b';
     return null;
+  }
+
+  private isBattleParticipant(playerId: string): boolean {
+    const snap = this.world?.snapshot();
+    return !!snap && (snap.a.id === playerId || snap.b.id === playerId);
+  }
+
+  private interruptBattle(): void {
+    this.world = null; this.ai = null; this._result = null; this.events = [];
+    this.menu = { a: 'root', b: 'root' };
+    this.active = null;
+    for (const s of this.slots) s.monsterId = null;
+    this._phase = this.slots.length > 0 ? 'monster_select' : 'lobby';
   }
 
   private canChoose(playerId: string): boolean {

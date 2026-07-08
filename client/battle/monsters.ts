@@ -416,6 +416,7 @@ function monsterSelectHtml(): string {
   const pickedBy = new Map<string, string>();   // monsterId → picker display name
   for (const p of players) if (p.monsterId) pickedBy.set(p.monsterId, p.name);
   const anyPick = players.some(p => p.monsterId);
+  const canBattle = players.length >= 2 ? players.every(p => p.monsterId) : anyPick;
   // MINIMAL cards: portrait + name + type + (who picked it). Portrait starts as the placeholder;
   // upgradeSelectPortraits() swaps in a real GIF/PNG post-mount.
   const cards = roster.map(m => {
@@ -432,8 +433,10 @@ function monsterSelectHtml(): string {
   return `<div class="vm-card wide">
     ${brandHead('CHOOSE YOUR MONSTER', 'Pick your fighter — say its name or tap it')}
     <div class="vm-grid">${cards}</div>
-    ${canDrive()
-      ? `<button class="vm-btn" data-act="advance">Battle ▶</button>${anyPick ? '' : '<div class="vm-dim">Pick a monster first (say its name or tap it)</div>'}`
+    ${canDrive() && canBattle
+      ? '<button class="vm-btn" data-act="advance">Battle ▶</button>'
+      : canDrive()
+        ? `<div class="vm-dim">${anyPick ? 'Waiting for every player to pick a monster.' : 'Pick a monster first (say its name or tap it).'}</div>`
       : '<div class="vm-dim">Say a monster\'s name or tap it.</div>'}
   </div>`;
 }

@@ -23,7 +23,7 @@ describe('parseSpokenName', () => {
 
 describe('isAdvanceWord', () => {
   it('recognizes the ways a caller says "move forward"', () => {
-    for (const w of ['start', 'go', 'begin', 'battle', "let's go", 'ready', 'next', 'rematch', 'again', 'run it back']) {
+    for (const w of ['start', 'go', 'begin', 'battle', 'fight', "let's go", 'ready', 'next', 'rematch', 'again', 'run it back']) {
       expect(isAdvanceWord(w)).toBe(true);
     }
   });
@@ -43,6 +43,7 @@ function battleSnap(over: Partial<BattleVoiceSnapshot> = {}): BattleVoiceSnapsho
     myMonsterId: null,
     myMonsterName: null,
     myMonsterType: null,
+    canStartBattle: false,
     foeName: null,
     foeMonsterName: null,
     foeMonsterType: null,
@@ -94,6 +95,14 @@ describe('BattleVoiceSession', () => {
     expect(said.length).toBeGreaterThan(0);   // greeting spoken
   });
 
+  it('tells a caller when the battle room is full or already in progress', () => {
+    const { deps, said } = fakeDeps({ join: () => null });
+    const s = new BattleVoiceSession(deps);
+    s.handleMessage(setup('4821'));
+    expect(s.boundPlayer).toBeNull();
+    expect(said.some(t => /full|in progress|next round/i.test(t))).toBe(true);
+  });
+
   it('greets new callers with Conversation Relay and simple voice-control instructions', () => {
     const { deps, said } = fakeDeps();
     const s = new BattleVoiceSession(deps);
@@ -117,6 +126,19 @@ describe('BattleVoiceSession', () => {
     expect(said.some(t => /nice to meet you, ada/i.test(t))).toBe(true);   // confirmed + guided
   });
 
+  it('does not capture a lobby advance phrase as the caller name', () => {
+    const { deps, log } = fakeDeps({
+      snapshot: () => battleSnap({ phase: 'lobby', myName: null }),
+    });
+    const s = new BattleVoiceSession(deps);
+    s.handleMessage(setup());
+
+    s.handleMessage(prompt("I'm ready"));
+
+    expect(log).toContain('advance');
+    expect(log.some(l => l === 'name Ready')).toBe(false);
+  });
+
   it('a spoken monster name during select picks it (deterministic, no LLM)', () => {
     // A name is already set, so "Embertail" is treated as a monster pick, not a name.
     const { deps, log } = fakeDeps({
@@ -126,6 +148,31 @@ describe('BattleVoiceSession', () => {
     s.handleMessage(setup());
     s.handleMessage(prompt('Embertail'));
     expect(log.some(l => l === 'monster embertail')).toBe(true);
+  });
+
+  it('understands ordinal monster picks before cardinal words', () => {
+    const { deps, log } = fakeDeps({
+      snapshot: () => battleSnap({ myName: 'Ada' }),
+    });
+    const s = new BattleVoiceSession(deps);
+    s.handleMessage(setup());
+
+    s.handleMessage(prompt('the second one'));
+
+    expect(log).toContain('monster embertail');
+  });
+
+  it('does not mistake a spoken monster name for the caller name on monster select', () => {
+    const { deps, log } = fakeDeps({
+      snapshot: () => battleSnap({ myName: null }),
+    });
+    const s = new BattleVoiceSession(deps);
+    s.handleMessage(setup());
+
+    s.handleMessage(prompt('Sparkmouse'));
+
+    expect(log).toContain('monster sparkmouse');
+    expect(log.some(l => l === 'name Sparkmouse')).toBe(false);
   });
 
   it('"start" advances the flow deterministically (no LLM) — lobby → select', () => {
@@ -147,6 +194,52 @@ describe('BattleVoiceSession', () => {
     s.handleMessage(prompt('battle'));
     expect(log.some(l => l === 'advance')).toBe(false);      // did NOT advance
     expect(said.some(t => /pick a monster first/i.test(t))).toBe(true);
+  });
+
+  it('"battle" in monster-select waits when this caller picked but the other player has not', () => {
+    const { deps, log, said } = fakeDeps({
+      snapshot: () => battleSnap({
+        myName: 'Ada', myMonsterId: 'sparkmouse', myMonsterName: 'Sparkmouse', myMonsterType: 'electric',
+        canStartBattle: false,
+      }),
+    });
+    const s = new BattleVoiceSession(deps);
+    s.handleMessage(setup()); said.length = 0;
+
+    s.handleMessage(prompt('battle'));
+
+    expect(log.some(l => l === 'advance')).toBe(false);
+    expect(said.some(t => /waiting for the other player/i.test(t))).toBe(true);
+  });
+
+  it('"battle" in monster-select advances when required monster picks are complete', () => {
+    const { deps, log } = fakeDeps({
+      snapshot: () => battleSnap({
+        myName: 'Ada', myMonsterId: 'sparkmouse', myMonsterName: 'Sparkmouse', myMonsterType: 'electric',
+        canStartBattle: true,
+      }),
+    });
+    const s = new BattleVoiceSession(deps);
+    s.handleMessage(setup());
+
+    s.handleMessage(prompt('battle'));
+
+    expect(log.some(l => l === 'advance')).toBe(true);
+  });
+
+  it('"fight" in monster-select also starts when required monster picks are complete', () => {
+    const { deps, log } = fakeDeps({
+      snapshot: () => battleSnap({
+        myName: 'Ada', myMonsterId: 'sparkmouse', myMonsterName: 'Sparkmouse', myMonsterType: 'electric',
+        canStartBattle: true,
+      }),
+    });
+    const s = new BattleVoiceSession(deps);
+    s.handleMessage(setup());
+
+    s.handleMessage(prompt('fight'));
+
+    expect(log.some(l => l === 'advance')).toBe(true);
   });
 
   it('a spoken battle action during battle commits it', async () => {
@@ -312,6 +405,32 @@ describe('BattleVoiceSession', () => {
     expect(said.some(t => /wait for shellback/i.test(t))).toBe(true);
   });
 
+  it('does not accept the next battle command while attack commentary is still resolving', () => {
+    let snap = battleSnap({
+      phase: 'battle', myName: 'Bo', mySide: 'b', myMonsterId: 'shellback', myMonsterName: 'Shellback', myMonsterType: 'water',
+      foeName: 'Ada', foeMonsterName: 'Sparkmouse', foeMonsterType: 'electric', myHp: 82, myMaxHp: 82, foeHp: 70, foeMaxHp: 70,
+      turn: 1, activeSide: 'b', activeMenu: 'root', whoseTurn: 'me',
+    });
+    const timers: (() => void)[] = [];
+    const { deps, log, said } = fakeDeps({
+      snapshot: () => snap,
+      setTimer: (fn: () => void) => { timers.push(fn); },
+    });
+    const s = new BattleVoiceSession(deps);
+    s.handleMessage(setup()); said.length = 0;
+
+    s.onBattleEvent({ kind: 'move_used', by: 'a', moveId: 'sparkmouse.jolt', moveName: 'Thunder Jolt' });
+    s.handleMessage(prompt('guard'));
+
+    expect(log.some(l => l.startsWith('action '))).toBe(false);
+    expect(said.some(t => /resolving the last move/i.test(t))).toBe(true);
+
+    timers.shift()?.();
+    snap = { ...snap, activeSide: 'b', whoseTurn: 'me' };
+    s.handleMessage(prompt('guard'));
+    expect(log.some(l => l.includes('"kind":"guard"'))).toBe(true);
+  });
+
   it('announces the winner and loser when the battle ends', () => {
     const { deps, said } = fakeDeps({
       snapshot: () => battleSnap({
@@ -330,6 +449,7 @@ describe('BattleVoiceSession', () => {
     expect(line).toMatch(/Bo loses/i);
     expect(line).toMatch(/Sparkmouse/i);
     expect(line).toMatch(/Embertail/i);
+    expect(line).toMatch(/rematch/i);
   });
 
   it('names monsters correctly for a side-b caller (event sides are absolute)', () => {
