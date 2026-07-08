@@ -24,7 +24,7 @@ export function battleControlsLegendHtml(): string {
   return `
     <div class="controls-legend">
       <div class="cl-title">How to battle</div>
-      <div class="cl-sub">Turn-based — just talk, or tap on screen</div>
+      <div class="cl-sub">Turn-based — just talk</div>
       ${rows}
     </div>`;
 }

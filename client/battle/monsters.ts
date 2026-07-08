@@ -318,7 +318,7 @@ function lobbyHtml(): string {
     action = `<button class="vm-btn" data-act="advance">Choose your monster ▶</button>`;
   } else if (isDisplay) {
     // Shared screen, nobody in yet: wait for callers, or press P to add a keyboard tester player.
-    action = `<div class="vm-dim">Have players call in to join — or press <b>P</b> to play on this screen</div>`;
+    action = `<div class="vm-dim">Anyone can join.</div>`;
   } else {
     action = '<div class="vm-dim">Waiting for the host to start…</div>';
   }

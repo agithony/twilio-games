@@ -8,6 +8,8 @@
 
 export type GameContext = 'lobby' | 'racer' | 'monsters' | 'leaderboard';
 
+const MUTE_STORAGE_KEY = 'twilio-games-music-muted';
+
 interface MusicContext {
   tracks: string[];
   currentTrackIndex: number;
@@ -37,10 +39,11 @@ export class MusicManager {
   private currentContext: GameContext | null = null;
   private isPlaying = false;
   private volume = 0.7;
-  private isMuted = false;
+  private isMuted = loadMutedPreference();
 
   constructor() {
     this.audio = new Audio();
+    this.applyAudioMuteState();
     this.audio.addEventListener('ended', () => this.onTrackEnded());
     this.audio.addEventListener('error', (e) => console.error('Audio error:', e));
   }
@@ -68,8 +71,11 @@ export class MusicManager {
    * Play a specific track
    */
   private playTrack(trackPath: string) {
+    this.syncMutedPreference();
     this.audio.src = trackPath;
     this.audio.volume = this.volume;
+    this.audio.muted = this.isMuted;
+    if (this.isMuted) return;
     this.audio.play().catch((err) => console.error('Failed to play track:', err));
   }
 
@@ -104,8 +110,10 @@ export class MusicManager {
    * Resume music
    */
   resume() {
-    this.audio.play().catch((err) => console.error('Failed to resume playback:', err));
     this.isPlaying = true;
+    this.syncMutedPreference();
+    if (this.isMuted) return;
+    this.audio.play().catch((err) => console.error('Failed to resume playback:', err));
   }
 
   /**
@@ -151,9 +159,9 @@ export class MusicManager {
    */
   toggleMute(): boolean {
     this.isMuted = !this.isMuted;
-    if (this.isMuted) {
-      this.audio.pause();
-    } else if (this.isPlaying) {
+    saveMutedPreference(this.isMuted);
+    this.applyAudioMuteState();
+    if (!this.isMuted && this.isPlaying) {
       this.audio.play().catch((err) => console.error('Failed to resume playback:', err));
     }
     return this.isMuted;
@@ -165,7 +173,8 @@ export class MusicManager {
   mute(): void {
     if (!this.isMuted) {
       this.isMuted = true;
-      this.audio.pause();
+      saveMutedPreference(this.isMuted);
+      this.applyAudioMuteState();
     }
   }
 
@@ -175,6 +184,8 @@ export class MusicManager {
   unmute(): void {
     if (this.isMuted) {
       this.isMuted = false;
+      saveMutedPreference(this.isMuted);
+      this.applyAudioMuteState();
       if (this.isPlaying) {
         this.audio.play().catch((err) => console.error('Failed to resume playback:', err));
       }
@@ -185,7 +196,36 @@ export class MusicManager {
    * Get mute state
    */
   getIsMuted(): boolean {
+    this.syncMutedPreference();
     return this.isMuted;
+  }
+
+  private syncMutedPreference(): void {
+    const persistedMuted = loadMutedPreference();
+    if (persistedMuted === this.isMuted) return;
+    this.isMuted = persistedMuted;
+    this.applyAudioMuteState();
+  }
+
+  private applyAudioMuteState(): void {
+    this.audio.muted = this.isMuted;
+    if (this.isMuted) this.audio.pause();
+  }
+}
+
+function loadMutedPreference(): boolean {
+  try {
+    return typeof localStorage !== 'undefined' && localStorage.getItem(MUTE_STORAGE_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+function saveMutedPreference(isMuted: boolean): void {
+  try {
+    if (typeof localStorage !== 'undefined') localStorage.setItem(MUTE_STORAGE_KEY, String(isMuted));
+  } catch {
+    // Private browsing or storage policy failures should not break audio controls.
   }
 }
 
