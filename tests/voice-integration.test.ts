@@ -100,4 +100,70 @@ describe('voice integration (fake Conversation Relay client)', () => {
       closeWs(spec);
     }
   });
+
+  it('Voice Monsters resumes the same caller mid-battle without asking for name or monster again', async () => {
+    srv = new HttpServer({ port: 0, publicBaseUrl: 'http://localhost', validateSignatures: false });
+    const port = await srv.start();
+    const roomCode = '6442';
+    const callSid = 'CA-MONSTERS-RECONNECT';
+
+    const spec = new WebSocket(`ws://127.0.0.1:${port}/battle`);
+    const states: any[] = [];
+    spec.on('message', d => {
+      const msg = JSON.parse(d.toString());
+      if (msg.type === 'battle_state') states.push(msg);
+    });
+    await new Promise<void>(r => spec.on('open', () => r()));
+    spec.send(JSON.stringify({ type: 'spectate', roomCode }));
+
+    const connectVoice = async (spoken: string[]) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/voice`);
+      ws.on('message', d => {
+        const msg = JSON.parse(d.toString());
+        if (msg.type === 'text') spoken.push(String(msg.token));
+      });
+      await new Promise<void>(r => ws.on('open', () => r()));
+      ws.send(JSON.stringify({
+        type: 'setup', callSid, from: '+15551234567',
+        customParameters: { roomCode, game: 'monsters' },
+      }));
+      return ws;
+    };
+
+    const firstSpeech: string[] = [];
+    const first = await connectVoice(firstSpeech);
+    try {
+      await wait(40);
+      for (const text of ['Ada', 'start', 'Sparkmouse', 'battle']) {
+        first.send(JSON.stringify({ type: 'prompt', voicePrompt: text, last: true }));
+        await wait(40);
+      }
+      const before = states.at(-1);
+      expect(before?.phase).toBe('battle');
+      expect(before?.players?.[0]?.name).toBe('Ada');
+      expect(before?.players?.[0]?.monsterId).toBe('sparkmouse');
+
+      first.close();
+      await new Promise<void>(r => first.once('close', () => r()));
+      await wait(40);
+
+      const resumedSpeech: string[] = [];
+      const resumed = await connectVoice(resumedSpeech);
+      try {
+        await wait(900);
+        const after = states.at(-1);
+        expect(after?.phase).toBe('battle');
+        expect(after?.players?.[0]?.name).toBe('Ada');
+        expect(after?.players?.[0]?.monsterId).toBe('sparkmouse');
+        expect(after?.players).toHaveLength(1);
+        expect(resumedSpeech.join(' ')).toMatch(/back in the battle/i);
+        expect(resumedSpeech.join(' ')).not.toMatch(/what'?s your name|pick a monster/i);
+      } finally {
+        closeWs(resumed);
+      }
+    } finally {
+      closeWs(first);
+      closeWs(spec);
+    }
+  });
 });

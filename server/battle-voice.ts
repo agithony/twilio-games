@@ -9,7 +9,7 @@
 import { parseCrMessage } from './conversation-relay';
 import { matchBattleAction } from '../shared/battle-intent';
 import { commentaryForBattleEvent, battleIntro } from '../shared/battle-commentary';
-import { dwellForEvent } from '../shared/battle-timing';
+import { dwellForEvent, HANDOFF_PAUSE_MS } from '../shared/battle-timing';
 import type { BattleEvent, BattleAction } from '../shared/battle-world';
 
 /** A snapshot of the caller's live battle state, flattened for voice routing + the LLM host context. */
@@ -21,6 +21,7 @@ export interface BattleVoiceSnapshot {
   myMonsterId: string | null; myMonsterName: string | null;
   myMonsterType: string | null;
   canStartBattle: boolean;
+  canRematch: boolean;
   foeName: string | null;
   foeMonsterName: string | null;
   foeMonsterType: string | null;
@@ -37,8 +38,8 @@ export interface BattleVoiceSnapshot {
 
 /** Everything the session needs from its host (the HTTP server wires these to the BattleServer + LLM). */
 export interface BattleVoiceDeps {
-  join(code: string, name: string): string | null;   // → playerId, or null if full
-  leave(code: string, playerId: string): void;
+  join(code: string, name: string, callSid: string): { playerId: string; resumed: boolean } | null;
+  leave(code: string, playerId: string, callSid: string): void;
   setName(code: string, playerId: string, name: string): void;
   selectMonster(code: string, playerId: string, monsterId: string): void;
   openFight(code: string, playerId: string): void;
@@ -50,7 +51,7 @@ export interface BattleVoiceDeps {
   setTimer(fn: () => void, ms: number): void;
   snapshot(code: string, playerId: string): BattleVoiceSnapshot | null;
   /** Conversational LLM turn (host brain). Returns what to say, or null → scripted fallback / silence. */
-  converse(code: string, playerId: string, utterance: string): Promise<string | null>;
+  converse(code: string, playerId: string, utterance: string, isCurrent: () => boolean): Promise<string | null>;
 }
 
 const GREETING = [
@@ -64,9 +65,12 @@ const GREETING = [
 export class BattleVoiceSession {
   private code: string | null = null;
   private playerId: string | null = null;
+  private callSid: string | null = null;
   private menuLevel: 'root' | 'fight' = 'root';
   private lineSeq = 0;
   private turnEpoch = 0;   // barge-in guard for in-flight LLM replies (mirrors the racer adapter)
+  private lastPhase: BattleVoiceSnapshot['phase'] | null = null;
+  private lastCanRematch = false;
 
   constructor(private deps: BattleVoiceDeps) {}
 
@@ -79,10 +83,29 @@ export class BattleVoiceSession {
       case 'setup': {
         const code = msg.customParameters['roomCode'];
         if (!code) return;
-        const id = this.deps.join(code, playerName(msg.from));
-        if (!id) { this.deps.say('This Voice Monsters battle is already full or in progress. Please wait for the next round.'); return; }
-        this.code = code; this.playerId = id;
-        for (const line of GREETING) this.deps.say(line);
+        if (this.code && this.playerId) {
+          if (this.code === code) return;
+          this.deps.leave(this.code, this.playerId, this.callSid ?? '');
+          this.code = null; this.playerId = null; this.callSid = null;
+        }
+        const joined = this.deps.join(code, playerName(msg.from), msg.callSid);
+        if (!joined) { this.deps.say('This Voice Monsters battle is already full or in progress. Please wait for the next round.'); return; }
+        this.code = code; this.playerId = joined.playerId; this.callSid = msg.callSid;
+        if (joined.resumed) this.speakResumeCue();
+        else {
+          const snap = this.deps.snapshot(code, joined.playerId);
+          this.lastPhase = snap?.phase ?? null;
+          this.lastCanRematch = snap?.canRematch ?? false;
+          if (snap?.phase === 'battle' && !snap.myMonsterId) {
+            this.deps.say('A battle is already in progress. You are in for the next round.');
+            this.deps.say(snap.myName ? `Welcome, ${snap.myName}. I will tell you when the next battle is ready.` : "What's your name, challenger?");
+          } else if (snap?.phase === 'results') {
+            this.deps.say('That battle just ended. You are in for the next round.');
+            this.deps.say(snap.myName ? `Welcome, ${snap.myName}. Say rematch when you are ready.` : "What's your name, challenger?");
+          } else {
+            for (const line of GREETING) this.deps.say(line);
+          }
+        }
         break;
       }
       case 'prompt': {
@@ -114,10 +137,20 @@ export class BattleVoiceSession {
     // Every REQUIRED step of the flow has a deterministic, LLM-INDEPENDENT path here, so the game is
     // fully playable by voice even with the LLM off/slow. The LLM is only a fallback for chat/questions.
 
+    if (snap.phase === 'results' && (!snap.canRematch || this.draining || this.evQ.length > 0) && isAdvanceWord(text)) {
+      this.deps.say('Hold on, the final result is still being announced. I will tell you when the rematch is ready.');
+      return;
+    }
+
     // NAME CAPTURE: the first thing we ask in the lobby. On the monster-picking screen, however, a
     // monster name must pick the monster, not get mistaken for the caller's missing name.
-    if (!snap.myName && snap.phase === 'lobby' && !isAdvanceWord(text)) {
+    if (!snap.myName && (snap.phase === 'lobby' || snap.phase === 'results' || (snap.phase === 'battle' && !snap.myMonsterId)) && !isAdvanceWord(text)) {
       if (this.captureName(text, snap.phase)) return;
+    }
+
+    if (snap.phase === 'battle' && !snap.myMonsterId) {
+      this.deps.say('The current battle is still in progress. I will bring you in for the next round.');
+      return;
     }
 
     // ADVANCE / REMATCH: an intent to move forward ("start"/"go"/"choose a monster"/"next"/"rematch")
@@ -186,19 +219,23 @@ export class BattleVoiceSession {
   }
 
   private captureName(text: string, phase: BattleVoiceSnapshot['phase']): boolean {
-    const name = parseSpokenName(text);
+    const name = phase === 'monster_select' ? parseExplicitSpokenName(text) : parseSpokenName(text);
     if (!name) return false;
     this.deps.setName(this.code!, this.playerId!, name);
     this.deps.say(phase === 'lobby'
       ? `Nice to meet you, ${name}! Other players can call in to join, or when you're ready, just say "start" and we'll head to monster select.`
-      : `Nice to meet you, ${name}! Pick your monster, say a name from the screen.`);
+      : phase === 'results'
+        ? `Nice to meet you, ${name}! Say rematch when you are ready for the next battle.`
+        : phase === 'battle'
+          ? `Nice to meet you, ${name}! I will bring you in when the current battle ends.`
+        : `Nice to meet you, ${name}! Pick your monster, say a name from the screen.`);
     return true;
   }
 
   /** Fire the conversational host; speak its reply unless the caller has spoken again since (epoch). */
   private converse(text: string): void {
     const epoch = ++this.turnEpoch;
-    void this.deps.converse(this.code!, this.playerId!, text)
+    void this.deps.converse(this.code!, this.playerId!, text, () => epoch === this.turnEpoch && !this.isPresentingResults())
       .then(reply => { if (reply && epoch === this.turnEpoch) this.deps.say(reply); })
       .catch(() => { /* LLM failure → stay quiet, never break the call */ });
   }
@@ -208,6 +245,7 @@ export class BattleVoiceSession {
   private draining = false;
   private pendingStateCue = false;
   private lastTurnCueKey = '';
+  private lastActionSide: 'a' | 'b' | null = null;
 
   /** Receive a battle-state push. Used for proactive call guidance that is NOT part of the resolution
    *  event stream: battle intro, opening controls, whose turn it is, and who should wait. */
@@ -234,6 +272,14 @@ export class BattleVoiceSession {
       if (this.pendingStateCue) { this.pendingStateCue = false; this.speakStateCue(); }
       return;
     }
+    const actionSide = sideForActionEvent(ev);
+    if (actionSide && this.lastActionSide && this.lastActionSide !== actionSide) {
+      this.lastActionSide = actionSide;
+      this.evQ.unshift(ev);
+      this.deps.setTimer(() => this.drainEvents(), HANDOFF_PAUSE_MS);
+      return;
+    }
+    if (actionSide) this.lastActionSide = actionSide;
     this.speakEvent(ev);
     // Match the screen: hold for this event's own dwell, then narrate the next event/state cue.
     this.deps.setTimer(() => this.drainEvents(), dwellForEvent(ev));
@@ -280,15 +326,65 @@ export class BattleVoiceSession {
     const snap = this.deps.snapshot(this.code!, this.playerId!);
     if (!snap || snap.phase !== 'battle') {
       this.lastTurnCueKey = '';
-      if (snap?.phase === 'monster_select' || snap?.phase === 'lobby') this.introDone = false;
+      const previous = this.lastPhase;
+      this.lastPhase = snap?.phase ?? null;
+      const rematchBecameReady = previous === 'results' && snap?.phase === 'results' && snap.canRematch && !this.lastCanRematch;
+      this.lastCanRematch = snap?.phase === 'results' ? snap.canRematch : false;
+      if (rematchBecameReady) this.deps.say('The final result is in. Say rematch when you are ready.');
+      if (previous === 'battle' && snap?.phase === 'monster_select') {
+        const pick = snap.myMonsterName ? `${snap.myMonsterName} is still locked in. ` : '';
+        this.deps.say(`The other player left the battle. ${pick}Say battle to continue against Rival.`);
+      }
+      if (snap?.phase === 'monster_select' || snap?.phase === 'lobby') {
+        this.introDone = false;
+        this.lastActionSide = null;
+      }
       return;
     }
+    this.lastPhase = 'battle';
     if (!this.introDone) {
       this.introDone = true;
       this.menuLevel = 'root';
       this.deps.say(this.battleIntroFor(snap));
       this.deps.say('How to play: on your turn, say fight. Then pick one of the four attacks. You can also say guard, item, or taunt.');
     }
+    this.speakTurnCue(snap);
+  }
+
+  private isPresentingResults(): boolean {
+    if (!this.code || !this.playerId || (!this.draining && this.evQ.length === 0)) return false;
+    const snap = this.deps.snapshot(this.code, this.playerId);
+    return snap?.phase === 'results' && (!snap.canRematch || this.draining || this.evQ.length > 0);
+  }
+
+  private speakResumeCue(): void {
+    if (!this.code || !this.playerId) return;
+    const snap = this.deps.snapshot(this.code, this.playerId);
+    if (!snap) return;
+    this.lastPhase = snap.phase;
+    this.lastCanRematch = snap.canRematch;
+    if (snap.phase === 'battle') {
+      this.introDone = true;
+      this.menuLevel = snap.activeMenu;
+      this.deps.say("You're back in the battle.");
+      this.speakTurnCue(snap);
+      return;
+    }
+    if (snap.phase === 'monster_select') {
+      if (snap.myMonsterName) this.deps.say(`You're back. ${snap.myMonsterName} is locked in. ${snap.canStartBattle ? 'Say battle to begin.' : 'Waiting for the other player to pick their monster.'}`);
+      else this.deps.say('You are back in monster select. Say a monster name from the screen, or a number.');
+      return;
+    }
+    if (snap.phase === 'results') {
+      this.deps.say(snap.canRematch
+        ? 'You are back at the results. Say rematch to battle again.'
+        : 'You are back at the results. The final announcement is still playing.');
+      return;
+    }
+    this.deps.say(snap.myName ? `You are back, ${snap.myName}. Say start when you are ready.` : "You are back. What's your name, challenger?");
+  }
+
+  private speakTurnCue(snap: BattleVoiceSnapshot): void {
     const key = `${snap.turn ?? 0}:${snap.activeSide ?? 'none'}:${snap.whoseTurn ?? 'none'}`;
     if (key === this.lastTurnCueKey) return;
     this.lastTurnCueKey = key;
@@ -310,8 +406,17 @@ export class BattleVoiceSession {
   }
 
   handleClose(): void {
-    if (this.code && this.playerId) this.deps.leave(this.code, this.playerId);
-    this.code = null; this.playerId = null;
+    this.turnEpoch++;
+    if (this.code && this.playerId) this.deps.leave(this.code, this.playerId, this.callSid ?? '');
+    this.code = null; this.playerId = null; this.callSid = null;
+  }
+
+  handleReplaced(): void {
+    this.turnEpoch++;
+    this.evQ = [];
+    this.draining = false;
+    this.pendingStateCue = false;
+    this.code = null; this.playerId = null; this.callSid = null;
   }
 }
 
@@ -350,8 +455,12 @@ function matchNameOrNumber(spoken: string, choices: string[]): number {
   const ORD: Record<string, number> = { first: 1, second: 2, third: 3, fourth: 4, fifth: 5, sixth: 6, seventh: 7, eighth: 8 };
   const digit = q.match(/\b(\d)(?:st|nd|rd|th)?\b/);
   if (digit) { const n = parseInt(digit[1]!, 10); if (n >= 1 && n <= choices.length) return n - 1; }
-  for (const [w, n] of Object.entries(ORD)) if (new RegExp(`\\b${w}\\b`).test(q) && n <= choices.length) return n - 1;
-  for (const [w, n] of Object.entries(NUM)) if (new RegExp(`\\b${w}\\b`).test(q) && n <= choices.length) return n - 1;
+  for (const [w, n] of Object.entries(ORD)) {
+    if (new RegExp(`^(?:i(?:'d| would)? (?:like|take|pick) )?(?:the )?${w}(?: one| monster| option)?$`).test(q) && n <= choices.length) return n - 1;
+  }
+  for (const [w, n] of Object.entries(NUM)) {
+    if (new RegExp(`^(?:i(?:'d| would)? (?:like|take|pick) )?(?:(?:number|monster|option) )?${w}$`).test(q) && n <= choices.length) return n - 1;
+  }
   // name: exact, then substring either way
   let i = choices.findIndex(c => c.toLowerCase() === q);
   if (i >= 0) return i;
@@ -362,6 +471,11 @@ function matchNameOrNumber(spoken: string, choices: string[]): number {
 function playerName(from?: string): string {
   if (from && from.length >= 4) return `Player ${from.slice(-4)}`;
   return 'Challenger';
+}
+
+function sideForActionEvent(ev: BattleEvent): 'a' | 'b' | null {
+  return ev.kind === 'move_used' || ev.kind === 'guard' || ev.kind === 'item' || ev.kind === 'taunt'
+    ? ev.by : null;
 }
 
 /** Extract a caller's NAME from a spoken reply, or null if it doesn't look like a name (a question, a
@@ -384,4 +498,9 @@ export function parseSpokenName(spoken: string): string | null {
   if (name.length < 2 || name.length > 20) return null;
   // Title-case for display.
   return name.replace(/\b[a-z]/g, c => c.toUpperCase());
+}
+
+function parseExplicitSpokenName(spoken: string): string | null {
+  if (!/^(?:my name is|i am|i'm|im|this is|it's|its|call me|the name's|name's)\s+/i.test(spoken.trim())) return null;
+  return parseSpokenName(spoken);
 }

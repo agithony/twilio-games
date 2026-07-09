@@ -11,7 +11,13 @@ import { parseBattleClientMessage, type BattleServerMessage } from '../shared/ba
 import { rosterEntries } from '../shared/monster-roster';
 import type { BattleEvent, BattleAction } from '../shared/battle-world';
 
-interface Conn { ws: WebSocket; roomCode?: string; playerId?: string; isAlive: boolean; }
+interface Conn { ws: WebSocket; roomCode?: string; playerId?: string; sessionId?: string; isAlive: boolean; }
+interface PlayerSession {
+  roomCode: string;
+  playerId: string;
+  conn: Conn | null;
+  leaveTimer: ReturnType<typeof setTimeout> | null;
+}
 
 // How often we ping idle battle sockets. Battle traffic is event-driven (a push only on a change), so
 // a player sitting on the monster-select screen sends/receives nothing — without a heartbeat an idle
@@ -19,11 +25,13 @@ interface Conn { ws: WebSocket; roomCode?: string; playerId?: string; isAlive: b
 // and the reconnect lands in an empty lobby (the "select screen reverts to play-here" bug). 30s keeps
 // it comfortably under typical idle-timeout windows.
 const HEARTBEAT_MS = 30_000;
+const PLAYER_RECONNECT_GRACE_MS = 30_000;
 
 export class BattleServer {
   private wss: WebSocketServer | null = null;
   private conns = new Set<Conn>();
   private rooms = new Map<string, BattleRoom>();
+  private playerSessions = new Map<string, PlayerSession>();
   private heartbeat: ReturnType<typeof setInterval> | null = null;
   private seedCounter = 0x1234abcd;
   private readonly port: number | undefined;
@@ -80,7 +88,7 @@ export class BattleServer {
     ws.on('error', () => { /* don't crash on a socket error; close handler cleans up */ });
     ws.on('close', () => {
       const code = conn.roomCode;
-      if (code && conn.playerId) this.rooms.get(code)?.removePlayer(conn.playerId);
+      if (code && conn.playerId && !this.holdPlayerForReconnect(conn)) this.rooms.get(code)?.removePlayer(conn.playerId);
       this.conns.delete(conn);
       if (code) { this.pushState(code); this.reapIfEmpty(code); }
     });
@@ -107,15 +115,30 @@ export class BattleServer {
     if (msg.type === 'error') { this.send(conn, msg); return; }
     switch (msg.type) {
       case 'join': {
+        if (conn.playerId && conn.roomCode) {
+          this.send(conn, { type: 'joined', playerId: conn.playerId, roomCode: conn.roomCode });
+          this.pushState(conn.roomCode);
+          break;
+        }
+        if (msg.sessionId) {
+          const resumed = this.resumePlayerSession(msg.roomCode, msg.sessionId, conn);
+          if (resumed) {
+            this.send(conn, { type: 'joined', playerId: resumed, roomCode: msg.roomCode });
+            this.pushState(msg.roomCode);
+            break;
+          }
+        }
         const room = this.room(msg.roomCode);
         const res = room.addPlayer(msg.name);
         if ('error' in res) { this.send(conn, { type: 'error', code: res.error, message: res.error }); return; }
-        conn.roomCode = msg.roomCode; conn.playerId = res.playerId;
+        conn.roomCode = msg.roomCode; conn.playerId = res.playerId; conn.sessionId = msg.sessionId;
+        if (msg.sessionId) this.rememberPlayerSession(msg.sessionId, conn);
         this.send(conn, { type: 'joined', playerId: res.playerId, roomCode: msg.roomCode });
         this.pushState(msg.roomCode);
         break;
       }
       case 'spectate': {
+        if (conn.playerId) { this.send(conn, { type: 'error', code: 'already_joined', message: 'leave before spectating' }); return; }
         this.room(msg.roomCode);
         conn.roomCode = msg.roomCode;   // display / spectator: no slot
         this.pushState(msg.roomCode);
@@ -147,9 +170,16 @@ export class BattleServer {
         this.withRoom(conn, (room) => { room.back(); this.pushState(room.code); });
         break;
       case 'leave':
-        this.withRoom(conn, (room) => {
-          if (conn.playerId) { room.removePlayer(conn.playerId); conn.playerId = undefined; this.pushState(room.code); this.reapIfEmpty(room.code); }
-        });
+        if (conn.playerId) {
+          const playerId = conn.playerId;
+          this.withRoom(conn, (room) => {
+            this.forgetPlayerSession(conn.sessionId);
+            room.removePlayer(playerId); conn.playerId = undefined; conn.sessionId = undefined;
+            this.pushState(room.code); this.reapIfEmpty(room.code);
+          });
+        } else if (msg.sessionId) {
+          this.releasePlayerSession(msg.sessionId);
+        }
         break;
     }
   }
@@ -159,30 +189,103 @@ export class BattleServer {
     if (room) fn(room);
   }
 
-  /** Commit a player's turn action (via `commit`), then flush events + push state; in single-player,
-   *  schedule the CPU's deferred beat if it still owes a move. Shared by choose_move + choose_action. */
-  private commitTurn(room: BattleRoom, commit: () => void): void {
-    commit();
-    this.flushEvents(room);       // any events from a 2P turn resolving…
-    this.pushState(room.code);    // …then state (shows "you chose — waiting" if AI still owes)
-    if (room.aiPending()) this.scheduleAiTurn(room.code);
+  private rememberPlayerSession(sessionId: string, conn: Conn): void {
+    const prior = this.playerSessions.get(sessionId);
+    if (prior?.leaveTimer) clearTimeout(prior.leaveTimer);
+    this.playerSessions.set(sessionId, {
+      roomCode: conn.roomCode!, playerId: conn.playerId!, conn, leaveTimer: null,
+    });
   }
 
-  /** Rooms with a scheduled AI turn (avoids double-scheduling if extra pushes arrive). */
-  private aiTimers = new Set<string>();
+  private resumePlayerSession(roomCode: string, sessionId: string, conn: Conn): string | null {
+    const session = this.playerSessions.get(sessionId);
+    if (!session || session.roomCode !== roomCode) return null;
+    const room = this.rooms.get(roomCode);
+    if (!room?.lobbyPlayers().some(p => p.playerId === session.playerId)) {
+      this.forgetPlayerSession(sessionId);
+      return null;
+    }
+    if (session.leaveTimer) { clearTimeout(session.leaveTimer); session.leaveTimer = null; }
+    if (session.conn && session.conn !== conn) {
+      session.conn.playerId = undefined;
+      session.conn.roomCode = undefined;
+      session.conn.sessionId = undefined;
+      session.conn.ws.close(4001, 'session replaced');
+    }
+    session.conn = conn;
+    conn.roomCode = roomCode; conn.playerId = session.playerId; conn.sessionId = sessionId;
+    return session.playerId;
+  }
+
+  private holdPlayerForReconnect(conn: Conn): boolean {
+    const sessionId = conn.sessionId;
+    if (!sessionId) return false;
+    const session = this.playerSessions.get(sessionId);
+    if (!session || session.conn !== conn) return false;
+    if (session.leaveTimer) clearTimeout(session.leaveTimer);
+    session.conn = null;
+    const leaveTimer = setTimeout(() => {
+      const current = this.playerSessions.get(sessionId);
+      if (!current || current.conn || current.leaveTimer !== leaveTimer) return;
+      this.playerSessions.delete(sessionId);
+      const room = this.rooms.get(current.roomCode);
+      room?.removePlayer(current.playerId);
+      this.pushState(current.roomCode);
+      this.reapIfEmpty(current.roomCode);
+    }, PLAYER_RECONNECT_GRACE_MS);
+    (leaveTimer as { unref?: () => void }).unref?.();
+    session.leaveTimer = leaveTimer;
+    return true;
+  }
+
+  private forgetPlayerSession(sessionId?: string): void {
+    if (!sessionId) return;
+    const session = this.playerSessions.get(sessionId);
+    if (session?.leaveTimer) clearTimeout(session.leaveTimer);
+    this.playerSessions.delete(sessionId);
+  }
+
+  private releasePlayerSession(sessionId: string): void {
+    const session = this.playerSessions.get(sessionId);
+    if (!session) return;
+    if (session.leaveTimer) clearTimeout(session.leaveTimer);
+    this.playerSessions.delete(sessionId);
+    this.rooms.get(session.roomCode)?.removePlayer(session.playerId);
+    this.pushState(session.roomCode);
+    this.reapIfEmpty(session.roomCode);
+  }
+
+  /** Commit a player's turn action (via `commit`), then flush events + push state; in single-player,
+   *  schedule the CPU's deferred beat if it still owes a move. Shared by choose_move + choose_action. */
+  private commitTurn(room: BattleRoom, commit: () => boolean): void {
+    if (!commit()) return;
+    this.flushEvents(room);       // any events from a 2P turn resolving…
+    this.pushState(room.code);    // …then state (shows "you chose — waiting" if AI still owes)
+    if (room.aiPending()) this.scheduleAiTurn(room);
+  }
+
+  /** One generation/turn-bound AI timer per room. A rematch replaces any stale prior timer. */
+  private aiTimers = new Map<string, { timer: ReturnType<typeof setTimeout>; generation: number }>();
   /** After the human commits, take the CPU's turn a beat later so it reads as a separate move:
    *  the "Waiting for Rival…" state is already on screen; ~700ms later the rival attacks + resolves. */
-  private scheduleAiTurn(roomCode: string): void {
-    if (this.aiTimers.has(roomCode)) return;
-    this.aiTimers.add(roomCode);
-    setTimeout(() => {
+  private scheduleAiTurn(room: BattleRoom): void {
+    const roomCode = room.code;
+    const generation = room.generation;
+    const expectedTurn = room.snapshot()?.turn ?? -1;
+    const existing = this.aiTimers.get(roomCode);
+    if (existing?.generation === generation) return;
+    if (existing) clearTimeout(existing.timer);
+    const timer = setTimeout(() => {
+      const scheduled = this.aiTimers.get(roomCode);
+      if (!scheduled || scheduled.timer !== timer) return;
       this.aiTimers.delete(roomCode);
-      const room = this.rooms.get(roomCode);
-      if (!room) return;
+      if (this.rooms.get(roomCode) !== room) return;
+      if (room.generation !== generation || room.snapshot()?.turn !== expectedTurn || !room.aiPending()) return;
       room.resolveAiTurn();
       this.flushEvents(room);
       this.pushState(roomCode);
     }, 700);
+    this.aiTimers.set(roomCode, { timer, generation });
   }
 
   /** Push the current battle_state to every connection watching a room. Sent on every change (join,
@@ -195,10 +298,29 @@ export class BattleServer {
       type: 'battle_state', roomCode, phase: room.phase,
       players: room.lobbyPlayers(), snapshot: room.snapshot(),
       activeSide: room.activeSide(), activeMenu: room.activeMenu(),
+      canRematch: room.canRematch,
       result: res ? { winner: res.winner, winnerName: res.winnerName } : null,
     };
     for (const c of this.conns) if (c.roomCode === roomCode) this.send(c, msg);
     this.onRoomState?.(roomCode);
+    this.scheduleResultsReady(room);
+  }
+
+  private resultsTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+  private scheduleResultsReady(room: BattleRoom): void {
+    const existing = this.resultsTimers.get(room.code);
+    if (room.phase !== 'results' || room.canRematch) {
+      if (existing) { clearTimeout(existing); this.resultsTimers.delete(room.code); }
+      return;
+    }
+    if (existing) return;
+    const timer = setTimeout(() => {
+      this.resultsTimers.delete(room.code);
+      if (this.rooms.get(room.code) === room) this.pushState(room.code);
+    }, room.rematchReadyInMs + 5);
+    (timer as { unref?: () => void }).unref?.();
+    this.resultsTimers.set(room.code, timer);
   }
 
   /** Drain the room's ordered battle events → screen (as battle_events) + voice layer. Sent BEFORE
@@ -259,6 +381,10 @@ export class BattleServer {
     const room = this.rooms.get(roomCode);
     if (!room || !room.isEmpty) return;
     for (const c of this.conns) if (c.roomCode === roomCode) return;   // a spectator still watching
+    const ai = this.aiTimers.get(roomCode);
+    if (ai) { clearTimeout(ai.timer); this.aiTimers.delete(roomCode); }
+    const results = this.resultsTimers.get(roomCode);
+    if (results) { clearTimeout(results); this.resultsTimers.delete(roomCode); }
     this.rooms.delete(roomCode);
   }
 
@@ -271,12 +397,24 @@ export class BattleServer {
   }
   stopLoopOnly(): void {
     this.stopHeartbeat();
+    for (const session of this.playerSessions.values()) if (session.leaveTimer) clearTimeout(session.leaveTimer);
+    this.playerSessions.clear();
+    for (const { timer } of this.aiTimers.values()) clearTimeout(timer);
+    this.aiTimers.clear();
+    for (const timer of this.resultsTimers.values()) clearTimeout(timer);
+    this.resultsTimers.clear();
     for (const c of this.conns) c.ws.close();
     this.conns.clear();
   }
   stop(): Promise<void> {
     return new Promise((resolve) => {
       this.stopHeartbeat();
+      for (const session of this.playerSessions.values()) if (session.leaveTimer) clearTimeout(session.leaveTimer);
+      this.playerSessions.clear();
+      for (const { timer } of this.aiTimers.values()) clearTimeout(timer);
+      this.aiTimers.clear();
+      for (const timer of this.resultsTimers.values()) clearTimeout(timer);
+      this.resultsTimers.clear();
       for (const c of this.conns) c.ws.close();
       this.conns.clear();
       if (this.wss) this.wss.close(() => resolve()); else resolve();

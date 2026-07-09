@@ -6,7 +6,7 @@ import type { BattleSnapshot, BattleEvent, BattleAction } from './battle-world';
 
 /** Client → server. */
 export type BattleClientMessage =
-  | { type: 'join'; roomCode: string; name: string }        // become a player (max 2 humans)
+  | { type: 'join'; roomCode: string; name: string; sessionId?: string } // become/resume a player
   | { type: 'spectate'; roomCode: string }                  // the shared display (no slot)
   | { type: 'select_monster'; monsterId: string }           // during monster_select
   | { type: 'open_fight' }                                  // battle: active side opens its 4 moves
@@ -15,7 +15,7 @@ export type BattleClientMessage =
   | { type: 'choose_action'; action: BattleAction }         // a turn action: fight/guard/item/taunt
   | { type: 'advance' }                                     // host: lobby→select→battle / rematch
   | { type: 'back' }                                        // host: step back a phase
-  | { type: 'leave' };                                      // drop the player slot, keep watching
+  | { type: 'leave'; sessionId?: string };                   // drop the player slot, keep watching
 
 /** One selectable creature, flattened for the select screen (no logic, just display data). */
 export interface RosterEntry {
@@ -34,6 +34,7 @@ export type BattleServerMessage =
   | { type: 'battle_state'; roomCode: string; phase: string;
       players: BattleLobbyPlayer[]; snapshot: BattleSnapshot | null;
       activeSide?: 'a' | 'b' | null; activeMenu?: 'root' | 'fight';
+      canRematch?: boolean;
       result: { winner: string; winnerName: string } | null }
   | { type: 'battle_events'; events: BattleEvent[] }         // ordered — renderer/commentator replay
   | { type: 'error'; code: string; message: string };
@@ -49,7 +50,9 @@ export function parseBattleClientMessage(raw: string): ParseResult {
   switch (m.type) {
     case 'join':
       if (typeof m.roomCode !== 'string' || typeof m.name !== 'string') return err('bad_join', 'roomCode + name required');
-      return { type: 'join', roomCode: m.roomCode, name: m.name };
+      if (m.sessionId !== undefined && (typeof m.sessionId !== 'string' || !m.sessionId.trim() || m.sessionId.length > 128)) return err('bad_join', 'invalid sessionId');
+      return { type: 'join', roomCode: m.roomCode, name: m.name,
+        ...(typeof m.sessionId === 'string' ? { sessionId: m.sessionId } : {}) };
     case 'spectate':
       if (typeof m.roomCode !== 'string') return err('bad_spectate', 'roomCode required');
       return { type: 'spectate', roomCode: m.roomCode };
@@ -68,7 +71,9 @@ export function parseBattleClientMessage(raw: string): ParseResult {
     }
     case 'advance': return { type: 'advance' };
     case 'back':    return { type: 'back' };
-    case 'leave':   return { type: 'leave' };
+    case 'leave':
+      if (m.sessionId !== undefined && (typeof m.sessionId !== 'string' || !m.sessionId.trim() || m.sessionId.length > 128)) return err('bad_leave', 'invalid sessionId');
+      return { type: 'leave', ...(typeof m.sessionId === 'string' ? { sessionId: m.sessionId } : {}) };
     default:        return err('unknown_type', `unknown type ${String(m.type)}`);
   }
 }

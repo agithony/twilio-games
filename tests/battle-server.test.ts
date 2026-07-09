@@ -78,13 +78,13 @@ describe('BattleServer', () => {
     // Reproduces the "select screen reverts to play-here" bug: on an idle socket the heartbeat must
     // keep the connection alive AND the player in their slot. A responsive ws client auto-pongs, so
     // across several fast sweeps it should never be terminated or dropped. (heartbeatMs tiny for speed.)
-    server = new BattleServer({ port: 0, heartbeatMs: 20 });
+    server = new BattleServer({ port: 0, heartbeatMs: 100 });
     const port = await server.start();
     const { ws, msgs } = await connectCollect(port);
     send(ws, { type: 'join', roomCode: '4821', name: 'Ada' });
     await wait(40);
     send(ws, { type: 'advance' });   // → monster_select, then sit idle
-    await wait(300);                 // ~15 heartbeat sweeps with no app traffic
+    await wait(550);                 // several heartbeat sweeps with no app traffic
     expect(ws.readyState).toBe(WebSocket.OPEN);                         // socket stayed up
     const state = msgs.filter(m => m.type === 'battle_state').at(-1)!;
     expect(state.phase).toBe('monster_select');                        // did NOT revert to lobby
@@ -103,6 +103,88 @@ describe('BattleServer', () => {
     const state = am.filter(m => m.type === 'battle_state').at(-1)!;
     expect((state.players as unknown[]).length).toBe(2);
     a.close(); b.close();
+  });
+
+  it('treats a repeated join frame on one socket as idempotent', async () => {
+    server = new BattleServer({ port: 0 });
+    const port = await server.start();
+    const { ws, msgs } = await connectCollect(port);
+    send(ws, { type: 'join', roomCode: '4821', name: 'Ada' });
+    await wait(40);
+    send(ws, { type: 'join', roomCode: '4821', name: 'Ada' });
+    await wait(40);
+
+    const state = msgs.filter(m => m.type === 'battle_state').at(-1)!;
+    expect((state.players as unknown[])).toHaveLength(1);
+    ws.close();
+  });
+
+  it('resumes a browser player session without resetting an active battle', async () => {
+    server = new BattleServer({ port: 0 });
+    const port = await server.start();
+    const sessionId = 'browser-session-1';
+    const first = await connectCollect(port);
+    send(first.ws, { type: 'join', roomCode: '4821', name: 'Ada', sessionId });
+    await wait(40);
+    const originalId = String(first.msgs.find(m => m.type === 'joined')!.playerId);
+    send(first.ws, { type: 'advance' });
+    await wait(40);
+    send(first.ws, { type: 'select_monster', monsterId: 'sparkmouse' });
+    await wait(40);
+    send(first.ws, { type: 'advance' });
+    await wait(40);
+    expect(first.msgs.filter(m => m.type === 'battle_state').at(-1)!.phase).toBe('battle');
+
+    first.ws.close();
+    await new Promise<void>(r => first.ws.once('close', () => r()));
+    const resumed = await connectCollect(port);
+    send(resumed.ws, { type: 'join', roomCode: '4821', name: 'Ada', sessionId });
+    await wait(60);
+
+    expect(String(resumed.msgs.find(m => m.type === 'joined')!.playerId)).toBe(originalId);
+    const state = resumed.msgs.filter(m => m.type === 'battle_state').at(-1)!;
+    expect(state.phase).toBe('battle');
+    expect((state.players as { playerId: string; monsterId: string }[])).toEqual([
+      expect.objectContaining({ playerId: originalId, monsterId: 'sparkmouse' }),
+    ]);
+    resumed.ws.close();
+  });
+
+  it('closes a replaced browser tab with a non-reconnect takeover code', async () => {
+    server = new BattleServer({ port: 0 });
+    const port = await server.start();
+    const sessionId = 'shared-tab-session';
+    const first = await connectCollect(port);
+    send(first.ws, { type: 'join', roomCode: '4821', name: 'Ada', sessionId });
+    await wait(40);
+    const closed = new Promise<number>(r => first.ws.once('close', code => r(code)));
+    const second = await connectCollect(port);
+    send(second.ws, { type: 'join', roomCode: '4821', name: 'Ada', sessionId });
+
+    expect(await closed).toBe(4001);
+    await wait(40);
+    expect((second.msgs.filter(m => m.type === 'battle_state').at(-1)!.players as unknown[])).toHaveLength(1);
+    second.ws.close();
+  });
+
+  it('releases a held player session when leave arrives on the reconnecting spectator socket', async () => {
+    server = new BattleServer({ port: 0 });
+    const port = await server.start();
+    const sessionId = 'release-session';
+    const first = await connectCollect(port);
+    send(first.ws, { type: 'join', roomCode: '4821', name: 'Ada', sessionId });
+    await wait(40);
+    first.ws.close();
+    await new Promise<void>(r => first.ws.once('close', () => r()));
+
+    const spec = await connectCollect(port);
+    send(spec.ws, { type: 'spectate', roomCode: '4821' });
+    send(spec.ws, { type: 'leave', sessionId });
+    await wait(60);
+
+    const state = spec.msgs.filter(m => m.type === 'battle_state').at(-1)!;
+    expect((state.players as unknown[])).toHaveLength(0);
+    spec.ws.close();
   });
 
   it('two-player battle broadcasts activeSide and activeMenu, and gates commands to that side', async () => {

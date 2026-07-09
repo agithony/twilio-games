@@ -9,6 +9,13 @@ describe('parseBattleClientMessage', () => {
       .toEqual({ type: 'spectate', roomCode: '4821' });
   });
 
+  it('parses and validates the optional reconnect session id', () => {
+    expect(parseBattleClientMessage(JSON.stringify({ type: 'join', roomCode: '4821', name: 'Ada', sessionId: 'session-1' })))
+      .toEqual({ type: 'join', roomCode: '4821', name: 'Ada', sessionId: 'session-1' });
+    expect(parseBattleClientMessage(JSON.stringify({ type: 'join', roomCode: '4821', name: 'Ada', sessionId: '' })).type)
+      .toBe('error');
+  });
+
   it('parses the in-game actions', () => {
     expect(parseBattleClientMessage(JSON.stringify({ type: 'select_monster', monsterId: 'embertail' })))
       .toEqual({ type: 'select_monster', monsterId: 'embertail' });
@@ -18,6 +25,8 @@ describe('parseBattleClientMessage', () => {
       .toEqual({ type: 'choose_move', moveId: 'embertail.ember' });
     expect(parseBattleClientMessage(JSON.stringify({ type: 'advance' })).type).toBe('advance');
     expect(parseBattleClientMessage(JSON.stringify({ type: 'leave' })).type).toBe('leave');
+    expect(parseBattleClientMessage(JSON.stringify({ type: 'leave', sessionId: 'session-1' })))
+      .toEqual({ type: 'leave', sessionId: 'session-1' });
   });
 
   it('parses the four turn actions (choose_action)', () => {

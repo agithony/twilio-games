@@ -130,6 +130,12 @@ describe('battleHostTurn', () => {
     expect(seen).toContain('guard');
   });
 
+  it('relies on battle event commentary after an action instead of double-speaking the model reply', async () => {
+    const llm = new FakeLlm({ say: 'Thunder Jolt!', toolCalls: [{ name: 'choose_action', args: { action: 'fight:Thunder Jolt' } }] });
+    const reply = await battleHostTurn(llm, ctx({ phase: 'battle', chooseAction: () => null }), []);
+    expect(reply).toBeNull();
+  });
+
   it('trusts the model words over the tool confirmation (no double-speak)', async () => {
     const llm = new FakeLlm({ say: 'Great pick — the Embertail!', toolCalls: [{ name: 'select_monster', args: { name: 'Embertail' } }] });
     const reply = await battleHostTurn(llm, ctx({ selectMonster: () => 'Locked in the Embertail!' }), []);

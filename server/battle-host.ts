@@ -121,6 +121,9 @@ export async function battleHostTurn(
   if (!llm.enabled) return null;
   const reply = await llm.respond(buildBattleSystemPrompt(ctx), history, BATTLE_HOST_TOOLS);
   const confirmations = reply.toolCalls.map(tc => runBattleTool(ctx, tc)).filter((s): s is string => !!s);
+  // A committed battle action immediately emits authoritative move/guard/item/taunt events, which the
+  // commentator narrates. Do not also speak the model's acknowledgement for the same action.
+  if (reply.toolCalls.some(tc => tc.name === 'choose_action')) return null;
   const said = reply.say.trim();
   // Anti-repetition: if the model spoke, trust ITS words alone (it usually acknowledges its own
   // action). Only fall back to the tool confirmation on a bare tool call. Never concatenate both.

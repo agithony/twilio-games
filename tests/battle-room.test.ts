@@ -2,7 +2,7 @@
 // pure BattleWorld and manages joining, per-player monster picks, single-player (1 human vs AI) vs
 // 2-player (human vs human), and AI move responses. Mirrors Room's public shape so the GameServer
 // wiring is familiar. Kept free of ws/http so it's unit-testable.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { BattleRoom } from '../server/battle-room';
 import { ROSTER } from '../shared/monster-roster';
 
@@ -53,15 +53,32 @@ describe('BattleRoom', () => {
   it('rejects late joins during an active battle instead of corrupting the current matchup', () => {
     const r = room();
     const a = r.addPlayer('Ada') as { playerId: string };
+    const b = r.addPlayer('Bo') as { playerId: string };
     r.advance();
     r.selectMonster(a.playerId, M0);
+    r.selectMonster(b.playerId, M1);
     r.advance();
 
     const late = r.addPlayer('Late');
 
     expect('error' in late).toBe(true);
-    expect(r.playerCount).toBe(1);
+    expect(r.playerCount).toBe(2);
     expect(r.phase).toBe('battle');
+  });
+
+  it('queues a second player who joins an active solo battle without changing the matchup', () => {
+    const r = room();
+    const a = r.addPlayer('Ada') as { playerId: string };
+    r.advance(); r.selectMonster(a.playerId, M0); r.advance();
+    const before = r.snapshot()!;
+
+    const queued = r.addPlayer('Bo');
+
+    expect('playerId' in queued).toBe(true);
+    expect(r.phase).toBe('battle');
+    expect(r.playerCount).toBe(2);
+    expect(r.snapshot()!.a.id).toBe(before.a.id);
+    expect(r.snapshot()!.b.id).toBe(before.b.id);
   });
 
   it('does not reset a full results room when a late player tries to join', () => {
@@ -84,6 +101,50 @@ describe('BattleRoom', () => {
     expect('error' in late).toBe(true);
     expect(r.phase).toBe('results');
     expect(r.playerCount).toBe(2);
+  });
+
+  it('lets a second player join after solo results without erasing the finished battle', () => {
+    const r = room();
+    const a = r.addPlayer('Ada') as { playerId: string };
+    r.advance(); r.selectMonster(a.playerId, 'embertail'); r.advance();
+    for (let i = 0; i < 100 && r.phase === 'battle'; i++) {
+      const s = r.snapshot()!;
+      r.chooseMove(a.playerId, s.a.moves[1]!.id);
+      if (r.aiPending()) r.resolveAiTurn();
+    }
+    expect(r.phase).toBe('results');
+
+    const late = r.addPlayer('Late');
+
+    expect('playerId' in late).toBe(true);
+    expect(r.phase).toBe('results');
+    expect(r.playerCount).toBe(2);
+    expect(r.result()).not.toBeNull();
+  });
+
+  it('does not allow a rematch until the final event sequence has finished', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+      const r = room();
+      const a = r.addPlayer('Ada') as { playerId: string };
+      r.advance(); r.selectMonster(a.playerId, 'embertail'); r.advance();
+      for (let i = 0; i < 100 && r.phase === 'battle'; i++) {
+        const s = r.snapshot()!;
+        r.chooseMove(a.playerId, s.a.moves[1]!.id);
+        if (r.aiPending()) r.resolveAiTurn();
+      }
+      expect(r.phase).toBe('results');
+      expect(r.canRematch).toBe(false);
+
+      r.advance();
+      expect(r.phase).toBe('results');
+      vi.advanceTimersByTime(r.rematchReadyInMs + 1);
+      r.advance();
+      expect(r.phase).toBe('monster_select');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('SINGLE-PLAYER: human action resolves immediately → AI is pending for the next beat', () => {
@@ -145,6 +206,19 @@ describe('BattleRoom', () => {
     expect(r.activeSide()).toBe('a');
   });
 
+  it('does not consume the active side turn for an invalid move', () => {
+    const r = room();
+    const a = r.addPlayer('Ada') as { playerId: string };
+    r.advance(); r.selectMonster(a.playerId, M0); r.advance();
+    const before = r.snapshot()!.turn;
+
+    expect(r.chooseMove(a.playerId, 'not-a-real-move')).toBe(false);
+
+    expect(r.snapshot()!.turn).toBe(before);
+    expect(r.activeSide()).toBe('a');
+    expect(r.aiPending()).toBe(false);
+  });
+
   it('server-synced fight menu only opens for the active side', () => {
     const r = room();
     const a = r.addPlayer('Ada') as { playerId: string };
@@ -161,7 +235,7 @@ describe('BattleRoom', () => {
     expect(r.activeMenu()).toBe('root');
   });
 
-  it('interrupts a 2P battle if an active participant leaves so the remaining player is not stuck', () => {
+  it('interrupts a 2P battle if a participant leaves but preserves the survivor monster pick', () => {
     const r = room();
     const a = r.addPlayer('Ada') as { playerId: string };
     const b = r.addPlayer('Bo') as { playerId: string };
@@ -175,7 +249,7 @@ describe('BattleRoom', () => {
     expect(r.phase).toBe('monster_select');
     expect(r.playerCount).toBe(1);
     expect(r.snapshot()).toBeNull();
-    expect(r.lobbyPlayers()[0]!.monsterId).toBeNull();
+    expect(r.lobbyPlayers()[0]!.monsterId).toBe(M1);
   });
 
   it('reaches results with a winner when a monster faints', () => {

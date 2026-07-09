@@ -8,6 +8,7 @@ export interface BattleStateMsg {
   roomCode: string; phase: string; players: BattleLobbyPlayer[];
   snapshot: BattleSnapshot | null; result: { winner: string; winnerName: string } | null;
   activeSide?: 'a' | 'b' | null; activeMenu?: 'root' | 'fight';
+  canRematch?: boolean;
 }
 
 export class BattleConnection {
@@ -15,7 +16,8 @@ export class BattleConnection {
   private closed = false;
   private backoff = 500;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  private identity: { type: 'join'; roomCode: string; name: string } | { type: 'spectate'; roomCode: string } | null = null;
+  private pendingReleaseSessionId: string | null = null;
+  private identity: { type: 'join'; roomCode: string; name: string; sessionId: string } | { type: 'spectate'; roomCode: string } | null = null;
 
   private onRosterCb?: (m: RosterEntry[]) => void;
   private onStateCb?: (m: BattleStateMsg) => void;
@@ -35,8 +37,18 @@ export class BattleConnection {
       else if (m.type === 'joined') this.onJoinedCb?.(m.playerId);
       else if (m.type === 'error') this.onErrorCb?.(m.code, m.message);
     };
-    this.ws.onopen = () => { this.backoff = 500; if (this.identity) this.rawSend(this.identity); };
-    this.ws.onclose = () => { if (!this.closed) this.scheduleReconnect(); };
+    this.ws.onopen = () => {
+      this.backoff = 500;
+      if (this.identity) this.rawSend(this.identity);
+      if (this.pendingReleaseSessionId) {
+        this.rawSend({ type: 'leave', sessionId: this.pendingReleaseSessionId });
+        this.pendingReleaseSessionId = null;
+      }
+    };
+    this.ws.onclose = (ev) => {
+      if (ev.code === 4001) { this.closed = true; return; }
+      if (!this.closed) this.scheduleReconnect();
+    };
     this.ws.onerror = () => { /* onclose drives retry */ };
   }
   private scheduleReconnect(): void {
@@ -54,11 +66,20 @@ export class BattleConnection {
   // onopen). If the socket is already open, send it once now; otherwise onopen will. Do NOT also go
   // through send()'s open-listener queue, or the join fires TWICE → two player slots → a room stuck
   // waiting on a phantom 2nd player (the "stuck on waiting…" bug).
-  join(roomCode: string, name: string) { this.identity = { type: 'join', roomCode, name }; this.rawSend(this.identity); }
+  join(roomCode: string, name: string) {
+    this.pendingReleaseSessionId = null;
+    this.identity = { type: 'join', roomCode, name, sessionId: sessionIdFor(roomCode) };
+    this.rawSend(this.identity);
+  }
   spectate(roomCode: string) { this.identity = { type: 'spectate', roomCode }; this.rawSend(this.identity); }
   /** Drop this client's player slot but keep watching (the shared screen's P-toggle-off). Reverts the
    *  replayed identity to spectator so a reconnect doesn't silently rejoin as a player. */
-  leave(roomCode: string) { this.identity = { type: 'spectate', roomCode }; this.send({ type: 'leave' }); }
+  leave(roomCode: string) {
+    const sessionId = this.identity?.type === 'join' ? this.identity.sessionId : null;
+    this.identity = { type: 'spectate', roomCode };
+    if (this.ws.readyState === WebSocket.OPEN) this.rawSend({ type: 'leave', ...(sessionId ? { sessionId } : {}) });
+    else this.pendingReleaseSessionId = sessionId;
+  }
   selectMonster(monsterId: string) { this.send({ type: 'select_monster', monsterId }); }
   openFight() { this.send({ type: 'open_fight' }); }
   backMenu() { this.send({ type: 'back_menu' }); }
@@ -77,5 +98,18 @@ export class BattleConnection {
     this.closed = true;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     try { this.ws.close(); } catch { /* already closing */ }
+  }
+}
+
+function sessionIdFor(roomCode: string): string {
+  const key = `voice-monsters-session:${roomCode}`;
+  try {
+    const prior = sessionStorage.getItem(key);
+    if (prior) return prior;
+    const id = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    sessionStorage.setItem(key, id);
+    return id;
+  } catch {
+    return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   }
 }

@@ -44,6 +44,7 @@ function battleSnap(over: Partial<BattleVoiceSnapshot> = {}): BattleVoiceSnapsho
     myMonsterName: null,
     myMonsterType: null,
     canStartBattle: false,
+    canRematch: true,
     foeName: null,
     foeMonsterName: null,
     foeMonsterType: null,
@@ -66,7 +67,7 @@ function fakeDeps(over: Partial<BattleVoiceDeps> = {}): { deps: BattleVoiceDeps;
   const log: string[] = [];
   const said: string[] = [];
   const deps: BattleVoiceDeps = {
-    join: (code, name) => { log.push(`join ${code} ${name}`); return 'p1'; },
+    join: (code, name) => { log.push(`join ${code} ${name}`); return { playerId: 'p1', resumed: false }; },
     leave: (code, id) => log.push(`leave ${code} ${id}`),
     setName: (_c, _id, n) => log.push(`name ${n}`),
     selectMonster: (_c, _id, m) => log.push(`monster ${m}`),
@@ -93,6 +94,65 @@ describe('BattleVoiceSession', () => {
     s.handleMessage(setup('4821'));
     expect(log.some(l => l.startsWith('join 4821'))).toBe(true);
     expect(said.length).toBeGreaterThan(0);   // greeting spoken
+  });
+
+  it('ignores a repeated setup frame on the same live session', () => {
+    const { deps, log, said } = fakeDeps();
+    const s = new BattleVoiceSession(deps);
+    s.handleMessage(setup('4821'));
+    said.length = 0;
+
+    s.handleMessage(setup('4821'));
+
+    expect(log.filter(l => l.startsWith('join 4821'))).toHaveLength(1);
+    expect(said).toHaveLength(0);
+  });
+
+  it('resumes an existing battle without repeating name or monster onboarding', () => {
+    const { deps, said } = fakeDeps({
+      join: () => ({ playerId: 'p1', resumed: true }),
+      snapshot: () => battleSnap({
+        phase: 'battle', myName: 'Ada', myMonsterId: 'sparkmouse', myMonsterName: 'Sparkmouse', myMonsterType: 'electric',
+        foeMonsterName: 'Shellback', foeMonsterType: 'water', myHp: 51, myMaxHp: 70, foeHp: 62, foeMaxHp: 82,
+        turn: 3, activeSide: 'a', activeMenu: 'root', whoseTurn: 'me',
+      }),
+    });
+    const s = new BattleVoiceSession(deps);
+
+    s.handleMessage(setup('4821'));
+
+    const speech = said.join(' ');
+    expect(speech).toMatch(/back in the battle/i);
+    expect(speech).toMatch(/your turn/i);
+    expect(speech).not.toMatch(/what'?s your name|pick a monster/i);
+  });
+
+  it('welcomes a late result-screen caller into the next round without normal onboarding', () => {
+    const { deps, said } = fakeDeps({
+      snapshot: () => battleSnap({ phase: 'results', myName: null, myMonsterId: null, myMonsterName: null, winnerName: 'Ada' }),
+    });
+    const s = new BattleVoiceSession(deps);
+    s.handleMessage(setup());
+
+    expect(said.join(' ')).toMatch(/battle just ended|next round/i);
+    expect(said.join(' ')).toMatch(/what'?s your name/i);
+    expect(said.join(' ')).not.toMatch(/pick a monster/i);
+  });
+
+  it('queues a late caller behind an active battle instead of pretending they are fighting', () => {
+    const { deps, log, said } = fakeDeps({
+      snapshot: () => battleSnap({ phase: 'battle', myName: null, myMonsterId: null, myMonsterName: null, whoseTurn: null }),
+    });
+    const s = new BattleVoiceSession(deps);
+    s.handleMessage(setup());
+    expect(said.join(' ')).toMatch(/battle is already in progress|next round/i);
+
+    said.length = 0;
+    s.handleMessage(prompt('Bo'));
+    expect(log).toContain('name Bo');
+    s.handleMessage(prompt('fight'));
+    expect(log.some(l => l.startsWith('action '))).toBe(false);
+    expect(said.join(' ')).toMatch(/current battle.*in progress|next round/i);
   });
 
   it('tells a caller when the battle room is full or already in progress', () => {
@@ -173,6 +233,17 @@ describe('BattleVoiceSession', () => {
 
     expect(log).toContain('monster sparkmouse');
     expect(log.some(l => l === 'name Sparkmouse')).toBe(false);
+  });
+
+  it('does not treat a descriptive monster phrase as option one or as the caller name', () => {
+    const { deps, log } = fakeDeps({ snapshot: () => battleSnap({ myName: null }) });
+    const s = new BattleVoiceSession(deps);
+    s.handleMessage(setup());
+
+    s.handleMessage(prompt('the fire one'));
+
+    expect(log.some(l => l.startsWith('monster '))).toBe(false);
+    expect(log.some(l => l.startsWith('name '))).toBe(false);
   });
 
   it('"start" advances the flow deterministically (no LLM) — lobby → select', () => {
@@ -429,6 +500,136 @@ describe('BattleVoiceSession', () => {
     snap = { ...snap, activeSide: 'b', whoseTurn: 'me' };
     s.handleMessage(prompt('guard'));
     expect(log.some(l => l.includes('"kind":"guard"'))).toBe(true);
+  });
+
+  it('drops a superseded LLM turn before it can execute stale work', async () => {
+    let release!: () => void;
+    let staleActionRan = false;
+    const pending = new Promise<void>(r => { release = r; });
+    const snap = battleSnap({
+      phase: 'battle', myName: 'Ada', myMonsterId: 'sparkmouse', myMonsterName: 'Sparkmouse',
+      whoseTurn: 'me', activeSide: 'a', myMoves: [{ id: 'sparkmouse.jolt', name: 'Thunder Jolt' }],
+    });
+    const { deps } = fakeDeps({
+      snapshot: () => snap,
+      converse: async (_code, _id, _text, isCurrent) => {
+        await pending;
+        if (isCurrent()) staleActionRan = true;
+        return 'stale reply';
+      },
+    });
+    const s = new BattleVoiceSession(deps);
+    s.handleMessage(setup());
+    s.handleMessage(prompt('what should I do'));
+    s.handleMessage(prompt('guard'));
+    release();
+    await pending;
+    await Promise.resolve();
+
+    expect(staleActionRan).toBe(false);
+  });
+
+  it('makes a replaced voice socket inert, including any in-flight LLM turn', async () => {
+    let release!: () => void;
+    let staleActionRan = false;
+    const pending = new Promise<void>(r => { release = r; });
+    const { deps, log } = fakeDeps({
+      snapshot: () => battleSnap({ phase: 'battle', myName: 'Ada', whoseTurn: 'me', activeSide: 'a' }),
+      converse: async (_code, _id, _text, isCurrent) => {
+        await pending;
+        if (isCurrent()) staleActionRan = true;
+        return null;
+      },
+    });
+    const s = new BattleVoiceSession(deps);
+    s.handleMessage(setup());
+    s.handleMessage(prompt('what should I do'));
+    s.handleReplaced();
+    s.handleMessage(prompt('guard'));
+    release();
+    await pending; await Promise.resolve();
+
+    expect(staleActionRan).toBe(false);
+    expect(log.some(l => l.startsWith('action '))).toBe(false);
+  });
+
+  it('holds commentary for the shared handoff pause when the acting side changes', () => {
+    const timers: { fn: () => void; ms: number }[] = [];
+    const { deps, said } = fakeDeps({
+      snapshot: () => battleSnap({
+        phase: 'battle', myName: 'Ada', myMonsterName: 'Sparkmouse', foeMonsterName: 'Embertail',
+      }),
+      setTimer: (fn, ms) => { timers.push({ fn, ms }); },
+    });
+    const s = new BattleVoiceSession(deps);
+    s.handleMessage(setup()); said.length = 0;
+    s.onBattleEvent({ kind: 'move_used', by: 'a', moveId: 'a', moveName: 'Thunder Jolt' });
+    s.onBattleEvent({ kind: 'guard', by: 'b', monsterName: 'Embertail' });
+    timers.shift()!.fn();
+
+    expect(said.join(' ')).not.toMatch(/braces|guard/i);
+    const handoff = timers.shift()!;
+    expect(handoff.ms).toBeGreaterThan(1000);
+    handoff.fn();
+    expect(said.join(' ')).toMatch(/braces|guard/i);
+  });
+
+  it('does not start a rematch while final battle commentary is still draining', () => {
+    const timers: (() => void)[] = [];
+    const { deps, log, said } = fakeDeps({
+      snapshot: () => battleSnap({
+        phase: 'results', myName: 'Ada', myMonsterId: 'sparkmouse', myMonsterName: 'Sparkmouse',
+        foeName: 'Bo', foeMonsterName: 'Embertail', winnerName: 'Ada',
+      }),
+      setTimer: (fn: () => void) => { timers.push(fn); },
+    });
+    const s = new BattleVoiceSession(deps);
+    s.handleMessage(setup()); said.length = 0;
+    s.onBattleEvent({ kind: 'battle_over', winner: 'a', winnerName: 'Ada' });
+
+    s.handleMessage(prompt('rematch'));
+
+    expect(log).not.toContain('advance');
+    expect(said.some(t => /final result|rematch is ready/i.test(t))).toBe(true);
+  });
+
+  it('does not let an LLM tool advance results while final commentary is draining', async () => {
+    const timers: (() => void)[] = [];
+    let advanced = false;
+    const { deps } = fakeDeps({
+      snapshot: () => battleSnap({ phase: 'results', myName: 'Ada', winnerName: 'Ada' }),
+      setTimer: (fn: () => void) => { timers.push(fn); },
+      converse: async (_code, _id, _text, isCurrent) => {
+        if (isCurrent()) advanced = true;
+        return null;
+      },
+    });
+    const s = new BattleVoiceSession(deps);
+    s.handleMessage(setup());
+    s.onBattleEvent({ kind: 'battle_over', winner: 'a', winnerName: 'Ada' });
+    s.handleMessage(prompt('yes'));
+    await Promise.resolve();
+
+    expect(advanced).toBe(false);
+  });
+
+  it('explains a mid-battle departure and keeps the survivor monster selected', () => {
+    let snap = battleSnap({
+      phase: 'battle', myName: 'Ada', myMonsterId: 'sparkmouse', myMonsterName: 'Sparkmouse',
+      foeName: 'Bo', foeMonsterName: 'Embertail', whoseTurn: 'me', activeSide: 'a', turn: 2,
+    });
+    const { deps, said } = fakeDeps({ snapshot: () => snap });
+    const s = new BattleVoiceSession(deps);
+    s.handleMessage(setup()); said.length = 0;
+    s.onBattleStateChanged(); said.length = 0;
+    snap = battleSnap({
+      phase: 'monster_select', myName: 'Ada', myMonsterId: 'sparkmouse', myMonsterName: 'Sparkmouse', canStartBattle: true,
+    });
+
+    s.onBattleStateChanged();
+
+    expect(said.join(' ')).toMatch(/other player left/i);
+    expect(said.join(' ')).toMatch(/Sparkmouse is still locked in/i);
   });
 
   it('announces the winner and loser when the battle ends', () => {

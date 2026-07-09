@@ -26,6 +26,14 @@ import type { Room } from './room';
 import type { RaceResult } from '../shared/types';
 
 const VOICE_RACER_CONTROLS_INTRO = 'Before you start, check the controls on the screen. Say left or right to steer. Say boost to speed up. Say brake to slow down. Say nitro to break through a wall.';
+const BATTLE_VOICE_RECONNECT_GRACE_MS = 30_000;
+
+interface BattleVoiceCallBinding {
+  code: string;
+  playerId: string;
+  activeSession: BattleVoiceSession | null;
+  leaveTimer: ReturnType<typeof setTimeout> | null;
+}
 
 export class HttpServer {
   private server: http.Server;
@@ -77,6 +85,9 @@ export class HttpServer {
   /** Voice Monsters talk-back registry: roomCode → live battle call sessions, fed battle events so
    *  callers hear commentary (super-effective/crit/faint/win). Parallel to voiceAdapters (the racer). */
   private battleVoice = new Map<string, Set<BattleVoiceSession>>();
+  /** Conversation Relay may reconnect the WS for the same phone call. Keep callSid → player binding
+   *  briefly so a transport reconnect resumes the active battle instead of re-running onboarding. */
+  private battleVoiceCallBindings = new Map<string, BattleVoiceCallBinding>();
   private lastGameWsAt = 0;
   private lastBattleWsAt = 0;
   /** The conversational AI host (OpenAI, or a null no-op when OPENAI_API_KEY is unset → scripted
@@ -347,20 +358,20 @@ export class HttpServer {
     let session: BattleVoiceSession;   // captured so join/leave can (un)register it for events
     const deps = {
       say,
-      join: (code: string, name: string) => {
+      join: (code: string, name: string, callSid: string) => {
         this.battle.getOrCreateRoom(code);
+        const resumed = this.resumeBattleVoiceCall(code, callSid, session);
+        if (resumed) return { playerId: resumed, resumed: true };
         const id = this.battle.voiceJoin(code, name);
         if (id) {
-          let set = this.battleVoice.get(code);
-          if (!set) { set = new Set(); this.battleVoice.set(code, set); }
-          set.add(session);
+          this.rememberBattleVoiceCall(callSid, code, id, session);
+          this.registerBattleVoiceSession(code, session);
         }
-        return id;
+        return id ? { playerId: id, resumed: false } : null;
       },
-      leave: (code: string, id: string) => {
-        const set = this.battleVoice.get(code);
-        if (set) { set.delete(session); if (set.size === 0) this.battleVoice.delete(code); }
-        this.battle.voiceLeave(code, id);
+      leave: (code: string, id: string, callSid: string) => {
+        this.unregisterBattleVoiceSession(session);
+        this.scheduleBattleVoiceLeave(code, id, callSid, session);
       },
       setName: (code: string, id: string, n: string) => this.battle.voiceSetName(code, id, n),
       selectMonster: (code: string, id: string, m: string) => this.battle.voiceSelectMonster(code, id, m),
@@ -370,12 +381,13 @@ export class HttpServer {
       advance: (code: string) => this.battle.voiceAdvance(code),
       setTimer: (fn: () => void, ms: number) => { setTimeout(fn, ms); },
       snapshot: (code: string, id: string) => this.battleVoiceSnapshot(code, id),
-      converse: async (code: string, id: string, utterance: string) => {
+      converse: async (code: string, id: string, utterance: string, isCurrent: () => boolean) => {
         if (!this.llm.enabled) return null;
-        const ctx = this.battleHostContext(code, id);
+        const ctx = this.battleHostContext(code, id, isCurrent);
         if (!ctx) return null;
         history.push({ role: 'user', content: utterance });
         const reply = await battleHostTurn(this.llm, ctx, history);
+        if (!isCurrent()) return null;
         if (reply) history.push({ role: 'assistant', content: reply });
         if (history.length > 12) history.splice(0, history.length - 12);
         return reply;
@@ -383,6 +395,89 @@ export class HttpServer {
     };
     session = new BattleVoiceSession(deps);
     return session;
+  }
+
+  private registerBattleVoiceSession(code: string, session: BattleVoiceSession): void {
+    let set = this.battleVoice.get(code);
+    if (!set) { set = new Set(); this.battleVoice.set(code, set); }
+    set.add(session);
+  }
+
+  private unregisterBattleVoiceSession(session: BattleVoiceSession): void {
+    for (const [code, set] of this.battleVoice) {
+      if (set.delete(session) && set.size === 0) this.battleVoice.delete(code);
+    }
+  }
+
+  private rememberBattleVoiceCall(callSid: string, code: string, playerId: string, session: BattleVoiceSession): void {
+    const sid = callSid.trim();
+    if (!sid) return;
+    const prev = this.battleVoiceCallBindings.get(sid);
+    if (prev?.leaveTimer) clearTimeout(prev.leaveTimer);
+    if (prev?.activeSession && prev.activeSession !== session) {
+      this.unregisterBattleVoiceSession(prev.activeSession);
+      prev.activeSession.handleReplaced();
+    }
+    if (prev && (prev.code !== code || prev.playerId !== playerId)) this.battle.voiceLeave(prev.code, prev.playerId);
+    this.battleVoiceCallBindings.set(sid, { code, playerId, activeSession: session, leaveTimer: null });
+  }
+
+  private resumeBattleVoiceCall(code: string, callSid: string, session: BattleVoiceSession): string | null {
+    const sid = callSid.trim();
+    if (!sid) return null;
+    const binding = this.battleVoiceCallBindings.get(sid);
+    if (!binding || binding.code !== code) return null;
+    if (!this.battleRoomHasPlayer(code, binding.playerId)) {
+      if (binding.leaveTimer) clearTimeout(binding.leaveTimer);
+      this.battleVoiceCallBindings.delete(sid);
+      return null;
+    }
+    if (binding.leaveTimer) {
+      clearTimeout(binding.leaveTimer);
+      binding.leaveTimer = null;
+    }
+    if (binding.activeSession && binding.activeSession !== session) this.unregisterBattleVoiceSession(binding.activeSession);
+    if (binding.activeSession && binding.activeSession !== session) binding.activeSession.handleReplaced();
+    binding.activeSession = session;
+    this.registerBattleVoiceSession(code, session);
+    return binding.playerId;
+  }
+
+  private scheduleBattleVoiceLeave(code: string, playerId: string, callSid: string, session: BattleVoiceSession): void {
+    const sid = callSid.trim();
+    if (!sid) { this.battle.voiceLeave(code, playerId); return; }
+    const prev = this.battleVoiceCallBindings.get(sid);
+    if (!prev && !this.battleRoomHasPlayer(code, playerId)) return;
+    if (prev?.activeSession && prev.activeSession !== session) return;
+    if (prev?.leaveTimer) clearTimeout(prev.leaveTimer);
+    if (prev) prev.activeSession = null;
+    const leaveTimer = setTimeout(() => {
+      const binding = this.battleVoiceCallBindings.get(sid);
+      if (!binding || binding.code !== code || binding.playerId !== playerId) return;
+      this.battleVoiceCallBindings.delete(sid);
+      this.battle.voiceLeave(code, playerId);
+    }, BATTLE_VOICE_RECONNECT_GRACE_MS);
+    (leaveTimer as { unref?: () => void }).unref?.();
+    this.battleVoiceCallBindings.set(sid, { code, playerId, activeSession: null, leaveTimer });
+  }
+
+  private endBattleVoiceCall(callSid: string): void {
+    const sid = callSid.trim();
+    if (!sid) return;
+    const binding = this.battleVoiceCallBindings.get(sid);
+    if (!binding) return;
+    if (binding.leaveTimer) clearTimeout(binding.leaveTimer);
+    if (binding.activeSession) {
+      this.unregisterBattleVoiceSession(binding.activeSession);
+      binding.activeSession.handleReplaced();
+    }
+    this.battleVoiceCallBindings.delete(sid);
+    this.battle.voiceLeave(binding.code, binding.playerId);
+  }
+
+  private battleRoomHasPlayer(code: string, playerId: string): boolean {
+    const room = this.battle.findRoom(code);
+    return !!room?.lobbyPlayers().some(p => p.playerId === playerId);
   }
 
   /** Deterministic selection fast-path for the conversational layer: in car/map select, if the caller
@@ -575,8 +670,9 @@ export class HttpServer {
     const myName = /^(Challenger|Player)(\s|$)/.test(rawName) ? null : (rawName || null);
     const snap = room.snapshot();
     const res = room.result();
-    const side = this.battleSideOf(room, playerId) ?? 'a';
-    if (!snap) {
+    const battleSide = this.battleSideOf(room, playerId);
+    const side = battleSide ?? 'a';
+    if (!snap || !battleSide) {
       const mon = player?.monsterId ? monsterById(player.monsterId) : null;
       return {
         phase: room.phase, mySide: side, monsterNames, myName,
@@ -584,6 +680,7 @@ export class HttpServer {
         myMonsterName: mon?.name ?? null,
         myMonsterType: mon?.type ?? null,
         canStartBattle,
+        canRematch: room.canRematch,
         foeName: null, foeMonsterName: null, foeMonsterType: null, myHp: null, myMaxHp: null, foeHp: null, foeMaxHp: null,
         myPotions: 2, turn: null, activeSide: null, activeMenu: 'root', whoseTurn: null, myMoves: [], winnerName: res?.winnerName ?? null,
       };
@@ -596,6 +693,7 @@ export class HttpServer {
       myMonsterId: me.monsterId, myMonsterName: me.monsterName,
       myMonsterType: me.type,
       canStartBattle,
+      canRematch: room.canRematch,
       foeName: foe.name,
       foeMonsterName: foe.monsterName,
       foeMonsterType: foe.type,
@@ -611,7 +709,7 @@ export class HttpServer {
   }
 
   /** Build the battle LLM host's context for one caller (delegating actions to the BattleServer). */
-  private battleHostContext(code: string, playerId: string): BattleHostContext | null {
+  private battleHostContext(code: string, playerId: string, isCurrent: () => boolean = () => true): BattleHostContext | null {
     const room = this.battle.findRoom(code);
     if (!room) return null;
     const s = this.battleVoiceSnapshot(code, playerId);
@@ -622,8 +720,13 @@ export class HttpServer {
       myHp: s.myHp, myMaxHp: s.myMaxHp, foeHp: s.foeHp, foeMaxHp: s.foeMaxHp,
       myPotions: s.myPotions, whoseTurn: s.whoseTurn, moves: s.myMoves.map(m => m.name),
       winnerName: s.winnerName,
-      setName: (name) => { const c = name.trim().slice(0, 20); if (!c) return null; this.battle.voiceSetName(code, playerId, c); return `Nice to meet you, ${c}!`; },
+      setName: (name) => {
+        if (!isCurrent() || (room.phase !== 'lobby' && room.phase !== 'monster_select')) return null;
+        const c = name.trim().slice(0, 20); if (!c) return null;
+        this.battle.voiceSetName(code, playerId, c); return `Nice to meet you, ${c}!`;
+      },
       selectMonster: (name) => {
+        if (!isCurrent()) return null;
         const i = matchChoice(name, s.monsterNames);
         if (i < 0 || room.phase !== 'monster_select') return null;
         const id = s.monsterNames[i]!.toLowerCase().replace(/\s+/g, '');
@@ -633,13 +736,18 @@ export class HttpServer {
       chooseAction: (action) => {
         // Gate on the caller's TURN, not just the phase: after the caller acts, the room may still be
         // in battle while the other side/AI is active. Do not let the LLM act out of turn.
-        if (room.phase !== 'battle' || s.whoseTurn !== 'me') return null;
-        const parsed = this.parseVoiceHostAction(action, s.myMoves);
+        if (!isCurrent()) return null;
+        const current = this.battleVoiceSnapshot(code, playerId);
+        if (room.phase !== 'battle' || current?.whoseTurn !== 'me' || current.turn !== s.turn) return null;
+        const parsed = this.parseVoiceHostAction(action, current.myMoves);
         if (!parsed) return null;
         this.battle.voiceChooseAction(code, playerId, parsed);
         return null;   // the model's own words carry the reply; avoid double-speak
       },
-      advance: () => { this.battle.voiceAdvance(code); return null; },
+      advance: () => {
+        if (!isCurrent() || room.phase !== s.phase) return null;
+        this.battle.voiceAdvance(code); return null;
+      },
     };
   }
 
@@ -715,6 +823,26 @@ export class HttpServer {
       return;
     }
     if (req.method === 'POST' && path === '/voice/session-ended') {
+      const body = await readBody(req);
+      const params = Object.fromEntries(new URLSearchParams(body));
+      if (this.validateSignatures) {
+        if (!this.authToken) {
+          res.writeHead(500).end('signature validation enabled but TWILIO_AUTH_TOKEN not configured');
+          return;
+        }
+        const sig = req.headers['x-twilio-signature'];
+        const ok = validateTwilioSignature({
+          authToken: this.authToken,
+          signature: Array.isArray(sig) ? sig[0] : sig,
+          url: `${this.publicBaseUrl}${path}`,
+          params,
+        });
+        if (!ok) {
+          res.writeHead(403).end('invalid signature');
+          return;
+        }
+      }
+      this.endBattleVoiceCall((params['CallSid'] ?? params['callSid'] ?? '').trim());
       res.writeHead(204).end();
       return;
     }
@@ -1015,6 +1143,10 @@ export class HttpServer {
     return new Promise((resolve) => {
       if (this.roomConfigTimer) { clearInterval(this.roomConfigTimer); this.roomConfigTimer = null; }
       if (this.smsSweepTimer) { clearInterval(this.smsSweepTimer); this.smsSweepTimer = null; }
+      for (const binding of this.battleVoiceCallBindings.values()) {
+        if (binding.leaveTimer) clearTimeout(binding.leaveTimer);
+      }
+      this.battleVoiceCallBindings.clear();
       this.game.stopLoopOnly();
       this.battle.stopLoopOnly();
       this.server.close(() => resolve());

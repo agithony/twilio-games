@@ -6,6 +6,7 @@ import { BattleWorld, type BattleSnapshot, type BattleEvent, type Side, type Bat
 import { ROSTER, monsterById, type Monster } from '../shared/monster-roster';
 import { pickAiAction } from '../shared/battle-ai';
 import { Rng } from '../shared/rng';
+import { dwellForEvent, HANDOFF_PAUSE_MS } from '../shared/battle-timing';
 
 export type BattlePhase = 'lobby' | 'monster_select' | 'battle' | 'results';
 
@@ -32,6 +33,10 @@ export class BattleRoom {
   private aiRng: Rng;
   private menu: Record<Side, 'root' | 'fight'> = { a: 'root', b: 'root' };
   private active: Side | null = null;
+  private battleGeneration = 0;
+  private resultsReadyAt = 0;
+  private presentationReadyAt = 0;
+  private lastPresentedActionSide: Side | null = null;
 
   constructor(code: string, seed: number) {
     this.code = code;
@@ -42,17 +47,20 @@ export class BattleRoom {
   get phase(): BattlePhase { return this._phase; }
   get playerCount(): number { return this.slots.length; }
   get isEmpty(): boolean { return this.slots.length === 0; }
+  get generation(): number { return this.battleGeneration; }
+  get canRematch(): boolean { return this._phase === 'results' && Date.now() >= this.resultsReadyAt; }
+  get rematchReadyInMs(): number { return this._phase === 'results' ? Math.max(0, this.resultsReadyAt - Date.now()) : 0; }
 
   /** Roster for the shared-display lobby + monster-select screens. */
   lobbyPlayers(): BattlePlayer[] {
     return this.slots.map(s => ({ playerId: s.id, name: s.name, monsterId: s.monsterId, isAi: s.isAi }));
   }
 
-  /** Add a human player. Battles are 1v1, so at most 2 humans. A finished battle reopens on a join. */
+  /** Add a human player. Battles are 1v1, so at most 2 humans. A late second player may join while
+   *  results remain visible, but the finished battle stays intact until an explicit rematch. */
   addPlayer(name: string): { playerId: string } | { error: string } {
     if (this._phase === 'results' && this.slots.length >= 2) return { error: 'room_full' };
-    if (this._phase === 'results') this.reset();
-    if (this._phase === 'battle') return { error: 'battle_in_progress' };
+    if (this._phase === 'battle' && this.slots.length >= 2) return { error: 'battle_in_progress' };
     if (this.slots.length >= 2) return { error: 'room_full' };
     const id = `p${this.nextId++}`;
     this.slots.push({ id, name: name || `Player ${this.slots.length + 1}`, monsterId: null, isAi: false });
@@ -83,7 +91,11 @@ export class BattleRoom {
    *  (keep the roster, back to monster_select). Starting the battle fills an AI opponent when solo. */
   advance(): void {
     if (this._phase === 'results') {
+      if (!this.canRematch) return;
       this.world = null; this.ai = null; this._result = null;
+      this.resultsReadyAt = 0;
+      this.presentationReadyAt = 0;
+      this.lastPresentedActionSide = null;
       for (const s of this.slots) s.monsterId = null;
       this._phase = 'monster_select';
       return;
@@ -126,6 +138,10 @@ export class BattleRoom {
     );
     this.menu = { a: 'root', b: 'root' };
     this.active = this.ai?.side === 'a' ? 'b' : 'a';
+    this.battleGeneration++;
+    this.resultsReadyAt = 0;
+    this.presentationReadyAt = 0;
+    this.lastPresentedActionSide = null;
     this._phase = 'battle';
     this.captureEvents();
   }
@@ -137,23 +153,25 @@ export class BattleRoom {
 
   /** A player chooses a move. The active monster's action resolves immediately, then the room advances
    *  to the other side so the next phone prompt/screen menu is unambiguous. */
-  chooseMove(playerId: string, moveId: string): void {
-    if (this._phase !== 'battle' || !this.world) return;
-    if (!this.canChoose(playerId)) return;
+  chooseMove(playerId: string, moveId: string): boolean {
+    if (this._phase !== 'battle' || !this.world) return false;
+    if (!this.canChoose(playerId)) return false;
+    if (!this.world.takeAction(playerId, { kind: 'fight', moveId })) return false;
     this.resetMenuFor(playerId);
-    this.world.takeAction(playerId, { kind: 'fight', moveId });
     this.captureEvents();
     this.advanceActiveSide();
+    return true;
   }
 
   /** A player commits a turn ACTION (fight/guard/item/taunt). Same resolution rules as chooseMove. */
-  chooseAction(playerId: string, action: BattleAction): void {
-    if (this._phase !== 'battle' || !this.world) return;
-    if (!this.canChoose(playerId)) return;
+  chooseAction(playerId: string, action: BattleAction): boolean {
+    if (this._phase !== 'battle' || !this.world) return false;
+    if (!this.canChoose(playerId)) return false;
+    if (!this.world.takeAction(playerId, action)) return false;
     this.resetMenuFor(playerId);
-    this.world.takeAction(playerId, action);
     this.captureEvents();
     this.advanceActiveSide();
+    return true;
   }
 
   /** The side whose command we are currently waiting for. In 2P this makes the phone UX sequential:
@@ -212,7 +230,21 @@ export class BattleRoom {
   /** Pull resolution events out of the world into the room's queue + detect battle end. */
   private captureEvents(): void {
     if (!this.world) return;
-    this.events.push(...this.world.drainEvents());
+    const fresh = this.world.drainEvents();
+    this.events.push(...fresh);
+    if (fresh.length) {
+      let firstActionSide: Side | null = null;
+      let lastActionSide: Side | null = null;
+      for (const ev of fresh) {
+        const side = sideForActionEvent(ev);
+        if (side) { firstActionSide ??= side; lastActionSide = side; }
+      }
+      const handoff = firstActionSide && this.lastPresentedActionSide && firstActionSide !== this.lastPresentedActionSide
+        ? HANDOFF_PAUSE_MS : 0;
+      this.presentationReadyAt = Math.max(Date.now(), this.presentationReadyAt)
+        + handoff + fresh.reduce((ms, ev) => ms + dwellForEvent(ev), 0);
+      if (lastActionSide) this.lastPresentedActionSide = lastActionSide;
+    }
     const snap = this.world.snapshot();
     if (this.world.phase === 'finished' && this._phase === 'battle') {
       const winnerSide = snap.winner!;
@@ -220,6 +252,7 @@ export class BattleRoom {
       this._result = { winner: winnerSide, winnerName };
       this.active = null;
       this._phase = 'results';
+      this.resultsReadyAt = this.presentationReadyAt;
     }
   }
 
@@ -227,6 +260,9 @@ export class BattleRoom {
     this.world = null; this.ai = null; this._result = null; this.events = [];
     this.menu = { a: 'root', b: 'root' };
     this.active = null;
+    this.resultsReadyAt = 0;
+    this.presentationReadyAt = 0;
+    this.lastPresentedActionSide = null;
     for (const s of this.slots) s.monsterId = null;
     this._phase = 'lobby';
   }
@@ -258,7 +294,9 @@ export class BattleRoom {
     this.world = null; this.ai = null; this._result = null; this.events = [];
     this.menu = { a: 'root', b: 'root' };
     this.active = null;
-    for (const s of this.slots) s.monsterId = null;
+    this.resultsReadyAt = 0;
+    this.presentationReadyAt = 0;
+    this.lastPresentedActionSide = null;
     this._phase = this.slots.length > 0 ? 'monster_select' : 'lobby';
   }
 
@@ -279,4 +317,9 @@ export class BattleRoom {
     this.active = this.active === 'a' ? 'b' : 'a';
     this.menu = { a: 'root', b: 'root' };
   }
+}
+
+function sideForActionEvent(ev: BattleEvent): Side | null {
+  return ev.kind === 'move_used' || ev.kind === 'guard' || ev.kind === 'item' || ev.kind === 'taunt'
+    ? ev.by : null;
 }

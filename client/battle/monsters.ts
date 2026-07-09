@@ -77,6 +77,7 @@ let draining = false;                 // events currently animating
 let lockedMoveName: string | null = null;   // the move I committed this turn (for the "locked" beat)
 let menuLevel: 'root' | 'fight' = 'root';   // two-level command menu: root actions → FIGHT's moves
 let phoneNumber = '';   // the number players call to join (from /api/config) — shown in the lobby join flow
+let joinedHere = false;
 
 // Fetch the join phone number so the lobby QR + copy show the real number (matches the racer). Fire-
 // and-forget: the lobby renders immediately with a placeholder, then re-renders when this lands.
@@ -85,8 +86,13 @@ void fetch('/api/config').then(r => r.ok ? r.json() : null).then((cfg) => {
 }).catch(() => { /* keep the placeholder */ });
 
 conn.onRoster((m) => { roster = m; renderOverlay(); });
-conn.onJoined((id) => { myId = id; });
-conn.onError((code, msg) => console.error(`[battle] ${code}: ${msg}`));
+conn.onJoined((id) => { myId = id; joinedHere = true; lastOverlayKey = ''; renderOverlay(); });
+conn.onError((code, msg) => {
+  console.error(`[battle] ${code}: ${msg}`);
+  if (code === 'room_full' || code === 'battle_in_progress' || code === 'round_complete') {
+    myId = null; joinedHere = false; conn.spectate(roomCode);
+  }
+});
 conn.onEvents((events) => queueEvents(events));
 
 conn.onState((m) => {
@@ -107,6 +113,7 @@ conn.onState((m) => {
   if (m.phase === 'lobby' && prevPhase !== 'lobby') {
     getMusicManager().switchContext('lobby');
   } else if (m.phase === 'battle' && prevPhase !== 'battle') {
+    lastActionSide = null;
     getMusicManager().switchContext('monsters');
   }
   
@@ -195,7 +202,7 @@ function queueEvents(events: BattleEvent[]): void {
   eventQ.push(...events);
   if (!draining) { draining = true; paintBattle(); drainNext(); }
 }
-let movesSeenThisTurn = 0;      // how many attacks played so far this turn (resets on turn_start)
+let lastActionSide: 'a' | 'b' | null = null;
 let pendingHandoff: 'a' | 'b' | null = null;   // a synthetic "▶ X'S TURN" card to show before next move
 let awaitingContinue = false;   // battle ended → holding on the arena until the player acknowledges
 
@@ -210,18 +217,19 @@ function drainNext(): void {
   }
   const ev = eventQ.shift();
   if (!ev) {
-    draining = false; movesSeenThisTurn = 0; renderer.setActiveSide(null);
+    draining = false; renderer.setActiveSide(null);
     // Battle just ended? Don't jump straight to the results modal — hold on the arena with a
     // "▶ Continue" prompt so the win lands, and wait for the player to acknowledge.
     if (state?.phase === 'results') { awaitingContinue = true; renderer.setEventBanner(`${state.result?.winnerName ?? 'Winner'} wins!  ▶ Press Enter / tap`); renderOverlay(); return; }
     paintBattle(); renderOverlay(); return;
   }
 
-  if (ev.kind === 'turn_start') movesSeenThisTurn = 0;
-  // Before the SECOND attack of a turn, inject a handoff card announcing the other side's turn.
+  const actionSide = sideForActionEvent(ev);
+  if (actionSide && lastActionSide && lastActionSide !== actionSide) {
+    lastActionSide = actionSide; pendingHandoff = actionSide; eventQ.unshift(ev); setTimeout(drainNext, 0); return;
+  }
+  if (actionSide) lastActionSide = actionSide;
   if (ev.kind === 'move_used') {
-    movesSeenThisTurn++;
-    if (movesSeenThisTurn === 2) { pendingHandoff = ev.by; eventQ.unshift(ev); setTimeout(drainNext, 0); return; }
     renderer.setActiveSide(ev.by);
     // Flash the OUTER background in the move's element color (leaves the 3D stage untouched).
     const moveType = moveById(ev.moveId)?.type ?? 'normal';
@@ -249,6 +257,11 @@ function handoffText(side: 'a' | 'b'): string {
   const me = state ? mySide(state) : null;
   if (me && side === me) return '▶ YOUR TURN';
   return `▶ ${actorName(side).toUpperCase()}'S TURN`;
+}
+
+function sideForActionEvent(ev: BattleEvent): 'a' | 'b' | null {
+  return ev.kind === 'move_used' || ev.kind === 'guard' || ev.kind === 'item' || ev.kind === 'taunt'
+    ? ev.by : null;
 }
 
 /** How long to hold on `ev` before playing the next one — SHARED with the voice layer (battle-timing)
@@ -310,7 +323,7 @@ function overlayKey(phase: string): string {
   const roster3 = roster.length;
   const roster3k = players.map(p => `${p.playerId}:${p.name}:${p.monsterId ?? ''}`).join('|');
   const win = state?.result?.winnerName ?? '';
-  return `${phase}|${isDisplay ? 'D' : 'P'}|${joinedHere ? 'J' : 'j'}|r${roster3}|${roster3k}|${win}`;
+  return `${phase}|${isDisplay ? 'D' : 'P'}|${joinedHere ? 'J' : 'j'}|r${roster3}|${roster3k}|${win}|${state?.canRematch ? 'ready' : 'locked'}`;
 }
 
 /** Can THIS client drive the flow (advance / start)? A device player (auto-joined) can drive their
@@ -413,21 +426,21 @@ function monsterSelectHtml(): string {
   // Highlight ANY player's current pick (this is a shared screen — a caller who picked by VOICE must
   // see their square light up even though they have no browser + no local myId). Map monsterId → who
   // picked it, so a voice pick highlights just like a tap.
-  const pickedBy = new Map<string, string>();   // monsterId → picker display name
-  for (const p of players) if (p.monsterId) pickedBy.set(p.monsterId, p.name);
+  const pickedBy = new Map<string, string[]>();
+  for (const p of players) if (p.monsterId) pickedBy.set(p.monsterId, [...(pickedBy.get(p.monsterId) ?? []), p.name]);
   const anyPick = players.some(p => p.monsterId);
   const canBattle = players.length >= 2 ? players.every(p => p.monsterId) : anyPick;
   // MINIMAL cards: portrait + name + type + (who picked it). Portrait starts as the placeholder;
   // upgradeSelectPortraits() swaps in a real GIF/PNG post-mount.
   const cards = roster.map(m => {
-    const picker = pickedBy.get(m.id);
-    const selected = picker !== undefined;
+    const pickers = pickedBy.get(m.id) ?? [];
+    const selected = pickers.length > 0;
     return `
     <button class="vm-mon t-${m.type}${selected ? ' sel' : ''}" data-mon="${m.id}">
       <div class="portrait"><img data-mon-portrait="${m.id}" src="${placeholderPortrait(m.id, m.type)}" alt=""></div>
       <div class="vm-mon-name">${esc(m.name)}</div>
       <div class="vm-type t-${m.type}">${m.type}</div>
-      ${picker ? `<div class="vm-picked-by">${esc(picker)}</div>` : ''}
+      ${selected ? `<div class="vm-picked-by">${esc(pickers.join(' + '))}</div>` : ''}
     </button>`;
   }).join('');
   return `<div class="vm-card wide">
@@ -443,10 +456,15 @@ function monsterSelectHtml(): string {
 
 function resultsHtml(): string {
   const w = state?.result?.winnerName ?? 'Nobody';
+  const action = !state?.canRematch
+    ? '<div class="vm-dim">Final result is being announced…</div>'
+    : isDisplay || joinedHere
+      ? '<button class="vm-btn" data-act="advance">Rematch ▶</button>'
+      : '<div class="vm-dim">Good battle!</div>';
   return `<div class="vm-card">
     ${brandHead('VOICE MONSTERS', 'Battle complete')}
     <div class="vm-title vm-win" style="font-size:36px">${esc(w)} WINS!</div>
-    ${isDisplay || joinedHere ? '<button class="vm-btn" data-act="advance">Rematch ▶</button>' : '<div class="vm-dim">Good battle!</div>'}
+    ${action}
   </div>`;
 }
 
@@ -463,16 +481,15 @@ const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;
 // Matches Voice Racer's lobby model: the shared SCREEN defaults to a spectator (callers dial in as
 // players), and the operator presses P to add/drop a KEYBOARD TESTER player on this screen. A device
 // (phone browser) auto-joins as its own player. `joinedHere` = this client holds a player slot.
-let joinedHere = false;
 if (isDisplay) conn.spectate(roomCode);
-else { conn.join(roomCode, name); joinedHere = true; }
+else conn.join(roomCode, name);
 
 /** Shared-screen P-toggle: opt IN as a keyboard tester player (adds a slot), or opt back OUT (drops it,
  *  stays the display). No-op on a device (already a player). */
 function toggleSelfPlaying(): void {
   if (!isDisplay) return;
   if (joinedHere) { conn.leave(roomCode); joinedHere = false; }
-  else { conn.join(roomCode, name); joinedHere = true; }
+  else conn.join(roomCode, name);
   lastOverlayKey = ''; renderOverlay();
 }
 
@@ -482,11 +499,12 @@ function toggleSelfPlaying(): void {
 // Lobby/select/results: P adds/drops a keyboard tester (shared screen); Enter advances the flow.
 addEventListener('keydown', (e) => {
   if (awaitingContinue) { dismissContinue(); return; }   // battle-end hold → any key continues
+  if (draining) return;
   if (state?.phase === 'battle' && currentUiPhase() === 'awaiting-input') {
     handleMenuKey(e.key);
   } else if ((e.key === 'p' || e.key === 'P') && isDisplay && state?.phase !== 'battle') {
     toggleSelfPlaying();
-  } else if (e.key === 'Enter' && isDisplay && state?.phase !== 'battle') {
+  } else if (e.key === 'Enter' && isDisplay && state?.phase !== 'battle' && (state?.phase !== 'results' || state.canRematch)) {
     conn.advance();
   }
 });

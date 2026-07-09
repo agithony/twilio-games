@@ -132,10 +132,10 @@ export class BattleWorld {
   /** Resolve exactly ONE fighter's action immediately. This is the live Voice Monsters flow: the active
    *  caller picks an action, it plays on screen, then the next monster gets prompted. The older
    *  chooseAction path above is kept for pure-engine/back-compat tests that resolve paired choices. */
-  takeAction(playerId: string, action: BattleAction): void {
-    if (this._phase !== 'choosing') return;
+  takeAction(playerId: string, action: BattleAction): boolean {
+    if (this._phase !== 'choosing') return false;
     const f = this.fighterOf(playerId);
-    if (!f || !this.isValidAction(f, action)) return;
+    if (!f || !this.isValidAction(f, action)) return false;
     const foe = f === this.a ? this.b : this.a;
     this._phase = 'resolving';
     f.action = action;
@@ -143,6 +143,7 @@ export class BattleWorld {
     f.action = null; f.committedAt = null;
     this._turn++;
     this._phase = this._winner ? 'finished' : 'choosing';
+    return true;
   }
 
   private applySingleAction(f: Fighter, foe: Fighter): void {
