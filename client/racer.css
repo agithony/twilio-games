@@ -268,12 +268,24 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); c
 .board-empty { color: var(--ink-mute); padding: 16px; text-align: center; }
 
 /* ───────── HUD (in-game) ───────── */
+.game-home {
+  position: fixed; top: max(16px, env(safe-area-inset-top)); left: max(16px, env(safe-area-inset-left));
+  z-index: 70; min-height: 44px; display: inline-flex; align-items: center; gap: 8px;
+  padding: 10px 14px; border-radius: 14px; color: var(--ink); text-decoration: none;
+  background: var(--glass-2); border: 1px solid var(--glass-brd); backdrop-filter: blur(10px);
+  font-family: var(--text); font-size: 13px; font-weight: 700; letter-spacing: .03em;
+  transition: border-color .18s, background .18s, transform .12s;
+}
+.game-home svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.game-home:hover { border-color: var(--red); background: rgba(239,34,58,.16); }
+.game-home:active { transform: scale(.97); }
+.game-home:focus-visible { outline: 2px solid var(--red); outline-offset: 3px; }
 .hud-pill {
   position: absolute; display: flex; align-items: center; gap: 10px; padding: 10px 14px;
   background: var(--glass-2); border: 1px solid var(--glass-brd); border-radius: 14px;
   backdrop-filter: blur(10px); font-size: 13px; color: var(--ink-dim); z-index: 20;
 }
-#hud { top: 16px; left: 16px; }
+#hud { top: 16px; left: 112px; }
 #hud .brandbug { width: 22px; height: 22px; }
 #hud .htitle { font-family: var(--disp); font-weight: 800; color: var(--ink); letter-spacing: .02em; font-size: 15px; }
 #hint { top: 16px; right: 16px; }
@@ -360,6 +372,11 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); c
 /* Hide HUD chrome while a menu screen is up — the menu is the focus, not the keyboard hint. */
 body.in-menu #hud, body.in-menu #hint, body.in-menu #ticker, body.in-menu #gauge, body.in-menu #music-toggle-container { opacity: 0; pointer-events: none; transition: opacity .3s; }
 
+@media (max-width: 520px) {
+  .game-home { top: max(10px, env(safe-area-inset-top)); left: max(10px, env(safe-area-inset-left)); padding: 10px 12px; }
+  #hud { top: 10px; left: 104px; }
+  #hud .htitle { display: none; }
+}
 
 
 

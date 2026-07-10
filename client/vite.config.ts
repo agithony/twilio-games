@@ -1,10 +1,8 @@
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 import { resolve } from 'path';
 
-// In dev the client is served by vite (5173) but the manifest API and GLB
-// assets are served by the node game server (default 8080). Proxy the
-// relative paths the client fetches so the same code works in dev and when
-// the node server serves the built bundle in prod.
+// In dev the client is served by Vite while APIs, GLBs, and WebSockets come from the node game server.
+// GAME_SERVER_URL selects that backend (default 8080); browser code remains same-origin in dev/prod.
 //
 // Multi-page build, served by clean paths:
 //   /            → index.html        (branded home/lobby)
@@ -28,34 +26,42 @@ const editorIndexRedirect = () => ({
   },
 });
 
-export default defineConfig({
-  root: __dirname,
-  plugins: [editorIndexRedirect()],
-  server: {
-    proxy: {
-      '/api': { target: 'http://localhost:8080', changeOrigin: true },
-      // GLB models live in the repo-root assets/ served by the node server, so /assets is proxied.
-      // EXCEPT monster sprites, which live in client/public/assets/monsters/ and are served by Vite
-      // itself — without this bypass the proxy would forward them to node (which has no client/public)
-      // and they'd 404 to the placeholder in dev. In production node serves them from dist/, no proxy.
-      '/assets': {
-        target: 'http://localhost:8080', changeOrigin: true,
-        bypass: (req) => {
-          const url = (req.url ?? '').split('?')[0] ?? '';
-          return url.startsWith('/assets/monsters/') ? url : undefined;   // Vite serves; else proxy
+export default defineConfig(({ mode }) => {
+  const gameServer = loadEnv(mode, __dirname, '').GAME_SERVER_URL || 'http://localhost:8080';
+  return {
+    root: __dirname,
+    plugins: [editorIndexRedirect()],
+    server: {
+      proxy: {
+        '/api': { target: gameServer, changeOrigin: true },
+        '/game': { target: gameServer, ws: true, bypass: bypassNonWebSocket },
+        '/battle': { target: gameServer, ws: true, bypass: bypassNonWebSocket },
+        '/voice': { target: gameServer, ws: true, bypass: bypassNonWebSocket },
+        // GLB models live in the repo-root assets/ served by the node server, so /assets is proxied.
+        // EXCEPT monster sprites, which live in client/public/assets/monsters/ and are served by Vite.
+        '/assets': {
+          target: gameServer, changeOrigin: true,
+          bypass: (req) => {
+            const url = (req.url ?? '').split('?')[0] ?? '';
+            return url.startsWith('/assets/monsters/') ? url : undefined;
+          },
         },
       },
     },
-  },
-  build: {
-    rollupOptions: {
-      input: {
-        home: resolve(__dirname, 'index.html'),                  // branded landing/lobby
-        play: resolve(__dirname, 'play.html'),                    // the racer
-        monsters: resolve(__dirname, 'monsters.html'),           // Voice Monsters (the battler)
-        editor: resolve(__dirname, 'editor/index.html'),          // unified Level Editor (/editor)
-        garage: resolve(__dirname, 'garage/index.html'),          // model viewer + configurator (/garage)
+    build: {
+      rollupOptions: {
+        input: {
+          home: resolve(__dirname, 'index.html'),                  // branded landing/lobby
+          play: resolve(__dirname, 'play.html'),                    // the racer
+          monsters: resolve(__dirname, 'monsters.html'),           // Voice Monsters (the battler)
+          editor: resolve(__dirname, 'editor/index.html'),          // unified Level Editor (/editor)
+          garage: resolve(__dirname, 'garage/index.html'),          // model viewer + configurator (/garage)
+        },
       },
     },
-  },
+  };
 });
+
+function bypassNonWebSocket(req: { url?: string; headers: { upgrade?: string } }): string | undefined {
+  return req.headers.upgrade?.toLowerCase() === 'websocket' ? undefined : req.url;
+}

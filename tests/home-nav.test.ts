@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { buildPlayUrl, sanitizeRoomCode, sanitizeName } from '../client/home-nav';
 
 describe('sanitizeRoomCode', () => {
@@ -46,4 +47,16 @@ describe('buildPlayUrl', () => {
     expect(buildPlayUrl({ mode: 'device', roomCode: '1234', name: '' }))
       .toBe('play.html?room=1234&name=Racer');
   });
+});
+
+describe('in-game home navigation', () => {
+  for (const page of ['play.html', 'monsters.html']) {
+    it(`${page} keeps an accessible persistent Home link`, () => {
+      const html = readFileSync(new URL(`../client/${page}`, import.meta.url), 'utf8');
+      expect(html).toContain('class="game-home"');
+      expect(html).toContain('href="/"');
+      expect(html).toContain('aria-label="Return to Twilio Games home"');
+      expect(html).toContain('<span>Home</span>');
+    });
+  }
 });

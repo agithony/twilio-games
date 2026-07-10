@@ -21,7 +21,7 @@
     .music-toggle-icon svg { width: 14px; height: 14px; stroke: currentColor; text-decoration: none; }
     .music-toggle-label { text-decoration: none; }
     #vm-hud {
-      position: fixed; top: 16px; left: 16px; z-index: 20;
+      position: fixed; top: 16px; left: 112px; z-index: 20;
       display: flex; align-items: center; gap: 10px; padding: 10px 14px;
       background: rgba(12, 18, 40, 0.72); border: 1px solid rgba(255, 255, 255, 0.10); border-radius: 14px;
       backdrop-filter: blur(10px);
@@ -38,6 +38,13 @@
     <!-- Lobby / monster-select / results overlay (hidden during a live battle). -->
     <div id="overlay"></div>
   </div>
+
+  <a class="game-home" href="/" aria-label="Return to Twilio Games home">
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M3 11.5 12 4l9 7.5M5.5 10v10h13V10M9.5 20v-6h5v6" />
+    </svg>
+    <span>Home</span>
+  </a>
 
   <div id="vm-hud">
     <img class="brandbug" src="/brand/Twilio_Logo_Bug_White.svg" alt="" />

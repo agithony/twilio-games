@@ -20,16 +20,11 @@ import { getMusicManager } from './music-manager';
 import { injectMusicToggle } from './music-toggle';
 import { getSoundEffectsManager } from './sound-effects';
 
-// Game WebSocket URL. In production the page is served by the same origin as the game server
-// (behind one HTTPS tunnel), so use the page's protocol+host — wss:// over https avoids a
-// mixed-content block. In local dev the page is on Vite (5173/5174) while the server is on 8080,
-// so fall back to :8080 only for localhost. An explicit ?ws= override wins for edge setups.
+// Game WebSocket URL. Production is same-origin; local Vite proxies /game to GAME_SERVER_URL.
+// An explicit ?ws= override still wins for edge setups.
 const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
 const wsOverride = new URLSearchParams(location.search).get('ws');
-const isLocalDev = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
-const url = wsOverride
-  ?? (isLocalDev ? `${wsProto}://${location.hostname}:8080/game`
-                 : `${wsProto}://${location.host}/game`);
+const url = wsOverride ?? `${wsProto}://${location.host}/game`;
 const conn = new GameConnection(url);
 const input = new KeyboardAdapter();
 const assets = new AssetLoader();

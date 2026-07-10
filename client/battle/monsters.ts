@@ -29,9 +29,8 @@ const roomCode = params.get('room') ?? '4821';
 const name = params.get('name') ?? 'Player';
 
 const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
-const isLocalDev = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
 const wsUrl = params.get('ws')
-  ?? (isLocalDev ? `${wsProto}://${location.hostname}:8080/battle` : `${wsProto}://${location.host}/battle`);
+  ?? `${wsProto}://${location.host}/battle`;
 
 const overlay = document.getElementById('overlay')!;
 const stageEl = document.getElementById('stage')!;
