@@ -46,7 +46,11 @@ export function formatReport(reports: GlbReport[]): string {
 const isMain = process.argv[1] && process.argv[1].endsWith('inspect-assets.ts');
 if (isMain) {
   const dir = 'assets';
-  inspectDir(dir).then(async (reports) => {
+  Promise.all([
+    inspectDir('assets/racer/cars').then(reports => reports.map(report => ({ ...report, file: `racer/cars/${report.file}` }))),
+    inspectDir('assets/racer/track').then(reports => reports.map(report => ({ ...report, file: `racer/track/${report.file}` }))),
+  ]).then(async groups => {
+    const reports = groups.flat();
     console.log(formatReport(reports));
     const manifest = buildStarterManifest(reports);
     await writeFile(join(dir, 'manifest.json'), serializeManifest(manifest));

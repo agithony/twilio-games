@@ -135,7 +135,7 @@ export class Renderer {
   private propsGroup = new THREE.Group();     // decoration props live here (added to trackContent)
   private propLoader = (() => {
     const l = new GLTFLoader(); const d = new DRACOLoader();
-    d.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/'); l.setDRACOLoader(d);
+    d.setDecoderPath('/draco/'); l.setDRACOLoader(d);
     return l;
   })();
 
@@ -363,7 +363,7 @@ export class Renderer {
   private lineGroup = new THREE.Group();
   private lineLoader = (() => {
     const l = new GLTFLoader(); const d = new DRACOLoader();
-    d.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/'); l.setDRACOLoader(d);
+    d.setDecoderPath('/draco/'); l.setDRACOLoader(d);
     return l;
   })();
   /** Remembered files so setPath() can re-place the gantries onto a freshly-set curve. */

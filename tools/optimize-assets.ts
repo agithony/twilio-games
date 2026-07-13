@@ -1,21 +1,20 @@
-// Compress every assets/*.glb in place (Draco geometry + WebP textures + 1024 resize).
-// Raw originals are preserved in assets/_raw/ (gitignored). Run: npm run optimize-assets
+// Compress organized Racer GLBs in place (Draco geometry + WebP textures + 1024 resize).
+// Raw originals are preserved beside each role directory in _raw/ (gitignored).
 import { readdir, mkdir, rename, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 const run = promisify(execFile);
 
-const DIR = 'assets';
-const RAW = join(DIR, '_raw');
+const DIRS = ['assets/racer/cars', 'assets/racer/track'];
 
 async function main() {
-  await mkdir(RAW, { recursive: true });
-  const files = (await readdir(DIR)).filter(f => f.toLowerCase().endsWith('.glb'));
-  if (files.length === 0) { console.log('No .glb files in assets/.'); return; }
-  for (const file of files) {
-    const src = join(DIR, file);
-    const raw = join(RAW, file);
+  for (const dir of DIRS) {
+    const rawDir = join(dir, '_raw'); await mkdir(rawDir, { recursive: true });
+    const files = (await readdir(dir)).filter(f => f.toLowerCase().endsWith('.glb'));
+    for (const file of files) {
+    const src = join(dir, file);
+    const raw = join(rawDir, file);
     // skip if already optimized (raw backup exists)
     try { await stat(raw); console.log(`skip (already optimized): ${file}`); continue; } catch {}
     const before = (await stat(src)).size;
@@ -28,6 +27,7 @@ async function main() {
     } catch (e) {
       await rename(raw, src);  // restore original on failure
       console.error(`FAILED ${file}: ${(e as Error).message}`);
+    }
     }
   }
 }

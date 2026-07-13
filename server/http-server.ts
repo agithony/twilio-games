@@ -6,6 +6,7 @@ import { readFile, writeFile, readdir, rename, mkdir, stat } from 'node:fs/promi
 import { WebSocketServer, WebSocket } from 'ws';
 import { GameServer } from './game-server';
 import { BattleServer } from './battle-server';
+import { FighterServer } from './fighter-server';
 import { ConversationRelayAdapter } from './conversation-relay';
 import { twimlConnectRelay, twimlMessage, twimlEmpty } from './twiml';
 import { validateTwilioSignature } from './twilio-signature';
@@ -20,13 +21,17 @@ import { SmsConcierge, type ConciergeRoom } from './sms-concierge';
 import { OpenAiClient, NullLlmClient, type LlmClient, type LlmTurn } from './llm';
 import { hostTurn, matchChoice, clearSelectionIndex, type HostContext } from './game-host';
 import { BattleVoiceSession, parseSpokenName, isAdvanceWord, type BattleVoiceSnapshot } from './battle-voice';
+import { FighterVoiceSession, type FighterVoiceSnapshot } from './fighter-voice';
 import { battleHostTurn, type BattleHostContext } from './battle-host';
 import { monsterById, rosterEntries } from '../shared/monster-roster';
 import type { Room } from './room';
 import type { RaceResult } from '../shared/types';
+import { FIGHTER_MAPS, FIGHTER_ROSTER, type FighterMapEntry } from '../shared/fighter-roster';
+import { parseFighterMaps } from '../shared/fighter-maps';
 
 const VOICE_RACER_CONTROLS_INTRO = 'Before you start, check the controls on the screen. Say left or right to steer. Say boost to speed up. Say brake to slow down. Say nitro to break through a wall.';
 const BATTLE_VOICE_RECONNECT_GRACE_MS = 30_000;
+const FIGHTER_VOICE_RECONNECT_GRACE_MS = 30_000;
 
 interface BattleVoiceCallBinding {
   code: string;
@@ -34,11 +39,16 @@ interface BattleVoiceCallBinding {
   activeSession: BattleVoiceSession | null;
   leaveTimer: ReturnType<typeof setTimeout> | null;
 }
+interface FighterVoiceCallBinding {
+  code: string; playerId: string; activeSession: FighterVoiceSession | null;
+  leaveTimer: ReturnType<typeof setTimeout> | null;
+}
 
 export class HttpServer {
   private server: http.Server;
   private game: GameServer;
   private battle: BattleServer;
+  private fighter: FighterServer;
   private voiceWss: WebSocketServer;
   private readonly port: number;
   private readonly authToken?: string;
@@ -63,6 +73,7 @@ export class HttpServer {
    *  CR_TTS_VOICE env; empty → Relay's default voice (talk-back text still sends, just in the default
    *  voice). A high-energy announcer voiceId is the intended default set in deploy config. */
   private readonly crVoice: string;
+  private readonly voiceRelayToken: string;
   /** Cached selectable cars/maps for the lobby (refreshed from manifest + maps.json periodically). */
   private roomConfigCache: { carCount: number; maps: string[]; carNames: string[] } = { carCount: 0, maps: [], carNames: [] };
   private roomConfigTimer: ReturnType<typeof setInterval> | null = null;
@@ -88,8 +99,15 @@ export class HttpServer {
   /** Conversation Relay may reconnect the WS for the same phone call. Keep callSid → player binding
    *  briefly so a transport reconnect resumes the active battle instead of re-running onboarding. */
   private battleVoiceCallBindings = new Map<string, BattleVoiceCallBinding>();
+  private fighterVoice = new Map<string, Set<FighterVoiceSession>>();
+  private fighterVoiceCallBindings = new Map<string, FighterVoiceCallBinding>();
   private lastGameWsAt = 0;
   private lastBattleWsAt = 0;
+  private lastFighterWsAt = 0;
+  private fighterMaps: FighterMapEntry[] = FIGHTER_MAPS;
+  private readonly fighterMapsPath: string;
+  private readonly bundledFighterMapsPath: string;
+  private readonly fighterPreviewDir: string;
   /** The conversational AI host (OpenAI, or a null no-op when OPENAI_API_KEY is unset → scripted
    *  fallback). Turns a caller's natural-language menu utterances into spoken replies + game actions. */
   private llm: LlmClient;
@@ -109,6 +127,9 @@ export class HttpServer {
     editorToken?: string;    // when set, /api writes require ?token= or x-editor-token; open if unset
     clientDir?: string;      // the Vite-built client to serve (prod single-process); default client/dist
     gamePhoneNumber?: string;// the number players CALL to join (shown + QR-encoded in the lobby)
+    fighterMapsPath?: string;
+    bundledFighterMapsPath?: string;
+    fighterPreviewDir?: string;
   }) {
     this.port = opts.port;
     this.authToken = opts.authToken;
@@ -123,9 +144,14 @@ export class HttpServer {
     this.bundledArenaPath = opts.bundledArenaPath;
     this.leaderboardPath = opts.leaderboardPath ?? 'data/leaderboard.json';
     this.editorToken = opts.editorToken;
+    if (process.env.NODE_ENV === 'production' && !this.editorToken) console.warn('[security] EDITOR_TOKEN is unset; editor writes remain open');
     this.clientDir = opts.clientDir ?? 'client/dist';
     this.gamePhoneNumber = (opts.gamePhoneNumber ?? '').trim();
+    this.fighterMapsPath = opts.fighterMapsPath ?? 'data/fighter-maps.json';
+    this.bundledFighterMapsPath = opts.bundledFighterMapsPath ?? 'assets/fighters/maps/maps.json';
+    this.fighterPreviewDir = opts.fighterPreviewDir ?? 'data/fighter-previews';
     this.crVoice = (process.env.CR_TTS_VOICE ?? '').trim();
+    this.voiceRelayToken = (process.env.VOICE_RELAY_TOKEN ?? this.authToken ?? '').trim();
     // Conversational AI host: OpenAI when OPENAI_API_KEY is set (model via OPENAI_MODEL), else a
     // null client so the game degrades gracefully to the scripted phrase-bank lines.
     const openaiKey = (process.env.OPENAI_API_KEY ?? '').trim();
@@ -144,6 +170,7 @@ export class HttpServer {
     // Voice Monsters lives on its own /battle WebSocket (turn-based, event-driven — separate from the
     // racer's continuous-sim GameServer). Mounted on the same HTTP host so one number serves both.
     this.battle = new BattleServer({ server: this.server });
+    this.fighter = new FighterServer({ server: this.server, displayToken: process.env.FIGHTER_DISPLAY_TOKEN });
     // Feed newly-created rooms the selectable cars (manifest) + maps (maps.json). Reads are async
     // and the provider is sync, so keep a cache refreshed at startup + on an interval; rooms read
     // the cache. Empty until the first refresh resolves (rooms then reconfigure on next create).
@@ -169,6 +196,14 @@ export class HttpServer {
       if (!set) return;
       for (const s of set) s.onBattleStateChanged();
     });
+    this.fighter.setOnRoomEvents((roomCode, events) => {
+      const set = this.fighterVoice.get(roomCode); if (!set) return;
+      for (const event of events) for (const session of set) session.onFighterEvent(event);
+    });
+    this.fighter.setOnRoomState(roomCode => {
+      const set = this.fighterVoice.get(roomCode); if (!set) return;
+      for (const session of set) session.onStateChanged();
+    });
     // SMS concierge: resolves a room code to a live Room wrapped as a ConciergeRoom (adds car names).
     this.concierge = new SmsConcierge({ findRoom: (code) => this.conciergeRoom(code) });
     this.smsSweepTimer = setInterval(() => this.concierge.sweep(), 5 * 60 * 1000);
@@ -183,6 +218,9 @@ export class HttpServer {
       } else if (path === '/battle') {
         this.lastBattleWsAt = Date.now();
         this.battle.handleUpgrade(req, socket, head);
+      } else if (path === '/fighter') {
+        this.lastFighterWsAt = Date.now();
+        this.fighter.handleUpgrade(req, socket, head);
       } else {
         socket.destroy();
       }
@@ -211,6 +249,21 @@ export class HttpServer {
     try {
       this.leaderboardEntriesCache = parseLeaderboard(await readFile(this.leaderboardPath, 'utf8'));
     } catch { /* keep prior rows */ }
+  }
+
+  private async refreshFighterMaps(): Promise<void> {
+    let liveValid = false;
+    try {
+      this.fighterMaps = parseFighterMaps(JSON.parse(await readFile(this.fighterMapsPath, 'utf8'))); liveValid = true;
+    } catch { /* seed/fallback below */ }
+    if (!liveValid) {
+      try {
+        this.fighterMaps = parseFighterMaps(JSON.parse(await readFile(this.bundledFighterMapsPath, 'utf8')));
+        await this.writeFileAtomic(this.fighterMapsPath, JSON.stringify(this.fighterMaps, null, 2));
+        console.log(`[fighter-maps] seeded ${this.fighterMapsPath} from ${this.bundledFighterMapsPath}`);
+      } catch (error) { console.error('[fighter-maps] using built-in fallback:', (error as Error).message); }
+    }
+    this.fighter.setMaps(this.fighterMaps);
   }
 
   /** Wrap a live game Room as a ConciergeRoom (adds car names/count from the cached manifest). */
@@ -305,11 +358,17 @@ export class HttpServer {
     // `game=monsters` Relay parameter, or — with none — auto-detect the battler as the game with a live
     // display and the racer idle). Otherwise the racer adapter (default, unchanged). Decided once, on
     // the first message; thereafter all frames go to the chosen handler.
-    let route: 'racer' | 'battle' | null = null;
+    let route: 'racer' | 'battle' | 'fighter' | null = null;
     let battle: BattleVoiceSession | null = null;
+    let fighter: FighterVoiceSession | null = null;
     const say = (text: string) => sendRelayText(ws, text);
     ws.on('message', (d) => {
       const raw = d.toString();
+      if (route === null && this.voiceRelayToken) {
+        try {
+          if (String(JSON.parse(raw)?.customParameters?.relayToken ?? '') !== this.voiceRelayToken) { ws.close(1008, 'unauthorized relay'); return; }
+        } catch { ws.close(1008, 'unauthorized relay'); return; }
+      }
       try {
         const type = JSON.parse(raw)?.type;
         if (type === 'prompt' || type === 'interrupt') clearRelayTextQueue(ws);
@@ -318,36 +377,126 @@ export class HttpServer {
       if (route === 'battle') {
         if (!battle) battle = this.makeBattleSession(say);
         battle.handleMessage(raw);
+      } else if (route === 'fighter') {
+        if (!fighter) fighter = this.makeFighterSession(say);
+        fighter.handleMessage(raw);
       } else {
         adapter.handleMessage(raw);
       }
     });
     ws.on('close', () => {
       console.log('[CR] voice WebSocket closed');
-      if (battle) battle.handleClose(); else adapter.handleClose();
+      if (battle) battle.handleClose(); else if (fighter) fighter.handleClose(); else adapter.handleClose();
     });
   }
 
   /** Decide which game a voice call joins, from its first frame. Explicit `game=monsters|racer` Relay
    *  parameter wins; otherwise auto-detect: the battler if ITS display is open and the racer's isn't
    *  (so whichever game is on the shared screen is the one the caller joins). Default: the racer. */
-  private pickVoiceGame(firstFrame: string): 'racer' | 'battle' {
+  private pickVoiceGame(firstFrame: string): 'racer' | 'battle' | 'fighter' {
     try {
       const o = JSON.parse(firstFrame);
       const g = String(o?.customParameters?.game ?? '').toLowerCase();
       if (g === 'monsters' || g === 'battle') return 'battle';
+      if (g === 'fighter' || g === 'fight') return 'fighter';
       if (g === 'racer' || g === 'race') return 'racer';
     } catch { /* fall through to auto-detect */ }
     // Auto-detect: route to the game whose screen most recently opened. This avoids a stale tab for one
     // game stealing calls while the other game is currently on the projector.
-    if (this.shouldRouteVoiceToBattle()) return 'battle';
-    return 'racer';
+    return this.recentVoiceGame();
   }
 
-  private shouldRouteVoiceToBattle(): boolean {
-    if (this.battle.connectionCount <= 0) return false;
-    if (this.game.connectionCount <= 0) return true;
-    return this.lastBattleWsAt >= this.lastGameWsAt;
+  private recentVoiceGame(): 'racer' | 'battle' | 'fighter' {
+    const live: { game: 'racer' | 'battle' | 'fighter'; at: number }[] = [];
+    if (this.game.connectionCount > 0) live.push({ game: 'racer', at: this.lastGameWsAt });
+    if (this.battle.connectionCount > 0) live.push({ game: 'battle', at: this.lastBattleWsAt });
+    if (this.fighter.connectionCount > 0) live.push({ game: 'fighter', at: this.lastFighterWsAt });
+    live.sort((a, b) => b.at - a.at);
+    return live[0]?.game ?? 'racer';
+  }
+
+  private makeFighterSession(say: (text: string) => void): FighterVoiceSession {
+    let session: FighterVoiceSession;
+    session = new FighterVoiceSession({
+      say,
+      join: (code, name, callSid) => {
+        code = code.trim().toUpperCase();
+        const resumed = this.resumeFighterVoiceCall(code, callSid, session);
+        if (resumed) return { playerId: resumed, resumed: true };
+        const playerId = this.fighter.voiceJoin(code, name); if (!playerId) return null;
+        this.rememberFighterVoiceCall(callSid, code, playerId, session); this.registerFighterVoiceSession(code, session);
+        return { playerId, resumed: false };
+      },
+      leave: (code, id, callSid) => { this.unregisterFighterVoiceSession(session); this.scheduleFighterVoiceLeave(code, id, callSid, session); },
+      setName: (code, id, name) => this.fighter.voiceSetName(code, id, name),
+      selectFighter: (code, id, fighterId) => this.fighter.voiceSelectFighter(code, id, fighterId),
+      selectMap: (code, id, mapId) => this.fighter.voiceSelectMap(code, id, mapId),
+      advance: (code, id) => this.fighter.voiceAdvance(code, id),
+      command: (code, id, command) => this.fighter.voiceCommand(code, id, command),
+      snapshot: (code, id) => this.fighterVoiceSnapshot(code, id),
+    });
+    return session;
+  }
+
+  private fighterVoiceSnapshot(code: string, playerId: string): FighterVoiceSnapshot | null {
+    const room = this.fighter.findRoom(code); if (!room || !room.hasPlayer(playerId)) return null;
+    const state = room.state(); const me = state.players.find(player => player.playerId === playerId);
+    const mySide = me?.side === 'p2' ? 'p2' : 'p1'; const foeSide = mySide === 'p1' ? 'p2' : 'p1';
+    const foe = state.players.find(player => player.side === foeSide);
+    const playerOne = state.players.find(player => player.side === 'p1'), playerTwo = state.players.find(player => player.side === 'p2');
+    const fighterName = (id: string | null | undefined) => FIGHTER_ROSTER.find(fighter => fighter.id === id)?.name ?? null;
+    return { phase: state.phase, myName: me?.name ?? null, myFighterId: me?.fighterId ?? null, myFighterName: fighterName(me?.fighterId),
+      foeName: foe?.name ?? null, foeFighterId: foe?.fighterId ?? null, foeFighterName: fighterName(foe?.fighterId), selectedMap: state.selectedMap,
+      mySide, myHealth: state.world?.[mySide].health ?? null, foeHealth: state.world?.[foeSide].health ?? null,
+      countdown: state.countdown, winnerName: state.result?.winnerName ?? null,
+      winnerSide: state.result?.winner ?? null,
+      playerOneName: playerOne?.name ?? null, playerOneFighterName: fighterName(playerOne?.fighterId),
+      playerTwoName: playerTwo?.name ?? null, playerTwoFighterName: fighterName(playerTwo?.fighterId),
+      playerCount: state.players.filter(player => !player.isAi).length,
+      allFightersSelected: state.players.filter(player => !player.isAi).length > 0 && state.players.filter(player => !player.isAi).every(player => player.fighterId),
+      isController: room.canControlSetup(playerId),
+      fighters: FIGHTER_ROSTER.map(fighter => ({ id: fighter.id, name: fighter.name })),
+      maps: this.fighterMaps.map(map => ({ id: map.id, name: map.name })) };
+  }
+
+  private registerFighterVoiceSession(code: string, session: FighterVoiceSession): void {
+    let set = this.fighterVoice.get(code); if (!set) { set = new Set(); this.fighterVoice.set(code, set); } set.add(session);
+  }
+  private unregisterFighterVoiceSession(session: FighterVoiceSession): void {
+    for (const [code, set] of this.fighterVoice) if (set.delete(session) && set.size === 0) this.fighterVoice.delete(code);
+  }
+  private rememberFighterVoiceCall(callSid: string, code: string, playerId: string, session: FighterVoiceSession): void {
+    const sid = callSid.trim(); if (!sid) return;
+    const prior = this.fighterVoiceCallBindings.get(sid); if (prior?.leaveTimer) clearTimeout(prior.leaveTimer);
+    if (prior?.activeSession && prior.activeSession !== session) { this.unregisterFighterVoiceSession(prior.activeSession); prior.activeSession.handleReplaced(); }
+    if (prior && (prior.code !== code || prior.playerId !== playerId)) this.fighter.voiceLeave(prior.code, prior.playerId);
+    this.fighterVoiceCallBindings.set(sid, { code, playerId, activeSession: session, leaveTimer: null });
+  }
+  private resumeFighterVoiceCall(code: string, callSid: string, session: FighterVoiceSession): string | null {
+    const sid = callSid.trim(); if (!sid) return null;
+    const binding = this.fighterVoiceCallBindings.get(sid);
+    if (!binding || binding.code !== code || !this.fighter.findRoom(code)?.hasPlayer(binding.playerId)) return null;
+    if (binding.leaveTimer) { clearTimeout(binding.leaveTimer); binding.leaveTimer = null; }
+    if (binding.activeSession && binding.activeSession !== session) { this.unregisterFighterVoiceSession(binding.activeSession); binding.activeSession.handleReplaced(); }
+    binding.activeSession = session; this.registerFighterVoiceSession(code, session); return binding.playerId;
+  }
+  private scheduleFighterVoiceLeave(code: string, playerId: string, callSid: string, session: FighterVoiceSession): void {
+    const sid = callSid.trim(); if (!sid) { this.fighter.voiceLeave(code, playerId); return; }
+    const binding = this.fighterVoiceCallBindings.get(sid);
+    if (binding?.activeSession && binding.activeSession !== session) return;
+    if (binding?.leaveTimer) clearTimeout(binding.leaveTimer);
+    const leaveTimer = setTimeout(() => {
+      const current = this.fighterVoiceCallBindings.get(sid); if (!current || current.playerId !== playerId || current.code !== code) return;
+      this.fighterVoiceCallBindings.delete(sid); this.fighter.voiceLeave(code, playerId);
+    }, FIGHTER_VOICE_RECONNECT_GRACE_MS);
+    (leaveTimer as { unref?: () => void }).unref?.();
+    this.fighterVoiceCallBindings.set(sid, { code, playerId, activeSession: null, leaveTimer });
+  }
+  private endFighterVoiceCall(callSid: string): void {
+    const sid = callSid.trim(), binding = this.fighterVoiceCallBindings.get(sid); if (!binding) return;
+    if (binding.leaveTimer) clearTimeout(binding.leaveTimer);
+    if (binding.activeSession) { this.unregisterFighterVoiceSession(binding.activeSession); binding.activeSession.handleReplaced(); }
+    this.fighterVoiceCallBindings.delete(sid); this.fighter.voiceLeave(binding.code, binding.playerId);
   }
 
   /** Build a Voice Monsters call session wired to the live BattleServer + the battle LLM host. The
@@ -801,8 +950,8 @@ export class HttpServer {
       const roomCode = path === '/voice/join'
         ? ((params['Digits'] ?? '').trim() || DEFAULT_ROOM)
         : DEFAULT_ROOM;
-      // MULTI-GAME: one number, both games. Auto-route to whichever game's screen most recently opened.
-      const toBattle = this.shouldRouteVoiceToBattle();
+      // MULTI-GAME: one number. Auto-route to whichever game's screen most recently opened.
+      const voiceGame = this.recentVoiceGame();
       const xml = twimlConnectRelay({
         wsUrl: `${this.publicBaseUrl.replace(/^http/, 'ws')}/voice`,
         sessionEndedUrl: `${this.publicBaseUrl}/voice/session-ended`,
@@ -810,10 +959,15 @@ export class HttpServer {
         // ElevenLabs voice for the announcer talk-back; swap via the CR_TTS_VOICE env.
         ttsProvider: 'ElevenLabs',
         voice: this.crVoice,
-        game: toBattle ? 'monsters' : 'racer',
-        hints: toBattle
+        game: voiceGame === 'battle' ? 'monsters' : voiceGame,
+        relayToken: this.voiceRelayToken || undefined,
+        hints: voiceGame === 'battle'
           ? 'fight, guard, item, potion, taunt, attack, heal, sparkmouse, embertail, shellback, thornling, galecoil, voltcrest, dazeduck, psyclone, ember, thunder, jolt, water, vine, psystrike'
-          : 'left, right, boost, go, brake, slow, stop, nitro, power',
+          : voiceGame === 'fighter'
+            ? [...FIGHTER_ROSTER.map(fighter => fighter.name), ...this.fighterMaps.map(map => map.name),
+                'forward', 'closer', 'back', 'backward', 'away', 'jump', 'leap', 'hop', 'punch', 'jab', 'strike',
+                'kick', 'roundhouse', 'block', 'guard', 'defend', 'start', 'next', 'fight', 'rematch', 'help'].join(', ')
+            : 'left, right, boost, go, brake, slow, stop, nitro, power',
         // NO welcomeGreeting here on purpose: the game's WS `setup` handler speaks the greeting (and
         // asks the caller's name) as its FIRST utterance. Setting it here too made the caller hear
         // "Welcome to Voice Monsters" TWICE (TwiML greeting + the WS greeting).
@@ -842,7 +996,8 @@ export class HttpServer {
           return;
         }
       }
-      this.endBattleVoiceCall((params['CallSid'] ?? params['callSid'] ?? '').trim());
+      const callSid = (params['CallSid'] ?? params['callSid'] ?? '').trim();
+      this.endBattleVoiceCall(callSid); this.endFighterVoiceCall(callSid);
       res.writeHead(204).end();
       return;
     }
@@ -895,15 +1050,15 @@ export class HttpServer {
       res.end(JSON.stringify(m));
       return;
     }
-    // ---- list available top-level GLB files (for the editor's role dropdowns) ----
+    // ---- list organized Voice Racer GLBs (for Garage/editor role dropdowns) ----
     if (path === '/api/assets' && req.method === 'GET') {
       let files: string[] = [];
       try {
-        const entries = await readdir('assets', { withFileTypes: true });
-        files = entries
-          .filter((e) => e.isFile() && e.name.toLowerCase().endsWith('.glb'))
-          .map((e) => e.name)
-          .sort();
+        for (const directory of ['racer/cars', 'racer/track']) {
+          const entries = await readdir(`assets/${directory}`, { withFileTypes: true });
+          files.push(...entries.filter(entry => entry.isFile() && entry.name.toLowerCase().endsWith('.glb')).map(entry => `${directory}/${entry.name}`));
+        }
+        files.sort();
       } catch { files = []; }
       res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
       res.end(JSON.stringify(files));
@@ -958,6 +1113,54 @@ export class HttpServer {
       res.end(JSON.stringify(cfg));
       return;
     }
+    // ---- Voice Fighter map catalog + GLB picker (authored in the unified editor) ----
+    if (path === '/api/fighter-maps' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify(this.fighterMaps));
+      return;
+    }
+    if (path === '/api/fighter-maps' && req.method === 'POST') {
+      if (!this.authorizeWrite(req, res)) return;
+      let maps: unknown;
+      try { maps = JSON.parse(await readBody(req)); } catch { res.writeHead(400).end('invalid JSON'); return; }
+      try { this.fighterMaps = parseFighterMaps(maps); }
+      catch (error) { res.writeHead(400).end((error as Error).message); return; }
+      await this.writeFileAtomic(this.fighterMapsPath, JSON.stringify(this.fighterMaps, null, 2));
+      this.fighter.setMaps(this.fighterMaps);
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify(this.fighterMaps));
+      return;
+    }
+    if (path === '/api/fighter-map-files' && req.method === 'GET') {
+      let files: string[] = [];
+      try {
+        const entries = await readdir('assets/fighters/maps', { withFileTypes: true });
+        files = entries.filter(entry => entry.isFile() && entry.name.toLowerCase().endsWith('.glb')).map(entry => entry.name).sort();
+      } catch { /* empty picker */ }
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify(files));
+      return;
+    }
+    if (path === '/api/fighter/leave' && req.method === 'POST') {
+      let body: unknown;
+      try { body = JSON.parse(await readBody(req)); } catch { res.writeHead(400).end('invalid JSON'); return; }
+      const value = body as { roomCode?: unknown; sessionId?: unknown };
+      if (typeof value?.roomCode !== 'string' || typeof value?.sessionId !== 'string' || value.sessionId.length > 128) { res.writeHead(400).end('roomCode + sessionId required'); return; }
+      this.fighter.releaseBrowserSession(value.roomCode, value.sessionId);
+      res.writeHead(204).end(); return;
+    }
+    if (path === '/api/fighter-map-preview' && req.method === 'POST') {
+      if (!this.authorizeWrite(req, res)) return;
+      const id = new URL(req.url ?? '', 'http://localhost').searchParams.get('id') ?? '';
+      if (!/^[a-z0-9-]{1,64}$/.test(id)) { res.writeHead(400).end('invalid map id'); return; }
+      const image = await readBinaryBody(req, 5 * 1024 * 1024);
+      if (image.length < 8 || !image.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) { res.writeHead(400).end('preview must be PNG'); return; }
+      await mkdir(this.fighterPreviewDir, { recursive: true });
+      await this.writeFileAtomic(`${this.fighterPreviewDir}/${id}.png`, image);
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify({ preview: `/fighter-previews/${id}.png` }));
+      return;
+    }
     // ---- global leaderboard (best finish times, all-time) ----
     if (path === '/api/leaderboard' && req.method === 'GET') {
       const url = new URL(req.url ?? '', 'http://localhost');
@@ -994,6 +1197,13 @@ export class HttpServer {
       res.end(JSON.stringify(merged.maps));
       return;
     }
+    if (req.method === 'GET' && path.startsWith('/fighter-previews/')) {
+      const name = path.slice('/fighter-previews/'.length);
+      if (!/^[a-z0-9-]+\.png$/i.test(name)) { res.writeHead(403).end('forbidden'); return; }
+      const file = `${this.fighterPreviewDir}/${name}`;
+      try { await stat(file); } catch { res.writeHead(404).end('not found'); return; }
+      return this.sendFile(file, res, req, { 'Cache-Control': 'no-cache', 'Access-Control-Allow-Origin': '*' });
+    }
     // ---- static assets (built JS bundles AND GLB models, both under /assets/) ----
     if (req.method === 'GET' && path.startsWith('/assets/')) {
       return this.serveAsset(path, res, req);
@@ -1024,7 +1234,7 @@ export class HttpServer {
 
   /** Write a file atomically (temp file + rename) so a crash mid-write can't truncate/corrupt it.
    *  Ensures the parent directory exists (e.g. data/ for the leaderboard on first run). */
-  private async writeFileAtomic(file: string, contents: string): Promise<void> {
+  private async writeFileAtomic(file: string, contents: string | Buffer): Promise<void> {
     const dir = path.dirname(file);
     if (dir && dir !== '.') await mkdir(dir, { recursive: true });
     const tmp = `${file}.tmp-${process.pid}`;
@@ -1044,14 +1254,16 @@ export class HttpServer {
     try { rel = decodeURIComponent(urlPath.replace(/^\/assets\//, '')); }
     catch { res.writeHead(400).end('bad request'); return; }   // malformed %-escape
     if (rel.includes('..') || rel.startsWith('/')) { res.writeHead(403).end('forbidden'); return; }
-    for (const base of [path.join(this.clientDir, 'assets'), 'assets']) {
+    const builtAssets = path.join(this.clientDir, 'assets');
+    for (const base of [builtAssets, 'assets']) {
       const full = path.join(base, rel);
       try {
         await stat(full);   // existence check; throws → try next base / 404
         // Assets are content-addressed (hashed JS bundles) or stable models → cache HARD so a client
         // (and the CDN/edge) fetches each big GLB ONCE, not on every menu load. This is the main fix
         // for the slow deployed menu: the 7.8MB models were re-downloaded uncompressed every time.
-        return this.sendFile(full, res, req, { 'Cache-Control': 'public, max-age=31536000, immutable', 'Access-Control-Allow-Origin': '*' });
+        const cache = base === builtAssets ? 'public, max-age=31536000, immutable' : 'public, max-age=3600, must-revalidate';
+        return this.sendFile(full, res, req, { 'Cache-Control': cache, 'Access-Control-Allow-Origin': '*' });
       } catch { /* try next base */ }
     }
     res.writeHead(404).end('not found');
@@ -1109,6 +1321,7 @@ export class HttpServer {
 
   async start(): Promise<number> {
     await this.seedMapsFile();
+    await this.refreshFighterMaps();
     // Re-read the (possibly just-seeded) maps into the lobby cache so map choices are correct on the
     // very first connection — the constructor's initial refresh may have run before the seed wrote.
     await this.refreshRoomConfig();
@@ -1147,8 +1360,11 @@ export class HttpServer {
         if (binding.leaveTimer) clearTimeout(binding.leaveTimer);
       }
       this.battleVoiceCallBindings.clear();
+      for (const binding of this.fighterVoiceCallBindings.values()) if (binding.leaveTimer) clearTimeout(binding.leaveTimer);
+      this.fighterVoiceCallBindings.clear(); this.fighterVoice.clear();
       this.game.stopLoopOnly();
       this.battle.stopLoopOnly();
+      this.fighter.stopLoopOnly();
       this.server.close(() => resolve());
     });
   }
@@ -1232,6 +1448,7 @@ export function contentType(name: string): string {
     // where Vite sent the right type). The Twilio Sans faces are all .otf.
     case '.otf': return 'font/otf';
     case '.glb': return 'model/gltf-binary';
+    case '.wasm': return 'application/wasm';
     case '.ico': return 'image/x-icon';
     // Audio (shared-screen background music) — a decodable Content-Type so the browser's Web Audio
     // API will fetch + decode them (application/octet-stream is refused by some decoders).
@@ -1258,6 +1475,19 @@ function readBody(req: http.IncomingMessage): Promise<string> {
       data += c;
     });
     req.on('end', () => resolve(data));
+    req.on('error', reject);
+  });
+}
+
+function readBinaryBody(req: http.IncomingMessage, max: number): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = []; let size = 0;
+    req.on('data', chunk => {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk); size += buffer.length;
+      if (size > max) { req.destroy(); reject(new Error('request body too large')); return; }
+      chunks.push(buffer);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
     req.on('error', reject);
   });
 }

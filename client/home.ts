@@ -13,8 +13,8 @@ const GAMES: GameCard[] = [
     blurb: 'Lane-dodging multiplayer race. Shout your moves; dodge barriers, grab boosts.' },
   { id: 'battler', title: 'Voice Monsters', status: 'active', page: 'monsters.html',
     blurb: 'Command your creature out loud in turn-based duels. Call your attacks and out-strategize your rival.' },
-  { id: 'fighter', title: 'Voice Fighter', status: 'soon',
-    blurb: 'Call your attacks out loud in a side-view brawler. Coming soon.' },
+  { id: 'fighter', title: 'Voice Fighter', status: 'active', page: 'fighter.html',
+    blurb: 'Call your attacks out loud in a cinematic side-view brawler.' },
   { id: 'karaoke', title: 'Voice Karaoke', status: 'soon',
     blurb: 'Karaoke meets Guitar Hero — sing into the call and nail the timing of each word for points. Coming soon.' },
 ];
@@ -35,7 +35,13 @@ function renderGames(): void {
     card.append(tag, h, p);
     if (g.status === 'active' && g.page) {
       card.style.cursor = 'pointer';
+      card.tabIndex = 0;
+      card.setAttribute('role', 'button');
+      card.setAttribute('aria-label', `Select ${g.title}`);
       card.addEventListener('click', () => selectGame(g));
+      card.addEventListener('keydown', event => {
+        if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); selectGame(g); }
+      });
     }
     host.appendChild(card);
   }

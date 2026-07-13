@@ -70,6 +70,61 @@ Scenery worlds a race can be played on (aligned + configured per-map in `/editor
 > scale the model in-scene (allowed — that's not modifying the asset itself) and never re-export an
 > altered mesh, so this stays compliant. Attribution to Nicholas-3D is required (above).
 
+## Voice Fighter provenance
+
+The Fighter assets below are runtime dependencies, but their original source URLs and licenses have
+not yet been verified. **UNKNOWN means the asset must not be assumed to be reusable or
+redistributable.** Replace each UNKNOWN with a verified source URL, author, and license before a
+public release; do not infer a license from a filename, format, or download site.
+
+### Fighters
+
+| Roster ID | Fighter | Runtime file | Source URL | License |
+|---|---|---|---|---|
+| `nyx` | Nyx | `nyx.fbx` | **UNKNOWN - verification required** | **UNKNOWN - verification required** |
+| `wraith` | Wraith | `wraith.fbx` | **UNKNOWN - verification required** | **UNKNOWN - verification required** |
+| `remy-riot` | Remy Riot | `remy-riot.fbx` | **UNKNOWN - verification required** | **UNKNOWN - verification required** |
+| `cinder-capone` | Cinder Capone | `cinder-capone.fbx` | **UNKNOWN - verification required** | **UNKNOWN - verification required** |
+| `rune-warden` | Rune Warden | `rune-warden.fbx` | **UNKNOWN - verification required** | **UNKNOWN - verification required** |
+| `shroom-boom` | Shroom Boom | `shroom-boom.fbx` | **UNKNOWN - verification required** | **UNKNOWN - verification required** |
+| `gran-slam` | Gran Slam | `gran-slam.fbx` | **UNKNOWN - verification required** | **UNKNOWN - verification required** |
+| `bass-nova` | Bass Nova | `bass-nova.fbx` | **UNKNOWN - verification required** | **UNKNOWN - verification required** |
+| `velvet-thunder` | Velvet Thunder | `velvet-thunder.fbx` | **UNKNOWN - verification required** | **UNKNOWN - verification required** |
+| `iron-oni` | Iron Oni | `iron-oni.fbx` | **UNKNOWN - verification required** | **UNKNOWN - verification required** |
+| `bulkhead` | Bulkhead | `bulkhead.fbx` | **UNKNOWN - verification required** | **UNKNOWN - verification required** |
+| `sir-knockout` | Sir Knockout | `sir-knockout.fbx` | **UNKNOWN - verification required** | **UNKNOWN - verification required** |
+
+### Animation groups
+
+Each row covers all clips currently selected from that animation group.
+
+| Group ID | Runtime files | Source URL | License |
+|---|---|---|---|
+| `idle` | `fighting-idle.fbx` | **UNKNOWN - verification required** | **UNKNOWN - verification required** |
+| `walk` | `run-forward.fbx` | **UNKNOWN - verification required** | **UNKNOWN - verification required** |
+| `walk-back` | `run-backward.fbx` | **UNKNOWN - verification required** | **UNKNOWN - verification required** |
+| `jump` | `jump-high.fbx`, `jump-vertical.fbx` | **UNKNOWN - verification required** | **UNKNOWN - verification required** |
+| `block` | `block-outward.fbx` | **UNKNOWN - verification required** | **UNKNOWN - verification required** |
+| `punch` | `punch-combo.fbx`, `punch-uppercut.fbx`, `punch-right-hook.fbx` | **UNKNOWN - verification required** | **UNKNOWN - verification required** |
+| `kick` | `kick-mma-01.fbx`, `kick-mma-02.fbx`, `kick-mma-03.fbx`, `kick-standard.fbx` | **UNKNOWN - verification required** | **UNKNOWN - verification required** |
+| `reaction` | `hit-reaction-01.fbx`, `hit-reaction-head.fbx`, `hit-reaction-face.fbx`, `hit-reaction-body.fbx` | **UNKNOWN - verification required** | **UNKNOWN - verification required** |
+| `fall` | `knockout-fall.fbx`, `knockdown-shoulder.fbx` | **UNKNOWN - verification required** | **UNKNOWN - verification required** |
+| `celebration` | `victory-01.fbx`, `victory-02.fbx`, `celebration-jazz.fbx`, `celebration-salsa.fbx`, `celebration-macarena.fbx`, `celebration-silly.fbx` | **UNKNOWN - verification required** | **UNKNOWN - verification required** |
+
+### Fighter maps
+
+Procedural fallbacks still require provenance for any textures, audio, or other source material later
+added to them. Preview images are project-generated derivatives of the corresponding map render and
+inherit the map's unresolved status.
+
+| Map ID | Map | Runtime file | Source URL | License |
+|---|---|---|---|---|
+| `foundry` | Neon Foundry | Procedural fallback | **UNKNOWN - verification required** | **UNKNOWN - verification required** |
+| `void` | Void Circuit | Procedural fallback | **UNKNOWN - verification required** | **UNKNOWN - verification required** |
+| `cyberpunk-city` | Cyberpunk City | `cyberpunk_city.glb` | **UNKNOWN - verification required** | **UNKNOWN - verification required** |
+| `inakaya` | Inakaya Restaurant | `japanese_restaurant_inakaya.glb` | **UNKNOWN - verification required** | **UNKNOWN - verification required** |
+| `rain` | Rain | `rain.glb` | **UNKNOWN - verification required** | **UNKNOWN - verification required** |
+
 ## Excluded models (NOT used in-game)
 
 Kept in `assets/_quarantine_noncommercial/` (gitignored), excluded for licensing reasons:

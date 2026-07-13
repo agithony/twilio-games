@@ -50,7 +50,7 @@ describe('buildPlayUrl', () => {
 });
 
 describe('in-game home navigation', () => {
-  for (const page of ['play.html', 'monsters.html']) {
+  for (const page of ['play.html', 'monsters.html', 'fighter.html']) {
     it(`${page} keeps an accessible persistent Home link`, () => {
       const html = readFileSync(new URL(`../client/${page}`, import.meta.url), 'utf8');
       expect(html).toContain('class="game-home"');
@@ -59,4 +59,9 @@ describe('in-game home navigation', () => {
       expect(html).toContain('<span>Home</span>');
     });
   }
+
+  it('Voice Fighter exposes the shared music toggle container', () => {
+    const html = readFileSync(new URL('../client/fighter.html', import.meta.url), 'utf8');
+    expect(html).toContain('id="music-toggle-container"');
+  });
 });

@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540">
+  <defs>
+    <linearGradient id="bg" x2="0" y2="1"><stop stop-color="#08070a"/><stop offset="1" stop-color="#291014"/></linearGradient>
+    <radialGradient id="core"><stop stop-color="#fff0b0"/><stop offset=".25" stop-color="#ff6b35"/><stop offset="1" stop-color="#ef223a" stop-opacity="0"/></radialGradient>
+    <filter id="glow"><feGaussianBlur stdDeviation="10" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  </defs>
+  <rect width="960" height="540" fill="url(#bg)"/>
+  <g fill="#1c2028" stroke="#434954" stroke-width="3">
+    <path d="M0 0h130l70 540H0zM960 0H830l-70 540h200z"/>
+    <path d="M180 0h28l40 420h-48zM752 0h28l-20 420h-48zM320 0h18l8 350h-30zM622 0h18l4 350h-30z"/>
+  </g>
+  <g filter="url(#glow)"><circle cx="480" cy="230" r="120" fill="url(#core)"/><circle cx="480" cy="230" r="72" fill="#ff7438"/><circle cx="480" cy="230" r="44" fill="#fff1bc"/></g>
+  <path d="M0 460L960 400V540H0z" fill="#14171d"/>
+  <g stroke="#ef223a" stroke-width="7" filter="url(#glow)"><path d="M0 486l960-60M0 526l960-60"/></g>
+  <g fill="#303640"><rect x="80" y="220" width="70" height="250"/><rect x="810" y="190" width="70" height="260"/><rect x="230" y="280" width="55" height="170"/><rect x="675" y="260" width="55" height="180"/></g>
+  <text x="42" y="68" fill="#fff" font-family="Arial,sans-serif" font-size="42" font-weight="800">NEON FOUNDRY</text>
+  <text x="44" y="98" fill="#ff5268" font-family="Arial,sans-serif" font-size="15" letter-spacing="6">INDUSTRIAL COMBAT PIT</text>
+</svg>

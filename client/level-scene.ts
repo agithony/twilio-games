@@ -122,7 +122,7 @@ export class LevelScene {
     this.scene.add(new THREE.GridHelper(RACE_LEN * 2, 60, 0x44597f, 0x2c3a55));
     this.scene.add(this.mapGroup, this.trackGroup);
 
-    const d = new DRACOLoader(); d.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
+    const d = new DRACOLoader(); d.setDecoderPath('/draco/');
     this.loader.setDRACOLoader(d);
 
     this.orbit = new OrbitControls(this.camera, this.renderer.domElement);
@@ -526,8 +526,8 @@ export class LevelScene {
     this.lineGroup.clear();
     this.startGantry = null; this.finishGantry = null;
     this.trackGroup.add(this.lineGroup);
-    this.loadGantry('starting_line.glb', 0, (g) => { this.startGantry = g; });
-    this.loadGantry('finish_line.glb', RACE_LEN, (g) => { this.finishGantry = g; });
+    this.loadGantry('racer/track/starting_line.glb', 0, (g) => { this.startGantry = g; });
+    this.loadGantry('racer/track/finish_line.glb', RACE_LEN, (g) => { this.finishGantry = g; });
   }
 
   /** Gantry auto-fit width target — IDENTICAL formula to the game renderer (track-width aware) so

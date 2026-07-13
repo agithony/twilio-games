@@ -1,6 +1,7 @@
 # Deployment
 
-Voice Racer ships to **Azure Container Apps (ACA)** as a single-process container, gated behind CI.
+Voice Racer, Voice Monsters, and Voice Fighter ship to **Azure Container Apps (ACA)** as a
+single-process container, gated behind CI.
 This doc explains how the pipeline works (for app devs). For the one-time cloud/secrets setup, see
 [INFRA_SETUP.md](./INFRA_SETUP.md).
 
@@ -44,14 +45,34 @@ a real re-architecture.
   the server runs on `tsx`), `npm run build` (client → `client/dist`), `tini` as PID-1.
 - `scripts/start.sh`: symlinks `/app/data` → the Azure Files mount (`DATA_MOUNT=/app/appdata`) so the
   leaderboard persists, then `exec npx tsx server/index.ts`.
-- Served on port `8080`: the client pages (`/`, `/play.html`, `/editor`, `/garage`), the API
+- Served on port `8080`: the client pages (`/`, `/play.html`, `/fighter`, `/editor`, `/garage`), the API
   (`/api/*`), GLB models + JS bundles (`/assets/*`), `/brand` + `/fonts`, the game/voice WebSockets
-  (`/game`, `/voice`), the Twilio webhooks (`/voice/*`, `/sms`), and `/healthz`.
+  (`/game`, `/battle`, `/fighter`, `/voice`), the Twilio webhooks (`/voice/*`, `/sms`), and
+  `/healthz`. `/fighter` is both the Fighter HTTP page and, for an HTTP Upgrade request, its realtime
+  game WebSocket endpoint.
 
 ## Persistence
 
-The global leaderboard survives restarts/redeploys via the Azure Files mount. Maps + GLB models ship
-in the image (committed to git) and update with each deploy. See INFRA_SETUP.md → Persistence.
+The Azure Files mount backs `/app/data`. The global leaderboard, live racer level configuration,
+Voice Monsters arena configuration, Fighter map catalog, and Fighter-generated previews survive
+restarts and redeploys there. Racer, arena, and Fighter map config are
+seeded once from bundled defaults when their persistent copies do not exist; a later deploy does not
+overwrite an existing persistent copy.
+
+Runtime models, Fighter FBX animations, previews, and map GLBs are bundled under `/app/assets` in the
+immutable image and update only with a new image. Raw authoring files under `assets/_raw`,
+`assets/maps/_raw`, and `assets/fighters/maps/_raw` are excluded from the Docker context and image.
+
+### Fighter editor behavior
+
+The Fighter map editor is available from `/editor`. It lists only bundled GLBs in
+`assets/fighters/maps`, edits the complete Fighter map catalog, and can capture map-card previews.
+Set `EDITOR_TOKEN` on public deployments: map and preview writes require that token when configured.
+The live catalog is stored at `data/fighter-maps.json`, seeded from the bundled catalog, and generated
+previews are stored under `data/fighter-previews/`. Set `FIGHTER_DISPLAY_TOKEN` and open the kiosk URL
+with `?displayToken=...` to require host authentication. Set `VOICE_RELAY_TOKEN` to authenticate
+Conversation Relay WebSocket setup frames (the TwiML webhook passes it to Twilio automatically).
+Runtime GLBs remain image-owned; do not place a required GLB only in an `_raw` directory.
 
 ## Rollback
 

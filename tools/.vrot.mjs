@@ -13,7 +13,7 @@ const res=await p.evaluate(async ()=>{
   const draco=new DRACOLoader();draco.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
   const loader=new GLTFLoader();loader.setDRACOLoader(draco);
   const shoot=async(rot)=>{
-    const gltf=await new Promise((res,rej)=>loader.load('/assets/18_mclaren_senna_crxw_widebody_kit_animated.glb',res,undefined,rej));
+    const gltf=await new Promise((res,rej)=>loader.load('/assets/racer/cars/18_mclaren_senna_crxw_widebody_kit_animated.glb',res,undefined,rej));
     const m=gltf.scene; stripDisplayBases(m); applyModelTransform(m,rot?{rotation:[0,180,0]}:{},4);
     const rend=new THREE.WebGLRenderer({antialias:true,alpha:true,preserveDrawingBuffer:true});rend.setSize(256,256);
     rend.outputColorSpace=THREE.SRGBColorSpace;

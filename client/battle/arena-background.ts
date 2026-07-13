@@ -67,7 +67,7 @@ export class ArenaBackground {
   load(cfg: ArenaConfig): void {
     const loader = new GLTFLoader();
     const draco = new DRACOLoader();
-    draco.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
+    draco.setDecoderPath('/draco/');
     loader.setDRACOLoader(draco);
     this.spinSpeed = cfg.spinSpeed ?? this.spinSpeed;
     loader.load(`/assets/arena/${cfg.file}`, (gltf) => {

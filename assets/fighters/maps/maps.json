@@ -1,0 +1,187 @@
+[
+  {
+    "id": "foundry",
+    "name": "Neon Foundry",
+    "blurb": "A red-hot industrial fight pit.",
+    "color": "#ef223a",
+    "preview": "/assets/fighters/previews/foundry.svg",
+    "bounds": [
+      -9,
+      9
+    ],
+    "floorY": 0,
+    "camera": {
+      "pos": [
+        0,
+        2.15,
+        10.5
+      ],
+      "lookAt": [
+        0,
+        1.25,
+        0
+      ],
+      "fov": 36
+    }
+  },
+  {
+    "id": "void",
+    "name": "Void Circuit",
+    "blurb": "A cold arena at the edge of space.",
+    "color": "#2dd4bf",
+    "preview": "/assets/fighters/previews/void.svg",
+    "bounds": [
+      -11,
+      11
+    ],
+    "floorY": 0,
+    "camera": {
+      "pos": [
+        0,
+        2.15,
+        11.5
+      ],
+      "lookAt": [
+        0,
+        1.25,
+        0
+      ],
+      "fov": 36
+    }
+  },
+  {
+    "id": "cyberpunk-city",
+    "name": "Cyberpunk City",
+    "blurb": "A neon city plaza built for a midnight showdown.",
+    "color": "#ff2bd6",
+    "file": "cyberpunk_city.glb",
+    "pos": [
+      6.65,
+      0.39,
+      -9.58
+    ],
+    "rotDeg": [
+      180,
+      -89.24,
+      180
+    ],
+    "scale": 5,
+    "bounds": [
+      0,
+      11
+    ],
+    "floorY": 0,
+    "camera": {
+      "pos": [
+        5.04,
+        4.02,
+        19.21
+      ],
+      "lookAt": [
+        4.28,
+        2.23,
+        -31.36
+      ],
+      "fov": 36
+    },
+    "fightPlane": {
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "rotationY": 0
+    },
+    "preview": "/assets/fighters/previews/cyberpunk-city.png?v=1783789445424"
+  },
+  {
+    "id": "inakaya",
+    "name": "Inakaya Restaurant",
+    "blurb": "A close-quarters duel inside a traditional Japanese restaurant.",
+    "color": "#ff9f43",
+    "file": "japanese_restaurant_inakaya.glb",
+    "pos": [
+      3.4,
+      1,
+      0
+    ],
+    "rotDeg": [
+      0,
+      0,
+      0
+    ],
+    "scale": 1.5,
+    "bounds": [
+      -4.5,
+      6.75
+    ],
+    "floorY": 0.75,
+    "camera": {
+      "pos": [
+        1.1,
+        3.27,
+        16.19
+      ],
+      "lookAt": [
+        1.02,
+        2.01,
+        -0.32
+      ],
+      "fov": 36
+    },
+    "fightPlane": {
+      "origin": [
+        0,
+        0.75,
+        8
+      ],
+      "rotationY": 0
+    },
+    "preview": "/assets/fighters/previews/inakaya.png?v=1783789452035"
+  },
+  {
+    "id": "rain",
+    "name": "Rain",
+    "blurb": "A sprawling rain-soaked battleground.",
+    "color": "#6c8cff",
+    "file": "rain.glb",
+    "pos": [
+      -6.27,
+      0.01,
+      5.55
+    ],
+    "rotDeg": [
+      0,
+      0,
+      0
+    ],
+    "scale": 0.05,
+    "bounds": [
+      -10,
+      10
+    ],
+    "floorY": 0,
+    "fightPlane": {
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "rotationY": 0
+    },
+    "camera": {
+      "pos": [
+        0,
+        4,
+        18
+      ],
+      "lookAt": [
+        0,
+        2,
+        0
+      ],
+      "fov": 40
+    },
+    "preview": "/assets/fighters/previews/rain.png?v=1783789470649"
+  }
+]

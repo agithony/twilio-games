@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#05060a" />
+  <link rel="icon" href="data:," />
+  <link rel="stylesheet" href="./fighter/fighter.css" />
+  <title>Voice Fighter</title>
+</head>
+<body>
+  <main id="arena" aria-label="Voice Fighter arena"></main>
+  <div id="overlay" class="flow-overlay" aria-live="polite"></div>
+  <div id="connection-status" class="connection-status" role="status" aria-live="polite">Connecting</div>
+  <a class="game-home" href="/" aria-label="Return to Twilio Games home">
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M3 11.5 12 4l9 7.5M5.5 10v10h13V10M9.5 20v-6h5v6" />
+    </svg>
+    <span>Home</span>
+  </a>
+  <div id="music-toggle-container"></div>
+
+  <header class="hud">
+    <section class="fighter-hud p1">
+      <div><strong id="p1-fighter-name">NYX</strong><span id="p1-player-name">Player One</span></div>
+      <div class="health" role="meter" aria-label="Player one health" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100"><i id="p1-health"></i></div>
+    </section>
+    <section class="round-hud">
+      <span>Round</span>
+      <strong>01</strong>
+      <small>First to KO</small>
+    </section>
+    <section class="fighter-hud p2">
+      <div><strong id="p2-fighter-name">WRAITH</strong><span id="p2-player-name">CPU Rival</span></div>
+      <div class="health" role="meter" aria-label="Player two health" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100"><i id="p2-health"></i></div>
+    </section>
+  </header>
+
+  <aside class="voice-feed" aria-live="polite" aria-atomic="true">
+    <span>Voice channel</span>
+    <strong id="voice-command">Choose your move</strong>
+  </aside>
+
+  <section class="command-deck" aria-label="Fight commands">
+    <div class="deck-title"><span>Say a command</span><small>Keyboard controls shown at right</small></div>
+    <div class="commands">
+      <button data-command="back"><b>Back</b><kbd>A</kbd></button>
+      <button data-command="forward"><b>Forward</b><kbd>D</kbd></button>
+      <button data-command="jump"><b>Jump</b><kbd>W</kbd></button>
+      <button data-command="punch" class="attack"><b>Punch</b><kbd>J</kbd></button>
+      <button data-command="kick" class="attack"><b>Kick</b><kbd>K</kbd></button>
+      <button data-command="block"><b>Block</b><kbd>L</kbd></button>
+    </div>
+  </section>
+
+  <div id="fight-call" class="fight-call" aria-live="assertive">Fight</div>
+  <section id="result" class="result" role="dialog" aria-modal="true" aria-labelledby="result-title" hidden>
+    <span id="result-kicker">Knockout</span>
+    <strong id="result-title">Nyx wins</strong>
+    <button id="rematch" type="button">Rematch</button>
+    <a href="/">Exit to games</a>
+  </section>
+
+  <section id="loading" class="loading" aria-live="polite" aria-busy="true">
+    <div class="mark"><i></i><b>VF</b></div>
+    <span>Voice Fighter</span>
+    <strong id="loading-label">Loading combat system</strong>
+    <div class="load-track" role="progressbar" aria-label="Loading combat system" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i id="loading-fill"></i></div>
+    <small id="loading-percent">0%</small>
+  </section>
+
+  <div id="error" class="error" role="alertdialog" aria-modal="true" aria-live="assertive" hidden></div>
+  <script type="module" src="./fighter/fighter.ts"></script>
+</body>
+</html>

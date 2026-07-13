@@ -32,6 +32,10 @@ function showPicker(): void {
           <div class="hub-card-name">Voice Monsters</div>
           <div class="hub-card-desc">Arena editor — 3D arena transform, camera framing, spin speed</div>
         </a>
+        <a class="hub-card" href="?game=fighter${tokenQ}">
+          <div class="hub-card-name">Voice Fighter</div>
+          <div class="hub-card-desc">Map editor — GLB placement, fight boundaries, floor and camera</div>
+        </a>
       </div>
     </div>`;
 }
@@ -46,6 +50,11 @@ async function boot(): Promise<void> {
     document.title = 'Voice Monsters — Arena Editor';
     const { ArenaEditor } = await import('./arena-editor');
     new ArenaEditor(document.getElementById('app')!);
+  } else if (game === 'fighter') {
+    setRacerChrome(false);
+    document.title = 'Voice Fighter — Map Editor';
+    const { FighterMapEditor } = await import('./fighter-map-editor');
+    new FighterMapEditor(document.getElementById('app')!);
   } else {
     document.title = 'Twilio Games — Editors';
     showPicker();

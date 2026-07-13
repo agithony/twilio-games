@@ -27,6 +27,9 @@ const srv = new HttpServer({
   // Voice Monsters arena config — live on the persistent mount, seeded from the committed default.
   arenaPath: process.env.ARENA_PATH ?? 'data/arena.json',
   bundledArenaPath: process.env.BUNDLED_ARENA_PATH ?? 'assets/arena/arena.json',
+  fighterMapsPath: process.env.FIGHTER_MAPS_PATH ?? 'data/fighter-maps.json',
+  bundledFighterMapsPath: process.env.BUNDLED_FIGHTER_MAPS_PATH ?? 'assets/fighters/maps/maps.json',
+  fighterPreviewDir: process.env.FIGHTER_PREVIEW_DIR ?? 'data/fighter-previews',
   // The number players call to join (shown + QR-encoded on the lobby screen). Unset → placeholder.
   gamePhoneNumber: process.env.GAME_PHONE_NUMBER,
 });

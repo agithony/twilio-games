@@ -36,6 +36,7 @@ export default defineConfig(({ mode }) => {
         '/api': { target: gameServer, changeOrigin: true },
         '/game': { target: gameServer, ws: true, bypass: bypassNonWebSocket },
         '/battle': { target: gameServer, ws: true, bypass: bypassNonWebSocket },
+        '/fighter': { target: gameServer, ws: true, bypass: bypassNonWebSocket },
         '/voice': { target: gameServer, ws: true, bypass: bypassNonWebSocket },
         // GLB models live in the repo-root assets/ served by the node server, so /assets is proxied.
         // EXCEPT monster sprites, which live in client/public/assets/monsters/ and are served by Vite.
@@ -54,6 +55,7 @@ export default defineConfig(({ mode }) => {
           home: resolve(__dirname, 'index.html'),                  // branded landing/lobby
           play: resolve(__dirname, 'play.html'),                    // the racer
           monsters: resolve(__dirname, 'monsters.html'),           // Voice Monsters (the battler)
+          fighter: resolve(__dirname, 'fighter.html'),              // Voice Fighter gameplay prototype
           editor: resolve(__dirname, 'editor/index.html'),          // unified Level Editor (/editor)
           garage: resolve(__dirname, 'garage/index.html'),          // model viewer + configurator (/garage)
         },

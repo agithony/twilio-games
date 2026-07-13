@@ -1,6 +1,6 @@
 // Headless render smoke for the racer. Drives a real Chrome (puppeteer-core + system Chrome,
 // SwiftShader/ANGLE for WebGL), starts a race, and asserts:
-//   - the start (z=0) and finish (z=RACE_LEN) gantry MODELS load + sit at the track ends
+//   - the start (z=0) and finish (z=RACE_LEN) gantry MODELS load + sit at the authored track ends
 //   - the barrier + every car GLB serve 200 through the real loader path
 //   - no console errors / page errors
 // Also writes screenshots for eyeballing. This is the renderer's only automated coverage
@@ -47,9 +47,22 @@ const lines = await page.evaluate(() => {
   const wrappers = [];
   scene.traverse((o) => {
     if (o.userData && o.userData.lineZ !== undefined) {
-      const e = o.matrixWorld.elements;
+      const z = o.userData.lineZ;
+      const expected = o.position.clone();
+      const offset = o.userData.offset;
+      if (offset?.pos) {
+        expected.fromArray(offset.pos);
+      } else if (r.path) {
+        const sample = r.path.sample(z, 0);
+        expected.set(sample.pos.x, sample.pos.y + 0.6, sample.pos.z);
+      } else {
+        expected.set(0, 0, z);
+      }
+      const expectedWorld = o.parent.localToWorld(expected);
+      const actualWorld = o.getWorldPosition(o.position.clone());
       wrappers.push({ lineZ: o.userData.lineZ, fallback: !!o.userData.fallback,
-        worldZ: round(e[14]), visible: o.visible });
+        world: actualWorld.toArray().map(round), expected: expectedWorld.toArray().map(round),
+        positionError: round(actualWorld.distanceTo(expectedWorld)), visible: o.visible });
     }
   });
   return { wrappers };
@@ -59,17 +72,20 @@ const want = ['starting_line.glb', 'finish_line.glb', 'danger_barrier_proops.glb
 const glbMissing = want.filter((w) => glb.get(w) !== 200);
 const start = lines.wrappers?.find((w) => w.lineZ === 0 && !w.fallback);
 const finish = lines.wrappers?.find((w) => w.lineZ === RACE_LEN && !w.fallback);
+const autoplayErrors = consoleErrors.filter((e) => e.includes('NotAllowedError: play() failed'));
+const unexpectedConsoleErrors = consoleErrors.filter((e) => !e.includes('NotAllowedError: play() failed'));
 
 console.log('\n=== gantry models ===');
 console.log(JSON.stringify(lines, null, 2));
 console.log('\n=== key GLBs ===');
 for (const w of want) console.log(`  ${w}: ${glb.get(w) ?? 'NOT REQUESTED'}`);
-console.log('\nconsole errors:', consoleErrors.length ? consoleErrors : '(none)');
+console.log('\nconsole errors:', unexpectedConsoleErrors.length ? unexpectedConsoleErrors : '(none)');
+console.log('autoplay blocks:', autoplayErrors.length ? autoplayErrors.length : '(none)');
 console.log('page errors:', pageErrors.length ? pageErrors : '(none)');
 
-const ok = glbMissing.length === 0 && pageErrors.length === 0
-  && !!start && Math.abs(start.worldZ) < 1 && start.visible
-  && !!finish && Math.abs(finish.worldZ - RACE_LEN) < 1 && finish.visible;
+const ok = glbMissing.length === 0 && pageErrors.length === 0 && unexpectedConsoleErrors.length === 0
+  && !!start && start.positionError < 1 && start.visible
+  && !!finish && finish.positionError < 1 && finish.visible;
 console.log(`\nRESULT: ${ok ? 'PASS' : 'FAIL'}`);
 if (!ok) {
   if (glbMissing.length) console.log('  missing/failed GLBs:', glbMissing.join(', '));

@@ -48,7 +48,7 @@ addEventListener('resize', () => {
 });
 
 const draco = new DRACOLoader();
-draco.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
+draco.setDecoderPath('/draco/');
 const loader = new GLTFLoader(); loader.setDRACOLoader(draco);
 
 // ── State ───────────────────────────────────────────────────────────────────────────────────────

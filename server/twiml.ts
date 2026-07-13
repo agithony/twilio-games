@@ -36,6 +36,7 @@ export function twimlConnectRelay(opts: {
   welcomeGreeting?: string;
   // Which game this call joins ('racer' | 'monsters'), passed to the WS so it routes correctly.
   game?: string;
+  relayToken?: string;
   // ASR biasing hints — the game's key spoken words (commands / move names) for better recognition.
   hints?: string;
 }): string {
@@ -46,6 +47,7 @@ export function twimlConnectRelay(opts: {
   const greeting = esc(speechSafeText(opts.welcomeGreeting ?? ''));
   const hints = esc(opts.hints ?? 'left, right, boost, go, brake, slow, stop, nitro, power');
   const gameParam = opts.game ? `\n      <Parameter name="game" value="${esc(opts.game)}" />` : '';
+  const relayTokenParam = opts.relayToken ? `\n      <Parameter name="relayToken" value="${esc(opts.relayToken)}" />` : '';
   // Interruption (barge-in) is a headline Conversation Relay feature and central to this app:
   //  - interruptible="speech": the caller's SPEECH cuts the TTS immediately (say "left" over the host).
   //  - reportInputDuringAgentSpeech="speech": we RECEIVE the caller's words while TTS plays (default
@@ -57,7 +59,7 @@ export function twimlConnectRelay(opts: {
 <Response>
   <Connect action="${esc(opts.sessionEndedUrl)}">
     <ConversationRelay url="${esc(opts.wsUrl)}"${ttsAttrs} transcriptionProvider="Deepgram" speechModel="flux" partialPrompts="true" transcriptionLanguage="en-US" interruptible="speech" reportInputDuringAgentSpeech="speech" interruptSensitivity="medium" ignoreBackchannel="true" dtmfDetection="true" hints="${hints}" speechTimeout="600" eotThreshold="0.6" welcomeGreeting="${greeting}">
-      <Parameter name="roomCode" value="${esc(opts.roomCode)}" />${gameParam}
+      <Parameter name="roomCode" value="${esc(opts.roomCode)}" />${gameParam}${relayTokenParam}
     </ConversationRelay>
   </Connect>
 </Response>`;

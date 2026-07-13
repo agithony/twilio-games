@@ -148,7 +148,7 @@ export function wrapMapScene(scene: THREE.Object3D): THREE.Group {
 export function loadMapWorld(cfg: MapConfig): Promise<THREE.Group | null> {
   const loader = new GLTFLoader();
   const draco = new DRACOLoader();
-  draco.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
+    draco.setDecoderPath('/draco/');
   loader.setDRACOLoader(draco);
 
   return new Promise((resolve) => {

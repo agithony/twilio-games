@@ -1,6 +1,14 @@
 # Assets
 
-Drop your Sketchfab **GLB** models here (`.glb` files).
+Runtime assets are organized by game and role. Do not place GLBs directly in `assets/`.
+
+- `racer/cars/` — selectable Racer vehicles
+- `racer/track/` — barriers, boost items, and start/finish gantries
+- `maps/` — Racer environments
+- `arena/` — Voice Monsters arena
+- `fighters/source/` — Fighter character/animation FBXs
+- `fighters/maps/` — Fighter environment GLBs
+- `fixtures/` — generated test-only GLBs
 
 ## How to download from Sketchfab
 On any free model page → **Download 3D Model** → choose the **glTF (.glb)** /
@@ -12,7 +20,7 @@ On any free model page → **Download 3D Model** → choose the **glTF (.glb)** 
 - Optionally distinct models for **barriers** (obstacles to dodge) and **boost pads**
 
 ## What happens next
-Claude runs `npm run inspect-assets` to scan these files — auto-detecting each
+Claude runs `npm run inspect-assets` to scan Racer asset directories — auto-detecting each
 model's size and whether it has separate wheel parts — and generates
 `assets/manifest.json`. You then arrange/tune them in the `/editor`.
 

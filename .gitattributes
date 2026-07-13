@@ -1,0 +1,2 @@
+assets/fighters/source/*.fbx filter=lfs diff=lfs merge=lfs -text
+assets/fighters/maps/*.glb filter=lfs diff=lfs merge=lfs -text

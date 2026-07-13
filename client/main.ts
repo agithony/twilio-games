@@ -294,7 +294,7 @@ conn.onError((code, message) => {
   big.textContent = message;
 });
 
-const GANTRY_FILES = { start: 'starting_line.glb', finish: 'finish_line.glb' };
+const GANTRY_FILES = { start: 'racer/track/starting_line.glb', finish: 'racer/track/finish_line.glb' };
 /** The map currently loaded into the renderer, so applyLevel() can skip redundant reloads. */
 let loadedMap: string | null = null;
 

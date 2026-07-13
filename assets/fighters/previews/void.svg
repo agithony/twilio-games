@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540">
+  <defs>
+    <radialGradient id="space"><stop stop-color="#122343"/><stop offset=".48" stop-color="#060a19"/><stop offset="1" stop-color="#010208"/></radialGradient>
+    <filter id="glow"><feGaussianBlur stdDeviation="7" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  </defs>
+  <rect width="960" height="540" fill="url(#space)"/>
+  <g fill="#d9fbff" opacity=".8"><circle cx="90" cy="90" r="2"/><circle cx="180" cy="160" r="1.5"/><circle cx="300" cy="80" r="2"/><circle cx="420" cy="145" r="1"/><circle cx="580" cy="70" r="1.5"/><circle cx="730" cy="130" r="2"/><circle cx="880" cy="65" r="1"/><circle cx="820" cy="250" r="1.5"/></g>
+  <g fill="#101a31" stroke="#27567a" stroke-width="3"><path d="M40 420l38-300 70-20 35 320z"/><path d="M190 420l22-220 68-18 20 238z"/><path d="M920 420l-38-300-70-20-35 320z"/><path d="M770 420l-22-220-68-18-20 238z"/></g>
+  <g fill="none" stroke="#2dd4bf" filter="url(#glow)"><ellipse cx="480" cy="430" rx="350" ry="85" stroke-width="8"/><ellipse cx="480" cy="430" rx="250" ry="60" stroke-width="5"/><ellipse cx="480" cy="430" rx="145" ry="35" stroke-width="3"/></g>
+  <path d="M0 440h960v100H0z" fill="#080d1c" fill-opacity=".82"/>
+  <text x="42" y="68" fill="#fff" font-family="Arial,sans-serif" font-size="42" font-weight="800">VOID CIRCUIT</text>
+  <text x="44" y="98" fill="#51ead7" font-family="Arial,sans-serif" font-size="15" letter-spacing="6">ORBITAL DUEL PLATFORM</text>
+</svg>

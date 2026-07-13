@@ -13,6 +13,8 @@ export class SoundEffectsManager {
   private lastPlayTime: Map<string, number> = new Map();
   private debounceMs = 100; // Minimum time between same sound plays
   private volume = 1.0;
+  private fighterPunchIndex = 0;
+  private readonly fighterPunchKeys = ['fighter-punch-light', 'fighter-punch-impact', 'fighter-punch-heavy'];
 
   constructor() {
     // Pre-load all sound effects
@@ -21,6 +23,10 @@ export class SoundEffectsManager {
     this.loadSound('turbo', '/audio/sfx/turbo.mp3');
     this.loadSound('countdown', '/audio/sfx/countdown.mp3');
     this.loadSound('select', '/audio/sfx/select.mp3');
+    this.loadSound('fighter-punch-light', '/audio/fighter/sfx/punch-light.mp3');
+    this.loadSound('fighter-punch-impact', '/audio/fighter/sfx/punch-impact.mp3');
+    this.loadSound('fighter-punch-heavy', '/audio/fighter/sfx/punch-heavy.mp3');
+    this.loadSound('fighter-kick-medium', '/audio/fighter/sfx/kick-medium.mp3');
 
     // Battle attack SFX by element type
     this.loadSound('attack-electric', '/audio/sfx/attack-electric.mp3');
@@ -103,6 +109,16 @@ export class SoundEffectsManager {
    */
   playSelect(): void {
     this.playSound('select');
+  }
+
+  playFighterPunch(): void {
+    const key = this.fighterPunchKeys[this.fighterPunchIndex % this.fighterPunchKeys.length]!;
+    this.fighterPunchIndex += 1;
+    this.playSound(key);
+  }
+
+  playFighterKick(): void {
+    this.playSound('fighter-kick-medium');
   }
 
   /**

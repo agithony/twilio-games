@@ -1,11 +1,11 @@
 {
   "cars": [
     {
-      "file": "batmobile-the_dark_knight_tumbler.glb",
+      "file": "racer/cars/batmobile-the_dark_knight_tumbler.glb",
       "name": "Batmobile"
     },
     {
-      "file": "18_mclaren_senna_crxw_widebody_kit_animated.glb",
+      "file": "racer/cars/18_mclaren_senna_crxw_widebody_kit_animated.glb",
       "name": "McLaren Senna",
       "rotation": [
         0,
@@ -14,7 +14,7 @@
       ]
     },
     {
-      "file": "lotus_elise.glb",
+      "file": "racer/cars/lotus_elise.glb",
       "name": "Lotus Elise",
       "rotation": [
         0,
@@ -23,15 +23,15 @@
       ]
     },
     {
-      "file": "bronco_car_animation_red.glb",
+      "file": "racer/cars/bronco_car_animation_red.glb",
       "name": "Ford Bronco"
     },
     {
-      "file": "1955_american_sedan_packard_based_free.glb",
+      "file": "racer/cars/1955_american_sedan_packard_based_free.glb",
       "name": "1955 Packard"
     },
     {
-      "file": "buggy__free_3d.glb",
+      "file": "racer/cars/buggy__free_3d.glb",
       "name": "Buggy",
       "rotation": [
         0,
@@ -40,7 +40,7 @@
       ]
     },
     {
-      "file": "jurassic_park_1930_-_park_rover.glb",
+      "file": "racer/cars/jurassic_park_1930_-_park_rover.glb",
       "name": "Jurassic Park Rover",
       "rotation": [
         0,
@@ -49,7 +49,7 @@
       ]
     },
     {
-      "file": "drunk_monster_truck.glb",
+      "file": "racer/cars/drunk_monster_truck.glb",
       "name": "Monster Truck",
       "rotation": [
         0,
@@ -58,11 +58,11 @@
       ]
     },
     {
-      "file": "monowheel_bot__vgdc.glb",
+      "file": "racer/cars/monowheel_bot__vgdc.glb",
       "name": "Monowheel"
     },
     {
-      "file": "climber.glb",
+      "file": "racer/cars/climber.glb",
       "name": "Climber",
       "rotation": [
         0,
@@ -71,7 +71,7 @@
       ]
     },
     {
-      "file": "forklift.glb",
+      "file": "racer/cars/forklift.glb",
       "name": "Forklift",
       "rotation": [
         0,
@@ -80,11 +80,11 @@
       ]
     },
     {
-      "file": "car.glb",
+      "file": "racer/cars/car.glb",
       "name": "Mini Bot"
     },
     {
-      "file": "pig_farm_car_trailer.glb",
+      "file": "racer/cars/pig_farm_car_trailer.glb",
       "name": "Trailer",
       "rotation": [
         0,
@@ -93,7 +93,7 @@
       ]
     },
     {
-      "file": "airtsel_valor_proiettile.glb",
+      "file": "racer/cars/airtsel_valor_proiettile.glb",
       "name": "Airtsel Valor Proiettile",
       "rotation": [
         0,
@@ -102,7 +102,7 @@
       ]
     },
     {
-      "file": "rigged_car_mustang_1965_with_engine_3d_model.glb",
+      "file": "racer/cars/rigged_car_mustang_1965_with_engine_3d_model.glb",
       "name": "Mustang 1965",
       "rotation": [
         0,
@@ -111,11 +111,11 @@
       ]
     },
     {
-      "file": "yuterra_buegett.glb",
+      "file": "racer/cars/yuterra_buegett.glb",
       "name": "Yuterra Buegett"
     },
     {
-      "file": "beetlefusca_version_1.glb",
+      "file": "racer/cars/beetlefusca_version_1.glb",
       "name": "Beetle / Fusca",
       "rotation": [
         0,
@@ -124,7 +124,7 @@
       ]
     },
     {
-      "file": "cartoon_sports_car.glb",
+      "file": "racer/cars/cartoon_sports_car.glb",
       "name": "Cartoon Sports Car",
       "rotation": [
         0,
@@ -133,7 +133,7 @@
       ]
     },
     {
-      "file": "cicada_-_retro_cartoon_car.glb",
+      "file": "racer/cars/cicada_-_retro_cartoon_car.glb",
       "name": "Cicada (Retro Cartoon Car)",
       "rotation": [
         0,
@@ -143,10 +143,10 @@
     }
   ],
   "barrier": {
-    "file": "danger_barrier_proops.glb"
+    "file": "racer/track/danger_barrier_proops.glb"
   },
   "boostPad": {
-    "file": "cyber_orb.glb"
+    "file": "racer/track/cyber_orb.glb"
   },
   "props": []
 }

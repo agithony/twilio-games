@@ -98,7 +98,7 @@ let loaded = false;
 
 const loader = new GLTFLoader();
 const draco = new DRACOLoader();
-draco.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
+draco.setDecoderPath('/draco/');
 loader.setDRACOLoader(draco);
 
 /**

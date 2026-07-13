@@ -6,13 +6,14 @@
  * - Dynamic switching between game contexts
  */
 
-export type GameContext = 'lobby' | 'racer' | 'monsters' | 'leaderboard';
+export type GameContext = 'lobby' | 'racer' | 'monsters' | 'fighter' | 'fighter-victory' | 'leaderboard';
 
 const MUTE_STORAGE_KEY = 'twilio-games-music-muted';
 
 interface MusicContext {
   tracks: string[];
   currentTrackIndex: number;
+  loop?: boolean;
 }
 
 export class MusicManager {
@@ -29,6 +30,15 @@ export class MusicManager {
     monsters: {
       tracks: ['/audio/monsters/hero-final-gambit.mp3', '/audio/monsters/one-last-gold-coin.mp3'],
       currentTrackIndex: 0,
+    },
+    fighter: {
+      tracks: ['/audio/fighter/music/break-the-guard.mp3'],
+      currentTrackIndex: 0,
+    },
+    'fighter-victory': {
+      tracks: ['/audio/fighter/music/victory.mp3'],
+      currentTrackIndex: 0,
+      loop: false,
     },
     leaderboard: {
       tracks: ['/audio/leaderboard/final-ascent.mp3'],
@@ -86,6 +96,10 @@ export class MusicManager {
     if (!this.currentContext) return;
 
     const contextData = this.contexts[this.currentContext];
+    if (contextData.loop === false) {
+      this.isPlaying = false;
+      return;
+    }
     const tracks = contextData.tracks;
 
     // Move to next track

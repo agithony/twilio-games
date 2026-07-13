@@ -6,6 +6,9 @@ client/dist
 assets/_raw
 assets/_quarantine_noncommercial
 assets/maps/_raw
+assets/racer/cars/_raw
+assets/racer/track/_raw
+assets/fighters/maps/_raw
 
 # Runtime state (lives on the Azure Files mount, not the image).
 data

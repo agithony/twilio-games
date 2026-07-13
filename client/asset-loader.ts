@@ -66,7 +66,7 @@ export class AssetLoader {
     // Our models are Draco-compressed (Task 1.5). DRACOLoader needs decoder wasm/js;
     // use the three.js CDN-hosted decoder (or vendor it under /assets/draco/ for offline).
     const draco = new DRACOLoader();
-    draco.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
+    draco.setDecoderPath('/draco/');
     this.loader.setDRACOLoader(draco);
   }
 

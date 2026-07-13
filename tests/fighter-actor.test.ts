@@ -1,0 +1,52 @@
+import { describe, expect, it } from 'vitest';
+import * as THREE from 'three';
+import { FighterActor } from '../client/fighter/fighter-actor';
+
+interface ActorState { currentId: string }
+
+describe('FighterActor playback', () => {
+  it('holds a knockout fall on the floor without starting get-up', () => {
+    const model = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.BoxGeometry(1, 2, 1));
+    body.position.y = 1;
+    model.add(body);
+    const fall = new THREE.AnimationClip('fall-01', 0.5, [
+      new THREE.NumberKeyframeTrack('.rotation[x]', [0, 0.5], [0, Math.PI / 2]),
+    ]);
+    const clips = new Map([
+      ['idle', new THREE.AnimationClip('idle', 1, [])],
+      ['fall-01', fall],
+    ]);
+    const Actor = FighterActor as unknown as new (fighter: THREE.Group, animations: Map<string, THREE.AnimationClip>) => FighterActor;
+    const actor = new Actor(model, clips);
+    const state = actor as unknown as ActorState;
+    actor.root.position.y = 3;
+
+    actor.playRandom('fall', { hold: true, lockFloor: true });
+    actor.update(0.6);
+
+    expect(state.currentId).toBe('fall-01');
+    expect(new THREE.Box3().setFromObject(model, true).min.y).toBeCloseTo(3, 5);
+    actor.dispose();
+  });
+
+  it('returns to idle after a victory animation instead of freezing on its final pose', () => {
+    const model = new THREE.Group();
+    const clip = (name: string, duration: number) => new THREE.AnimationClip(name, duration, []);
+    const clips = new Map([
+      ['idle', clip('idle', 1)],
+      ['celebration-01', clip('celebration-01', 0.5)],
+    ]);
+    const Actor = FighterActor as unknown as new (fighter: THREE.Group, animations: Map<string, THREE.AnimationClip>) => FighterActor;
+    const actor = new Actor(model, clips);
+    const state = actor as unknown as ActorState;
+
+    actor.playRandom('celebration');
+    expect(state.currentId).toBe('celebration-01');
+
+    actor.update(0.6);
+    expect(state.currentId).toBe('idle');
+
+    actor.dispose();
+  });
+});
