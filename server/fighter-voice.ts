@@ -65,7 +65,7 @@ export class FighterVoiceSession {
       this.lastFoeName = snapshot?.foeName ?? null;
       if (joined.resumed && snapshot) {
         this.deps.say(`You're back${snapshot.myName && snapshot.myName !== 'Caller' ? `, ${snapshot.myName}` : ''}.`);
-        this.speakContext(snapshot, true);
+        this.speakContext(snapshot);
       } else {
         this.deps.say('Welcome to Voice Fighter, powered by Twilio Conversation Relay. Reduce your rival to zero health. During the fight, say forward, back, jump, punch, kick, or block. First, what is your name?');
       }
@@ -80,14 +80,14 @@ export class FighterVoiceSession {
   private handleUtterance(spoken: string): void {
     const snapshot = this.deps.snapshot(this.code!, this.playerId!); if (!snapshot) return;
     const unnamed = !snapshot.myName || snapshot.myName === 'Caller';
-    if (isHelpRequest(spoken)) { this.speakContext(snapshot, true); return; }
+    if (isHelpRequest(spoken)) { this.speakContext(snapshot); return; }
     if (unnamed && (snapshot.phase === 'lobby' || isExplicitName(spoken))) {
       const name = parseSpokenName(spoken);
       if (name && !isAdvanceWord(spoken)) {
         this.deps.setName(this.code!, this.playerId!, name);
         const next = this.deps.snapshot(this.code!, this.playerId!) ?? snapshot;
         if (next.phase === 'lobby') this.deps.say(`Welcome, ${name}. Say start when you are ready to choose fighters.`);
-        else { this.deps.say(`Welcome, ${name}.`); this.speakContext(next, true); }
+        else { this.deps.say(`Welcome, ${name}.`); this.speakContext(next); }
         return;
       }
     }
@@ -105,7 +105,7 @@ export class FighterVoiceSession {
         return;
       }
       if (isAdvanceWord(spoken)) { this.advanceOrExplain(snapshot); return; }
-      this.deps.say(`I didn't recognize that fighter. ${choicePrompt('fighter', snapshot.fighters)}`); return;
+      this.deps.say(`I didn't recognize that fighter. ${choicePrompt('fighter')}`); return;
     }
     if (snapshot.phase === 'map_select') {
       const map = matchChoice(spoken, snapshot.maps);
@@ -115,7 +115,7 @@ export class FighterVoiceSession {
         return;
       }
       if (isAdvanceWord(spoken)) { this.advanceOrExplain(snapshot); return; }
-      this.deps.say(`I didn't recognize that arena. ${choicePrompt('arena', snapshot.maps)}`); return;
+      this.deps.say(`I didn't recognize that arena. ${choicePrompt('arena')}`); return;
     }
     if (snapshot.phase === 'fight') {
       const command = matchFighterCommand(spoken);
@@ -127,7 +127,7 @@ export class FighterVoiceSession {
       this.deps.say('Say forward, back, jump, punch, kick, or block.'); return;
     }
     if (isAdvanceWord(spoken)) { this.advanceOrExplain(snapshot); return; }
-    this.speakContext(snapshot, true);
+    this.speakContext(snapshot);
   }
 
   onStateChanged(): void {
@@ -139,7 +139,7 @@ export class FighterVoiceSession {
     }
     if (snapshot.phase !== this.lastPhase) {
       if (snapshot.phase === 'map_select' && this.lastPhase === 'loading') this.deps.say('The arena failed to load. Choose another map.');
-      else this.speakContext(snapshot, snapshot.phase === 'fighter_select' || snapshot.phase === 'map_select');
+      else this.speakContext(snapshot);
     } else if (snapshot.foeName && snapshot.foeName !== 'Caller' && snapshot.foeName !== this.lastFoeName) {
       this.deps.say(`${snapshot.foeName} joined as your opponent${snapshot.foeFighterName ? ` and locked in ${snapshot.foeFighterName}` : ''}.`);
     } else if (snapshot.phase === 'fighter_select' && snapshot.foeName !== 'Caller' && snapshot.foeFighterId && snapshot.foeFighterId !== this.lastFoeFighterId) {
@@ -172,18 +172,18 @@ export class FighterVoiceSession {
     }
   }
 
-  private speakContext(snapshot: FighterVoiceSnapshot, detailed: boolean): void {
+  private speakContext(snapshot: FighterVoiceSnapshot): void {
     if (snapshot.phase === 'lobby') {
       if (!snapshot.myName || snapshot.myName === 'Caller') this.deps.say('Tell me your name.');
       else if (snapshot.isController) this.deps.say('Say start to choose fighters.');
       else this.deps.say('Waiting for player one to start fighter selection.');
     } else if (snapshot.phase === 'fighter_select') {
       if (snapshot.myFighterName) this.deps.say(`${snapshot.myFighterName} is your fighter.${snapshot.allFightersSelected && snapshot.isController ? ' Say next to choose the arena.' : ' Waiting for the other player.'}`);
-      else this.deps.say(choicePrompt('fighter', snapshot.fighters, detailed));
+      else this.deps.say(choicePrompt('fighter'));
     } else if (snapshot.phase === 'map_select') {
       if (!snapshot.isController) this.deps.say('Player one is choosing the arena.');
       else if (snapshot.selectedMap) this.deps.say(`${choiceName(snapshot.selectedMap, snapshot.maps)} is selected. Say fight to begin.`);
-      else this.deps.say(choicePrompt('arena', snapshot.maps, detailed));
+      else this.deps.say(choicePrompt('arena'));
     } else if (snapshot.phase === 'loading') this.deps.say('Loading the arena. The player intro begins when the stage is ready.');
     else if (snapshot.phase === 'intro') this.deps.say(`Introducing player one, ${snapshot.playerOneName ?? 'Player one'}, as ${snapshot.playerOneFighterName ?? 'their fighter'}. Versus player two, ${snapshot.playerTwoName ?? 'the rival'}, as ${snapshot.playerTwoFighterName ?? 'their fighter'}.`);
     else if (snapshot.phase === 'countdown') this.deps.say('Get ready. The fight starts after the countdown.');
@@ -217,8 +217,5 @@ const matchChoice = matchVoiceChoice;
 const normalize = (text: string) => text.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
 const isExplicitName = (spoken: string) => /^(?:my name is|i am|i'm|call me)\b/i.test(spoken.trim());
 const isHelpRequest = (spoken: string) => /\b(?:help|instructions|what can i say|where am i|status)\b/i.test(spoken);
-function choicePrompt(kind: string, choices: { name: string }[], detailed = true): string {
-  if (!detailed) return `Choose your ${kind}. Say its name or screen number.`;
-  return `Choose your ${kind}. ${choices.map((choice, index) => `${index + 1}, ${choice.name}`).join('. ')}.`;
-}
+function choicePrompt(kind: string): string { return `Choose your ${kind}. Say the name or number shown on screen.`; }
 function choiceName(id: string, choices: { id: string; name: string }[]): string { return choices.find(choice => choice.id === id)?.name ?? id; }

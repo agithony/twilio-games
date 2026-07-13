@@ -11,8 +11,10 @@ describe('fighter voice session', () => {
 
     ada.prompt('Ada');
     ada.prompt('start');
+    expect(ada.spoken.at(-1)).toBe('Choose your fighter. Say the name or number shown on screen.');
     ada.prompt('first');
     ada.prompt('next');
+    expect(ada.spoken.at(-1)).toBe('Choose your arena. Say the name or number shown on screen.');
     ada.prompt('second');
     ada.prompt('fight');
     expect(game.room.phase).toBe('loading');
@@ -40,6 +42,7 @@ describe('fighter voice session', () => {
     expect(game.room.phase).toBe('results');
 
     expect(ada.spoken.join(' ')).toContain('Reduce your rival to zero health');
+    expect(ada.spoken.join(' ')).not.toContain('1, Nyx');
     expect(ada.spoken.some(line => line.includes('Introducing player one, Ada, as Nyx. Versus player two'))).toBe(true);
     expect(ada.spoken).toContain('3');
     expect(ada.spoken).toContain('2');

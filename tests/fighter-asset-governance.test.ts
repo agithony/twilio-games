@@ -83,6 +83,15 @@ describe('fighter asset governance', () => {
     if (warnings.length) console.warn(`Fighter assets above the ${WARNING_BYTES / MIB} MiB warning budget:\n${warnings.join('\n')}`);
   });
 
+  it('materializes Git LFS models instead of shipping pointer text', () => {
+    const models = runtimeFiles('assets/fighters').filter(file => /\.(?:fbx|glb)$/i.test(file));
+    expect(models.length).toBeGreaterThan(0);
+    for (const file of models) {
+      const prefix = readFileSync(file).subarray(0, 64).toString('utf8');
+      expect(prefix, `Git LFS asset was not downloaded: ${file}`).not.toContain('version https://git-lfs.github.com/spec/v1');
+    }
+  });
+
   it('excludes raw Fighter map originals from the Docker context', () => {
     const rules = source('.dockerignore').split(/\r?\n/).map(line => line.trim());
     expect(rules).toContain('assets/fighters/maps/_raw');

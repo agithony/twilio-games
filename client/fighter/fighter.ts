@@ -111,7 +111,6 @@ connection.onState(next => {
     if (next.phase === 'loading') { preparedFightKey = ''; fightStartedKey = ''; bufferedEvents = []; }
     if (next.phase === 'loading' || next.phase === 'intro') countdownSoundPlayed = false;
     if (next.phase !== 'results' && resultTimer) { clearTimeout(resultTimer); resultTimer = null; resultRevealAt = 0; }
-    if (next.phase !== 'loading') hideAssetError();
     if (['lobby', 'fighter_select', 'map_select', 'loading'].includes(next.phase)) getMusicManager().switchContext('lobby');
   }
   state = next;
@@ -523,7 +522,11 @@ function applyMapTheme(mapId: string): void {
   if (!config.file) { mapReadyId = mapId; maybeSignalReady(); return; }
   const draco = new DRACOLoader(); draco.setDecoderPath('/draco/');
   const loader = new GLTFLoader(); loader.setDRACOLoader(draco);
+  const fallbackTimer = setTimeout(() => {
+    if (loadedMapId === mapId && attempt === mapLoadAttempt && mapReadyId !== mapId) { draco.dispose(); useProceduralFallback(mapId); }
+  }, 12000);
   loader.load(`/assets/fighters/maps/${encodeURIComponent(config.file)}`, gltf => {
+    clearTimeout(fallbackTimer);
     draco.dispose();
     if (loadedMapId !== mapId || attempt !== mapLoadAttempt) { disposeObjectResources(gltf.scene); return; }
     mapModel = gltf.scene;
@@ -534,24 +537,26 @@ function applyMapTheme(mapId: string): void {
     // shadows, but must not render into the shadow map itself every frame.
     mapModel.traverse(object => { if ((object as THREE.Mesh).isMesh) { (object as THREE.Mesh).receiveShadow = true; (object as THREE.Mesh).castShadow = false; } });
     scene.add(mapModel);
-    captureMapBackdrop();
+    try { captureMapBackdrop(); }
+    catch (error) { console.warn('Unable to cache arena backdrop; using live rendering.', error); customMapStatic = false; renderer.shadowMap.enabled = true; }
     mapReadyId = mapId;
     hideAssetError();
     maybeSignalReady();
   }, undefined, error => {
+    clearTimeout(fallbackTimer);
     draco.dispose();
     if (loadedMapId !== mapId || attempt !== mapLoadAttempt) return;
-    showAssetError('Arena failed to load', error, [
-      { label: 'Retry', action: () => { hideAssetError(); loadedMapId = ''; applyMapTheme(mapId); } },
-      { label: 'Use fallback', action: () => useProceduralFallback(mapId) },
-      { label: 'Cancel', secondary: true, action: () => { hideAssetError(); loadedMapId = ''; connection.back(); } },
-    ]);
+    console.warn(`Arena ${mapId} failed to load; using the procedural stage.`, error);
+    useProceduralFallback(mapId);
   });
 }
 
 function useProceduralFallback(mapId: string): void {
   mapLoadAttempt++; disposeCurrentMap(); hideAssetError();
   theme.procedural.visible = true; renderer.shadowMap.enabled = true; customMapStatic = false;
+  mapPlane = { origin: [0, 0, 0], rotationY: 0 };
+  cameraBase = { pos: [0, 2.15, 10.5], lookAt: [0, 1.25, 0], fov: 36 };
+  applyActorTransforms(); camera.position.set(...cameraBase.pos); updateCameraProjection(); camera.lookAt(...cameraBase.lookAt);
   scene.background = new THREE.Color(0x05060a); scene.fog = new THREE.FogExp2(0x08090e, .06);
   mapReadyId = mapId; maybeSignalReady();
 }

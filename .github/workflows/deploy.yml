@@ -39,6 +39,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
+        with:
+          lfs: true
 
       - name: Login to Azure
         uses: azure/login@v3
