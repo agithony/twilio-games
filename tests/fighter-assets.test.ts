@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { existsSync } from 'node:fs';
 import { FIGHTER_ROSTER } from '../shared/fighter-roster';
-import { ANIMATION_POOLS, FIGHTER_ANIMATIONS } from '../client/fighter/fighter-assets';
+import { ANIMATION_POOLS, FIGHTER_ANIMATIONS, fighterAssetUrl } from '../client/fighter/fighter-assets';
 
 describe('fighter assets', () => {
   it('has unique roster IDs with models and previews', () => {
@@ -28,5 +28,9 @@ describe('fighter assets', () => {
     expect(FIGHTER_ANIMATIONS.find(animation => animation.id === 'walk')?.file).toBe('run-forward.fbx');
     expect(FIGHTER_ANIMATIONS.find(animation => animation.id === 'walk-back')?.file).toBe('run-backward.fbx');
     for (const animation of FIGHTER_ANIMATIONS) expect(existsSync(`assets/fighters/source/${animation.file}`), animation.file).toBe(true);
+  });
+
+  it('cache-busts Fighter runtime assets after binary replacements', () => {
+    expect(fighterAssetUrl('fighting-idle.fbx')).toMatch(/^\/assets\/fighters\/source\/fighting-idle\.fbx\?v=\d+$/);
   });
 });

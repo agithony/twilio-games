@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { FighterActor } from './fighter-actor';
-import { FIGHTERS, loadAnimationSources } from './fighter-assets';
+import { FIGHTERS, FIGHTER_ASSET_VERSION, loadAnimationSources } from './fighter-assets';
 import { FighterConnection } from './fighter-net';
 import { isInteractiveShortcutTarget, resolveNumericSelection } from './fighter-client-utils';
 import { getSoundEffectsManager } from '../sound-effects';
@@ -525,7 +525,7 @@ function applyMapTheme(mapId: string): void {
   const fallbackTimer = setTimeout(() => {
     if (loadedMapId === mapId && attempt === mapLoadAttempt && mapReadyId !== mapId) { draco.dispose(); useProceduralFallback(mapId); }
   }, 12000);
-  loader.load(`/assets/fighters/maps/${encodeURIComponent(config.file)}`, gltf => {
+  loader.load(`/assets/fighters/maps/${encodeURIComponent(config.file)}?v=${FIGHTER_ASSET_VERSION}`, gltf => {
     clearTimeout(fallbackTimer);
     draco.dispose();
     if (loadedMapId !== mapId || attempt !== mapLoadAttempt) { disposeObjectResources(gltf.scene); return; }

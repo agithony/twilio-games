@@ -19,6 +19,8 @@ export interface FighterAnimationSpec {
 }
 
 export const FIGHTER_ASSET_ROOT = '/assets/fighters/source/';
+export const FIGHTER_ASSET_VERSION = '3';
+export const fighterAssetUrl = (file: string) => `${FIGHTER_ASSET_ROOT}${file}?v=${FIGHTER_ASSET_VERSION}`;
 
 export const FIGHTERS: FighterSpec[] = FIGHTER_ROSTER.map(entry => ({ id: entry.id, label: entry.name, file: entry.file, embeddedIdle: entry.embeddedIdle }));
 
@@ -60,7 +62,7 @@ export const ANIMATION_POOLS: Record<string, string[]> = {
 export function loadFbx(file: string, onProgress?: (fraction: number) => void): Promise<THREE.Group> {
   return new Promise((resolve, reject) => {
     new FBXLoader().load(
-      FIGHTER_ASSET_ROOT + file,
+      fighterAssetUrl(file),
       resolve,
       (event) => onProgress?.(event.total ? event.loaded / event.total : 0),
       reject,
