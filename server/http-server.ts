@@ -448,7 +448,7 @@ export class HttpServer {
     return { phase: state.phase, myName: me?.name ?? null, myFighterId: me?.fighterId ?? null, myFighterName: fighterName(me?.fighterId),
       foeName: foe?.name ?? null, foeFighterId: foe?.fighterId ?? null, foeFighterName: fighterName(foe?.fighterId), selectedMap: state.selectedMap,
       mySide, myHealth: state.world?.[mySide].health ?? null, foeHealth: state.world?.[foeSide].health ?? null,
-      countdown: state.countdown, winnerName: state.result?.winnerName ?? null,
+      countdown: state.countdown, intro: state.intro, winnerName: state.result?.winnerName ?? null,
       winnerSide: state.result?.winner ?? null,
       playerOneName: playerOne?.name ?? null, playerOneFighterName: fighterName(playerOne?.fighterId),
       playerTwoName: playerTwo?.name ?? null, playerTwoFighterName: fighterName(playerTwo?.fighterId),

@@ -202,7 +202,7 @@ describe('voice integration (fake Conversation Relay client)', () => {
         expect(states.at(-1)?.players?.find((player: any) => !player.isAi)).toMatchObject({ name: 'Ada', fighterId: 'iron-oni' });
         expect(states.at(-1)?.players?.find((player: any) => player.isAi)).toBeTruthy();
         expect(resumedSpeech.join(' ')).toMatch(/back/i);
-        expect(resumedSpeech.join(' ')).toMatch(/introducing player one/i);
+        expect(resumedSpeech.join(' ')).toMatch(/player one, Ada, as Iron Oni/i);
         expect(resumedSpeech.join(' ')).not.toMatch(/what is your name/i);
       } finally { closeWs(resumed); }
     } finally { closeWs(first); closeWs(display); }

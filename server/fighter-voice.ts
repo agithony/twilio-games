@@ -2,7 +2,7 @@ import { parseCrMessage } from './conversation-relay';
 import { parseSpokenName, isAdvanceWord } from './battle-voice';
 import { matchFighterCommand } from '../shared/fighter-intent';
 import type { FighterCommand, FighterEvent } from '../shared/fighter-world';
-import type { FighterPhase } from '../shared/fighter-protocol';
+import { FIGHTER_INTRO_SECONDS, fighterIntroStage, type FighterIntroStage, type FighterPhase } from '../shared/fighter-protocol';
 
 export interface FighterVoiceSnapshot {
   phase: FighterPhase;
@@ -17,6 +17,7 @@ export interface FighterVoiceSnapshot {
   myHealth: number | null;
   foeHealth: number | null;
   countdown: number | null;
+  intro: number | null;
   winnerName: string | null;
   winnerSide: 'p1' | 'p2' | null;
   playerOneName: string | null;
@@ -50,7 +51,10 @@ export class FighterVoiceSession {
   private lastFoeFighterId: string | null = null;
   private lastFoeName: string | null = null;
   private lastCombatCueAt = 0;
-  private lastBusyCueAt = 0;
+  private lastIntroStage: FighterIntroStage | null = null;
+  private interimCandidate: FighterCommand | null = null;
+  private interimCount = 0;
+  private interimFired = false;
   constructor(private deps: FighterVoiceDeps) {}
 
   handleMessage(raw: string): void {
@@ -72,8 +76,19 @@ export class FighterVoiceSession {
       return;
     }
     if (message.type === 'prompt' && this.code && this.playerId) {
-      // Final transcripts avoid firing both the original and revised command when ASR self-corrects.
-      if (message.last) this.handleUtterance(message.voicePrompt);
+      const snapshot = this.deps.snapshot(this.code, this.playerId);
+      if (!message.last) {
+        if (snapshot?.phase !== 'fight') return;
+        const command = matchFighterCommand(message.voicePrompt);
+        if (!command) { this.interimCandidate = null; this.interimCount = 0; return; }
+        if (command === this.interimCandidate) this.interimCount += 1;
+        else { this.interimCandidate = command; this.interimCount = 1; }
+        // Two matching interim frames provide low latency without acting on one unstable ASR guess.
+        if (this.interimCount >= 2 && !this.interimFired && this.deps.command(this.code, this.playerId, command)) this.interimFired = true;
+        return;
+      }
+      if (this.interimFired) { this.resetInterim(); return; }
+      this.resetInterim(); this.handleUtterance(message.voicePrompt);
     }
   }
 
@@ -119,12 +134,8 @@ export class FighterVoiceSession {
     }
     if (snapshot.phase === 'fight') {
       const command = matchFighterCommand(spoken);
-      if (command) {
-        const accepted = this.deps.command(this.code!, this.playerId!, command);
-        if (!accepted && Date.now() - this.lastBusyCueAt > 1200) { this.lastBusyCueAt = Date.now(); this.deps.say('Still recovering.'); }
-        return;
-      }
-      this.deps.say('Say forward, back, jump, punch, kick, or block.'); return;
+      if (command) this.deps.command(this.code!, this.playerId!, command);
+      return;
     }
     if (isAdvanceWord(spoken)) { this.advanceOrExplain(snapshot); return; }
     this.speakContext(snapshot);
@@ -137,8 +148,13 @@ export class FighterVoiceSession {
       const count = Math.ceil(snapshot.countdown ?? 0);
       if (count > 0 && count <= 3 && count !== this.lastCountdown) { this.lastCountdown = count; this.deps.say(String(count)); }
     }
+    if (snapshot.phase === 'intro') {
+      const stage = fighterIntroStage(snapshot.intro ?? FIGHTER_INTRO_SECONDS);
+      if (stage !== this.lastIntroStage) { this.lastIntroStage = stage; this.speakIntroCue(snapshot, stage); }
+    } else this.lastIntroStage = null;
     if (snapshot.phase !== this.lastPhase) {
       if (snapshot.phase === 'map_select' && this.lastPhase === 'loading') this.deps.say('The arena failed to load. Choose another map.');
+      else if (snapshot.phase === 'intro') { /* synchronized segment cue emitted above */ }
       else this.speakContext(snapshot);
     } else if (snapshot.foeName && snapshot.foeName !== 'Caller' && snapshot.foeName !== this.lastFoeName) {
       this.deps.say(`${snapshot.foeName} joined as your opponent${snapshot.foeFighterName ? ` and locked in ${snapshot.foeFighterName}` : ''}.`);
@@ -184,15 +200,26 @@ export class FighterVoiceSession {
       if (!snapshot.isController) this.deps.say('Player one is choosing the arena.');
       else if (snapshot.selectedMap) this.deps.say(`${choiceName(snapshot.selectedMap, snapshot.maps)} is selected. Say fight to begin.`);
       else this.deps.say(choicePrompt('arena'));
-    } else if (snapshot.phase === 'loading') this.deps.say('Loading the arena. The player intro begins when the stage is ready.');
-    else if (snapshot.phase === 'intro') this.deps.say(`Introducing player one, ${snapshot.playerOneName ?? 'Player one'}, as ${snapshot.playerOneFighterName ?? 'their fighter'}. Versus player two, ${snapshot.playerTwoName ?? 'the rival'}, as ${snapshot.playerTwoFighterName ?? 'their fighter'}.`);
+    } else if (snapshot.phase === 'loading') return;
+    else if (snapshot.phase === 'intro') {
+      const stage = fighterIntroStage(snapshot.intro ?? FIGHTER_INTRO_SECONDS); this.lastIntroStage = stage; this.speakIntroCue(snapshot, stage);
+    }
     else if (snapshot.phase === 'countdown') this.deps.say('Get ready. The fight starts after the countdown.');
-    else if (snapshot.phase === 'fight') this.deps.say(`Fight! You have ${snapshot.myHealth ?? 100} health. Say forward, back, jump, punch, kick, or block.`);
+    else if (snapshot.phase === 'fight') this.deps.say(this.lastPhase === 'countdown' ? 'Fight!' : `Fight in progress. You have ${snapshot.myHealth ?? 100} health.`);
     else if (snapshot.phase === 'victory') {
       const outcome = snapshot.winnerSide === snapshot.mySide ? 'You win!' : `${snapshot.winnerName ?? 'The winner'} wins.`;
       this.deps.say(`${outcome} Victory!`);
     } else if (snapshot.phase === 'results') this.deps.say(snapshot.isController ? 'Say rematch to play again.' : 'Player one can start the rematch.');
   }
+
+  private speakIntroCue(snapshot: FighterVoiceSnapshot, stage: FighterIntroStage): void {
+    if (stage === 'p1') this.deps.say(`Player one, ${snapshot.playerOneName ?? 'Player one'}, as ${snapshot.playerOneFighterName ?? 'their fighter'}.`);
+    else if (stage === 'versus') this.deps.say('Versus.');
+    else if (stage === 'p2') this.deps.say(`Player two, ${snapshot.playerTwoName ?? 'the rival'}, as ${snapshot.playerTwoFighterName ?? 'their fighter'}.`);
+    else this.deps.say('Fighters ready.');
+  }
+
+  private resetInterim(): void { this.interimCandidate = null; this.interimCount = 0; this.interimFired = false; }
 
   handleClose(): void { if (this.code && this.playerId) this.deps.leave(this.code, this.playerId, this.callSid ?? ''); this.clear(); }
   handleReplaced(): void { this.clear(); }

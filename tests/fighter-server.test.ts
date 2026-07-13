@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createServer, type Server } from 'http';
 import { WebSocket } from 'ws';
 import { FighterServer } from '../server/fighter-server';
+import { FIGHTER_INTRO_SECONDS } from '../shared/fighter-protocol';
 
 type Message = Record<string, unknown>;
 interface Client { ws: WebSocket; messages: Message[]; }
@@ -207,7 +208,7 @@ describe('FighterServer WebSocket authority and lifecycle', () => {
     const room = fighter!.findRoom('VOICE')!;
     expect(room.phase).toBe('loading');
     expect(room.ready(room.state().loadingGeneration)).toBe(true);
-    room.tick(9); room.tick(6);
+    room.tick(FIGHTER_INTRO_SECONDS); room.tick(6);
     expect(room.phase).toBe('fight');
     expect(fighter!.voiceCommand('VOICE', p1, 'forward')).toBe(true);
     expect(fighter!.voiceCommand('VOICE', p1, 'forward')).toBe(false);

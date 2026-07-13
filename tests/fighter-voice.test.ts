@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { FighterVoiceSession, matchVoiceChoice, type FighterVoiceSnapshot } from '../server/fighter-voice';
 import { FIGHTER_VICTORY_SECONDS, FighterRoom } from '../server/fighter-room';
 import { FIGHTER_MAPS, FIGHTER_ROSTER } from '../shared/fighter-roster';
+import { FIGHTER_INTRO_SECONDS } from '../shared/fighter-protocol';
 import type { FighterCommand, FighterEvent } from '../shared/fighter-world';
 
 describe('fighter voice session', () => {
@@ -18,22 +19,31 @@ describe('fighter voice session', () => {
     ada.prompt('second');
     ada.prompt('fight');
     expect(game.room.phase).toBe('loading');
+    expect(ada.spoken.at(-1)).toBe('Void Circuit selected. Say fight to begin.');
 
     expect(game.room.ready(game.room.state().loadingGeneration)).toBe(true);
     game.stateChanged();
     expect(game.room.phase).toBe('intro');
-    game.tick(9);
+    advanceIntro(game);
     game.tick(3.1);
     game.tick(1);
     game.tick(1);
     game.tick(1);
     expect(game.room.phase).toBe('fight');
+    expect(ada.spoken.at(-1)).toBe('Fight!');
+
+    const beforeUnknown = ada.spoken.length;
+    ada.prompt('what was that');
+    expect(ada.spoken).toHaveLength(beforeUnknown);
+    ada.prompt('back', false); ada.prompt('back', false); ada.prompt('back');
+    expect(game.commands.map(row => row.command)).toEqual(['back']);
+    game.tick(0.7);
 
     const world = game.room.state().world!;
     world.p1.x = 0; world.p2.x = 1; world.p2.health = 10;
     ada.prompt('punch', false);
     ada.prompt('kick');
-    expect(game.commands.map(row => row.command)).toEqual(['kick']);
+    expect(game.commands.map(row => row.command)).toEqual(['back', 'kick']);
     game.tick(0.6);
     expect(game.room.phase).toBe('victory');
     ada.prompt('rematch');
@@ -43,7 +53,10 @@ describe('fighter voice session', () => {
 
     expect(ada.spoken.join(' ')).toContain('Reduce your rival to zero health');
     expect(ada.spoken.join(' ')).not.toContain('1, Nyx');
-    expect(ada.spoken.some(line => line.includes('Introducing player one, Ada, as Nyx. Versus player two'))).toBe(true);
+    expect(ada.spoken).toContain('Player one, Ada, as Nyx.');
+    expect(ada.spoken).toContain('Versus.');
+    expect(ada.spoken.some(line => line.startsWith('Player two, Rival, as '))).toBe(true);
+    expect(ada.spoken).toContain('Fighters ready.');
     expect(ada.spoken).toContain('3');
     expect(ada.spoken).toContain('2');
     expect(ada.spoken).toContain('1');
@@ -83,7 +96,7 @@ describe('fighter voice session', () => {
     ada.prompt('fight');
     expect(game.room.phase).toBe('loading');
     game.room.ready(game.room.state().loadingGeneration); game.stateChanged();
-    game.tick(9); game.tick(6);
+    advanceIntro(game); game.tick(6);
     ada.prompt('forward'); bob.prompt('back');
     expect(game.commands.slice(-2)).toEqual([
       { playerId: ada.playerId, command: 'forward' },
@@ -92,7 +105,9 @@ describe('fighter voice session', () => {
 
     expect(ada.spoken.some(line => line.includes('Bob joined as your opponent and locked in Wraith'))).toBe(true);
     expect(bob.spoken.some(line => line.includes('Player one is choosing the arena'))).toBe(true);
-    expect(bob.spoken.some(line => line.includes('Introducing player one, Ada, as Nyx. Versus player two, Bob, as Wraith'))).toBe(true);
+    expect(bob.spoken).toContain('Player one, Ada, as Nyx.');
+    expect(bob.spoken).toContain('Versus.');
+    expect(bob.spoken).toContain('Player two, Bob, as Wraith.');
   });
 
   it('matches screen numbers, ordinals, normalized IDs, and dynamic names', () => {
@@ -139,6 +154,7 @@ function voiceGame() {
       myHealth: state.world?.[me.side].health ?? null,
       foeHealth: state.world?.[foeSide].health ?? null,
       countdown: state.countdown,
+      intro: state.intro,
       winnerName: state.result?.winnerName ?? null,
       winnerSide: state.result?.winner ?? null,
       playerOneName: playerOne?.name ?? null,
@@ -186,4 +202,12 @@ function voiceGame() {
 
   const tick = (seconds: number) => { room.tick(seconds); publishEvents(room.drainEvents()); stateChanged(); };
   return { room, commands, connect, tick, stateChanged };
+}
+
+function advanceIntro(game: ReturnType<typeof voiceGame>): void {
+  expect(game.room.state().intro).toBe(FIGHTER_INTRO_SECONDS);
+  game.tick(4.1); // Player one -> versus
+  game.tick(2);   // Versus -> player two
+  game.tick(4);   // Player two -> faceoff
+  game.tick(4);   // Faceoff -> countdown
 }

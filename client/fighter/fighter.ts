@@ -13,7 +13,7 @@ import { DEFAULT_ROOM } from '../../shared/constants';
 import { FIGHTER_RUN_BACKWARD_DURATION, FIGHTER_RUN_FORWARD_DURATION,
   type FighterCommand, type FighterEvent, type FighterId, type FighterWorld } from '../../shared/fighter-world';
 import type { FighterMapEntry, FighterRosterEntry } from '../../shared/fighter-roster';
-import type { FighterState } from '../../shared/fighter-protocol';
+import { fighterIntroStage, type FighterState } from '../../shared/fighter-protocol';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const arena = $('arena'), overlay = $('overlay'), loading = $('loading');
@@ -175,7 +175,7 @@ function renderFlow(): void {
   const focusKey = focusedControlKey();
   const phaseBeforeRender = lastPhase;
   const countdownKey = state.countdown === null ? null : Math.ceil(state.countdown) > 3 ? 'ready' : Math.ceil(state.countdown);
-  const introKey = state.intro === null ? null : introStage(state.intro);
+  const introKey = state.intro === null ? null : fighterIntroStage(state.intro);
   const key = JSON.stringify([state.phase, state.players, state.selectedMap, introKey, countdownKey, playerId, isHost, roster, maps, phoneNumber, flowMessage]);
   if (key === lastOverlayKey || state.phase === 'fight' || state.phase === 'victory' || state.phase === 'results') {
     if (state.phase === 'fight' || state.phase === 'victory' || state.phase === 'results') overlay.replaceChildren();
@@ -253,15 +253,8 @@ function wireFlowButtons(): void {
   for (const button of overlay.querySelectorAll<HTMLElement>('[data-map]')) button.addEventListener('click', () => { if (!isHost) return; flowMessage = ''; connection.selectMap(button.dataset.map!); });
 }
 
-function introStage(remaining: number): 'p1' | 'versus' | 'p2' | 'faceoff' {
-  if (remaining > 6.3) return 'p1';
-  if (remaining > 4.5) return 'versus';
-  if (remaining > 1.7) return 'p2';
-  return 'faceoff';
-}
-
 function introHtml(current: FighterState): string {
-  const stage = introStage(current.intro ?? 0);
+  const stage = fighterIntroStage(current.intro ?? 0);
   const p1 = current.players.find(player => player.side === 'p1'), p2 = current.players.find(player => player.side === 'p2');
   const p1Fighter = roster.find(fighter => fighter.id === p1?.fighterId)?.name ?? 'Fighter One';
   const p2Fighter = roster.find(fighter => fighter.id === p2?.fighterId)?.name ?? 'Fighter Two';
@@ -279,7 +272,7 @@ function beginIntro(current: FighterState): void {
 
 function updateIntroPresentation(current: FighterState, force = false): void {
   if (!actors || current.phase !== 'intro') return;
-  const segment = introStage(current.intro ?? 0), changed = force || segment !== introSegment;
+  const segment = fighterIntroStage(current.intro ?? 0), changed = force || segment !== introSegment;
   if (changed) {
     introSegment = segment;
     if (segment === 'p1') playIntroAttack(actors.p1);

@@ -1,6 +1,6 @@
 import { applyFighterCommand, createFighterWorld, tickFighterWorld, type FighterCommand, type FighterEvent, type FighterId, type FighterWorld } from '../shared/fighter-world';
 import { FIGHTER_MAPS, FIGHTER_ROSTER, type FighterMapEntry } from '../shared/fighter-roster';
-import type { FighterLobbyPlayer, FighterPhase, FighterState } from '../shared/fighter-protocol';
+import { FIGHTER_INTRO_SECONDS, type FighterLobbyPlayer, type FighterPhase, type FighterState } from '../shared/fighter-protocol';
 
 interface Player { playerId: string; name: string; fighterId: string | null; side: FighterId; }
 
@@ -80,7 +80,7 @@ export class FighterRoom {
   }
   ready(generation?: number): boolean {
     if (this.phase !== 'loading' || (generation !== undefined && generation !== this.loadingGeneration)) return false;
-    this.phase = 'intro'; this.intro = 9; return true;
+    this.phase = 'intro'; this.intro = FIGHTER_INTRO_SECONDS; return true;
   }
   command(playerId: string, command: FighterCommand): FighterEvent[] {
     if (this.phase !== 'fight' || !this.world) return [];

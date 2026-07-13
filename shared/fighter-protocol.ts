@@ -2,6 +2,14 @@ import type { FighterCommand, FighterEvent, FighterWorld } from './fighter-world
 import type { FighterMapEntry, FighterRosterEntry } from './fighter-roster';
 
 export type FighterPhase = 'lobby' | 'fighter_select' | 'map_select' | 'loading' | 'intro' | 'countdown' | 'fight' | 'victory' | 'results';
+export type FighterIntroStage = 'p1' | 'versus' | 'p2' | 'faceoff';
+export const FIGHTER_INTRO_SECONDS = 14;
+export function fighterIntroStage(remaining: number): FighterIntroStage {
+  if (remaining > 10) return 'p1';
+  if (remaining > 8) return 'versus';
+  if (remaining > 4) return 'p2';
+  return 'faceoff';
+}
 export interface FighterLobbyPlayer {
   playerId: string; name: string; fighterId: string | null; side: 'p1' | 'p2' | null; isAi: boolean;
 }

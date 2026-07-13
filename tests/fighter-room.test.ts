@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { FIGHTER_LOADING_TIMEOUT_SECONDS, FIGHTER_VICTORY_SECONDS, FighterRoom } from '../server/fighter-room';
+import { FIGHTER_INTRO_SECONDS } from '../shared/fighter-protocol';
 
 describe('fighter room', () => {
   it('runs lobby through selection into a solo AI fight', () => {
@@ -14,8 +15,8 @@ describe('fighter room', () => {
     expect(room.ready()).toBe(true);
     expect(room.phase).toBe('intro');
     expect(room.command(joined.playerId, 'punch')).toEqual([]);
-    expect(room.state().intro).toBe(9);
-    room.tick(9.1);
+    expect(room.state().intro).toBe(FIGHTER_INTRO_SECONDS);
+    room.tick(FIGHTER_INTRO_SECONDS + 0.1);
     expect(room.phase).toBe('countdown');
     expect(room.state().countdown).toBe(6);
     room.tick(6.1);
@@ -27,7 +28,7 @@ describe('fighter room', () => {
     const room = new FighterRoom('4821', 1);
     const a = room.addPlayer('A'), b = room.addPlayer('B');
     if ('error' in a || 'error' in b) throw new Error('join failed');
-    room.advance(); room.selectFighter(a.playerId, 'nyx'); room.selectFighter(b.playerId, 'wraith'); room.advance(); room.selectMap('foundry'); room.advance(); room.ready(); room.tick(9.1); room.tick(6.1);
+    room.advance(); room.selectFighter(a.playerId, 'nyx'); room.selectFighter(b.playerId, 'wraith'); room.advance(); room.selectMap('foundry'); room.advance(); room.ready(); room.tick(FIGHTER_INTRO_SECONDS + 0.1); room.tick(6.1);
     expect(room.command(b.playerId, 'jump')[0]).toEqual({ type: 'action', fighter: 'p2', command: 'jump' });
     expect(room.command('unknown', 'punch')).toEqual([]);
   });
@@ -87,7 +88,7 @@ describe('fighter room', () => {
   it('keeps rematch locked until the authoritative victory presentation finishes', () => {
     const room = new FighterRoom('4821'); const player = room.addPlayer('A'); if ('error' in player) throw new Error('join failed');
     room.advance(); room.selectFighter(player.playerId, 'nyx'); room.advance(); room.selectMap('void'); room.advance();
-    room.ready(room.state().loadingGeneration); room.tick(9); room.tick(6);
+    room.ready(room.state().loadingGeneration); room.tick(FIGHTER_INTRO_SECONDS); room.tick(6);
     const world = room.state().world!; world.p1.x = 0; world.p2.x = 1; world.p2.health = 10;
     room.command(player.playerId, 'kick'); room.tick(0.6);
     expect(room.phase).toBe('victory');

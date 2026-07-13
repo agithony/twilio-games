@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseFighterClientMessage } from '../shared/fighter-protocol';
+import { fighterIntroStage, parseFighterClientMessage } from '../shared/fighter-protocol';
 
 describe('fighter protocol', () => {
   it('parses every combat command', () => {
@@ -18,5 +18,11 @@ describe('fighter protocol', () => {
     expect(parseFighterClientMessage('{"type":"display_auth","roomCode":"4821","token":"secret"}')).toEqual({ type: 'display_auth', roomCode: '4821', token: 'secret' });
     expect(parseFighterClientMessage('{"type":"ready","loadingGeneration":2}')).toEqual({ type: 'ready', loadingGeneration: 2 });
     expect(parseFighterClientMessage('{"type":"ready","loadingGeneration":0}')).toMatchObject({ type: 'error', code: 'bad_ready' });
+  });
+  it('uses one authoritative timeline for every intro segment', () => {
+    expect(fighterIntroStage(14)).toBe('p1');
+    expect(fighterIntroStage(9.9)).toBe('versus');
+    expect(fighterIntroStage(7.9)).toBe('p2');
+    expect(fighterIntroStage(3.9)).toBe('faceoff');
   });
 });
