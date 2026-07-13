@@ -1,6 +1,6 @@
 import { parseCrMessage } from './conversation-relay';
 import { parseSpokenName, isAdvanceWord } from './battle-voice';
-import { matchFighterCommand } from '../shared/fighter-intent';
+import { matchFighterCommand, matchFighterCommands } from '../shared/fighter-intent';
 import type { FighterCommand, FighterEvent } from '../shared/fighter-world';
 import { FIGHTER_INTRO_SECONDS, fighterIntroStage, type FighterIntroStage, type FighterPhase } from '../shared/fighter-protocol';
 
@@ -54,7 +54,8 @@ export class FighterVoiceSession {
   private lastIntroStage: FighterIntroStage | null = null;
   private interimCandidate: FighterCommand | null = null;
   private interimCount = 0;
-  private interimFired = false;
+  private interimFiredCommand: FighterCommand | null = null;
+  private interimSelectionId: string | null = null;
   constructor(private deps: FighterVoiceDeps) {}
 
   handleMessage(raw: string): void {
@@ -75,19 +76,38 @@ export class FighterVoiceSession {
       }
       return;
     }
+    if (message.type === 'interrupt') { this.resetInterim(); return; }
     if (message.type === 'prompt' && this.code && this.playerId) {
       const snapshot = this.deps.snapshot(this.code, this.playerId);
       if (!message.last) {
+        if (snapshot?.phase === 'fighter_select' || snapshot?.phase === 'map_select') {
+          const choices = snapshot.phase === 'fighter_select' ? snapshot.fighters : snapshot.maps;
+          const choice = matchChoice(message.voicePrompt, choices);
+          if (choice && choice.id !== this.interimSelectionId) { this.interimSelectionId = choice.id; this.handleUtterance(message.voicePrompt); }
+          return;
+        }
         if (snapshot?.phase !== 'fight') return;
         const command = matchFighterCommand(message.voicePrompt);
         if (!command) { this.interimCandidate = null; this.interimCount = 0; return; }
         if (command === this.interimCandidate) this.interimCount += 1;
         else { this.interimCandidate = command; this.interimCount = 1; }
         // Two matching interim frames provide low latency without acting on one unstable ASR guess.
-        if (this.interimCount >= 2 && !this.interimFired && this.deps.command(this.code, this.playerId, command)) this.interimFired = true;
+        if (this.interimCount >= 2 && !this.interimFiredCommand && this.deps.command(this.code, this.playerId, command)) this.interimFiredCommand = command;
         return;
       }
-      if (this.interimFired) { this.resetInterim(); return; }
+      if (this.interimSelectionId) {
+        const choices = snapshot?.phase === 'fighter_select' ? snapshot.fighters : snapshot?.phase === 'map_select' ? snapshot.maps : [];
+        const finalChoice = matchChoice(message.voicePrompt, choices);
+        if (finalChoice?.id === this.interimSelectionId) { this.resetInterim(); return; }
+      }
+      if (this.interimFiredCommand) {
+        const commands = matchFighterCommands(message.voicePrompt);
+        if (commands[0] === this.interimFiredCommand) commands.shift();
+        const correctedSingle = commands.length === 1 && commands[0] !== this.interimFiredCommand;
+        this.resetInterim();
+        if (!correctedSingle) for (const command of commands) this.deps.command(this.code, this.playerId, command);
+        return;
+      }
       this.resetInterim(); this.handleUtterance(message.voicePrompt);
     }
   }
@@ -133,8 +153,7 @@ export class FighterVoiceSession {
       this.deps.say(`I didn't recognize that arena. ${choicePrompt('arena')}`); return;
     }
     if (snapshot.phase === 'fight') {
-      const command = matchFighterCommand(spoken);
-      if (command) this.deps.command(this.code!, this.playerId!, command);
+      for (const command of matchFighterCommands(spoken)) this.deps.command(this.code!, this.playerId!, command);
       return;
     }
     if (isAdvanceWord(spoken)) { this.advanceOrExplain(snapshot); return; }
@@ -219,7 +238,7 @@ export class FighterVoiceSession {
     else this.deps.say('Fighters ready.');
   }
 
-  private resetInterim(): void { this.interimCandidate = null; this.interimCount = 0; this.interimFired = false; }
+  private resetInterim(): void { this.interimCandidate = null; this.interimCount = 0; this.interimFiredCommand = null; this.interimSelectionId = null; }
 
   handleClose(): void { if (this.code && this.playerId) this.deps.leave(this.code, this.playerId, this.callSid ?? ''); this.clear(); }
   handleReplaced(): void { this.clear(); }
@@ -236,11 +255,22 @@ export function matchVoiceChoice(spoken: string, maps: { id: string; name: strin
   const choiceIndex = digit ? Number(digit[1]) - 1 : ordinalIndex >= 0 ? ordinalIndex : wordIndex;
   if (choiceIndex >= 0 && maps[choiceIndex]) return maps[choiceIndex];
   return maps.find(map => text.includes(normalize(map.id)) || text.includes(normalize(map.name)))
+    ?? maps.find(map => (VOICE_CHOICE_ALIASES[map.id] ?? []).some(alias => text.includes(normalize(alias))))
+    ?? maps.find(map => {
+      const first = normalize(map.name).split(' ')[0];
+      return first && text === first && maps.filter(candidate => normalize(candidate.name).split(' ')[0] === first).length === 1;
+    })
     ?? (text.includes('neon') ? maps.find(map => map.id === 'foundry') : text.includes('circuit') ? maps.find(map => map.id === 'void') : null)
     ?? null;
 }
 
 const matchChoice = matchVoiceChoice;
+const VOICE_CHOICE_ALIASES: Record<string, string[]> = {
+  nyx: ['nix', 'nicks', 'nick'], wraith: ['wreath', 'raith'], 'remy-riot': ['remy', 'remi riot'],
+  'cinder-capone': ['cinder'], 'rune-warden': ['rune'], 'shroom-boom': ['shroom', 'mushroom'],
+  'gran-slam': ['grand slam', 'gran'], 'bass-nova': ['bass'], 'velvet-thunder': ['velvet'],
+  'iron-oni': ['iron'], bulkhead: ['bulk head'], 'sir-knockout': ['knockout'],
+};
 const normalize = (text: string) => text.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
 const isExplicitName = (spoken: string) => /^(?:my name is|i am|i'm|call me)\b/i.test(spoken.trim());
 const isHelpRequest = (spoken: string) => /\b(?:help|instructions|what can i say|where am i|status)\b/i.test(spoken);

@@ -13,7 +13,11 @@ describe('fighter voice session', () => {
     ada.prompt('Ada');
     ada.prompt('start');
     expect(ada.spoken.at(-1)).toBe('Choose your fighter. Say the name or number shown on screen.');
-    ada.prompt('first');
+    ada.prompt('Nicks', false);
+    expect(game.room.state().players.find(player => player.playerId === ada.playerId)?.fighterId).toBe('nyx');
+    const afterInterimSelection = ada.spoken.length;
+    ada.prompt('Nicks');
+    expect(ada.spoken).toHaveLength(afterInterimSelection);
     ada.prompt('next');
     expect(ada.spoken.at(-1)).toBe('Choose your arena. Say the name or number shown on screen.');
     ada.prompt('second');
@@ -120,6 +124,46 @@ describe('fighter voice session', () => {
     expect(matchVoiceChoice('number 3', choices)?.id).toBe('void-circuit');
     expect(matchVoiceChoice('rain temple', choices)?.id).toBe('rain-temple');
     expect(matchVoiceChoice('neon foundry', choices)?.id).toBe('neon-foundry');
+    expect(matchVoiceChoice('Nicks', FIGHTER_ROSTER)?.id).toBe('nyx');
+  });
+
+  it('expands a finalized command burst after a low-latency interim command', () => {
+    const commands: FighterCommand[] = [], spoken: string[] = [];
+    const snapshot: FighterVoiceSnapshot = {
+      phase: 'fight', myName: 'Ada', myFighterId: 'nyx', myFighterName: 'Nyx', foeName: 'Rival',
+      foeFighterId: 'wraith', foeFighterName: 'Wraith', selectedMap: 'void', mySide: 'p1', myHealth: 100,
+      foeHealth: 100, countdown: null, intro: null, winnerName: null, winnerSide: null,
+      playerOneName: 'Ada', playerOneFighterName: 'Nyx', playerTwoName: 'Rival', playerTwoFighterName: 'Wraith',
+      playerCount: 1, allFightersSelected: true, isController: true,
+      fighters: FIGHTER_ROSTER.map(fighter => ({ id: fighter.id, name: fighter.name })),
+      maps: FIGHTER_MAPS.map(map => ({ id: map.id, name: map.name })),
+    };
+    const session = new FighterVoiceSession({
+      say: text => spoken.push(text), join: () => ({ playerId: 'f1', resumed: true }), leave: () => {}, setName: () => {},
+      selectFighter: () => false, selectMap: () => false, advance: () => false,
+      command: (_code, _id, command) => { commands.push(command); return true; }, snapshot: () => snapshot,
+    });
+    session.handleMessage(JSON.stringify({ type: 'setup', callSid: 'CA1', customParameters: { roomCode: '4821' } }));
+    const prompt = (voicePrompt: string, last: boolean) => session.handleMessage(JSON.stringify({ type: 'prompt', voicePrompt, last }));
+    prompt('punch', false); prompt('punch', false); prompt('punch five times', true);
+    expect(commands).toEqual(['punch', 'punch', 'punch', 'punch', 'punch']);
+    prompt('kick', false);
+    session.handleMessage(JSON.stringify({ type: 'interrupt', utteranceUntilInterrupt: '', durationUntilInterruptMs: 100 }));
+    prompt('kick', false);
+    expect(commands).toHaveLength(5);
+    prompt('kick', false);
+    expect(commands.at(-1)).toBe('kick');
+    expect(spoken.join(' ')).not.toContain('Say forward');
+  });
+
+  it('lets a corrected character selection through after barge-in', () => {
+    const game = voiceGame(), ada = game.connect('CA-INTERRUPT');
+    ada.prompt('Ada'); ada.prompt('start');
+    ada.prompt('Nicks', false);
+    expect(game.room.state().players[0]?.fighterId).toBe('nyx');
+    ada.interrupt();
+    ada.prompt('Wraith');
+    expect(game.room.state().players[0]?.fighterId).toBe('wraith');
   });
 });
 
@@ -197,6 +241,7 @@ function voiceGame() {
       spoken,
       get playerId() { return playerId; },
       prompt(text: string, last = true) { session.handleMessage(JSON.stringify({ type: 'prompt', voicePrompt: text, last })); },
+      interrupt() { session.handleMessage(JSON.stringify({ type: 'interrupt', utteranceUntilInterrupt: '', durationUntilInterruptMs: 100 })); },
     };
   };
 

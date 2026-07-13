@@ -184,8 +184,9 @@ describe('voice integration (fake Conversation Relay client)', () => {
     try {
       await wait(50); first.send(JSON.stringify({ type: 'prompt', voicePrompt: 'Ada', last: true })); await wait(40);
       first.send(JSON.stringify({ type: 'prompt', voicePrompt: 'start', last: true })); await wait(40);
-      first.send(JSON.stringify({ type: 'prompt', voicePrompt: 'Iron Oni', last: true })); await wait(80);
+      first.send(JSON.stringify({ type: 'prompt', voicePrompt: 'Iron Oni', last: false })); await wait(80);
       expect(states.at(-1)?.players?.[0]).toMatchObject({ name: 'Ada', fighterId: 'iron-oni' });
+      first.send(JSON.stringify({ type: 'prompt', voicePrompt: 'Iron Oni', last: true })); await wait(40);
       first.send(JSON.stringify({ type: 'prompt', voicePrompt: 'next', last: true })); await wait(40);
       expect(states.at(-1)?.phase).toBe('map_select');
       first.send(JSON.stringify({ type: 'prompt', voicePrompt: 'first', last: true })); await wait(40);

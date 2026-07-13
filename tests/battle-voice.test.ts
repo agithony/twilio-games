@@ -553,6 +553,27 @@ describe('BattleVoiceSession', () => {
     expect(log.some(l => l.startsWith('action '))).toBe(false);
   });
 
+  it('drops an in-flight Voice Monsters turn when the caller interrupts', async () => {
+    let release!: () => void;
+    let staleReplyRan = false;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    const { deps } = fakeDeps({
+      snapshot: () => battleSnap({ phase: 'battle', myName: 'Ada', whoseTurn: 'me', activeSide: 'a' }),
+      converse: async (_code, _id, _text, isCurrent) => {
+        await pending;
+        if (isCurrent()) staleReplyRan = true;
+        return null;
+      },
+    });
+    const session = new BattleVoiceSession(deps);
+    session.handleMessage(setup());
+    session.handleMessage(prompt('what should I do'));
+    session.handleMessage(JSON.stringify({ type: 'interrupt', utteranceUntilInterrupt: '', durationUntilInterruptMs: 100 }));
+    release(); await pending; await Promise.resolve();
+
+    expect(staleReplyRan).toBe(false);
+  });
+
   it('holds commentary for the shared handoff pause when the acting side changes', () => {
     const timers: { fn: () => void; ms: number }[] = [];
     const { deps, said } = fakeDeps({

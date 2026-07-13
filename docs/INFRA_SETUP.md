@@ -1,125 +1,186 @@
-# Infrastructure setup (one-time runbook)
+# Infrastructure Setup
 
-This is the one-time setup needed before the deploy workflow (`.github/workflows/deploy.yml`) can
-ship Voice Racer to **Azure Container Apps**. The workflow is **self-bootstrapping** — it creates
-the resource group, container registry, storage account, file share, and Container Apps environment
-on first run if they don't exist. So the only manual prerequisites are: an Azure service principal
-(for the workflow to log in) and the GitHub secrets below.
+This runbook covers the Azure and GitHub configuration required by `.github/workflows/deploy.yml`. For application behavior and local setup, see the [README](../README.md). For image, runtime, persistence, URLs, and rollback details, see [Deployment](./DEPLOYMENT.md).
 
-Deploy style: **service-principal credentials + inline idempotent provisioning + `az acr build`**
-(the same pattern as `twilio-cartoon-printer`). The build runs in the cloud on ACR agents, so no
-local Docker is needed.
+The workflow uses service-principal JSON credentials, Azure CLI provisioning, a remote ACR build, and an Azure Container Apps YAML specification. It does not use GitHub OIDC or `azure/container-apps-deploy-action`.
 
-## Resource names (set in deploy.yml `env:`)
+## Prerequisites
 
-| Resource | Name |
+- An Azure subscription and permission to create a service principal and role assignment.
+- Permission to create resources in the target subscription or resource group.
+- GitHub repository administrator access for Actions secrets and variables.
+- Git LFS objects available to GitHub Actions. Both CI and deploy explicitly check them out.
+- A voice-capable Twilio number for live voice or SMS use.
+- Asset redistribution rights appropriate for the deployment. See [Asset licensing](#asset-licensing).
+
+No local Docker installation is required for the GitHub deployment because `az acr build` runs in Azure. Azure CLI is required only for manual setup and operations.
+
+## Resource names
+
+The workflow currently declares:
+
+| Resource | Name or value |
 |---|---|
 | Resource group | `rg-twilio-games` |
-| Container registry (ACR) | `twiliogames` |
+| Region | `centralus` |
+| Azure Container Registry | `twiliogames` |
 | Container Apps environment | `cae-twilio-games` |
+| Log Analytics workspace | `law-twilio-games` |
 | Container App | `twilio-games` |
 | Storage account | `twiliogamesdata` |
 | Azure Files share | `twiliogamesdata` |
-| Region | `centralus` |
+| Environment storage attachment | `appdata` |
+| Image repository | `twilio-games` |
 
-Change these in `deploy.yml`'s `env:` block if your subscription needs different names (ACR +
-storage account names are globally unique).
+ACR and storage account names are globally unique. Change the values in the workflow `env` block if they are unavailable. Keep `.github/containerapp.yaml`, documentation, and operational commands aligned with any name changes.
 
-## 1. Create the service principal
+The workflow applies `created_by=github-actions` and `managed_by=twilio-games-ci` to resources it creates, except the resource group. This satisfies the repository's documented tenant tag policy. The Log Analytics workspace is created explicitly so the Container Apps environment does not attempt to create an untagged workspace.
 
-The workflow logs in with `azure/login@v3` using a single `AZURE_CREDENTIALS` JSON secret. Create a
-service principal scoped to the subscription (it needs Contributor to create/manage the resources
-above on first run):
+## Create the deployment identity
+
+The checked-in workflow passes one JSON secret to `azure/login@v3` through its `creds` input. Create a client-secret-based service principal:
 
 ```bash
 az ad sp create-for-rbac \
-  --name "twilio-games-deploy" \
+  --name twilio-games-deploy \
   --role Contributor \
-  --scopes /subscriptions/<SUBSCRIPTION_ID> \
+  --scopes /subscriptions/<subscription-id> \
   --sdk-auth
 ```
 
-`--sdk-auth` prints the JSON object (clientId/clientSecret/subscriptionId/tenantId) that goes into
-the `AZURE_CREDENTIALS` GitHub secret verbatim.
+Store the complete JSON output as the GitHub Actions secret `AZURE_CREDENTIALS`. This is client-secret authentication, not federated OIDC. Rotate the service-principal secret according to the organization's credential policy and replace the GitHub secret before expiration.
 
-> Tighter scope: once the resource group exists you can re-scope the SP to just
-> `/subscriptions/<id>/resourceGroups/rg-twilio-games`. The first run needs subscription scope only
-> if it must create the resource group itself.
+Subscription scope permits the workflow's first run to create `rg-twilio-games`. To reduce scope, create the resource group first and assign Contributor on:
 
-## 2. GitHub repo secrets
+```text
+/subscriptions/<subscription-id>/resourceGroups/rg-twilio-games
+```
 
-Set under **Settings → Secrets and variables → Actions → Secrets**:
+Contributor is broad but matches the workflow's resource creation and update behavior. A custom role can be used if it includes the required resource group, ACR, storage, Log Analytics, Container Apps environment, Container App, and environment-storage operations.
 
-| Secret | Purpose | Required? |
+## Configure GitHub Actions secrets
+
+Open **Settings > Secrets and variables > Actions > Secrets** and configure:
+
+| Secret | Required | Use |
 |---|---|---|
-| `AZURE_CREDENTIALS` | SP login JSON from step 1 | **Yes** |
-| `TWILIO_AUTH_TOKEN` | Validates inbound Twilio webhook signatures. When set, validation is ON (fail-closed). | Yes for voice/SMS |
-| `EDITOR_TOKEN` | Gates the level-editor `/api` writes on the public deploy. Pick any strong string. | Recommended |
-| `OPENAI_API_KEY` | Powers the conversational AI host (natural-language chat + voice-driven car/map/start actions in the menus + end-of-race, via Conversation Relay). **Empty/unset → the game falls back to scripted phrase-bank lines and still works** (the deploy succeeds either way). Rendered into the Container App as a plain env var via envsubst (not a Container App `secretRef`), because a valueless secretRef fails when the key is unset — the empty case must stay deployable. | Optional (for the AI demo) |
+| `AZURE_CREDENTIALS` | Yes | `azure/login@v3` service-principal JSON |
+| `TWILIO_AUTH_TOKEN` | Required for authenticated Twilio voice/SMS | Stored as Container App secret `twilio-token`; validates Twilio webhook signatures and currently also authenticates Conversation Relay setup frames |
+| `EDITOR_TOKEN` | Strongly recommended for public deployments | Stored as Container App secret `editor-token`; protects disk-writing editor and garage APIs |
+| `OPENAI_API_KEY` | No | Enables the OpenAI conversational host; empty uses scripted/deterministic behavior |
 
-Optional **repo variables** (Settings → … → Variables) — all safe to leave unset:
+The workflow creates Container App secret references only for `TWILIO_AUTH_TOKEN`, `EDITOR_TOKEN`, and the generated ACR password. `OPENAI_API_KEY` is substituted into `.github/containerapp.yaml` as a plain Container App environment value, not a Container App secret reference.
 
-| Variable | Purpose |
-|---|---|
-| `CR_TTS_VOICE` | ElevenLabs voiceId for the spoken race-host talk-back (empty → Conversation Relay default voice). |
-| `OPENAI_MODEL` | Which OpenAI model the AI host uses (empty → server default, currently `gpt-4o-mini`). Bump this as OpenAI ships newer models — no code change needed. |
+An empty `TWILIO_AUTH_TOKEN` disables signature validation by default. An empty `EDITOR_TOKEN` leaves editor and garage writes open. Do not leave either empty on a public event deployment that exposes the corresponding endpoints.
 
-## Tenant tag policy (already handled)
+## Configure GitHub Actions variables
 
-The tenant root management group enforces `tag-enforcement-policy`: it **denies creating any resource
-(except resource groups) without a non-empty `created_by` tag**. The deploy already satisfies this —
-every create passes `--tags created_by=github-actions managed_by=twilio-games-ci` (the Container App
-carries it via `tags:` in `containerapp.yaml`). Nothing to do; noted so a future name/resource change
-remembers to keep the tag.
+Open **Settings > Secrets and variables > Actions > Variables** and configure as needed:
 
-## 3. First deploy
+| Variable | Required | Use |
+|---|---|---|
+| `GAME_PHONE_NUMBER` | Recommended for live events | Public phone number displayed and QR-encoded in all game lobbies; empty displays a setup placeholder |
+| `CR_TTS_VOICE` | No | ElevenLabs voice ID for Conversation Relay TTS; empty uses the Relay default |
+| `OPENAI_MODEL` | No | OpenAI model name; empty defaults to `gpt-4o-mini` |
 
-Push to `main` (or run the workflow manually: **Actions → Deploy to Azure Container Apps → Run
-workflow**). The run will: gate on CI → bootstrap infra → `az acr build` the image → create the
-Container App with the Azure Files mount → patch `PUBLIC_BASE_URL` to the real FQDN → smoke
-`/healthz`. The final step prints the app URL + webhook URLs.
+These values are rendered into the Container App specification on every deployment.
 
-## 4. Point Twilio at the deployed app
+## First deployment
 
-After the first successful deploy, take the printed FQDN (`https://<app>.<region>.azurecontainerapps.io`)
-and configure your Twilio number:
+Push to `main`, or run **Actions > Deploy to Azure Container Apps > Run workflow**. The deploy job proceeds only after the reusable `Validate` job succeeds.
 
-- **Voice** → A call comes in → Webhook → `https://<FQDN>/voice/incoming` (HTTP POST).
-- **Messaging** (SMS concierge) → A message comes in → Webhook → `https://<FQDN>/sms` (HTTP POST).
+The first successful run performs these operations:
 
-The app derives the Conversation Relay `wss://` URL and the `/voice/join` action URL from
-`PUBLIC_BASE_URL`, which the deploy sets to the FQDN automatically — no manual URL config beyond the
-two webhook fields above.
+1. Checks out repository and Git LFS content.
+2. Signs in to Azure with `AZURE_CREDENTIALS`.
+3. Creates or verifies the resource group, ACR, storage account, file share, Log Analytics workspace, Container Apps environment, and `appdata` environment storage.
+4. Builds and pushes SHA and `latest` image tags in ACR.
+5. Creates a tagged Container App with external ingress on port 8080.
+6. Enables ACR admin credentials, obtains the admin username/password, and stores the password as the Container App secret `acr-password`.
+7. Sets application secrets and applies `.github/containerapp.yaml`, including the Azure Files mount, one-replica limit, 2 vCPU, 4 GiB memory, and runtime environment.
+8. Resolves the public FQDN and polls `/healthz` until it returns HTTP 200 or five minutes elapse.
 
-> Sending SMS from the concierge requires A2P 10DLC / toll-free verification on the Twilio number
-> (carriers filter unregistered traffic). Inbound + reply works for testing without it.
+The workflow is create-if-missing for supporting infrastructure, not a full declarative reconciliation system. For example, it does not change an existing storage SKU, share quota, region, or Log Analytics configuration to match the checked-in defaults.
 
-## 5. Out-of-band runtime config (env vars NOT in the workflow)
+## Configure Twilio webhooks
 
-The Container App's env is defined in `.github/containerapp.yaml`. The deploy sets `PORT`,
-`NODE_ENV`, `PUBLIC_BASE_URL`, `DATA_MOUNT`, and the two secret-refs. If you need to add a one-off
-runtime var without a redeploy:
+After deployment, let `<base>` be the printed `https://<fqdn>` value.
 
-```bash
-az containerapp update --name twilio-games --resource-group rg-twilio-games \
-  --set-env-vars SOME_VAR=value
+Configure the Twilio number's incoming voice webhook:
+
+```text
+POST <base>/voice/incoming
 ```
 
-…but prefer editing `containerapp.yaml` so it survives the next deploy (a `--set-env-vars` not in
-the YAML is overwritten on the next `containerapp update --yaml`).
+Configure the incoming messaging webhook if the SMS concierge is used:
 
-## Persistence
+```text
+POST <base>/sms
+```
 
-The global leaderboard (`data/leaderboard.json`) lives on the Azure Files share mounted at
-`/app/appdata`; `scripts/start.sh` symlinks `/app/data` → the mount so writes survive restarts and
-redeploys. Maps (`assets/maps/maps.json`) and the GLB models ship **in the image** (committed to
-git), so they update with each deploy and are not on the share.
+The voice webhook returns TwiML that connects Conversation Relay to `wss://<fqdn>/voice` and sets `POST <base>/voice/session-ended` as the session-ended callback. `PUBLIC_BASE_URL` is populated from the Container App FQDN, so these derived URLs do not require separate configuration.
 
-## Rollback
+Open the desired shared screen before accepting calls. The server routes a new call to the game whose `/game`, `/battle`, or `/fighter` display WebSocket connected most recently; Racer is the fallback. Current launch URLs are listed in [Deployment](./DEPLOYMENT.md#public-urls), including `/fighter.html` and `/editor`.
 
-Images are tagged by commit SHA (`twilio-games:<sha>`). To roll back, redeploy an older SHA:
+Carrier registration requirements, including A2P 10DLC or toll-free verification, may apply to outbound US messaging. Confirm the Twilio number and campaign configuration before an event.
+
+## Verify the deployment
 
 ```bash
-az containerapp update --name twilio-games --resource-group rg-twilio-games \
-  --image twiliogames.azurecr.io/twilio-games:<old-sha>
+FQDN=$(az containerapp show \
+  --name twilio-games \
+  --resource-group rg-twilio-games \
+  --query properties.configuration.ingress.fqdn \
+  --output tsv)
+
+curl --fail "https://${FQDN}/healthz"
 ```
+
+Expected response shape:
+
+```json
+{"status":"ok","rooms":0}
+```
+
+This endpoint confirms that the HTTP process can answer and reports the current Racer room count. It does not verify Azure Files writability, LFS asset integrity, Twilio connectivity, OpenAI connectivity, or WebSocket gameplay. The Container App YAML currently has no platform health probe.
+
+For an event readiness check, also load `/play.html`, `/monsters.html`, `/fighter.html`, and `/editor`; verify representative GLB and FBX-backed scenes; save and reload a disposable editor change; and complete a real Twilio call.
+
+## Persistent storage operations
+
+Azure Files is mounted at `/app/appdata`; `scripts/start.sh` links `/app/data` to `/app/appdata/data`. Persistent files include the leaderboard, Racer maps, Monsters arena configuration after its first save, Fighter map catalog, and generated Fighter previews.
+
+Back up the share before destructive editor work or rollback across a data-format change. The workflow does not create snapshots, backups, retention policies, or migrations. Image rollback does not roll back Azure Files content.
+
+Do not place image-owned assets or `assets/manifest.json` on the share without changing application behavior deliberately. See [Deployment persistence](./DEPLOYMENT.md#persistence) for the exact boundary.
+
+## Configuration gaps and security notes
+
+`FIGHTER_DISPLAY_TOKEN` is supported by the server but is absent from both `deploy.yml` and `.github/containerapp.yaml`. The deployed Fighter display therefore has no host-token enforcement. Adding a GitHub secret alone has no effect; the workflow and Container App specification must also pass it as a secret reference.
+
+`VOICE_RELAY_TOKEN` is also absent from the deployment configuration. The server currently falls back to `TWILIO_AUTH_TOKEN` for Conversation Relay setup-frame authentication, so Relay is authenticated when the Twilio token is configured. A separate relay token requires wiring it through the workflow and Container App specification.
+
+`OPENAI_API_KEY` originates as a GitHub Actions secret but is rendered as a plain Container App environment value. It can be visible to principals allowed to inspect Container App configuration. Treat that access as secret-bearing or change the deployment to use an Azure Container App secret reference.
+
+The workflow enables the ACR admin account and places an admin password in the Container App as `acr-password`. This works with the current YAML but uses long-lived registry credentials. A managed identity with `AcrPull` would reduce credential exposure and rotation work.
+
+Manual `az containerapp update --set-env-vars` changes are not authoritative. A later `az containerapp update --yaml` can replace the container environment list with the checked-in specification. Persist runtime configuration by updating the workflow and `.github/containerapp.yaml`; this documentation-only runbook does not add missing secret wiring.
+
+## Asset licensing
+
+Git LFS checkout includes Fighter map GLBs and Fighter source FBX files in the build context and production image. `assets/CREDITS.md` states that Fighter asset source URLs, authors, and licenses are still unknown and must be verified before public redistribution. Do not treat successful LFS checkout as proof of redistribution rights.
+
+The asset credits also identify `assets/maps/drift_race_track_free.glb` as CC-BY-ND 4.0. Distribute only an unmodified work and preserve required attribution. Review [assets/CREDITS.md](../assets/CREDITS.md) before every public or commercial deployment.
+
+## Operational rollback
+
+Every build pushes an immutable commit-SHA tag. Roll back the image with:
+
+```bash
+az containerapp update \
+  --name twilio-games \
+  --resource-group rg-twilio-games \
+  --image twiliogames.azurecr.io/twilio-games:<old-commit-sha>
+```
+
+A later normal deployment reapplies the full YAML and the current commit image. Validate persistent-file compatibility before rolling back application code.

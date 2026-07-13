@@ -241,7 +241,7 @@ export class FighterServer {
   }
   voiceCommand(code: string, id: string, command: FighterCommand): boolean {
     code = canonicalRoomCode(code); const room = this.rooms.get(code); if (!room) return false;
-    const accepted = room.command(id, command).length > 0; this.flush(room); this.pushState(code); return accepted;
+    const accepted = room.voiceCommand(id, command); this.flush(room); this.pushState(code); return accepted;
   }
   releaseBrowserSession(code: string, sessionId: string): boolean {
     const key = sessionKey(canonicalRoomCode(code), sessionId);

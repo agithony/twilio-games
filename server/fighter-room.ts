@@ -21,6 +21,7 @@ export class FighterRoom {
   private loadingElapsed = 0;
   private loadingGeneration = 0;
   private victory = 0;
+  private voiceCommands = new Map<string, { command: FighterCommand; expiresAt: number }[]>();
   private rng: number;
 
   constructor(readonly code: string, seed = 0x12345678, private maps: FighterMapEntry[] = FIGHTER_MAPS) { this.rng = seed >>> 0; }
@@ -35,6 +36,7 @@ export class FighterRoom {
   }
   removePlayer(id: string): void {
     this.players = this.players.filter((player) => player.playerId !== id);
+    this.voiceCommands.delete(id);
     if (!this.players.length) { this.phase = 'lobby'; this.world = null; this.selectedMap = null; this.aiFighterId = null; }
     else if (this.phase === 'loading' || this.phase === 'intro' || this.phase === 'fight' || this.phase === 'countdown' || this.phase === 'victory' || this.phase === 'results') {
       this.phase = 'fighter_select'; this.world = null; this.selectedMap = null; this.aiFighterId = null;
@@ -61,7 +63,7 @@ export class FighterRoom {
         const choices = FIGHTER_ROSTER.filter(fighter => fighter.id !== this.players[0]!.fighterId);
         this.aiFighterId = choices[Math.floor(this.random() * choices.length)]?.id ?? 'wraith';
       } else this.aiFighterId = null;
-      this.phase = 'loading'; this.world = createFighterWorld(bounds); this.countdown = 0; this.aiNext = 0.8;
+      this.phase = 'loading'; this.world = createFighterWorld(bounds); this.voiceCommands.clear(); this.countdown = 0; this.aiNext = 0.8;
       this.loadingElapsed = 0; this.loadingGeneration++; return true;
     }
     if (this.phase === 'results') {
@@ -88,6 +90,13 @@ export class FighterRoom {
     if (!player) return [];
     const events = applyFighterCommand(this.world, player.side, command);
     this.events.push(...events); return events;
+  }
+  voiceCommand(playerId: string, command: FighterCommand): boolean {
+    const events = this.command(playerId, command); if (events.length) return true;
+    if (this.phase !== 'fight' || !this.world || !this.hasPlayer(playerId)) return false;
+    const queued = this.voiceCommands.get(playerId) ?? [];
+    if (queued.length >= 6) return false;
+    queued.push({ command, expiresAt: this.world.now + 6 }); this.voiceCommands.set(playerId, queued); return true;
   }
   tick(delta: number): void {
     if (this.phase === 'loading') {
@@ -120,6 +129,15 @@ export class FighterRoom {
     }
     const resolved = tickFighterWorld(this.world, delta);
     this.events.push(...resolved);
+    if (this.world.status === 'fighting') {
+      for (const [playerId, queued] of this.voiceCommands) {
+        while (queued[0] && queued[0].expiresAt < this.world.now) queued.shift();
+        const next = queued[0]; if (!next) { this.voiceCommands.delete(playerId); continue; }
+        const events = this.command(playerId, next.command);
+        if (events.length) queued.shift();
+        if (!queued.length) this.voiceCommands.delete(playerId);
+      }
+    } else this.voiceCommands.clear();
     if (this.world.status === 'finished') { this.phase = 'victory'; this.victory = FIGHTER_VICTORY_SECONDS; }
   }
   drainEvents(): FighterEvent[] { const events = this.events; this.events = []; return events; }

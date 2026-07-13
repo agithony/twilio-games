@@ -1,31 +1,28 @@
-# Monster sprites
+# Voice Monsters Sprites
 
-Drop real creature art here to replace the procedural placeholders. **No code change needed** — the
-battle renderer auto-discovers these files at runtime.
+This directory contains the browser-public front and back art for the eight Voice Monsters. It currently has 16 animated GIFs, one complete pair per monster. See the [project README](../../../../README.md) for application setup and the [asset credits](../../../../assets/CREDITS.md) for the repository provenance ledger.
 
-## Files
+## Installation
 
-Two views per monster: `front` (the enemy, facing you) and `back` (your monster, from behind).
+These sprites ship with the main application and require no separate installation. Follow the [root installation guide](../../../../README.md#installation); Vite serves this directory at `/assets/monsters/`.
 
+## Usage
+
+Name each file with a roster ID and view:
+
+```text
+<id>_front.gif
+<id>_back.gif
+<id>_front.png
+<id>_back.png
 ```
-<id>_front.gif   or   <id>_front.png
-<id>_back.gif    or   <id>_back.png
-```
 
-The renderer tries **`.gif` first, then `.png`** for each — so an **animated GIF wins** when both
-exist. If neither is present, that monster keeps its generated placeholder. You can add files one at
-a time.
+`front` is the opponent-facing view and `back` is the player's rear view. Valid IDs are `sparkmouse`, `embertail`, `shellback`, `thornling`, `galecoil`, `voltcrest`, `dazeduck`, and `psyclone`.
 
-## The 8 monster ids
+The battle renderer tries GIF first and PNG second for each monster and view, so GIF wins when both exist. If both requests fail, it draws the hand-authored canvas sprite from `client/battle/monster-art.ts`; an unknown roster ID degrades to a simple tinted shape. The selection and battle screens use the same candidate order. No manifest or code change is needed when replacing an existing filename.
 
-`sparkmouse` · `embertail` · `shellback` · `thornling` · `galecoil` · `voltcrest` · `dazeduck` · `psyclone`
+Use transparent, roughly square artwork. The UI displays sprites with nearest-neighbor scaling. GIF transparency has hard one-bit edges; an animated PNG stored with a `.png` extension can retain full alpha in supporting browsers. Static PNGs still receive the battle renderer's attack and hit motion.
 
-So a full set is 16 files, e.g. `embertail_front.gif`, `embertail_back.png`, …
+## License
 
-## Art tips
-
-- **Transparent background** — the spinning 3D arena shows through behind the creature.
-- **Roughly square**, ideally pixel-art; the canvas scales with nearest-neighbor (`image-rendering: pixelated`), so crisp pixels stay crisp.
-- ~96px+ is plenty; it's drawn small (Game Boy resolution) and integer-scaled.
-- **GIF transparency is 1-bit** (hard edges only). If you need soft/anti-aliased edges *and* animation, use an **APNG** saved with a `.png` extension — it animates in modern browsers and keeps full alpha.
-- The engine already adds motion to static art (a lunge on attack, a flash on hit), so a still PNG isn't lifeless.
+The repository has no root `LICENSE` file. Inclusion here does not establish permission to reuse or redistribute a sprite. The current [asset credits](../../../../assets/CREDITS.md) do not record the source, author, or license for these GIFs. Record and verify that provenance before public redistribution or replacement with third-party art.

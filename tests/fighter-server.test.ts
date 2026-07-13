@@ -211,6 +211,6 @@ describe('FighterServer WebSocket authority and lifecycle', () => {
     room.tick(FIGHTER_INTRO_SECONDS); room.tick(6);
     expect(room.phase).toBe('fight');
     expect(fighter!.voiceCommand('VOICE', p1, 'forward')).toBe(true);
-    expect(fighter!.voiceCommand('VOICE', p1, 'forward')).toBe(false);
+    expect(fighter!.voiceCommand('VOICE', p1, 'forward')).toBe(true);
   });
 });
