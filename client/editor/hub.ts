@@ -4,6 +4,8 @@
 //   ?game=battler → the Voice Monsters arena editor (client/editor/arena-editor.ts)
 //   (no ?game)    → the picker
 // The editor token (?token=) is preserved across navigation so a gated deploy stays authorized.
+import { injectMagicHat } from '../magic-hat';
+
 const params = new URLSearchParams(location.search);
 const game = params.get('game');
 const token = params.get('token') ?? '';
@@ -58,6 +60,7 @@ async function boot(): Promise<void> {
   } else {
     document.title = 'Twilio Games — Editors';
     showPicker();
+    injectMagicHat();
   }
 }
 void boot();

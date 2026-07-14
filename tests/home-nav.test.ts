@@ -64,4 +64,14 @@ describe('in-game home navigation', () => {
     const html = readFileSync(new URL('../client/fighter.html', import.meta.url), 'utf8');
     expect(html).toContain('id="music-toggle-container"');
   });
+
+  it('shows Magician attribution only on non-game entry surfaces', () => {
+    const home = readFileSync(new URL('../client/home.ts', import.meta.url), 'utf8');
+    const editor = readFileSync(new URL('../client/editor/hub.ts', import.meta.url), 'utf8');
+    expect(home).toContain('injectMagicHat()');
+    expect(editor).toContain('injectMagicHat()');
+    for (const file of ['main.ts', 'battle/monsters.ts', 'fighter/fighter.ts']) {
+      expect(readFileSync(new URL(`../client/${file}`, import.meta.url), 'utf8')).not.toContain('injectMagicHat');
+    }
+  });
 });

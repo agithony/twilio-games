@@ -2,6 +2,7 @@
 import { getMusicManager } from './music-manager';
 import { injectMusicToggle } from './music-toggle';
 import { getSoundEffectsManager } from './sound-effects';
+import { injectMagicHat } from './magic-hat';
 
 interface GameCard { id: string; title: string; blurb: string; status: 'active' | 'soon';
   /** The page an ACTIVE card launches (shared-screen mode). Racer → play.html; battler → monsters.html. */
@@ -114,3 +115,4 @@ wireTheme();
 
 // Add music toggle button
 injectMusicToggle('header-controls');
+injectMagicHat();
