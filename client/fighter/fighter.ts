@@ -3,6 +3,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { FighterActor } from './fighter-actor';
 import { FIGHTERS, FIGHTER_ASSET_VERSION, loadAnimationSources } from './fighter-assets';
+import { FighterAtmosphere, fighterAtmosphereSpec, type FighterAtmosphereSpec } from './fighter-atmosphere';
 import { FighterConnection } from './fighter-net';
 import { isInteractiveShortcutTarget, resolveNumericSelection } from './fighter-client-utils';
 import { getSoundEffectsManager } from '../sound-effects';
@@ -64,6 +65,7 @@ let readySentFor = '';
 let readyTimer: ReturnType<typeof setTimeout> | null = null;
 let mapModel: THREE.Object3D | null = null;
 let mapBackdrop: THREE.WebGLRenderTarget | null = null;
+let mapAtmosphere: FighterAtmosphere | null = null;
 let mapLoadAttempt = 0;
 let customMapStatic = false;
 let mapPlane = { origin: [0, 0, 0] as [number, number, number], rotationY: 0 };
@@ -500,6 +502,8 @@ function applyMapTheme(mapId: string): void {
   scene.background = new THREE.Color(mapId === 'void' ? 0x02040d : 0x0d080b);
   scene.fog = new THREE.FogExp2(mapId === 'void' ? 0x040817 : 0x16090c, .035);
   mapPlane = config.fightPlane ?? { origin: [0, config.floorY ?? 0, 0], rotationY: 0 };
+  const atmosphereSpec = fighterAtmosphereSpec(mapId);
+  applyAtmosphereLighting(atmosphereSpec);
   applyActorTransforms();
   if (config.camera) {
     cameraBase = { pos: config.camera.pos, lookAt: config.camera.lookAt, fov: config.camera.fov ?? 36 };
@@ -509,6 +513,7 @@ function applyMapTheme(mapId: string): void {
     camera.position.set(...cameraBase.pos); updateCameraProjection();
   }
   camera.lookAt(...cameraBase.lookAt);
+  if (atmosphereSpec) mapAtmosphere = new FighterAtmosphere(atmosphereSpec, scene, new THREE.Vector3(...cameraBase.lookAt), new THREE.Vector3(...mapPlane.origin), THREE.MathUtils.degToRad(mapPlane.rotationY));
   customMapStatic = false;
   renderer.shadowMap.enabled = true;
   theme.procedural.visible = !config.file;
@@ -548,6 +553,7 @@ function useProceduralFallback(mapId: string): void {
   mapLoadAttempt++; disposeCurrentMap(); hideAssetError();
   theme.procedural.visible = true; renderer.shadowMap.enabled = true; customMapStatic = false;
   mapPlane = { origin: [0, 0, 0], rotationY: 0 };
+  applyAtmosphereLighting(null);
   cameraBase = { pos: [0, 2.15, 10.5], lookAt: [0, 1.25, 0], fov: 36 };
   applyActorTransforms(); camera.position.set(...cameraBase.pos); updateCameraProjection(); camera.lookAt(...cameraBase.lookAt);
   scene.background = new THREE.Color(0x05060a); scene.fog = new THREE.FogExp2(0x08090e, .06);
@@ -557,6 +563,20 @@ function useProceduralFallback(mapId: string): void {
 function disposeCurrentMap(): void {
   if (mapBackdrop) { if (scene.background === mapBackdrop.texture) scene.background = new THREE.Color(0x05060a); mapBackdrop.dispose(); mapBackdrop = null; }
   if (mapModel) { disposeObjectResources(mapModel); mapModel.removeFromParent(); mapModel = null; }
+  if (mapAtmosphere) { mapAtmosphere.dispose(scene); mapAtmosphere = null; }
+}
+
+function applyAtmosphereLighting(spec: FighterAtmosphereSpec | null): void {
+  const origin = new THREE.Vector3(...mapPlane.origin);
+  theme.key.position.copy(origin).add(new THREE.Vector3(-4, 9, 6)); theme.key.target.position.copy(origin).add(new THREE.Vector3(0, 1, 0));
+  theme.red.position.copy(origin).add(new THREE.Vector3(-5, 5, 1)); theme.red.target.position.copy(origin).add(new THREE.Vector3(-1, 1, 0));
+  theme.cyan.position.copy(origin).add(new THREE.Vector3(5, 4, -1)); theme.cyan.target.position.copy(origin).add(new THREE.Vector3(1, 1, 0));
+  theme.key.color.setHex(spec?.keyColor ?? 0xfff1e6); theme.key.intensity = spec?.keyIntensity ?? 4.4;
+  theme.red.color.setHex(spec?.redColor ?? 0xef223a); theme.red.intensity = spec?.redIntensity ?? 70;
+  theme.cyan.color.setHex(spec?.cyanColor ?? 0x2dd4bf); theme.cyan.intensity = spec?.cyanIntensity ?? 55;
+  theme.ambient.color.setHex(spec?.skyColor ?? 0x9db7d4); theme.ambient.groundColor.setHex(spec?.groundColor ?? 0x11080d);
+  theme.ambient.intensity = spec?.ambientIntensity ?? 1.5; renderer.toneMappingExposure = spec?.exposure ?? 1.12;
+  if (spec) scene.fog = new THREE.FogExp2(spec.fogColor, spec.fogDensity);
 }
 
 function disposeObjectResources(root: THREE.Object3D): void {
@@ -600,16 +620,18 @@ function captureMapBackdrop(): void {
     minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: true,
   });
   const actorVisibility = actors ? [actors.p1.root.visible, actors.p2.root.visible] : null;
-  const priorFog = scene.fog;
   if (actors) { actors.p1.root.visible = false; actors.p2.root.visible = false; }
+  mapAtmosphere?.setEffectVisible(false);
   mapModel.visible = true;
-  scene.fog = null;
-  scene.background = new THREE.Color(0x101522);
-  renderer.setRenderTarget(mapBackdrop); renderer.render(scene, camera); renderer.setRenderTarget(null);
+  try { renderer.setRenderTarget(mapBackdrop); renderer.render(scene, camera); }
+  finally {
+    renderer.setRenderTarget(null);
+    if (actors && actorVisibility) { actors.p1.root.visible = actorVisibility[0]!; actors.p2.root.visible = actorVisibility[1]!; }
+    mapAtmosphere?.setEffectVisible(true);
+  }
   const capturedModel = mapModel; capturedModel.visible = false; capturedModel.removeFromParent(); disposeObjectResources(capturedModel); mapModel = null;
-  if (actors && actorVisibility) { actors.p1.root.visible = actorVisibility[0]!; actors.p2.root.visible = actorVisibility[1]!; }
+  mapAtmosphere?.freezeStatic();
   scene.background = mapBackdrop.texture;
-  scene.fog = priorFog;
   customMapStatic = true;
   // The flattened backdrop cannot receive live shadows, so skip the animated shadow pass entirely.
   renderer.shadowMap.enabled = false;
@@ -624,7 +646,7 @@ function updateCameraProjection(): void {
 }
 function escapeHtml(value: string): string { return value.replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[char]!); }
 
-function buildArena(): { ring: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>; floor: THREE.Mesh<THREE.CircleGeometry, THREE.MeshStandardMaterial>; red: THREE.SpotLight; procedural: THREE.Group; foundry: THREE.Group; voidStage: THREE.Group } {
+function buildArena(): { ring: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>; floor: THREE.Mesh<THREE.CircleGeometry, THREE.MeshStandardMaterial>; key: THREE.DirectionalLight; red: THREE.SpotLight; cyan: THREE.SpotLight; ambient: THREE.HemisphereLight; procedural: THREE.Group; foundry: THREE.Group; voidStage: THREE.Group } {
   const procedural = new THREE.Group(); scene.add(procedural);
   const floor = new THREE.Mesh(new THREE.CircleGeometry(13, 8), new THREE.MeshStandardMaterial({ color: 0x171922, roughness: .72, metalness: .16 })); floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; scene.add(floor);
   const ring = new THREE.Mesh(new THREE.RingGeometry(10.2, 10.3, 8), new THREE.MeshBasicMaterial({ color: 0xef223a, side: THREE.DoubleSide })); ring.rotation.x = -Math.PI / 2; ring.position.y = .006; procedural.add(floor, ring);
@@ -658,7 +680,8 @@ function buildArena(): { ring: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMat
   const key = new THREE.DirectionalLight(0xfff1e6, 4.4); key.position.set(-1, 7, 5); key.castShadow = true; key.shadow.mapSize.set(2048, 2048); key.shadow.camera.left = -6; key.shadow.camera.right = 6; key.shadow.camera.top = 5; key.shadow.camera.bottom = -1;
   const red = new THREE.SpotLight(0xef223a, 70, 14, .62, .8); red.position.set(-5, 5, 1); red.target.position.set(-1, 0, 0);
   const cyan = new THREE.SpotLight(0x2dd4bf, 55, 14, .62, .8); cyan.position.set(5, 4, -1); cyan.target.position.set(1, 0, 0);
-  scene.add(key, red, red.target, cyan, cyan.target, new THREE.HemisphereLight(0x9db7d4, 0x11080d, 1.5)); return { ring, floor, red, procedural, foundry, voidStage };
+  const ambient = new THREE.HemisphereLight(0x9db7d4, 0x11080d, 1.5);
+  scene.add(key, key.target, red, red.target, cyan, cyan.target, ambient); return { ring, floor, key, red, cyan, ambient, procedural, foundry, voidStage };
 }
 
 for (const button of commandButtons) button.addEventListener('click', () => connection.command(button.dataset.command as FighterCommand));
@@ -701,7 +724,7 @@ for (const link of document.querySelectorAll<HTMLAnchorElement>('.game-home, #re
 
 function render(now: number): void {
   requestAnimationFrame(render); const delta = Math.min((now - lastTime) / 1000, .05); lastTime = now;
-  updateMovement(delta); if (actors) {
+  mapAtmosphere?.update(delta); updateMovement(delta); if (actors) {
     actors.p1.update(delta); actors.p2.update(delta);
     if (state?.phase === 'intro') { updateIntroPresentation(state); renderer.render(scene, camera); return; }
     if (customMapStatic) { renderer.render(scene, camera); return; }

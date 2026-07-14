@@ -78,6 +78,8 @@ The Fighter runtime currently references 12 roster FBXs and 25 animation FBXs fr
 
 `assets/fighters/maps/maps.json` is the five-map catalog. `cyberpunk-city`, `inakaya`, and `rain` load GLBs from `assets/fighters/maps/`; `foundry` and `void` intentionally use procedural scenes. If a configured Fighter GLB fails or times out, the client switches that map to its procedural fallback. The 12 character previews are under `fighters/previews/characters/`; map previews are directly under `fighters/previews/`.
 
+The three GLB stages also receive runtime atmosphere layers. Cyberpunk City adds a moonlit neon skyline and haze, Inakaya adds a sunset mountain horizon and warm motes, and Rain adds a storm sky, live rain, and a wet-stone fighting platform. Static sky, terrain, and map geometry are flattened into one backdrop frame; only the fighters and small effect buffers remain animated.
+
 The Fighter map editor can save map configuration and PNG previews. Runtime-generated previews are served from `/fighter-previews/`; committed catalog previews use `/assets/fighters/previews/`.
 
 ### Other Runtime Assets
