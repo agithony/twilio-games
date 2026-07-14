@@ -1,5 +1,9 @@
 # Twilio Games
 
+<p align="center">
+  <img src="docs/assets/twilio-games-icon.png" alt="Twilio Games: Play together. Talk to play." width="460">
+</p>
+
 Twilio Games is a shared-screen platform for three voice-controlled multiplayer games. Players call one Twilio number, and Twilio Conversation Relay sends speech and DTMF events to the Node.js server. The server routes each call to the active game, applies commands to authoritative game state, and sends state and commentary back to the browser and caller.
 
 ![CI](https://img.shields.io/github/actions/workflow/status/agithony/twilio-games/ci.yml) ![Top language](https://img.shields.io/github/languages/top/agithony/twilio-games) ![Last commit](https://img.shields.io/github/last-commit/agithony/twilio-games) ![Twilio](https://img.shields.io/badge/Twilio-EF223A?logo=twilio&logoColor=white)
@@ -13,6 +17,35 @@ The current games are:
 | Voice Fighter | Real-time side-view 3D fighting with character and arena selection | Names or numbers, `forward`, `back`, `jump`, `punch`, `kick`, `block` |
 
 All three games support a spectator display, phone callers, keyboard testing, music, sound effects, spoken guidance, and reconnectable WebSocket sessions. Voice Racer also includes an SMS concierge for joining and selecting cars or maps.
+
+## Screenshots
+
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <img src="docs/assets/voice-racer.png" alt="Voice Racer gameplay on a mountain track"><br>
+      <strong>Voice Racer</strong><br>
+      Race, dodge barriers, and trigger boosts by voice.
+    </td>
+    <td width="50%" align="center">
+      <img src="docs/assets/voice-monsters.png" alt="Voice Monsters battle between Sparkmouse and Shellback"><br>
+      <strong>Voice Monsters</strong><br>
+      Choose moves in a turn-based creature battle.
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <img src="docs/assets/voice-fighter.png" alt="Voice Fighter match between Gran Slam and Nyx"><br>
+      <strong>Voice Fighter</strong><br>
+      Move, attack, block, and jump in a voice-controlled fight.
+    </td>
+    <td width="50%" align="center">
+      <img src="docs/assets/fighter-editor.png" alt="Voice Fighter map editor"><br>
+      <strong>Map editor</strong><br>
+      Configure stages, boundaries, cameras, and previews.
+    </td>
+  </tr>
+</table>
 
 ## Architecture
 
@@ -199,29 +232,6 @@ See [Deployment](docs/DEPLOYMENT.md) for pipeline and rollback behavior and [Inf
 - [Asset layout](assets/README.md): runtime asset directory conventions.
 - [Music setup](MUSIC_SETUP.md): audio contexts and extension points.
 - [Design records](docs/superpowers/): historical specifications and implementation plans. These are design records, not the current operational source of truth.
-
-## Screenshots
-
-<!-- doc-beautifier:screenshot
-what: the home page showing the Voice Racer, Voice Monsters, and Voice Fighter cards
-how:  run both development servers, open http://localhost:5173/, and capture the desktop game selector
-save: docs/assets/home.png
--->
-> _Screenshot pending — see capture note above._
-
-<!-- doc-beautifier:screenshot
-what: representative shared-display gameplay from all three games
-how:  capture Voice Racer, Voice Monsters, and Voice Fighter during active play and combine them into one labeled image
-save: docs/assets/games.png
--->
-> _Screenshot pending — see capture note above._
-
-<!-- doc-beautifier:screenshot
-what: the editor hub with Racer, Monsters, and Fighter editor choices
-how:  open http://localhost:5173/editor and capture the desktop editor hub
-save: docs/assets/editors.png
--->
-> _Screenshot pending — see capture note above._
 
 ## License
 
