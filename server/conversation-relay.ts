@@ -72,6 +72,8 @@ export interface AdapterDeps {
   converse?: (roomCode: string, playerId: string, utterance: string) => Promise<string | null>;
   /** The room's current phase, so the adapter routes: race → fast commands; else → conversation. */
   phaseOf?: (roomCode: string) => string;
+  /** Accepted semantic commands only; raw transcripts are deliberately never exposed to analytics. */
+  onIntent?: (intent: Intent) => void;
 }
 
 export class ConversationRelayAdapter {
@@ -175,7 +177,7 @@ export class ConversationRelayAdapter {
           const p = commonPrefixLen(this.firedIntents, cur);
           const fresh = cur.slice(p);
           console.log(`[CR] prompt last=${msg.last} text="${msg.voicePrompt}" → fired ${fresh.length} new: [${fresh.join(',')}]${this.playerId ? '' : ' (NOT BOUND — dropped)'}`);
-          if (this.room && this.playerId) for (const intent of fresh) this.room.applyIntent(this.playerId, intent);
+          if (this.room && this.playerId) for (const intent of fresh) { this.room.applyIntent(this.playerId, intent); this.deps.onIntent?.(intent); }
           this.firedIntents = cur;
           if (msg.last) this.firedIntents = [];
         } else if (msg.last && this.roomCode && this.playerId) {
@@ -196,7 +198,7 @@ export class ConversationRelayAdapter {
         console.log(`[CR] dtmf digit=${msg.digit}${this.playerId ? '' : ' (NOT BOUND)'}`);
         if (!this.room || !this.playerId) return;
         const intent = DTMF_TO_INTENT[msg.digit];
-        if (intent) this.room.applyIntent(this.playerId, intent);
+        if (intent) { this.room.applyIntent(this.playerId, intent); this.deps.onIntent?.(intent); }
         break;
       }
       case 'interrupt': {

@@ -22,6 +22,10 @@ const editorToken = process.env.EDITOR_TOKEN;
 // SEED copied in on first boot when the persistent file doesn't exist yet.
 const srv = new HttpServer({
   port, publicBaseUrl, authToken, validateSignatures, editorToken,
+  analyticsPath: process.env.ANALYTICS_PATH ?? 'data/analytics.json',
+  googleOAuthClientId: process.env.GOOGLE_OAUTH_CLIENT_ID,
+  googleOAuthClientSecret: process.env.GOOGLE_OAUTH_CLIENT_SECRET,
+  analyticsAllowedEmail: process.env.ANALYTICS_ALLOWED_EMAIL,
   mapsPath: process.env.MAPS_PATH ?? 'data/maps.json',
   bundledMapsPath: process.env.BUNDLED_MAPS_PATH ?? 'assets/maps/maps.json',
   // Voice Monsters arena config — live on the persistent mount, seeded from the committed default.

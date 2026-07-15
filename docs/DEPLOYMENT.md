@@ -66,6 +66,7 @@ These default paths persist:
 | Path | Contents | Initialization |
 |---|---|---|
 | `data/leaderboard.json` | Racer leaderboard | Created on the first completed race |
+| `data/analytics.json` | Anonymous daily activation rollups for all games | Created when the first match or accepted voice command is recorded; retains 730 days |
 | `data/maps.json` | Live Racer level catalog | Seeded from `assets/maps/maps.json` when missing, blank, or corrupt; a valid live file is not overwritten |
 | `data/arena.json` | Live Voice Monsters arena configuration | Read from the bundled `assets/arena/arena.json` fallback until the editor first saves a live copy |
 | `data/fighter-maps.json` | Live Fighter map catalog | Seeded from `assets/fighters/maps/maps.json` when the live catalog cannot be parsed |
@@ -87,6 +88,9 @@ The deployed specification currently sets these variables:
 | `DATA_MOUNT` | Literal `/app/appdata` | Persistent mount used by `scripts/start.sh` |
 | `TWILIO_AUTH_TOKEN` | Container App secret `twilio-token` | Enables fail-closed Twilio webhook signature validation when non-empty; also becomes the Conversation Relay setup token unless `VOICE_RELAY_TOKEN` is set |
 | `EDITOR_TOKEN` | Container App secret `editor-token` | Requires `x-editor-token` or `?token=` on disk-writing editor and garage APIs when non-empty |
+| `GOOGLE_OAUTH_CLIENT_ID` | Container App secret `google-oauth-client-id` | Identifies the Google OAuth web client used by `/analytics` |
+| `GOOGLE_OAUTH_CLIENT_SECRET` | Container App secret `google-oauth-client-secret` | Server-side Google authorization-code exchange |
+| `ANALYTICS_ALLOWED_EMAIL` | GitHub repository variable | Allows one exact verified Google email in addition to `@twilio.com` accounts |
 | `GAME_PHONE_NUMBER` | GitHub repository variable | Number displayed and QR-encoded in game lobbies; empty shows a configuration placeholder |
 | `CR_TTS_VOICE` | GitHub repository variable | ElevenLabs Conversation Relay voice ID; empty uses the Relay default |
 | `OPENAI_API_KEY` | GitHub Actions secret rendered as a plain environment value | Enables the OpenAI host; empty uses deterministic/scripted behavior |
@@ -110,6 +114,7 @@ Replace `<base>` with `https://<app-fqdn>`.
 | Monsters arena editor | `<base>/editor?game=battler` |
 | Fighter map editor | `<base>/editor?game=fighter` |
 | Racer garage and manifest editor | `<base>/garage` |
+| Private activation analytics | `<base>/analytics` |
 | Health check | `<base>/healthz` |
 | Voice webhook | `<base>/voice/incoming` using HTTP POST |
 | Legacy voice join alias | `<base>/voice/join` using HTTP POST |

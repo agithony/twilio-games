@@ -215,6 +215,19 @@ describe('GameServer integration', () => {
     expect(reportedResults[0]).toMatchObject({ name: 'Solo', place: 1, carIndex: 4, finished: true });
   });
 
+  it('reports authoritative race starts and abandonment once', async () => {
+    server = new GameServer({ port: 0 });
+    server.setRoomConfigProvider(() => ({ carCount: 2, maps: ['Silver Lake'] }));
+    let starts = 0, abandoned = 0;
+    server.setOnRaceStarted(() => starts++); server.setOnRaceAbandoned(() => abandoned++);
+    await server.start();
+    const room = server.getOrCreateRoom('DROP'); const joined = room.addPlayer('Solo') as { playerId: string };
+    room.advance(); room.selectCar(joined.playerId, 0); room.advance(); room.selectMap('Silver Lake'); room.advance();
+    server.stepRoomForTest(room, 0.1); expect(starts).toBe(1);
+    room.removePlayer(joined.playerId); server.stepRoomForTest(room, 0.1); server.stepRoomForTest(room, 0.1);
+    expect(abandoned).toBe(1);
+  });
+
   it('flushes final finish/race_over events when a race enters results', async () => {
     server = new GameServer({ port: 0, broadcastHz: 30 });
     server.setRoomConfigProvider(() => ({ carCount: 19, maps: ['Silver Lake'] }));

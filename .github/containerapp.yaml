@@ -23,6 +23,8 @@ properties:
     secrets:
       - name: twilio-token
       - name: editor-token
+      - name: google-oauth-client-id
+      - name: google-oauth-client-secret
       - name: acr-password
         value: ${ACR_PASSWORD}
     registries:
@@ -63,6 +65,13 @@ properties:
           # Gate the editor's /api writes on a public deploy. Empty = writes open (not recommended public).
           - name: EDITOR_TOKEN
             secretRef: editor-token
+          # Private activation dashboard: verified @twilio.com Google accounts plus one exception.
+          - name: GOOGLE_OAUTH_CLIENT_ID
+            secretRef: google-oauth-client-id
+          - name: GOOGLE_OAUTH_CLIENT_SECRET
+            secretRef: google-oauth-client-secret
+          - name: ANALYTICS_ALLOWED_EMAIL
+            value: "${ANALYTICS_ALLOWED_EMAIL}"
           # ElevenLabs voiceId for Conversation Relay talk-back (greeting/countdown/result to callers).
           # Empty → Relay's default voice (talk-back still speaks). Set to a high-energy sports-
           # announcer voiceId from the ElevenLabs library for the racing vibe. Rendered via envsubst

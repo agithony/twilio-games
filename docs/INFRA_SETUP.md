@@ -67,11 +67,13 @@ Open **Settings > Secrets and variables > Actions > Secrets** and configure:
 | `AZURE_CREDENTIALS` | Yes | `azure/login@v3` service-principal JSON |
 | `TWILIO_AUTH_TOKEN` | Required for authenticated Twilio voice/SMS | Stored as Container App secret `twilio-token`; validates Twilio webhook signatures and currently also authenticates Conversation Relay setup frames |
 | `EDITOR_TOKEN` | Strongly recommended for public deployments | Stored as Container App secret `editor-token`; protects disk-writing editor and garage APIs |
+| `GOOGLE_OAUTH_CLIENT_ID` | Required for analytics | Stored as Container App secret `google-oauth-client-id`; Google OAuth web client ID |
+| `GOOGLE_OAUTH_CLIENT_SECRET` | Required for analytics | Stored as Container App secret `google-oauth-client-secret`; Google OAuth web client secret |
 | `OPENAI_API_KEY` | No | Enables the OpenAI conversational host; empty uses scripted/deterministic behavior |
 
-The workflow creates Container App secret references only for `TWILIO_AUTH_TOKEN`, `EDITOR_TOKEN`, and the generated ACR password. `OPENAI_API_KEY` is substituted into `.github/containerapp.yaml` as a plain Container App environment value, not a Container App secret reference.
+The workflow creates Container App secret references for `TWILIO_AUTH_TOKEN`, `EDITOR_TOKEN`, both Google OAuth credentials, and the generated ACR password. `OPENAI_API_KEY` is substituted into `.github/containerapp.yaml` as a plain Container App environment value, not a Container App secret reference.
 
-An empty `TWILIO_AUTH_TOKEN` disables signature validation by default. An empty `EDITOR_TOKEN` leaves editor and garage writes open. Do not leave either empty on a public event deployment that exposes the corresponding endpoints.
+An empty `TWILIO_AUTH_TOKEN` disables signature validation by default. An empty `EDITOR_TOKEN` leaves editor and garage writes open. Missing Google OAuth credentials disable analytics sign-in. Do not leave required protections empty on a public event deployment.
 
 ## Configure GitHub Actions variables
 
@@ -82,8 +84,11 @@ Open **Settings > Secrets and variables > Actions > Variables** and configure as
 | `GAME_PHONE_NUMBER` | Recommended for live events | Public phone number displayed and QR-encoded in all game lobbies; empty displays a setup placeholder |
 | `CR_TTS_VOICE` | No | ElevenLabs voice ID for Conversation Relay TTS; empty uses the Relay default |
 | `OPENAI_MODEL` | No | OpenAI model name; empty defaults to `gpt-4o-mini` |
+| `ANALYTICS_ALLOWED_EMAIL` | No | One exact verified Google email allowed to view analytics in addition to `@twilio.com` accounts |
 
 These values are rendered into the Container App specification on every deployment.
+
+Create a Google OAuth 2.0 web client with `https://<app-fqdn>/auth/google/callback` as an authorized redirect URI. If `ANALYTICS_ALLOWED_EMAIL` belongs to an account outside Twilio Workspace, the OAuth application audience must permit external users. See [Analytics setup](./analytics.md).
 
 ## First deployment
 
@@ -148,7 +153,7 @@ For an event readiness check, also load `/play.html`, `/monsters.html`, `/fighte
 
 ## Persistent storage operations
 
-Azure Files is mounted at `/app/appdata`; `scripts/start.sh` links `/app/data` to `/app/appdata/data`. Persistent files include the leaderboard, Racer maps, Monsters arena configuration after its first save, Fighter map catalog, and generated Fighter previews.
+Azure Files is mounted at `/app/appdata`; `scripts/start.sh` links `/app/data` to `/app/appdata/data`. Persistent files include activation analytics, the leaderboard, Racer maps, Monsters arena configuration after its first save, Fighter map catalog, and generated Fighter previews.
 
 Back up the share before destructive editor work or rollback across a data-format change. The workflow does not create snapshots, backups, retention policies, or migrations. Image rollback does not roll back Azure Files content.
 

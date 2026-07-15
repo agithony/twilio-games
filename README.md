@@ -65,7 +65,7 @@ flowchart LR
   Racer --> Shared[Shared protocols and game state]
   Monsters --> Shared
   Fighter --> Shared
-  HTTP --> Data[Persistent maps, previews, and leaderboard]
+  HTTP --> Data[Persistent maps, previews, leaderboard, and analytics]
   HTTP --> Assets[GLB, FBX, sprites, music, and SFX]
 ```
 
@@ -136,6 +136,7 @@ The home page lists the three playable games. Selecting a game opens its shared 
 | Voice Fighter | <http://localhost:5173/fighter.html?display=1&room=4821> | Spectator and operator display |
 | Editors | <http://localhost:5173/editor> | Choose the Racer level, Monsters arena, or Fighter map editor |
 | Garage | <http://localhost:5173/garage> | Inspect and configure Racer models and manifest entries |
+| Activation analytics | <http://localhost:5173/analytics> | Private date-filtered engagement dashboard and PDF reports |
 
 The shared display starts as a spectator and does not consume a player slot. Press `P` to add or remove a local keyboard player. Use `Enter` to advance supported menu phases; Racer also uses left arrow to go back and right arrow to advance.
 
@@ -186,13 +187,25 @@ The application runs locally without Twilio or OpenAI credentials. Configure the
 | `OPENAI_API_KEY` | Enables conversational hosting for Voice Racer and Voice Monsters | Conversational host disabled when unset; deterministic and scripted flows remain |
 | `OPENAI_MODEL` | OpenAI model used by the optional host | Server default |
 | `EDITOR_TOKEN` | Requires authentication for editor and manifest writes | Writes open when unset |
+| `GOOGLE_OAUTH_CLIENT_ID` | Google OAuth web client for the private analytics dashboard | Analytics access disabled when unset |
+| `GOOGLE_OAUTH_CLIENT_SECRET` | Google OAuth web client secret | Analytics access disabled when unset |
+| `ANALYTICS_ALLOWED_EMAIL` | One exact verified Google email allowed in addition to `@twilio.com` accounts | No exception account |
+| `ANALYTICS_PATH` | Persistent daily analytics rollup file | `data/analytics.json` |
 | `FIGHTER_DISPLAY_TOKEN` | Requires host authentication for the Fighter display | Unset |
 | `GAME_SERVER_URL` | Vite development proxy target | `http://localhost:8080` |
 | `MAPS_PATH`, `ARENA_PATH`, `FIGHTER_MAPS_PATH` | Live writable game configuration paths | Files under `data/` |
 | `BUNDLED_MAPS_PATH`, `BUNDLED_ARENA_PATH`, `BUNDLED_FIGHTER_MAPS_PATH` | Seed configuration paths | Files under `assets/` |
 | `FIGHTER_PREVIEW_DIR` | Writable Fighter preview directory | `data/fighter-previews` |
 
-When signature validation is enabled without `TWILIO_AUTH_TOKEN`, Twilio webhooks fail closed. Keep `EDITOR_TOKEN`, `VOICE_RELAY_TOKEN`, and `FIGHTER_DISPLAY_TOKEN` set on public deployments where their protections are required.
+When signature validation is enabled without `TWILIO_AUTH_TOKEN`, Twilio webhooks fail closed. Keep `EDITOR_TOKEN`, Google OAuth credentials, `VOICE_RELAY_TOKEN`, and `FIGHTER_DISPLAY_TOKEN` set on public deployments where their protections are required.
+
+## Activation Analytics
+
+`/analytics` reports engaged participants, sessions, completion, active play time, accepted voice commands, daily trends, per-game performance, and popular maps, characters, and vehicles. Filters support a date range of up to 366 days and an individual game. The PDF button downloads the same filtered report model shown on screen.
+
+Access uses Google OAuth. The server accepts verified Google emails ending exactly in `@twilio.com`, plus one exact exception configured through `ANALYTICS_ALLOWED_EMAIL`. Sessions are server-side and use an eight-hour secure, HTTP-only cookie. Configure the Google web client redirect URI as `<PUBLIC_BASE_URL>/auth/google/callback`. See [Analytics setup](docs/analytics.md).
+
+Collection happens at authoritative server transitions, so browser refreshes and spectators do not inflate gameplay metrics. The store keeps pseudonymous participant keys and daily aggregates only: it does not retain phone numbers, display names, transcripts, or LLM text. Rollups are retained for 730 days in `data/analytics.json` on the Azure Files mount.
 
 ## Testing
 
@@ -202,7 +215,7 @@ npm run typecheck
 npm run build
 ```
 
-The current Vitest suite contains 705 passing tests across 82 files. It covers game worlds and protocols, room and reconnect behavior, Conversation Relay routing, voice command parsing, TwiML, webhook signatures, HTTP APIs, persistence, asset governance, render helpers, audio management, and WebSocket integration.
+The current Vitest suite contains 718 passing tests across 86 files. It covers game worlds and protocols, room and reconnect behavior, Conversation Relay routing, voice command parsing, TwiML, webhook signatures, HTTP APIs, persistence, analytics, Google OAuth authorization, asset governance, render helpers, audio management, and WebSocket integration.
 
 Additional Chromium-based render checks are available when a compatible browser is installed:
 
@@ -219,7 +232,7 @@ Production uses one Azure Container Apps replica. The container builds the Vite 
 
 Pushes to `main` and manual workflow runs execute the shared `Validate` CI job before deployment. On success, the deploy workflow provisions or updates Azure resources, builds the image in Azure Container Registry, updates the Container App, and checks `/healthz`.
 
-The single-replica limit is a correctness requirement because rooms, active matches, call sessions, and WebSocket coordination are in memory. Azure Files persists the leaderboard, live editor configuration, map catalogs, and generated Fighter previews across revisions.
+The single-replica limit is a correctness requirement because rooms, active matches, call sessions, and WebSocket coordination are in memory. Azure Files persists analytics, the leaderboard, live editor configuration, map catalogs, and generated Fighter previews across revisions.
 
 See [Deployment](docs/DEPLOYMENT.md) for pipeline and rollback behavior and [Infrastructure setup](docs/INFRA_SETUP.md) for Azure resources, GitHub secrets, Twilio webhooks, and first deployment.
 

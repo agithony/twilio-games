@@ -368,9 +368,11 @@ export class BattleServer {
     room.backMenu(playerId); this.pushState(code);
   }
   /** Commit a voice-driven turn action; resolves + schedules the AI beat exactly like the WS path. */
-  voiceChooseAction(code: string, playerId: string, action: BattleAction): void {
-    const room = this.rooms.get(code); if (!room) return;
-    this.commitTurn(room, () => room.chooseAction(playerId, action));
+  voiceChooseAction(code: string, playerId: string, action: BattleAction): boolean {
+    const room = this.rooms.get(code); if (!room) return false;
+    let accepted = false;
+    this.commitTurn(room, () => { accepted = room.chooseAction(playerId, action); return accepted; });
+    return accepted;
   }
   voiceAdvance(code: string): void {
     const room = this.rooms.get(code); if (!room) return;

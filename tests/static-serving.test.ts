@@ -16,10 +16,12 @@ beforeEach(async () => {
   await mkdir(join(clientDir, 'brand'), { recursive: true });
   await mkdir(join(clientDir, 'editor'), { recursive: true });
   await mkdir(join(clientDir, 'garage'), { recursive: true });
+  await mkdir(join(clientDir, 'analytics'), { recursive: true });
   await writeFile(join(clientDir, 'index.html'), '<!doctype html><title>home</title>');
   await writeFile(join(clientDir, 'play.html'), '<!doctype html><title>play</title>');
   await writeFile(join(clientDir, 'editor', 'index.html'), '<!doctype html><title>editor</title>');
   await writeFile(join(clientDir, 'garage', 'index.html'), '<!doctype html><title>garage</title>');
+  await writeFile(join(clientDir, 'analytics', 'index.html'), '<!doctype html><title>analytics</title>');
   await writeFile(join(clientDir, 'assets', 'play-ABC123.js'), 'console.log("bundle")');
   await writeFile(join(clientDir, 'brand', 'logo.svg'), '<svg/>');
 });
@@ -58,10 +60,11 @@ describe('static client serving', () => {
     expect((await get(port, '/play.html')).body).toContain('play');
   });
 
-  it('serves folder-index pages at /editor and /garage (bare path)', async () => {
+  it('serves folder-index pages at /editor, /garage, and /analytics (bare path)', async () => {
     srv = makeServer(); const port = await srv.start();
     expect((await get(port, '/editor')).body).toContain('editor');
     expect((await get(port, '/garage')).body).toContain('garage');
+    expect((await get(port, '/analytics')).body).toContain('analytics');
   });
 
   it('serves the built JS bundle under /assets/ (with a JS content-type)', async () => {

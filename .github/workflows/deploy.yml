@@ -169,6 +169,8 @@ jobs:
         env:
           TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
           EDITOR_TOKEN: ${{ secrets.EDITOR_TOKEN }}
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           az containerapp secret set \
@@ -177,6 +179,8 @@ jobs:
             --secrets \
               "twilio-token=$TWILIO_AUTH_TOKEN" \
               "editor-token=$EDITOR_TOKEN" \
+              "google-oauth-client-id=$GOOGLE_OAUTH_CLIENT_ID" \
+              "google-oauth-client-secret=$GOOGLE_OAUTH_CLIENT_SECRET" \
             --output none 2>/dev/null || echo "App does not exist yet — secrets set on create below."
 
       - name: Deploy Container App
@@ -185,6 +189,8 @@ jobs:
         env:
           TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
           EDITOR_TOKEN: ${{ secrets.EDITOR_TOKEN }}
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           # Resolve the public FQDN (exists for an already-created app; a new app gets it on create,
@@ -211,8 +217,10 @@ jobs:
           export OPENAI_API_KEY="${OPENAI_API_KEY:-}"
           # Phone number players call to join (optional repo var; empty → lobby shows a placeholder).
           export GAME_PHONE_NUMBER="${{ vars.GAME_PHONE_NUMBER }}"
+          # One optional non-Twilio Google account that may access activation analytics.
+          export ANALYTICS_ALLOWED_EMAIL="${{ vars.ANALYTICS_ALLOWED_EMAIL }}"
           # Restrict substitution to our known vars so no other ${...} in the template is touched.
-          SUBST='${APP_NAME} ${CONTAINER_IMAGE} ${BASE_URL} ${ACR_SERVER} ${ACR_USERNAME} ${ACR_PASSWORD} ${CR_TTS_VOICE} ${OPENAI_MODEL} ${OPENAI_API_KEY} ${GAME_PHONE_NUMBER}'
+          SUBST='${APP_NAME} ${CONTAINER_IMAGE} ${BASE_URL} ${ACR_SERVER} ${ACR_USERNAME} ${ACR_PASSWORD} ${CR_TTS_VOICE} ${OPENAI_MODEL} ${OPENAI_API_KEY} ${GAME_PHONE_NUMBER} ${ANALYTICS_ALLOWED_EMAIL}'
           envsubst "$SUBST" < .github/containerapp.yaml > /tmp/containerapp.yaml
 
           # Retry an `az containerapp` write on ACA's transient control-plane race
@@ -270,6 +278,8 @@ jobs:
               --secrets \
                 "twilio-token=${TWILIO_AUTH_TOKEN:-}" \
                 "editor-token=${EDITOR_TOKEN:-}" \
+                "google-oauth-client-id=${GOOGLE_OAUTH_CLIENT_ID:-}" \
+                "google-oauth-client-secret=${GOOGLE_OAUTH_CLIENT_SECRET:-}" \
               --output none
 
             # The app now exists + has its FQDN. Re-render the YAML with the real BASE_URL so

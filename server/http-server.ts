@@ -28,6 +28,11 @@ import type { Room } from './room';
 import type { RaceResult } from '../shared/types';
 import { FIGHTER_MAPS, FIGHTER_ROSTER, type FighterMapEntry } from '../shared/fighter-roster';
 import { parseFighterMaps } from '../shared/fighter-maps';
+import { ANALYTICS_GAMES, type AnalyticsGame } from '../shared/analytics';
+import { AnalyticsStore, validDate } from './analytics-store';
+import { AnalyticsObserver } from './analytics-observer';
+import { analyticsPdf } from './analytics-pdf';
+import { GoogleAnalyticsAuth } from './google-analytics-auth';
 
 const VOICE_RACER_CONTROLS_INTRO = 'Before you start, check the controls on the screen. Say left or right to steer. Say boost to speed up. Say brake to slow down. Say nitro to break through a wall.';
 const BATTLE_VOICE_RECONNECT_GRACE_MS = 30_000;
@@ -64,6 +69,9 @@ export class HttpServer {
   private readonly bundledArenaPath?: string;
   private readonly leaderboardPath: string;
   private readonly editorToken?: string;
+  private readonly analytics: AnalyticsStore;
+  private readonly analyticsObserver: AnalyticsObserver;
+  private readonly analyticsAuth: GoogleAnalyticsAuth;
   /** The Vite-built client directory served in production (one-process container). */
   private readonly clientDir: string;
   /** Phone number players CALL to join (from GAME_PHONE_NUMBER). '' = unset → the lobby shows a
@@ -130,6 +138,11 @@ export class HttpServer {
     fighterMapsPath?: string;
     bundledFighterMapsPath?: string;
     fighterPreviewDir?: string;
+    analyticsPath?: string;
+    googleOAuthClientId?: string;
+    googleOAuthClientSecret?: string;
+    analyticsAllowedEmail?: string;
+    analyticsAuth?: GoogleAnalyticsAuth;
   }) {
     this.port = opts.port;
     this.authToken = opts.authToken;
@@ -144,7 +157,14 @@ export class HttpServer {
     this.bundledArenaPath = opts.bundledArenaPath;
     this.leaderboardPath = opts.leaderboardPath ?? 'data/leaderboard.json';
     this.editorToken = opts.editorToken;
+    this.analyticsAuth = opts.analyticsAuth ?? new GoogleAnalyticsAuth({
+      clientId: opts.googleOAuthClientId, clientSecret: opts.googleOAuthClientSecret,
+      redirectUri: `${this.publicBaseUrl}/auth/google/callback`, allowedEmail: opts.analyticsAllowedEmail,
+    });
+    this.analytics = new AnalyticsStore(opts.analyticsPath ?? 'data/analytics.json', opts.googleOAuthClientSecret?.trim() || 'twilio-games-analytics');
+    this.analyticsObserver = new AnalyticsObserver(this.analytics);
     if (process.env.NODE_ENV === 'production' && !this.editorToken) console.warn('[security] EDITOR_TOKEN is unset; editor writes remain open');
+    if (process.env.NODE_ENV === 'production' && !this.analyticsAuth.configured) console.warn('[security] Google OAuth is unset; analytics access is disabled');
     this.clientDir = opts.clientDir ?? 'client/dist';
     this.gamePhoneNumber = (opts.gamePhoneNumber ?? '').trim();
     this.fighterMapsPath = opts.fighterMapsPath ?? 'data/fighter-maps.json';
@@ -175,10 +195,15 @@ export class HttpServer {
     // and the provider is sync, so keep a cache refreshed at startup + on an interval; rooms read
     // the cache. Empty until the first refresh resolves (rooms then reconfigure on next create).
     this.game.setRoomConfigProvider(() => this.roomConfigCache);
+    this.game.setOnRaceStarted(room => this.analyticsObserver.raceStarted(room));
+    this.game.setOnRaceAbandoned(room => this.analyticsObserver.raceAbandoned(room));
     void this.refreshRoomConfig();
     this.roomConfigTimer = setInterval(() => void this.refreshRoomConfig(), 5000);
     // Persist each finished race onto the global leaderboard (serialized, atomic).
-    this.game.setOnRaceFinished((room) => this.persistRaceResults(room.selectedMap, room.results()));
+    this.game.setOnRaceFinished((room) => {
+      this.persistRaceResults(room.selectedMap, room.results());
+      this.analyticsObserver.raceFinished(room);
+    });
     // Fan a room's game events out to any voice callers in it (greeting/countdown/go/finish talk-back).
     this.game.setOnRoomEvents((roomCode, events) => {
       const set = this.voiceAdapters.get(roomCode);
@@ -192,6 +217,7 @@ export class HttpServer {
       for (const ev of events) for (const s of set) s.onBattleEvent(ev);
     });
     this.battle.setOnRoomState((roomCode) => {
+      const room = this.battle.findRoom(roomCode); if (room) this.analyticsObserver.battleState(room);
       const set = this.battleVoice.get(roomCode);
       if (!set) return;
       for (const s of set) s.onBattleStateChanged();
@@ -201,6 +227,7 @@ export class HttpServer {
       for (const event of events) for (const session of set) session.onFighterEvent(event);
     });
     this.fighter.setOnRoomState(roomCode => {
+      const room = this.fighter.findRoom(roomCode); if (room) this.analyticsObserver.fighterState(room);
       const set = this.fighterVoice.get(roomCode); if (!set) return;
       for (const session of set) session.onStateChanged();
     });
@@ -333,6 +360,7 @@ export class HttpServer {
       // Drop the caller's slot + reap the room if empty (a phone caller never hits the WS reap paths).
       leaveRoom: (roomCode, playerId) => this.game.voiceLeave(roomCode, playerId),
       phaseOf: (roomCode) => this.game.findRoom(roomCode)?.phase ?? 'lobby',
+      onIntent: () => this.analyticsObserver.voiceCommand('racer'),
       // Conversational AI turn: build the host context from the live room, run the LLM (with history),
       // return what to say. Null when the LLM is disabled → adapter stays quiet (scripted fallback).
       converse: async (roomCode, playerId, utterance) => {
@@ -432,7 +460,11 @@ export class HttpServer {
       selectFighter: (code, id, fighterId) => this.fighter.voiceSelectFighter(code, id, fighterId),
       selectMap: (code, id, mapId) => this.fighter.voiceSelectMap(code, id, mapId),
       advance: (code, id) => this.fighter.voiceAdvance(code, id),
-      command: (code, id, command) => this.fighter.voiceCommand(code, id, command),
+      command: (code, id, command) => {
+        const accepted = this.fighter.voiceCommand(code, id, command);
+        if (accepted) this.analyticsObserver.voiceCommand('fighter');
+        return accepted;
+      },
       snapshot: (code, id) => this.fighterVoiceSnapshot(code, id),
     });
     return session;
@@ -526,7 +558,10 @@ export class HttpServer {
       selectMonster: (code: string, id: string, m: string) => this.battle.voiceSelectMonster(code, id, m),
       openFight: (code: string, id: string) => this.battle.voiceOpenFight(code, id),
       backMenu: (code: string, id: string) => this.battle.voiceBackMenu(code, id),
-      chooseAction: (code: string, id: string, a: import('../shared/battle-world').BattleAction) => this.battle.voiceChooseAction(code, id, a),
+      chooseAction: (code: string, id: string, a: import('../shared/battle-world').BattleAction) => {
+        const accepted = this.battle.voiceChooseAction(code, id, a);
+        if (accepted) this.analyticsObserver.voiceCommand('monsters');
+      },
       advance: (code: string) => this.battle.voiceAdvance(code),
       setTimer: (fn: () => void, ms: number) => { setTimeout(fn, ms); },
       snapshot: (code: string, id: string) => this.battleVoiceSnapshot(code, id),
@@ -890,7 +925,7 @@ export class HttpServer {
         if (room.phase !== 'battle' || current?.whoseTurn !== 'me' || current.turn !== s.turn) return null;
         const parsed = this.parseVoiceHostAction(action, current.myMoves);
         if (!parsed) return null;
-        this.battle.voiceChooseAction(code, playerId, parsed);
+        if (this.battle.voiceChooseAction(code, playerId, parsed)) this.analyticsObserver.voiceCommand('monsters');
         return null;   // the model's own words carry the reply; avoid double-speak
       },
       advance: () => {
@@ -921,6 +956,14 @@ export class HttpServer {
       res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
       res.end(JSON.stringify({ status: 'ok', rooms: this.game.roomCount }));
       return;
+    }
+    if (req.method === 'GET' && path === '/auth/google') { this.analyticsAuth.begin(res); return; }
+    if (req.method === 'GET' && path === '/auth/google/callback') { await this.analyticsAuth.complete(req, res); return; }
+    if (req.method === 'POST' && path === '/auth/logout') { this.analyticsAuth.logout(req, res); return; }
+    if (req.method === 'GET' && path === '/api/analytics/session') {
+      const user = this.analyticsAuth.currentUser(req);
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+      res.end(JSON.stringify({ authenticated: Boolean(user), configured: this.analyticsAuth.configured, email: user?.email })); return;
     }
     if (req.method === 'POST' && (path === '/voice/incoming' || path === '/voice/join')) {
       const body = await readBody(req);
@@ -1173,6 +1216,36 @@ export class HttpServer {
       res.end(JSON.stringify({ entries: top }));
       return;
     }
+    // ---- private activation analytics (daily anonymous aggregates, no transcripts or phone data) ----
+    if ((path === '/api/analytics' || path === '/api/analytics.pdf') && req.method === 'GET') {
+      if (!this.analyticsAuth.currentUser(req)) {
+        res.writeHead(401, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' }).end('Google sign-in required'); return;
+      }
+      const url = new URL(req.url ?? '', 'http://localhost');
+      const today = new Date().toISOString().slice(0, 10);
+      const prior = new Date(Date.now() - 29 * 86_400_000).toISOString().slice(0, 10);
+      const fromParam = url.searchParams.get('from'), toParam = url.searchParams.get('to');
+      const from = validDate(fromParam) ?? prior, to = validDate(toParam) ?? today;
+      if ((fromParam && !validDate(fromParam)) || (toParam && !validDate(toParam))) {
+        res.writeHead(400, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' }).end('dates must use YYYY-MM-DD'); return;
+      }
+      const requestedGame = url.searchParams.get('game') ?? 'all';
+      if (requestedGame !== 'all' && !ANALYTICS_GAMES.includes(requestedGame as AnalyticsGame)) {
+        res.writeHead(400, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' }).end('unknown game filter'); return;
+      }
+      const game = requestedGame as AnalyticsGame | 'all';
+      let report;
+      try { report = this.analytics.report(from, to, game); }
+      catch (error) { res.writeHead(400, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' }).end((error as Error).message); return; }
+      if (path.endsWith('.pdf')) {
+        const pdf = analyticsPdf(report);
+        res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Length': String(pdf.length),
+          'Content-Disposition': `attachment; filename="twilio-games-${from}-${to}.pdf"`, 'Cache-Control': 'no-store' });
+        res.end(pdf); return;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+      res.end(JSON.stringify(report)); return;
+    }
     // ---- map configs (level layouts authored in /editor) ----
     if (path === '/api/maps' && req.method === 'GET') {
       let body = '{}';
@@ -1309,6 +1382,7 @@ export class HttpServer {
     if (rel === '/' || rel === '') file = 'index.html';
     else if (rel === '/editor' || rel === '/editor/') file = 'editor/index.html';
     else if (rel === '/garage' || rel === '/garage/') file = 'garage/index.html';
+    else if (rel === '/analytics' || rel === '/analytics/') file = 'analytics/index.html';
     else file = rel.replace(/^\/+/, '');
     const full = path.join(this.clientDir, file);
     try { await stat(full); } catch { res.writeHead(404).end('not found'); return; }
@@ -1320,6 +1394,7 @@ export class HttpServer {
   }
 
   async start(): Promise<number> {
+    await this.analytics.load();
     await this.seedMapsFile();
     await this.refreshFighterMaps();
     // Re-read the (possibly just-seeded) maps into the lobby cache so map choices are correct on the
@@ -1365,7 +1440,7 @@ export class HttpServer {
       this.game.stopLoopOnly();
       this.battle.stopLoopOnly();
       this.fighter.stopLoopOnly();
-      this.server.close(() => resolve());
+      this.server.close(() => { void this.analytics.flush().then(resolve); });
     });
   }
 }

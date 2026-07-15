@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex,nofollow" />
+  <title>Activation Analytics | Twilio Games</title>
+  <link rel="stylesheet" href="/analytics/analytics.css" />
+</head>
+<body>
+  <div class="shell">
+    <header>
+      <a class="brand" href="/" aria-label="Twilio Games home"><span class="mark">T</span><span>TWILIO GAMES</span></a>
+      <div><p class="eyebrow">Activation intelligence</p><h1>See what people actually played.</h1></div>
+      <button id="download" class="primary" disabled>Download PDF</button>
+    </header>
+
+    <section id="auth" class="auth-card">
+      <div><p class="eyebrow">Private dashboard</p><h2>Sign in with Google</h2><p id="auth-message">Access is limited to verified @twilio.com accounts and the configured exception account.</p></div>
+      <a id="google-login" class="google-login" href="/auth/google"><span>G</span>Continue with Google</a>
+    </section>
+
+    <main id="dashboard" hidden>
+      <section class="toolbar" aria-label="Report filters">
+        <label>From<input id="from" type="date" /></label><label>To<input id="to" type="date" /></label>
+        <label>Game<select id="game"><option value="all">All games</option><option value="racer">Voice Racer</option><option value="monsters">Voice Monsters</option><option value="fighter">Voice Fighter</option></select></label>
+        <button id="apply">Apply range</button><span id="user" class="signed-in"></span><button id="logout" class="quiet">Sign out</button>
+      </section>
+
+      <p id="status" role="status"></p>
+      <section id="kpis" class="kpis" aria-label="Activation summary"></section>
+
+      <section class="grid">
+        <article class="panel trend-panel"><div class="panel-head"><div><p class="eyebrow">Daily activity</p><h2>Engagement trend</h2></div><div class="legend"><span><i class="red"></i>Participants</span><span><i class="blue"></i>Sessions</span></div></div><div id="trend" class="chart"></div></article>
+        <article class="panel"><p class="eyebrow">Game mix</p><h2>Performance by title</h2><div id="games"></div></article>
+        <article class="panel"><p class="eyebrow">Player choices</p><h2>Top selections</h2><div id="selections"></div></article>
+        <article class="panel insight-panel"><p class="eyebrow">Report narrative</p><h2>Key takeaways</h2><ul id="insights"></ul></article>
+      </section>
+
+      <footer><strong>Privacy by design.</strong> Metrics are daily aggregates. Participant keys are pseudonymous; transcripts, phone numbers, and display names are not stored. Rollups retain 730 days.</footer>
+    </main>
+  </div>
+  <script type="module" src="/analytics/analytics.ts"></script>
+</body>
+</html>

@@ -58,11 +58,14 @@ export class GameServer {
   private roomConfig: (() => RoomConfig) | null = null;
   /** Fired once when a room's race finishes (transitions into results), for leaderboard persistence. */
   private onRaceFinished: ((room: Room) => void) | null = null;
+  private onRaceStarted: ((room: Room) => void) | null = null;
+  private onRaceAbandoned: ((room: Room) => void) | null = null;
   /** Fired with a room's drained game events each broadcast (countdown/go/finish/…), so the voice
    *  layer can speak the caller-relevant ones. Same events the screen gets; voice picks a subset. */
   private onRoomEvents: ((roomCode: string, events: GameEvent[]) => void) | null = null;
   /** Rooms whose finished race we've already reported (cleared when they leave results). */
   private reported = new WeakSet<Room>();
+  private started = new WeakSet<Room>();
 
   constructor(opts: { port?: number; server?: HttpServer; broadcastHz?: number }) {
     this.port = opts.port;
@@ -79,6 +82,8 @@ export class GameServer {
   setOnRaceFinished(fn: (room: Room) => void): void {
     this.onRaceFinished = fn;
   }
+  setOnRaceStarted(fn: (room: Room) => void): void { this.onRaceStarted = fn; }
+  setOnRaceAbandoned(fn: (room: Room) => void): void { this.onRaceAbandoned = fn; }
 
   /** Register a hook fired with a room's game events each broadcast — for the voice talk-back layer. */
   setOnRoomEvents(fn: (roomCode: string, events: GameEvent[]) => void): void {
@@ -131,7 +136,9 @@ export class GameServer {
     ws.on('error', () => { /* a socket error shouldn't crash the process; close handler cleans up */ });
     ws.on('close', () => {
       const roomCode = conn.roomCode;
-      if (roomCode && conn.playerId) this.rooms.find(roomCode)?.removePlayer(conn.playerId);
+      if (roomCode && conn.playerId) {
+        const room = this.rooms.find(roomCode); room?.removePlayer(conn.playerId); if (room) this.reportAbandonedIfReset(room);
+      }
       this.conns.delete(conn);
       if (roomCode) {
         this.pushLobby(roomCode);     // refresh roster after a disconnect
@@ -160,6 +167,7 @@ export class GameServer {
           const room = this.rooms.find(conn.roomCode);
           if (room && (room.phase === 'lobby' || room.phase === 'finished')) {
             room.start();
+            this.reportStartedOnce(room);
             this.broadcastItems(conn.roomCode);
           }
         }
@@ -197,6 +205,7 @@ export class GameServer {
           const before = room.phase;
           room.advance();
           const after = room.phase;
+          if (after === 'countdown' || after === 'racing') this.reportStartedOnce(room);
           // Crossing into a race broadcasts items (with the chosen map) to EVERY conn in the room
           // so all displays/players load the right level; otherwise refresh the select screen.
           if (after === 'countdown' || after === 'racing') this.broadcastItems(conn.roomCode!);
@@ -221,7 +230,7 @@ export class GameServer {
         // Conversation Relay emit movement intents only), so it isn't a griefing vector — and a
         // host wanting to reroll the course mid-race is legitimate, not griefing.
         const room = conn.roomCode ? this.rooms.find(conn.roomCode) : undefined;
-        if (room) { room.start(); this.broadcastItems(conn.roomCode!); }
+        if (room) { this.reportAbandonedOnce(room); room.start(); this.reportStartedOnce(room); this.broadcastItems(conn.roomCode!); }
         break;
       }
       case 'spectate': {
@@ -234,7 +243,7 @@ export class GameServer {
         // Drop this connection's PLAYER slot but keep it connected as a spectator (same roomCode).
         // Used by the shared screen toggling "I'm playing" → back to spectating, without reconnecting.
         if (conn.roomCode && conn.playerId) {
-          this.rooms.find(conn.roomCode)?.removePlayer(conn.playerId);
+          const room = this.rooms.find(conn.roomCode); room?.removePlayer(conn.playerId); if (room) this.reportAbandonedIfReset(room);
           conn.playerId = undefined;
           this.pushLobby(conn.roomCode);
           this.reapRoomIfEmpty(conn.roomCode);
@@ -274,7 +283,7 @@ export class GameServer {
    *  voice-only room would leak in `this.rooms` forever. Mirrors BattleServer.voiceLeave. */
   voiceLeave(roomCode: string, playerId: string): void {
     const room = this.rooms.find(roomCode); if (!room) return;
-    room.removePlayer(playerId);
+    room.removePlayer(playerId); this.reportAbandonedIfReset(room);
     this.pushLobby(roomCode);
     this.reapRoomIfEmpty(roomCode);
   }
@@ -284,6 +293,7 @@ export class GameServer {
     const before = room.phase;
     room.advance();
     const after = room.phase;
+    if (after === 'countdown' || after === 'racing') this.reportStartedOnce(room);
     if (after === 'countdown' || after === 'racing') this.broadcastItems(roomCode);
     else this.pushLobby(roomCode);
     if (after !== before) {
@@ -348,10 +358,11 @@ export class GameServer {
       // Not racing: nothing to simulate. Clear the "already reported" flag for non-results phases
       // so the NEXT race reports too. (A room sitting in results was reported the tick it finished.)
       this.roomAccum.delete(room);
-      if (room.phase !== 'results') this.reported.delete(room);
+      if (room.phase !== 'results') { this.reportAbandonedOnce(room); this.reported.delete(room); }
       else this.reportFinishedOnce(room);   // belt-and-suspenders if it slipped through
       return;
     }
+    this.reportStartedOnce(room);
     let acc = (this.roomAccum.get(room) ?? 0) + dt;
     while (acc >= STEP) { room.tick(STEP); acc -= STEP; }
     this.roomAccum.set(room, acc);
@@ -371,7 +382,22 @@ export class GameServer {
   private reportFinishedOnce(room: Room): void {
     if (this.reported.has(room)) return;
     this.reported.add(room);
+    this.started.delete(room);
     this.onRaceFinished?.(room);
+  }
+
+  private reportStartedOnce(room: Room): void {
+    if (this.started.has(room) || (room.phase !== 'countdown' && room.phase !== 'racing')) return;
+    this.started.add(room); this.onRaceStarted?.(room);
+  }
+
+  private reportAbandonedIfReset(room: Room): void {
+    if (room.phase === 'lobby') this.reportAbandonedOnce(room);
+  }
+
+  private reportAbandonedOnce(room: Room): void {
+    if (!this.started.has(room)) return;
+    this.started.delete(room); this.reported.delete(room); this.onRaceAbandoned?.(room);
   }
 
   /** True for the non-racing phases that broadcast roster/selection/results rather than snapshots. */
