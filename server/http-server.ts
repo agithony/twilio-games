@@ -1515,6 +1515,7 @@ export function contentType(name: string): string {
     case '.png': return 'image/png';
     case '.jpg': case '.jpeg': return 'image/jpeg';
     case '.webp': return 'image/webp';
+    case '.mp4': return 'video/mp4';
     case '.woff2': return 'font/woff2';
     case '.woff': return 'font/woff';
     case '.ttf': return 'font/ttf';

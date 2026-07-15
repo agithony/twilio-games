@@ -95,6 +95,7 @@ describe('static client serving', () => {
     expect(contentType('x.ogg')).toBe('audio/ogg');
     expect(contentType('x.wav')).toBe('audio/wav');
     expect(contentType('x.m4a')).toBe('audio/mp4');
+    expect(contentType('x.mp4')).toBe('video/mp4');
     // unknown stays octet-stream
     expect(contentType('x.zzz')).toBe('application/octet-stream');
   });
