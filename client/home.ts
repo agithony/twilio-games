@@ -16,6 +16,8 @@ const GAMES: GameCard[] = [
     blurb: 'Command your creature out loud in turn-based duels. Call your attacks and out-strategize your rival.' },
   { id: 'fighter', title: 'Voice Fighter', status: 'active', page: 'fighter.html',
     blurb: 'Call your attacks out loud in a cinematic side-view brawler.' },
+  { id: 'trivia', title: 'Voice Trivia', status: 'soon',
+    blurb: 'Race to answer shared-screen trivia over a phone call. The first correct answer scores. Coming soon.' },
   { id: 'karaoke', title: 'Voice Karaoke', status: 'soon',
     blurb: 'Karaoke meets Guitar Hero — sing into the call and nail the timing of each word for points. Coming soon.' },
 ];
