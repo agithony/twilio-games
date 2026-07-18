@@ -3,23 +3,29 @@ import { getMusicManager } from './music-manager';
 import { injectMusicToggle } from './music-toggle';
 import { getSoundEffectsManager } from './sound-effects';
 import { injectMagicHat } from './magic-hat';
+import { injectLanguagePicker, locale } from './i18n';
+import { HOME_MESSAGES, type HomeMessageKey } from '../shared/i18n/home';
+import { createTranslator } from '../shared/i18n/translate';
+import { gameTitle, type GameId } from '../shared/i18n/content';
 
-interface GameCard { id: string; title: string; blurb: string; status: 'active' | 'soon';
+const text = createTranslator(locale, HOME_MESSAGES);
+
+interface GameCard { id: GameId; blurbKey: HomeMessageKey; status: 'active' | 'soon';
   /** The page an ACTIVE card launches (shared-screen mode). Racer → play.html; battler → monsters.html. */
   page?: string; }
 
 // Adding a future game is a one-line edit here.
 const GAMES: GameCard[] = [
-  { id: 'racer', title: 'Voice Racer', status: 'active', page: 'play.html',
-    blurb: 'Lane-dodging multiplayer race. Shout your moves; dodge barriers, grab boosts.' },
-  { id: 'battler', title: 'Voice Monsters', status: 'active', page: 'monsters.html',
-    blurb: 'Command your creature out loud in turn-based duels. Call your attacks and out-strategize your rival.' },
-  { id: 'fighter', title: 'Voice Fighter', status: 'active', page: 'fighter.html',
-    blurb: 'Call your attacks out loud in a cinematic side-view brawler.' },
-  { id: 'trivia', title: 'Voice Trivia', status: 'soon',
-    blurb: 'Race to answer shared-screen trivia over a phone call. The first correct answer scores. Coming soon.' },
-  { id: 'karaoke', title: 'Voice Karaoke', status: 'soon',
-    blurb: 'Karaoke meets Guitar Hero — sing into the call and nail the timing of each word for points. Coming soon.' },
+  { id: 'racer', status: 'active', page: 'play.html',
+    blurbKey: 'games.racer.blurb' },
+  { id: 'monsters', status: 'active', page: 'monsters.html',
+    blurbKey: 'games.monsters.blurb' },
+  { id: 'fighter', status: 'active', page: 'fighter.html',
+    blurbKey: 'games.fighter.blurb' },
+  { id: 'trivia', status: 'soon',
+    blurbKey: 'games.trivia.blurb' },
+  { id: 'karaoke', status: 'soon',
+    blurbKey: 'games.karaoke.blurb' },
 ];
 
 let selectedGame: GameCard | null = null;
@@ -28,19 +34,20 @@ function renderGames(): void {
   const host = document.getElementById('games')!;
   host.innerHTML = '';
   for (const g of GAMES) {
+    const title = gameTitle(locale, g.id);
     const card = document.createElement('div');
     card.className = `game ${g.status === 'active' ? 'active' : 'soon'}`;
     card.dataset.gameId = g.id;
-    const badge = g.status === 'active' ? 'Playable' : 'Coming soon';
+    const badge = g.status === 'active' ? text('games.playable') : text('games.soon');
     const tag = document.createElement('span'); tag.className = 'badge'; tag.textContent = badge;
-    const h = document.createElement('h3'); h.textContent = g.title;
-    const p = document.createElement('p'); p.textContent = g.blurb;
+    const h = document.createElement('h3'); h.textContent = title;
+    const p = document.createElement('p'); p.textContent = text(g.blurbKey);
     card.append(tag, h, p);
     if (g.status === 'active' && g.page) {
       card.style.cursor = 'pointer';
       card.tabIndex = 0;
       card.setAttribute('role', 'button');
-      card.setAttribute('aria-label', `Select ${g.title}`);
+      card.setAttribute('aria-label', text('games.select', { game: title }));
       card.addEventListener('click', () => selectGame(g));
       card.addEventListener('keydown', event => {
         if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); selectGame(g); }
@@ -62,7 +69,7 @@ function selectGame(game: GameCard): void {
   // Update Play button
   const btn = document.getElementById('playBtn') as HTMLButtonElement;
   btn.disabled = false;
-  btn.textContent = `Play ${game.title}`;
+  btn.textContent = text('games.play', { game: gameTitle(locale, game.id) });
 
   // Swap background video
   const videos = document.querySelectorAll<HTMLVideoElement>('#videoBg video');
@@ -79,7 +86,7 @@ function selectGame(game: GameCard): void {
 
 function launchSelected(): void {
   if (!selectedGame?.page) return;
-  location.href = `${selectedGame.page}?display=1&room=4821`;
+  location.href = `${selectedGame.page}?display=1&room=4821&locale=${encodeURIComponent(locale)}`;
 }
 
 function wirePlayBtn(): void {
@@ -101,7 +108,7 @@ function wireTheme(): void {
   const apply = (t: string) => {
     document.documentElement.setAttribute('data-theme', t);
     localStorage.setItem('twilio-theme', t);
-    btn.textContent = t === 'dark' ? 'Light theme' : 'Dark theme';
+    btn.textContent = t === 'dark' ? text('theme.light') : text('theme.dark');
   };
   apply(document.documentElement.getAttribute('data-theme') || 'dark');
   btn.addEventListener('click', () => {
@@ -110,6 +117,21 @@ function wireTheme(): void {
   });
 }
 
+function localizeStaticPage(): void {
+  document.title = text('page.title');
+  document.getElementById('brandName')!.textContent = text('page.title');
+  document.getElementById('heroEyebrow')!.textContent = text('hero.eyebrow');
+  document.getElementById('heroTitle')!.innerHTML = text('hero.title');
+  document.getElementById('heroDescription')!.innerHTML = text('hero.description');
+  document.getElementById('gamesHeading')!.textContent = text('games.heading');
+  document.getElementById('playBtn')!.textContent = text('games.selectPrompt');
+  const theme = document.getElementById('themeToggle')!;
+  theme.title = text('theme.toggle');
+  theme.setAttribute('aria-label', text('theme.toggle'));
+  document.getElementById('homeFooter')!.textContent = text('footer');
+}
+
+localizeStaticPage();
 renderGames();
 wirePlayBtn();
 wireAutoplay();
@@ -117,4 +139,5 @@ wireTheme();
 
 // Add music toggle button
 injectMusicToggle('header-controls');
+injectLanguagePicker('header-controls');
 injectMagicHat();

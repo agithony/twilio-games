@@ -3,11 +3,12 @@
 // 20Hz simulation. Kept in shared/ so client + server agree on the shapes; the parser validates
 // untrusted client input on the server.
 import type { BattleSnapshot, BattleEvent, BattleAction } from './battle-world';
+import { isSupportedLocale, type SupportedLocale } from './i18n/locales';
 
 /** Client → server. */
 export type BattleClientMessage =
-  | { type: 'join'; roomCode: string; name: string; sessionId?: string } // become/resume a player
-  | { type: 'spectate'; roomCode: string }                  // the shared display (no slot)
+  | { type: 'join'; roomCode: string; name: string; sessionId?: string; locale?: SupportedLocale } // become/resume a player
+  | { type: 'spectate'; roomCode: string; locale?: SupportedLocale }                  // the shared display (no slot)
   | { type: 'select_monster'; monsterId: string }           // during monster_select
   | { type: 'open_fight' }                                  // battle: active side opens its 4 moves
   | { type: 'back_menu' }                                   // battle: active side backs out to root menu
@@ -52,10 +53,11 @@ export function parseBattleClientMessage(raw: string): ParseResult {
       if (typeof m.roomCode !== 'string' || typeof m.name !== 'string') return err('bad_join', 'roomCode + name required');
       if (m.sessionId !== undefined && (typeof m.sessionId !== 'string' || !m.sessionId.trim() || m.sessionId.length > 128)) return err('bad_join', 'invalid sessionId');
       return { type: 'join', roomCode: m.roomCode, name: m.name,
-        ...(typeof m.sessionId === 'string' ? { sessionId: m.sessionId } : {}) };
+        ...(typeof m.sessionId === 'string' ? { sessionId: m.sessionId } : {}),
+        ...(isSupportedLocale(m.locale) ? { locale: m.locale } : {}) };
     case 'spectate':
       if (typeof m.roomCode !== 'string') return err('bad_spectate', 'roomCode required');
-      return { type: 'spectate', roomCode: m.roomCode };
+      return { type: 'spectate', roomCode: m.roomCode, ...(isSupportedLocale(m.locale) ? { locale: m.locale } : {}) };
     case 'select_monster':
       if (typeof m.monsterId !== 'string') return err('bad_select', 'monsterId required');
       return { type: 'select_monster', monsterId: m.monsterId };

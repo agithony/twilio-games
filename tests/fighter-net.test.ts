@@ -51,4 +51,12 @@ describe('fighter connection', () => {
       { type: 'spectate', roomCode: 'ROOM' },
     ]);
   });
+
+  it('includes the selected locale in display and player identities', () => {
+    const connection = new FighterConnection('ws://fighter', 'pt-BR');
+    connection.spectate('ROOM'); sockets[0]!.open();
+    expect(JSON.parse(sockets[0]!.sent[0]!)).toEqual({ type: 'spectate', roomCode: 'ROOM', locale: 'pt-BR' });
+    connection.join('ROOM', 'Ana');
+    expect(JSON.parse(sockets[0]!.sent.at(-1)!)).toMatchObject({ type: 'join', roomCode: 'ROOM', name: 'Ana', locale: 'pt-BR' });
+  });
 });

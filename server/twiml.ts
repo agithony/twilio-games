@@ -1,4 +1,5 @@
 import { speechSafeText } from '../shared/speech-text';
+import { DEFAULT_LOCALE, LOCALE_PROFILES, type SupportedLocale } from '../shared/i18n/locales';
 
 function esc(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -17,13 +18,18 @@ export function twimlEmpty(): string {
 <Response></Response>`;
 }
 
-export function twimlGatherRoomCode(opts: { actionUrl: string }): string {
+export function twimlGatherRoomCode(opts: { actionUrl: string; locale?: SupportedLocale }): string {
+  const locale = opts.locale ?? DEFAULT_LOCALE;
+  const prompt = locale === 'pt-BR'
+    ? 'Boas-vindas à Corrida por Voz da Twilio. Digite o código de quatro números da sala.'
+    : 'Welcome to Twilio Voice Racer. Enter your four digit room code.';
+  const goodbye = locale === 'pt-BR' ? 'Nenhum código recebido. Até logo.' : 'No code received. Goodbye.';
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Gather input="dtmf" numDigits="4" timeout="8" action="${esc(opts.actionUrl)}" method="POST">
-    <Say>Welcome to Twilio Voice Racer. Enter your four digit room code.</Say>
+    <Say language="${esc(LOCALE_PROFILES[locale].ttsLanguage)}">${esc(prompt)}</Say>
   </Gather>
-  <Say>No code received. Goodbye.</Say>
+  <Say language="${esc(LOCALE_PROFILES[locale].ttsLanguage)}">${esc(goodbye)}</Say>
 </Response>`;
 }
 
@@ -39,7 +45,10 @@ export function twimlConnectRelay(opts: {
   relayToken?: string;
   // ASR biasing hints — the game's key spoken words (commands / move names) for better recognition.
   hints?: string;
+  locale?: SupportedLocale;
 }): string {
+  const locale = opts.locale ?? DEFAULT_LOCALE;
+  const profile = LOCALE_PROFILES[locale];
   // Only emit tts attrs when a voice is configured (an empty voice="" would be invalid).
   const ttsAttrs = opts.voice
     ? ` ttsProvider="${esc(opts.ttsProvider ?? 'ElevenLabs')}" voice="${esc(opts.voice)}"`
@@ -48,6 +57,7 @@ export function twimlConnectRelay(opts: {
   const hints = esc(opts.hints ?? 'left, right, boost, go, brake, slow, stop, nitro, power');
   const gameParam = opts.game ? `\n      <Parameter name="game" value="${esc(opts.game)}" />` : '';
   const relayTokenParam = opts.relayToken ? `\n      <Parameter name="relayToken" value="${esc(opts.relayToken)}" />` : '';
+  const localeParams = `\n      <Parameter name="locale" value="${esc(locale)}" />\n      <Parameter name="commandLocale" value="${esc(locale)}" />`;
   // Interruption (barge-in) is a headline Conversation Relay feature and central to this app:
   //  - interruptible="speech": the caller's SPEECH cuts the TTS immediately (say "left" over the host).
   //  - reportInputDuringAgentSpeech="speech": we RECEIVE the caller's words while TTS plays (default
@@ -58,8 +68,8 @@ export function twimlConnectRelay(opts: {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Connect action="${esc(opts.sessionEndedUrl)}">
-    <ConversationRelay url="${esc(opts.wsUrl)}"${ttsAttrs} transcriptionProvider="Deepgram" speechModel="flux" partialPrompts="true" transcriptionLanguage="en-US" interruptible="speech" reportInputDuringAgentSpeech="speech" interruptSensitivity="medium" ignoreBackchannel="true" dtmfDetection="true" hints="${hints}" speechTimeout="600" eotThreshold="0.6" welcomeGreeting="${greeting}">
-      <Parameter name="roomCode" value="${esc(opts.roomCode)}" />${gameParam}${relayTokenParam}
+    <ConversationRelay url="${esc(opts.wsUrl)}"${ttsAttrs} transcriptionProvider="Deepgram" speechModel="flux" partialPrompts="true" transcriptionLanguage="${esc(profile.transcriptionLanguage)}" ttsLanguage="${esc(profile.ttsLanguage)}" interruptible="speech" reportInputDuringAgentSpeech="speech" interruptSensitivity="medium" ignoreBackchannel="true" dtmfDetection="true" hints="${hints}" speechTimeout="600" eotThreshold="0.6" welcomeGreeting="${greeting}">
+      <Parameter name="roomCode" value="${esc(opts.roomCode)}" />${gameParam}${relayTokenParam}${localeParams}
     </ConversationRelay>
   </Connect>
 </Response>`;

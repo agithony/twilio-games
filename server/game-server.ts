@@ -6,6 +6,7 @@ import { Room, type RoomConfig } from './room';
 import { STEP } from '../shared/constants';
 import { INTENTS } from '../shared/types';
 import type { ClientMessage, ServerMessage, GameEvent } from '../shared/types';
+import { DEFAULT_LOCALE, isSupportedLocale, type SupportedLocale } from '../shared/i18n/locales';
 
 type ParseResult = ClientMessage | { type: 'error'; code: string; message: string };
 
@@ -18,7 +19,8 @@ export function parseClientMessage(raw: string): ParseResult {
       if (typeof obj.roomCode !== 'string' || typeof obj.name !== 'string')
         return err('bad_join', 'roomCode and name required');
       return { type: 'join', roomCode: obj.roomCode, name: obj.name,
-               ...(typeof obj.color === 'string' ? { color: obj.color } : {}) };
+               ...(typeof obj.color === 'string' ? { color: obj.color } : {}),
+               ...(isSupportedLocale(obj.locale) ? { locale: obj.locale } : {}) };
     case 'intent':
       if (!INTENTS.includes(obj.intent)) return err('bad_intent', 'unknown intent');
       return { type: 'intent', intent: obj.intent };
@@ -26,7 +28,8 @@ export function parseClientMessage(raw: string): ParseResult {
     case 'restart': return { type: 'restart' };
     case 'spectate':
       if (typeof obj.roomCode !== 'string') return err('bad_spectate', 'roomCode required');
-      return { type: 'spectate', roomCode: obj.roomCode };
+      return { type: 'spectate', roomCode: obj.roomCode,
+        ...(isSupportedLocale(obj.locale) ? { locale: obj.locale } : {}) };
     case 'leave':   return { type: 'leave' };
     case 'select_car':
       if (!Number.isInteger(obj.carIndex)) return err('bad_select_car', 'carIndex (int) required');
@@ -41,7 +44,7 @@ export function parseClientMessage(raw: string): ParseResult {
 }
 function err(code: string, message: string): ParseResult { return { type: 'error', code, message }; }
 
-interface Conn { ws: WebSocket; roomCode?: string; playerId?: string; }
+interface Conn { ws: WebSocket; roomCode?: string; playerId?: string; locale?: SupportedLocale; }
 
 export class GameServer {
   private wss: WebSocketServer | null = null;
@@ -152,6 +155,7 @@ export class GameServer {
     if (msg.type === 'error') return this.send(conn, msg as ServerMessage);
     switch (msg.type) {
       case 'join': {
+        if (msg.locale) conn.locale = msg.locale;
         const room = this.room(msg.roomCode);
         const res = room.addPlayer(msg.name, msg.color);
         if ('error' in res) return this.send(conn, { type: 'error', code: res.error, message: res.error });
@@ -234,6 +238,7 @@ export class GameServer {
         break;
       }
       case 'spectate': {
+        if (msg.locale) conn.locale = msg.locale;
         this.room(msg.roomCode);
         conn.roomCode = msg.roomCode;   // no playerId: receives broadcasts, occupies no slot
         this.pushLobby(msg.roomCode);   // send the display the current select/lobby state immediately
@@ -311,6 +316,11 @@ export class GameServer {
   /** Live WS connections (displays + device players). Used by the voice router to auto-join a caller
    *  to whichever game currently has an open display. */
   get connectionCount(): number { return this.conns.size; }
+
+  preferredLocale(roomCode?: string, fallback: SupportedLocale = DEFAULT_LOCALE): SupportedLocale {
+    const matching = [...this.conns].filter(conn => (!roomCode || conn.roomCode === roomCode) && conn.locale);
+    return matching.find(conn => !conn.playerId)?.locale ?? matching[0]?.locale ?? fallback;
+  }
 
   /**
    * Drop a room once nothing references it — no players AND no connections (spectators included)

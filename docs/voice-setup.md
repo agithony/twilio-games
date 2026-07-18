@@ -84,6 +84,8 @@ For a deployed environment, configure the same `POST /voice/incoming` webhook ag
 | `GAME_PHONE_NUMBER` | Recommended | Number displayed and QR-encoded by the lobby. Use E.164 format, for example `+15551234567`. It does not affect call handling. |
 | `PORT` | No | HTTP and WebSocket port. Defaults to `8080`. |
 | `CR_TTS_VOICE` | No | ElevenLabs voice ID for Conversation Relay talk-back. If unset, Relay uses its default voice. |
+| `CR_TTS_VOICE_PT_BR` | No | Optional Brazilian Portuguese ElevenLabs voice ID. Empty uses Relay's `pt-BR` default. |
+| `DEFAULT_LOCALE` | No | Call locale used when no localized display is connected. Defaults to `en-US`. |
 | `VOICE_RELAY_TOKEN` | Recommended for public deployments | Authenticates the Conversation Relay `setup` frame. Defaults to `TWILIO_AUTH_TOKEN`. The generated TwiML passes it to Twilio automatically. |
 | `OPENAI_API_KEY` | No | Enables conversational menu help for Voice Racer and Voice Monsters. Deterministic selection and gameplay still work without it. |
 | `OPENAI_MODEL` | No | Overrides the OpenAI model when `OPENAI_API_KEY` is set. |
@@ -101,7 +103,8 @@ The generated TwiML uses these settings:
 | `transcriptionProvider` | `Deepgram` | Required transcription provider |
 | `speechModel` | `flux` | Low-latency speech recognition |
 | `partialPrompts` | `true` | Sends interim transcripts for low-latency controls |
-| `transcriptionLanguage` | `en-US` | Recognition language |
+| `transcriptionLanguage` | Active display locale (`en-US` or `pt-BR`) | Recognition language |
+| `ttsLanguage` | Active display locale (`en-US` or `pt-BR`) | Spoken response language |
 | `interruptible` | `speech` | Caller speech stops active TTS |
 | `reportInputDuringAgentSpeech` | `speech` | Delivers caller speech while TTS is playing |
 | `interruptSensitivity` | `medium` | Balances command barge-in against room noise |
@@ -110,7 +113,7 @@ The generated TwiML uses these settings:
 | `speechTimeout` | `600` | End-of-speech timeout used by Relay |
 | `eotThreshold` | `0.6` | End-of-turn threshold |
 
-The server supplies game-specific recognition hints. It leaves `welcomeGreeting` empty because each game speaks its own onboarding after the `/voice` WebSocket receives the `setup` frame.
+The server supplies localized, game-specific recognition hints. It leaves `welcomeGreeting` empty because each game speaks its own onboarding after the `/voice` WebSocket receives the `setup` frame. See [Localization](localization.md) for locale routing and extension details.
 
 Talk-back is active. The server sends `{ "type": "text", "token": "...", "last": true }` messages for onboarding, menu guidance, countdowns, events, and results. It spaces queued lines by at least 420 ms. A new prompt or interrupt clears unsent talk-back so old instructions do not play over the caller.
 

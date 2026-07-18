@@ -4,66 +4,72 @@
 // arcade quips (throttled), and their finish. No I/O here; the adapter decides WHEN to send these.
 import type { GameEvent } from '../shared/types';
 import { countdownCue } from '../shared/countdown';
+import { DEFAULT_LOCALE, type SupportedLocale } from '../shared/i18n/locales';
+import { RACER_MESSAGES, type RacerMessageKey } from '../shared/i18n/racer';
+import { createTranslator } from '../shared/i18n/translate';
+import { carName } from '../shared/i18n/content';
+
+type Text = ReturnType<typeof createTranslator<RacerMessageKey>>;
 
 /** The connect greeting, as SEPARATE sentences. Sending each as its own TTS utterance gives natural
  *  pauses between them — one long run-on string was read without breaths (the "no pause" issue). */
-export function greetingLines(): string[] {
+export function greetingLines(locale: SupportedLocale = DEFAULT_LOCALE): string[] {
+  const text = createTranslator(locale, RACER_MESSAGES);
   return [
-    'Welcome to Twilio Voice Racer!',
-    'A game powered by Twilio Conversation Relay, so you control the game with your voice.',
-    "First up, what's your name?",
+    text('voice.greeting.0'),
+    text('voice.greeting.1'),
+    text('voice.greeting.2'),
   ];
 }
 /** Back-compat single-line greeting (kept for any caller that wants one string). */
-export function greetingLine(): string { return greetingLines().join(' '); }
+export function greetingLine(locale: SupportedLocale = DEFAULT_LOCALE): string { return greetingLines(locale).join(' '); }
 
-const CAR_SELECT = ['Pick your ride! Say a car by name or number.', 'Choose your machine — just say its number!'];
-const MAP_SELECT = ['Now vote for the track — say its name or number!', 'Choose your course — say the number!'];
-const CAR_PICKED = ['Nice choice!', 'Great pick!', 'Ooh, bold choice!', 'Solid ride!'];
+const CAR_SELECT = ['voice.carSelect.0', 'voice.carSelect.1'] as const;
+const MAP_SELECT = ['voice.mapSelect.0', 'voice.mapSelect.1'] as const;
+const CAR_PICKED = ['voice.carPicked.0', 'voice.carPicked.1', 'voice.carPicked.2', 'voice.carPicked.3'] as const;
 
-const STREAK = ['Watch the barriers — find the gaps.', 'Ouch, watch the walls.',
-  'The barriers keep finding you.', 'Thread the needle and aim for the gaps.', 'Say NITRO if you need to break through a wall.'];
-const LAST = ['You slipped to last — plenty of race left.', "Don't give up, you can catch them.",
-  'Last place for now, but there is time.', 'Time for a comeback — keep saying boost.', 'You can still climb back.'];
-const LEAD = ['You have the lead — hold it.', 'You are out in front.', 'First place is yours for now.',
-  'You are leading the pack.', 'Clean driving — stay ahead.'];
+const STREAK = ['voice.streak.0', 'voice.streak.1', 'voice.streak.2', 'voice.streak.3', 'voice.streak.4'] as const;
+const LAST = ['voice.last.0', 'voice.last.1', 'voice.last.2', 'voice.last.3', 'voice.last.4'] as const;
+const LEAD = ['voice.lead.0', 'voice.lead.1', 'voice.lead.2', 'voice.lead.3', 'voice.lead.4'] as const;
 // A NITRO dash blasting through a barrier — the special move paying off. Big, hype, spoken to the caller.
-const SMASH = ['Nice — nitro got you through that barrier.', 'Good nitro timing, straight through.',
-  'Barrier cleared with nitro.', 'You broke through cleanly.', 'Good move — right through it.'];
+const SMASH = ['voice.smash.0', 'voice.smash.1', 'voice.smash.2', 'voice.smash.3', 'voice.smash.4'] as const;
 
 /** What to SAY (if anything) for a game event, from THIS caller's perspective. Returns null when the
  *  event shouldn't be spoken to THIS caller. `myPlayerId` is the caller's bound player id, so we only
  *  voice events about THEIR car. `seq` picks a phrase-bank variant (pass a per-adapter counter).
  *  Mid-race arcade lines (streak/fell-to-last/lead) are OPT-IN via `chatty` + the caller decides how
  *  often to actually speak them (the adapter throttles) so TTS never buries the caller's commands. */
-export function lineForEvent(ev: GameEvent, myPlayerId: string | null, seq = 0): string | null {
+export function lineForEvent(ev: GameEvent, myPlayerId: string | null, seq = 0,
+                             locale: SupportedLocale = DEFAULT_LOCALE): string | null {
+  const text = createTranslator(locale, RACER_MESSAGES);
   const mine = (id: string) => myPlayerId !== null && id === myPlayerId;
   switch (ev.kind) {
-    case 'enter_car_select': return pick(CAR_SELECT, seq);
-    case 'enter_map_select': return pick(MAP_SELECT, seq);
-    case 'car_picked':       return mine(ev.playerId) ? `${pick(CAR_PICKED, seq)} The ${ev.car}!` : null;
+    case 'enter_car_select': return pick(CAR_SELECT, seq, text);
+    case 'enter_map_select': return pick(MAP_SELECT, seq, text);
+    case 'car_picked':       return mine(ev.playerId)
+      ? text('voice.carPickedLine', { reaction: pick(CAR_PICKED, seq, text), car: carName(locale, ev.car) }) : null;
     case 'map_picked':       return null;   // the screen host covers the map pick; don't double up
     case 'countdown':
-      return ev.n <= 3 ? countdownCue(ev.n) : null;
+      return ev.n <= 3 ? countdownCue(ev.n, locale) : null;
     case 'go':
-      return 'Go!';
+      return text('voice.go');
     case 'finish':
-      return mine(ev.playerId) ? placeLine(ev.place) : null;
+      return mine(ev.playerId) ? placeLine(ev.place, locale) : null;
     case 'hit_streak':
-      return mine(ev.playerId) ? pick(STREAK, seq) : null;
+      return mine(ev.playerId) ? pick(STREAK, seq, text) : null;
     case 'fell_to_last':
-      return mine(ev.playerId) ? pick(LAST, seq) : null;
+      return mine(ev.playerId) ? pick(LAST, seq, text) : null;
     case 'lead_change':
-      return mine(ev.playerId) ? pick(LEAD, seq) : null;
+      return mine(ev.playerId) ? pick(LEAD, seq, text) : null;
     case 'barrier_smashed':
-      return mine(ev.playerId) ? pick(SMASH, seq) : null;   // NITRO paid off — hype it up
+      return mine(ev.playerId) ? pick(SMASH, seq, text) : null;   // NITRO paid off — hype it up
     // hit / boost_taken / race_over → not spoken to the caller (screen announcer covers them).
     default:
       return null;
   }
 }
 
-const pick = (arr: string[], seq: number): string => arr[Math.abs(seq) % arr.length]!;
+const pick = (arr: readonly RacerMessageKey[], seq: number, text: Text): string => text(arr[Math.abs(seq) % arr.length]!);
 
 /** Which event kinds are the mid-race "arcade" lines — the adapter throttles these so spoken audio
  *  doesn't step on the caller's own commands. Countdown/go/finish are key moments, always spoken. */
@@ -72,23 +78,26 @@ export function isChattyEvent(kind: GameEvent['kind']): boolean {
 }
 
 /** A result callout by finishing place. Scripted fallback when the LLM host is off. */
-export function placeLine(place: number): string {
+export function placeLine(place: number, locale: SupportedLocale = DEFAULT_LOCALE): string {
+  const text = createTranslator(locale, RACER_MESSAGES);
   switch (place) {
-    case 1: return 'Nice work — first place. You won the race.';
-    case 2: return 'Second place — close race. Try again and take the win.';
-    case 3: return 'Third place — on the podium. Nice driving.';
-    default: return `You finished ${ordinal(place)}. Try again and climb the board.`;
+    case 1: return text('voice.place.first');
+    case 2: return text('voice.place.second');
+    case 3: return text('voice.place.third');
+    default: return text('voice.place.other', { place: ordinal(place, locale) });
   }
 }
 
-export function raceOverLine(place: number | null): string {
-  if (place === 1) return 'Race over. Congratulations, you won. Check the results and leaderboard on the big screen.';
-  if (place && place > 1) return `Race over. You finished ${ordinal(place)}. Try again next time, and check the results and leaderboard on the big screen.`;
-  return 'Race over. Check the results and leaderboard on the big screen, then run it back!';
+export function raceOverLine(place: number | null, locale: SupportedLocale = DEFAULT_LOCALE): string {
+  const text = createTranslator(locale, RACER_MESSAGES);
+  if (place === 1) return text('voice.raceOver.first');
+  if (place && place > 1) return text('voice.raceOver.other', { place: ordinal(place, locale) });
+  return text('voice.raceOver.none');
 }
 
 /** 1→"1st", 2→"2nd", 3→"3rd", 4→"4th", … (spoken form). */
-export function ordinal(n: number): string {
+export function ordinal(n: number, locale: SupportedLocale = DEFAULT_LOCALE): string {
+  if (locale === 'pt-BR') return `${n}º`;
   const s = ['th', 'st', 'nd', 'rd'];
   const v = n % 100;
   return n + (s[(v - 20) % 10] ?? s[v] ?? s[0]!);

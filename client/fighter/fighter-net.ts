@@ -1,6 +1,7 @@
 import type { FighterCommand, FighterEvent } from '../../shared/fighter-world';
 import type { FighterMapEntry, FighterRosterEntry } from '../../shared/fighter-roster';
 import type { FighterServerMessage, FighterState } from '../../shared/fighter-protocol';
+import type { SupportedLocale } from '../../shared/i18n/locales';
 
 export type FighterConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'closed';
 
@@ -11,7 +12,7 @@ export class FighterConnection {
   private generation = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private outbound: unknown[] = [];
-  private identity: { type: 'join'; roomCode: string; name: string; sessionId: string } | { type: 'spectate'; roomCode: string } | null = null;
+  private identity: { type: 'join'; roomCode: string; name: string; sessionId: string; locale?: SupportedLocale } | { type: 'spectate'; roomCode: string; locale?: SupportedLocale } | null = null;
   private displayAuth: { roomCode: string; token: string } | null = null;
   private displayAuthSupported = false;
   private displayAuthSentGeneration = 0;
@@ -26,7 +27,7 @@ export class FighterConnection {
   private pendingReleaseSessionId: string | null = null;
   private loadingGeneration = 0;
 
-  constructor(private url: string) { this.connect(); }
+  constructor(private url: string, private locale?: SupportedLocale) { this.connect(); }
   private connect(): void {
     const generation = ++this.generation;
     const ws = this.ws = new WebSocket(this.url);
@@ -84,17 +85,17 @@ export class FighterConnection {
     this.sessionSentGeneration = generation;
   }
   join(roomCode: string, name: string): void {
-    this.identity = { type: 'join', roomCode, name, sessionId: sessionIdFor(roomCode) };
+    this.identity = { type: 'join', roomCode, name, sessionId: sessionIdFor(roomCode), ...(this.locale ? { locale: this.locale } : {}) };
     if (this.ws.readyState === WebSocket.OPEN) this.sendNow(this.ws, this.identity);
   }
-  spectate(roomCode: string): void { this.identity = { type: 'spectate', roomCode }; if (this.ws.readyState === WebSocket.OPEN) this.sendNow(this.ws, this.identity); }
+  spectate(roomCode: string): void { this.identity = { type: 'spectate', roomCode, ...(this.locale ? { locale: this.locale } : {}) }; if (this.ws.readyState === WebSocket.OPEN) this.sendNow(this.ws, this.identity); }
   setDisplayAuth(roomCode: string, token: string | null): void {
     this.displayAuth = token ? { roomCode, token } : null;
     if (this.displayAuth) this.sendDisplayAuth(this.ws, this.generation);
   }
   leave(roomCode: string): void {
     const sessionId = this.identity?.type === 'join' ? this.identity.sessionId : undefined;
-    this.identity = { type: 'spectate', roomCode };
+    this.identity = { type: 'spectate', roomCode, ...(this.locale ? { locale: this.locale } : {}) };
     this.outbound = [];
     clearSessionId(roomCode);
     if (this.ws.readyState === WebSocket.OPEN) this.sendNow(this.ws, { type: 'leave', ...(sessionId ? { sessionId } : {}) });

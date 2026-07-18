@@ -84,7 +84,10 @@ function fakeDeps(over: Partial<BattleVoiceDeps> = {}): { deps: BattleVoiceDeps;
   return { deps, log, said };
 }
 
-const setup = (code = '4821') => JSON.stringify({ type: 'setup', callSid: 'CA1', customParameters: { roomCode: code } });
+const setup = (code = '4821', commandLocale?: string) => JSON.stringify({
+  type: 'setup', callSid: 'CA1',
+  customParameters: { roomCode: code, ...(commandLocale ? { commandLocale } : {}) },
+});
 const prompt = (text: string, last = true) => JSON.stringify({ type: 'prompt', voicePrompt: text, last });
 
 describe('BattleVoiceSession', () => {
@@ -707,5 +710,45 @@ describe('BattleVoiceSession', () => {
     s.handleMessage(setup('4821'));
     s.handleClose();
     expect(log.some(l => l.startsWith('leave 4821'))).toBe(true);
+  });
+
+  it('resolves pt-BR commandLocale for deterministic commands and spoken output', () => {
+    const snap = battleSnap({
+      phase: 'battle', myName: 'Ada', myMonsterId: 'sparkmouse', myMonsterName: 'Sparkmouse', myMonsterType: 'electric',
+      foeMonsterName: 'Shellback', foeMonsterType: 'water', whoseTurn: 'me', activeSide: 'a', activeMenu: 'root',
+      myMoves: [{ id: 'sparkmouse.jolt', name: 'Thunder Jolt' }, { id: 'sparkmouse.zap', name: 'Static Zap' }],
+    });
+    const { deps, log, said } = fakeDeps({ snapshot: () => snap });
+    const s = new BattleVoiceSession(deps);
+
+    s.handleMessage(setup('4821', 'pt-BR'));
+    expect(said.join(' ')).toMatch(/boas-vindas|sua voz|regras rápidas/i);
+    said.length = 0;
+
+    s.handleMessage(prompt('lutar'));
+    expect(log).toContain('openFight');
+    expect(said.join(' ')).toMatch(/seus golpes|diga o nome/i);
+    expect(said.join(' ')).toContain('Thunder Jolt');
+
+    s.handleMessage(prompt('defender'));
+    s.handleMessage(prompt('Thunder Jolt'));
+    expect(log.some(line => line.includes('"kind":"guard"'))).toBe(true);
+    expect(log.some(line => line.includes('"moveId":"sparkmouse.jolt"'))).toBe(true);
+    said.length = 0;
+    s.handleMessage(prompt('ajuda'));
+    expect(said.join(' ')).toMatch(/lutar.*defender.*item.*provocar/i);
+  });
+
+  it('understands Portuguese monster ordinals, advance words, and caller names', () => {
+    const { deps, log } = fakeDeps({ snapshot: () => battleSnap({ myName: 'João' }) });
+    const s = new BattleVoiceSession(deps);
+    s.handleMessage(setup('4821', 'pt-BR'));
+    s.handleMessage(prompt('a segunda'));
+    expect(log).toContain('monster embertail');
+
+    expect(isAdvanceWord('começar', 'pt-BR')).toBe(true);
+    expect(isAdvanceWord('revanche', 'pt-BR')).toBe(true);
+    expect(parseSpokenName('meu nome é joão', 'pt-BR')).toBe('João');
+    expect(parseSpokenName('poção', 'pt-BR')).toBeNull();
   });
 });

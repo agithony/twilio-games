@@ -17,6 +17,9 @@ import { spriteCandidateUrls } from './sprite-sources';
 import { ResolutionHp } from './resolution-hp';
 import { effectivePips } from './move-menu';
 import { hpFraction, hpZone, hpColor } from './hp-bar';
+import { DEFAULT_LOCALE, type SupportedLocale } from '../../shared/i18n/locales';
+import { MONSTERS_MESSAGES, type MonstersMessageKey } from '../../shared/i18n/monsters';
+import { createTranslator, type MessageValues } from '../../shared/i18n/translate';
 
 // Logical GB resolution (160×144); we scale up to fill the element with nearest-neighbor crispness.
 const GB_W = 160, GB_H = 144;
@@ -66,9 +69,13 @@ export class BattleRenderer {
   private spriteLayer: HTMLElement;
   /** The <img> currently shown on screen per side (so we can reposition/replace it each frame). */
   private shownImg: { a: HTMLImageElement | null; b: HTMLImageElement | null } = { a: null, b: null };
+  private text: (key: MonstersMessageKey, values?: MessageValues) => string;
 
-  constructor(private host: HTMLElement) {
+  constructor(private host: HTMLElement, private locale: SupportedLocale = DEFAULT_LOCALE) {
+    this.text = createTranslator(locale, MONSTERS_MESSAGES);
     this.canvas = document.createElement('canvas');
+    this.canvas.setAttribute('role', 'img');
+    this.canvas.setAttribute('aria-label', this.text('access.battleCanvas'));
     // Layered ON TOP of the 3D arena canvas (which the host also holds). Transparent in the battle
     // area so the spinning arena shows through behind the monsters; the HP boxes + command window are
     // opaque panels drawn over it. z-index sits above the arena.
@@ -76,6 +83,7 @@ export class BattleRenderer {
     host.appendChild(this.canvas);
     // Sprite layer: same absolute-centering as the canvas so device-pixel coords line up 1:1.
     this.spriteLayer = document.createElement('div');
+    this.spriteLayer.setAttribute('aria-hidden', 'true');
     this.spriteLayer.style.cssText = 'position:absolute;inset:0;margin:auto;z-index:3;pointer-events:none;overflow:visible';
     host.appendChild(this.spriteLayer);
     this.ctx = this.canvas.getContext('2d')!;
@@ -243,7 +251,7 @@ export class BattleRenderer {
     this.drawWindow(4, 88, GB_W - 8, 56);
     const line = this.uiPhase === 'resolving'
       ? (this.eventBanner || this.statusLine)
-      : (this.statusLine || (this.snap ? '' : 'Waiting…'));
+      : (this.statusLine || (this.snap ? '' : this.text('renderer.waiting')));
     // Wrap long banners ("Sparkmouse used Thunder Jolt!") to a 2nd line instead of running off the edge.
     this.drawWrappedText(line, 11, 93, GB_W - 8 - 14, 9);
     if (this.uiPhase === 'awaiting-input') {
@@ -258,10 +266,10 @@ export class BattleRenderer {
   private drawRootMenu(): void {
     const potions = this.snap ? (this.mySide === 'b' ? this.snap.potions.b : this.snap.potions.a) : 0;
     const cells: [string, string][] = [
-      ['1 FIGHT', 'attack'],
-      ['2 GUARD', 'brace'],
-      ['3 ITEM', `potion x${potions}`],
-      ['4 TAUNT', 'rattle'],
+      [`1 ${this.text('renderer.fight')}`, this.text('renderer.attack')],
+      [`2 ${this.text('renderer.guard')}`, this.text('renderer.brace')],
+      [`3 ${this.text('renderer.item')}`, this.text('renderer.potionCount', { count: potions })],
+      [`4 ${this.text('renderer.taunt')}`, this.text('renderer.rattle')],
     ];
     cells.forEach(([label, hint], i) => {
       const col = i % 2, row = Math.floor(i / 2);
@@ -284,7 +292,7 @@ export class BattleRenderer {
       this.drawPips(x + 6, y + 7, effectivePips(m.power, mult), typeColor(m.type));
       this.drawText(`${accuracyPercent(m.power)}%`, x + 52, y + 7, true);   // hit chance
     });
-    this.drawText('0 back', 118, 138, true);   // return to the root actions
+    this.drawText(`0 ${this.text('renderer.back')}`, 112, 138, true);   // return to the root actions
   }
 
   /** Draw a monster centered horizontally on `cx`, standing ON the platform at `groundY` (its feet
@@ -444,14 +452,15 @@ export class BattleRenderer {
     const drop = Math.max(0, 4 - this.tick * 0.2);   // small settle-in from above (decays over ~20 frames)
     const by = y + drop;
     // red pill background
-    const w = 22, h = 11, px = cx - w / 2;
+    const label = this.locale === 'pt-BR' ? 'NOCAUTE' : 'K.O.';
+    const w = this.locale === 'pt-BR' ? 38 : 22, h = 11, px = cx - w / 2;
     ctx.fillStyle = '#0a0a0a'; ctx.fillRect(px - 1, by - 1, w + 2, h + 2);   // dark outline
     ctx.fillStyle = '#e5533c'; ctx.fillRect(px, by, w, h);                    // red fill
     // "K.O." text
     ctx.fillStyle = '#fff';
-    ctx.font = 'bold 8px monospace';
+    ctx.font = `bold ${this.locale === 'pt-BR' ? 6 : 8}px monospace`;
     ctx.textBaseline = 'top';
-    ctx.fillText('K.O.', px + 3, by + 2);
+    ctx.fillText(label, px + 3, by + 2);
     // two little faint-stars circling above the badge
     ctx.fillStyle = '#ffd23f';
     for (let i = 0; i < 2; i++) {

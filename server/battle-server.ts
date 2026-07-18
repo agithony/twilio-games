@@ -10,8 +10,9 @@ import { BattleRoom } from './battle-room';
 import { parseBattleClientMessage, type BattleServerMessage } from '../shared/battle-protocol';
 import { rosterEntries } from '../shared/monster-roster';
 import type { BattleEvent, BattleAction } from '../shared/battle-world';
+import { DEFAULT_LOCALE, type SupportedLocale } from '../shared/i18n/locales';
 
-interface Conn { ws: WebSocket; roomCode?: string; playerId?: string; sessionId?: string; isAlive: boolean; }
+interface Conn { ws: WebSocket; roomCode?: string; playerId?: string; sessionId?: string; isAlive: boolean; locale?: SupportedLocale; }
 interface PlayerSession {
   roomCode: string;
   playerId: string;
@@ -74,6 +75,10 @@ export class BattleServer {
   /** Live WS connections (displays + device players). The voice router uses this to auto-join a caller
    *  to Voice Monsters when its display is the one that's open. */
   get connectionCount(): number { return this.conns.size; }
+  preferredLocale(roomCode?: string, fallback: SupportedLocale = DEFAULT_LOCALE): SupportedLocale {
+    const matching = [...this.conns].filter(conn => (!roomCode || conn.roomCode === roomCode) && conn.locale);
+    return matching.find(conn => !conn.playerId)?.locale ?? matching[0]?.locale ?? fallback;
+  }
 
   private onConnection(ws: WebSocket): void {
     const conn: Conn = { ws, isAlive: true };
@@ -115,6 +120,7 @@ export class BattleServer {
     if (msg.type === 'error') { this.send(conn, msg); return; }
     switch (msg.type) {
       case 'join': {
+        if (msg.locale) conn.locale = msg.locale;
         if (conn.playerId && conn.roomCode) {
           this.send(conn, { type: 'joined', playerId: conn.playerId, roomCode: conn.roomCode });
           this.pushState(conn.roomCode);
@@ -138,6 +144,7 @@ export class BattleServer {
         break;
       }
       case 'spectate': {
+        if (msg.locale) conn.locale = msg.locale;
         if (conn.playerId) { this.send(conn, { type: 'error', code: 'already_joined', message: 'leave before spectating' }); return; }
         this.room(msg.roomCode);
         conn.roomCode = msg.roomCode;   // display / spectator: no slot

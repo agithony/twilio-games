@@ -2,6 +2,9 @@
 // (no Pokémon tables copied). 8 elemental types; each attacking type is 2x (super-effective) against
 // some, 0.5x (resisted) against others, and 1x otherwise. Pure lookup so the battle sim + UI share
 // ONE source of truth and it's fully unit-testable.
+import { DEFAULT_LOCALE, type SupportedLocale } from './i18n/locales';
+import { MONSTERS_MESSAGES, type MonstersMessageKey } from './i18n/monsters';
+import { createTranslator } from './i18n/translate';
 
 export const MONSTER_TYPES = [
   'normal', 'fire', 'water', 'grass', 'electric', 'rock', 'ground', 'flying', 'psychic',
@@ -42,8 +45,14 @@ export function typeMultiplier(atk: MonsterType, def: MonsterType): number {
 }
 
 /** Spoken label for effectiveness (announcer/UI). null = neutral (say nothing special). */
-export function effectivenessLabel(mult: number): string | null {
-  if (mult >= 2) return "It's super effective!";
-  if (mult <= 0.5) return "It's not very effective…";
+export function effectivenessLabel(mult: number, locale: SupportedLocale = DEFAULT_LOCALE): string | null {
+  const text = createTranslator(locale, MONSTERS_MESSAGES);
+  if (mult >= 2) return text('effect.super');
+  if (mult <= 0.5) return text('effect.resisted');
   return null;
+}
+
+/** Localized display/spoken label. Type IDs remain stable English protocol values. */
+export function monsterTypeLabel(type: MonsterType, locale: SupportedLocale = DEFAULT_LOCALE): string {
+  return createTranslator(locale, MONSTERS_MESSAGES)(`type.${type}` as MonstersMessageKey);
 }

@@ -1,28 +1,54 @@
 import type { Intent } from '../shared/types';
+import { DEFAULT_LOCALE, type SupportedLocale } from '../shared/i18n/locales';
+import { normalizeForMatching } from '../shared/i18n/translate';
 
 // Each intent maps to the words/phrases that trigger it. Order within the scan
 // is by last-occurrence in the transcript so self-corrections ("left no right")
 // take the latest command.
-const WORD_TO_INTENT: { word: string; intent: Intent }[] = [
-  { word: 'left', intent: 'MOVE_LEFT' },
-  { word: 'right', intent: 'MOVE_RIGHT' },
-  { word: 'boost', intent: 'BOOST' },
-  { word: 'go', intent: 'BOOST' },           // "go" = accelerate
-  { word: 'brake', intent: 'BRAKE' },
-  { word: 'slow', intent: 'BRAKE' },          // "slow down"
-  { word: 'stop', intent: 'BRAKE' },
-  { word: 'nitro', intent: 'USE_POWER' },     // primary trigger word for the dash
-  { word: 'power', intent: 'USE_POWER' },     // legacy synonym — still accepted so old habits work
-];
+const WORD_TO_INTENT: Record<SupportedLocale, ReadonlyMap<string, Intent>> = {
+  'en-US': new Map([
+    ['left', 'MOVE_LEFT'],
+    ['right', 'MOVE_RIGHT'],
+    ['boost', 'BOOST'],
+    ['go', 'BOOST'],
+    ['brake', 'BRAKE'],
+    ['slow', 'BRAKE'],
+    ['stop', 'BRAKE'],
+    ['nitro', 'USE_POWER'],
+    ['power', 'USE_POWER'],
+  ]),
+  'pt-BR': new Map([
+    ['esquerda', 'MOVE_LEFT'],
+    ['direita', 'MOVE_RIGHT'],
+    ['acelerar', 'BOOST'],
+    ['acelera', 'BOOST'],
+    ['acelere', 'BOOST'],
+    ['vai', 'BOOST'],
+    ['frear', 'BRAKE'],
+    ['freia', 'BRAKE'],
+    ['freie', 'BRAKE'],
+    ['devagar', 'BRAKE'],
+    ['reduzir', 'BRAKE'],
+    ['reduz', 'BRAKE'],
+    ['reduza', 'BRAKE'],
+    ['desacelerar', 'BRAKE'],
+    ['desacelera', 'BRAKE'],
+    ['desacelere', 'BRAKE'],
+    ['parar', 'BRAKE'],
+    ['nitro', 'USE_POWER'],
+    ['turbo', 'USE_POWER'],
+    ['poder', 'USE_POWER'],
+  ]),
+};
 
-export function mapTranscriptToIntent(transcript: string): Intent | null {
-  const norm = transcript.toLowerCase().replace(/[^a-z\s]/g, ' ');
+export function mapTranscriptToIntent(transcript: string, locale: SupportedLocale = DEFAULT_LOCALE): Intent | null {
+  const norm = normalizeForMatching(transcript, locale);
   const tokens = norm.split(/\s+/).filter(Boolean);
   if (tokens.length === 0) return null;
   // scan from the end so the latest spoken command wins
   for (let i = tokens.length - 1; i >= 0; i--) {
-    const hit = WORD_TO_INTENT.find(w => w.word === tokens[i]);
-    if (hit) return hit.intent;
+    const hit = WORD_TO_INTENT[locale].get(tokens[i]!);
+    if (hit) return hit;
   }
   return null;
 }
@@ -33,13 +59,13 @@ export function mapTranscriptToIntent(transcript: string): Intent | null {
  * Used to handle Conversation Relay's ACCUMULATING partial transcripts: we look
  * at how many commands a growing partial contains and only act on newly-added ones.
  */
-export function intentsFromTranscript(transcript: string): Intent[] {
-  const norm = transcript.toLowerCase().replace(/[^a-z\s]/g, ' ');
+export function intentsFromTranscript(transcript: string, locale: SupportedLocale = DEFAULT_LOCALE): Intent[] {
+  const norm = normalizeForMatching(transcript, locale);
   const tokens = norm.split(/\s+/).filter(Boolean);
   const out: Intent[] = [];
   for (const tok of tokens) {
-    const hit = WORD_TO_INTENT.find(w => w.word === tok);
-    if (hit) out.push(hit.intent);
+    const hit = WORD_TO_INTENT[locale].get(tok);
+    if (hit) out.push(hit);
   }
   return out;
 }

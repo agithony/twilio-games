@@ -180,6 +180,10 @@ describe('buildSystemPrompt', () => {
 });
 
 describe('hostTurn', () => {
+  it('refuses an English LLM reply on a Portuguese call', async () => {
+    expect(await hostTurn(fakeLlm({ say: 'Choose your car now.', toolCalls: [] }), ctx(), [], 'pt-BR')).toBeNull();
+    expect(await hostTurn(fakeLlm({ say: 'Escolha seu carro agora.', toolCalls: [] }), ctx(), [], 'pt-BR')).toBeNull();
+  });
   it('returns null when the LLM is disabled (→ scripted fallback)', async () => {
     const out = await hostTurn(fakeLlm({ say: 'hi', toolCalls: [] }, false), ctx(), []);
     expect(out).toBeNull();

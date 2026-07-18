@@ -5,6 +5,8 @@
 // Pure-ish: all game access goes through the injected HostContext (a narrow, testable seam), and the
 // LLM through LlmClient. game-host has NO direct Room/WS dependency, so it unit-tests with fakes.
 import type { LlmClient, LlmTurn, ToolSpec, ToolCall } from './llm';
+import { DEFAULT_LOCALE, type SupportedLocale } from '../shared/i18n/locales';
+import { normalizeForMatching } from '../shared/i18n/translate';
 
 /** What the host can SEE and DO for one caller. The adapter supplies this from the live room. */
 export interface HostContext {
@@ -43,13 +45,20 @@ export const HOST_TOOLS: ToolSpec[] = [
 
 /** Build the system prompt: persona + LIVE game state + rules. Regenerated each turn so the model
  *  always sees the current phase/choices (cheap, and keeps it grounded). */
-export function buildSystemPrompt(ctx: HostContext): string {
+export function buildSystemPrompt(ctx: HostContext, locale: SupportedLocale = DEFAULT_LOCALE): string {
   const lines: string[] = [
-    'You are the AI host + live commentator of "Voice Racer", a phone-controlled arcade racing game by Twilio, played on a big shared screen. Players call in and control everything BY VOICE.',
+    locale === 'pt-BR'
+      ? 'LANGUAGE: Understand the caller in Brazilian Portuguese and reply ONLY in natural Brazilian Portuguese. Keep car and track names exactly as listed, but explain all instructions in Portuguese. The spoken race commands are esquerda, direita, acelerar, frear, and nitro.'
+      : 'LANGUAGE: Understand and reply in natural US English.',
+    locale === 'pt-BR'
+      ? 'Você apresenta a Corrida por Voz, um jogo de corrida da Twilio controlado por telefone e exibido em uma tela compartilhada.'
+      : 'You are the AI host + live commentator of "Voice Racer", a phone-controlled arcade racing game by Twilio, played on a big shared screen. Players call in and control everything BY VOICE.',
     'Personality: upbeat, clear, and measured — not over-the-top. You are a helpful race host, not a shouting announcer. Keep replies to ONE or TWO short spoken sentences for a live phone call.',
     'Everything is done BY VOICE — the caller never types or texts. You collect their setup by talking: their name, then their car, then their track vote. Use the tools to record each.',
     '',
-    'HOW TO PLAY (tell players when they ask, and remind them at the start): during the race they SHOUT commands — "left"/"right" to change lane, "boost" (or "go") to speed up (keep saying it to build speed), "brake" to slow down. "NITRO" is the special move: a NITRO DASH that makes them INVULNERABLE for a couple seconds so they SMASH THROUGH barriers unharmed instead of crashing. It is DIFFERENT from boost — boost just goes faster; NITRO busts through a wall you cannot dodge. One dash charge; grab a glowing orb on the track to refill. NITRO is the move players most often forget — remind them to say "nitro" and that it smashes through barriers.',
+    locale === 'pt-BR'
+      ? 'COMO JOGAR: durante a corrida, os comandos são "esquerda" e "direita" para mudar de faixa, "acelerar" ou "vai" para ganhar velocidade, "frear" para reduzir e "nitro" para atravessar barreiras sem bater. Há uma carga de nitro; pegue uma esfera brilhante para recarregar.'
+      : 'HOW TO PLAY (tell players when they ask, and remind them at the start): during the race they SHOUT commands — "left"/"right" to change lane, "boost" (or "go") to speed up (keep saying it to build speed), "brake" to slow down. "NITRO" is the special move: a NITRO DASH that makes them INVULNERABLE for a couple seconds so they SMASH THROUGH barriers unharmed instead of crashing. It is DIFFERENT from boost — boost just goes faster; NITRO busts through a wall you cannot dodge. One dash charge; grab a glowing orb on the track to refill. NITRO is the move players most often forget — remind them to say "nitro" and that it smashes through barriers.',
     '',
     // ── Knowledge base so the host can actually HAVE a conversation / answer questions ──
     'YOU CAN ANSWER QUESTIONS — and you are SMART and context-aware. If the caller asks about the game, the controls, strategy ("how do I win?", "what does nitro do?"), what screen they are on, who is winning, Twilio, or how this app is built, answer helpfully and specifically in a sentence or two, then steer back to racing. Use the LIVE STATE below so your answers fit exactly what is on their screen right now. Never give a generic non-answer.',
@@ -62,7 +71,9 @@ export function buildSystemPrompt(ctx: HostContext): string {
   // Onboarding sequence: proactively drive name → car → map → start, ONE step at a time. Always get
   // the NAME first (any phase) if it's still unset.
   if (!ctx.myName) {
-    lines.push("The caller has NOT given their name yet. Your FIRST job: ask their name, and the moment they say it, CALL set_name. In the SAME reply, greet them BY NAME, tell them to look at the controls on the screen, and briefly explain: say left/right to steer, boost to speed up, brake to slow down, and nitro to break through a wall. Then tell them to say start when ready to pick a car — do NOT just say 'nice to meet you' and stop.");
+    lines.push(locale === 'pt-BR'
+      ? 'A pessoa ainda NÃO disse o nome. Primeiro pergunte o nome e use set_name. Na mesma resposta, cumprimente-a, explique os comandos esquerda, direita, acelerar, frear e nitro, e diga para falar "começar" quando quiser escolher o carro.'
+      : "The caller has NOT given their name yet. Your FIRST job: ask their name, and the moment they say it, CALL set_name. In the SAME reply, greet them BY NAME, tell them to look at the controls on the screen, and briefly explain: say left/right to steer, boost to speed up, brake to slow down, and nitro to break through a wall. Then tell them to say start when ready to pick a car — do NOT just say 'nice to meet you' and stop.");
   }
   if (ctx.phase === 'lobby') {
     lines.push("SCREEN: the LOBBY (players call in to join; the shared screen shows who's in). Once you have their name: greet them, say they can wait a moment for other players to call in OR jump right in, and that you'll take them to pick their car — then CALL start_race to advance to CAR selection. NEVER end a turn on a bare 'nice to meet you'; always tell them the next step. Nothing is picked yet, so don't mention specific cars/tracks.");
@@ -81,7 +92,9 @@ export function buildSystemPrompt(ctx: HostContext): string {
     lines.push(`${ctx.selectedMap ? `Currently leading: ${ctx.selectedMap}. ` : ''}Ask which track they want (you can say "say a track name or number") and CALL select_map to cast THEIR vote; tell them it is a vote. Only CALL start_race once they say they are ready to race.`);
   }
   if (ctx.phase === 'racing' || ctx.phase === 'countdown') {
-    lines.push('A race is LIVE — the caller should be DRIVING (shouting left/right/boost/brake/nitro), and the scripted announcer handles the play-by-play. Do NOT narrate unprompted. But if they ASK you something mid-race ("what place am I?", "how do I use nitro?"), answer in a SNAPPY few words so it does not bury their next command. Otherwise stay quiet.');
+    lines.push(locale === 'pt-BR'
+      ? 'A corrida está AO VIVO. A pessoa está pilotando com esquerda, direita, acelerar, frear e nitro. Não faça narração sem que a pessoa peça; responda perguntas em poucas palavras para não cobrir o próximo comando.'
+      : 'A race is LIVE — the caller should be DRIVING (shouting left/right/boost/brake/nitro), and the scripted announcer handles the play-by-play. Do NOT narrate unprompted. But if they ASK you something mid-race ("what place am I?", "how do I use nitro?"), answer in a SNAPPY few words so it does not bury their next command. Otherwise stay quiet.');
   }
   if (ctx.phase === 'results' || ctx.phase === 'finished') {
     if (ctx.myPlace === 1) lines.push('The caller won the race. Congratulate them warmly, but keep it calm and concise.');
@@ -99,10 +112,13 @@ export function buildSystemPrompt(ctx: HostContext): string {
     } else if (ctx.allTimeBest) {
       lines.push(`CURRENT TRACK LEADERBOARD (${ctx.selectedMap ?? 'this track'}): the record is ${ctx.allTimeBest.name} at ${ctx.allTimeBest.time.toFixed(2)} seconds. Use ONLY this track-specific leaderboard data when discussing high scores.`);
     }
-    lines.push('Then invite them to race again (say "rematch" or "go again").');
+    lines.push(locale === 'pt-BR'
+      ? 'Depois, convide a pessoa para correr novamente dizendo "revanche" ou "correr de novo".'
+      : 'Then invite them to race again (say "rematch" or "go again").');
   }
-  lines.push('',
-    'RULES: Never invent car or track names — use ONLY the exact lists above. Do NOT advance the flow past the current step unless that step is done AND the caller is ready. Never mention that you are an AI language model. Stay in character as the race host. Do not use emojis (this is spoken aloud).');
+  lines.push('', locale === 'pt-BR'
+    ? 'REGRAS: responda SOMENTE em português natural do Brasil. Nunca invente nem traduza nomes de carros ou pistas; use exatamente as listas acima. Não avance uma etapa antes de ela estar concluída. Não use emojis.'
+    : 'RULES: Never invent car or track names — use ONLY the exact lists above. Do NOT advance the flow past the current step unless that step is done AND the caller is ready. Never mention that you are an AI language model. Stay in character as the race host. Do not use emojis (this is spoken aloud).');
   return lines.join('\n');
 }
 
@@ -116,14 +132,17 @@ function numberedList(items: string[]): string {
  *  it requests against the HostContext, and return what to SAY back (reply + action confirmations).
  *  Returns null when the LLM is disabled/empty so the caller falls back to scripted lines. */
 export async function hostTurn(
-  llm: LlmClient, ctx: HostContext, history: LlmTurn[],
+  llm: LlmClient, ctx: HostContext, history: LlmTurn[], locale: SupportedLocale = DEFAULT_LOCALE,
 ): Promise<string | null> {
   if (!llm.enabled) return null;
-  const reply = await llm.respond(buildSystemPrompt(ctx), history, HOST_TOOLS);
+  const reply = await llm.respond(buildSystemPrompt(ctx, locale), history, HOST_TOOLS);
   // Execute the tool calls (side effects: pick car/map, set name, start) — we still run them for
   // their game effect even if we don't speak their confirmation.
   const confirmations = reply.toolCalls.map(tc => runTool(ctx, tc)).filter((s): s is string => !!s);
   const said = reply.say.trim();
+  // Deterministic localized confirmations are safe; free-form model text has no hard language
+  // guarantee, so never send it to a Portuguese TTS session.
+  if (locale === 'pt-BR') return confirmations.length ? confirmations.join(' ') : null;
   // ANTI-REPETITION: the model usually acknowledges its own action in words ("Great pick, the
   // McLaren!"). Appending the tool confirmation too ("...the McLaren!") said the car/map name TWICE.
   // So: if the model spoke, trust ITS words alone. Only fall back to the confirmation when the model
@@ -132,6 +151,7 @@ export async function hostTurn(
   if (confirmations.length) return confirmations.join(' ');
   return null;
 }
+
 
 /** Execute one tool call against the game, returning a short confirmation to speak (or null). */
 function runTool(ctx: HostContext, tc: ToolCall): string | null {
@@ -147,30 +167,44 @@ function runTool(ctx: HostContext, tc: ToolCall): string | null {
 
 /** Spoken number words → value, for "car eleven" / "number three" voice picks (ASR often gives words,
  *  not digits). Covers 1–20 which comfortably spans the roster + map list. */
-const NUM_WORDS: Record<string, number> = {
-  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
-  eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17,
-  eighteen: 18, nineteen: 19, twenty: 20,
+const NUM_WORDS: Record<SupportedLocale, Record<string, number>> = {
+  'en-US': {
+    one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+    eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17,
+    eighteen: 18, nineteen: 19, twenty: 20,
+  },
+  'pt-BR': {
+    um: 1, uma: 1, dois: 2, duas: 2, tres: 3, quatro: 4, cinco: 5, seis: 6, sete: 7, oito: 8,
+    nove: 9, dez: 10, onze: 11, doze: 12, treze: 13, quatorze: 14, quinze: 15, dezesseis: 16,
+    dezessete: 17, dezoito: 18, dezenove: 19, vinte: 20,
+  },
 };
 
 /** ORDINAL words → value ("the second one" = index 2). Checked BEFORE cardinals so "second" wins
  *  over the trailing filler "one" in phrases like "the second one" (which used to match "one"→1). */
-const ORDINAL_WORDS: Record<string, number> = {
-  first: 1, second: 2, third: 3, fourth: 4, fifth: 5, sixth: 6, seventh: 7, eighth: 8, ninth: 9,
-  tenth: 10, eleventh: 11, twelfth: 12,
+const ORDINAL_WORDS: Record<SupportedLocale, Record<string, number>> = {
+  'en-US': {
+    first: 1, second: 2, third: 3, fourth: 4, fifth: 5, sixth: 6, seventh: 7, eighth: 8, ninth: 9,
+    tenth: 10, eleventh: 11, twelfth: 12,
+  },
+  'pt-BR': {
+    primeiro: 1, primeira: 1, segundo: 2, segunda: 2, terceiro: 3, terceira: 3,
+    quarto: 4, quarta: 4, quinto: 5, quinta: 5, sexto: 6, sexta: 6, setimo: 7, setima: 7,
+    oitavo: 8, oitava: 8, nono: 9, nona: 9, decimo: 10, decima: 10,
+  },
 };
 
 /** Parse a 1-based selection NUMBER out of a spoken phrase ("car 11", "number three", "the 3rd one",
  *  "eleven", "the second one"), or null if none. Priority: digits → ordinal words → cardinal words.
  *  Ordinals beat cardinals so "the second one" is 2, not 1 (the trailing "one"). */
-export function parseSelectionNumber(spoken: string): number | null {
-  const q = spoken.toLowerCase();
+export function parseSelectionNumber(spoken: string, locale: SupportedLocale = DEFAULT_LOCALE): number | null {
+  const q = normalizeForMatching(spoken, locale);
   const digit = q.match(/\b(\d{1,2})(?:st|nd|rd|th)?\b/);   // "car 11", "3", "3rd"
   if (digit) return parseInt(digit[1]!, 10);
-  for (const [word, n] of Object.entries(ORDINAL_WORDS)) {
+  for (const [word, n] of Object.entries(ORDINAL_WORDS[locale])) {
     if (new RegExp(`\\b${word}\\b`).test(q)) return n;
   }
-  for (const [word, n] of Object.entries(NUM_WORDS)) {
+  for (const [word, n] of Object.entries(NUM_WORDS[locale])) {
     if (new RegExp(`\\b${word}\\b`).test(q)) return n;
   }
   return null;
@@ -178,42 +212,46 @@ export function parseSelectionNumber(spoken: string): number | null {
 
 /** Match a spoken phrase to a choice index. Tries a NUMBER first ("car 11" → index 10), then falls
  *  back to fuzzy NAME matching. Returns the index or -1. Shared by HostContext impls + tests. */
-export function matchChoice(spoken: string, choices: string[]): number {
-  const num = parseSelectionNumber(spoken);
+export function matchChoice(spoken: string, choices: string[], locale: SupportedLocale = DEFAULT_LOCALE): number {
+  const num = parseSelectionNumber(spoken, locale);
   if (num !== null && num >= 1 && num <= choices.length) return num - 1;   // 1-based → index
-  return fuzzyMatch(spoken, choices);
+  return fuzzyMatch(spoken, choices, locale);
 }
 
 /** Is this utterance a QUESTION rather than a selection? ("which is fastest?", "what do you..."). */
-function isQuestion(spoken: string): boolean {
-  const q = spoken.toLowerCase().trim();
-  return q.endsWith('?') || /^(which|what|who|how|why|when|where|can |could |should |do |does |is |are |tell me|explain)/.test(q);
+function isQuestion(spoken: string, locale: SupportedLocale): boolean {
+  const q = normalizeForMatching(spoken, locale);
+  if (spoken.trim().endsWith('?')) return true;
+  return locale === 'pt-BR'
+    ? /^(qual|quais|o que|quem|como|por que|quando|onde|pode|posso|devo|explique|me diga)\b/.test(q)
+    : /^(which|what|who|how|why|when|where|can |could |should |do |does |is |are |tell me|explain)/.test(q);
 }
 
 /** A DETERMINISTIC selection: return the chosen index when the caller CLEARLY picked one (an in-range
  *  number, or a strong name match) and did NOT ask a question — else null so the LLM handles it. Used
  *  as a pre-LLM fast-path in menus so "two" / "the second one" reliably picks even if the model would
  *  have chatted instead (and so selection works with the LLM disabled). Questions fall through. */
-export function clearSelectionIndex(spoken: string, choices: string[]): number | null {
-  if (isQuestion(spoken)) return null;
-  const num = parseSelectionNumber(spoken);
+export function clearSelectionIndex(spoken: string, choices: string[], locale: SupportedLocale = DEFAULT_LOCALE): number | null {
+  if (isQuestion(spoken, locale)) return null;
+  const num = parseSelectionNumber(spoken, locale);
   if (num !== null) return (num >= 1 && num <= choices.length) ? num - 1 : null;
-  const i = fuzzyMatch(spoken, choices);
+  const i = fuzzyMatch(spoken, choices, locale);
   return i >= 0 ? i : null;
 }
 
 /** Fuzzy-match a spoken name against a list of choices (case-insensitive substring / word overlap).
  *  Returns the matched index or -1. Exposed so HostContext impls + tests share one matcher. */
-export function fuzzyMatch(spoken: string, choices: string[]): number {
-  const q = spoken.toLowerCase().trim();
+export function fuzzyMatch(spoken: string, choices: string[], locale: SupportedLocale = DEFAULT_LOCALE): number {
+  const q = normalizeForMatching(spoken, locale);
   if (!q) return -1;
+  const normalizedChoices = choices.map(choice => normalizeForMatching(choice, locale));
   // exact / substring first
-  let idx = choices.findIndex(c => c.toLowerCase() === q);
+  let idx = normalizedChoices.findIndex(choice => choice === q);
   if (idx >= 0) return idx;
-  idx = choices.findIndex(c => c.toLowerCase().includes(q) || q.includes(c.toLowerCase()));
+  idx = normalizedChoices.findIndex(choice => choice.includes(q) || q.includes(choice));
   if (idx >= 0) return idx;
   // word-overlap: any shared significant word
   const qWords = new Set(q.split(/\s+/).filter(w => w.length > 2));
-  idx = choices.findIndex(c => c.toLowerCase().split(/\s+/).some(w => qWords.has(w)));
+  idx = normalizedChoices.findIndex(choice => choice.split(/\s+/).some(word => qWords.has(word)));
   return idx;
 }

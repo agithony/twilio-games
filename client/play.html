@@ -22,20 +22,20 @@
   <div id="veil">
     <img src="/brand/Twilio_Logo_Bug_White.svg" alt="" />
     <div class="veil-eyebrow">Twilio</div>
-    <div class="veil-title">Voice Racer</div>
+    <div id="veil-title" class="veil-title">Voice Racer</div>
     <div class="veil-bar"><span></span></div>
   </div>
 
   <!-- In-game HUD (hidden while a menu screen is up via body.in-menu) -->
   <div id="hud" class="hud-pill">
     <img class="brandbug" src="/brand/Twilio_Logo_Bug_White.svg" alt="" />
-    <span class="htitle">Voice Racer</span>
+    <span id="hud-title" class="htitle">Voice Racer</span>
   </div>
   <div id="hint" class="hud-pill">
-    <span class="me">Shout</span>
-    <span class="say">“left”</span> <span class="say">“right”</span> ·
-    <span class="say">“boost”</span> · <span class="say">“brake”</span> ·
-    <span class="say pw">"nitro"</span>
+    <span id="hint-shout" class="me">Shout</span>
+    <span id="hint-left" class="say">“left”</span> <span id="hint-right" class="say">“right”</span> ·
+    <span id="hint-boost" class="say">“boost”</span> · <span id="hint-brake" class="say">“brake”</span> ·
+    <span id="hint-nitro" class="say pw">“nitro”</span>
   </div>
 
   <!-- Personal in-race gauges (power charge + boost/brake). Shown ONLY for a real local player
@@ -54,12 +54,12 @@
     </div>
   </div>
 
-  <div id="big"></div>
+  <div id="big" role="status" aria-live="assertive"></div>
 
   <!-- Legacy lobby overlay retired; the Screens overlay (built in main.ts) handles all menu states. -->
   <div id="lobby" style="display:none"></div>
 
-  <div id="ticker"></div>
+  <div id="ticker" aria-live="polite"></div>
   <div id="music-toggle-container"></div>
 
   <script type="module" src="./main.ts"></script>

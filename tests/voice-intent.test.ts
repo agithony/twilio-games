@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mapTranscriptToIntent } from '../server/voice-intent';
+import { intentsFromTranscript, mapTranscriptToIntent } from '../server/voice-intent';
 
 describe('mapTranscriptToIntent', () => {
   it('maps core command words', () => {
@@ -31,5 +31,38 @@ describe('mapTranscriptToIntent', () => {
   it('prioritizes the last directional word in a phrase', () => {
     // "left ... no right" — caller corrected themselves; take the latest
     expect(mapTranscriptToIntent('left no right')).toBe('MOVE_RIGHT');
+  });
+
+  it.each([
+    ['esquerda', 'MOVE_LEFT'],
+    ['direita', 'MOVE_RIGHT'],
+    ['acelerar', 'BOOST'],
+    ['turbo', 'USE_POWER'],
+    ['vai', 'BOOST'],
+    ['frear', 'BRAKE'],
+    ['devagar', 'BRAKE'],
+    ['parar', 'BRAKE'],
+    ['NÍTRO!!!', 'USE_POWER'],
+    ['poder', 'USE_POWER'],
+  ] as const)('maps Portuguese command %s', (transcript, intent) => {
+    expect(mapTranscriptToIntent(transcript, 'pt-BR')).toBe(intent);
+  });
+
+  it.each([
+    ['acelere', 'BOOST'], ['acelera', 'BOOST'], ['freie', 'BRAKE'], ['freia', 'BRAKE'],
+    ['reduza', 'BRAKE'], ['desacelere', 'BRAKE'],
+  ] as const)('accepts natural Portuguese Racer command %s', (spoken, intent) => {
+    expect(mapTranscriptToIntent(spoken, 'pt-BR')).toBe(intent);
+  });
+
+  it('extracts a Portuguese command burst in order with Unicode-safe punctuation', () => {
+    expect(intentsFromTranscript('Esquerda, direita; ACELERAR — nitro… frear!', 'pt-BR')).toEqual([
+      'MOVE_LEFT', 'MOVE_RIGHT', 'BOOST', 'USE_POWER', 'BRAKE',
+    ]);
+  });
+
+  it('keeps command aliases locale-specific', () => {
+    expect(mapTranscriptToIntent('esquerda')).toBeNull();
+    expect(mapTranscriptToIntent('left', 'pt-BR')).toBeNull();
   });
 });

@@ -26,6 +26,10 @@ describe('parseClientMessage', () => {
     const m = parseClientMessage(JSON.stringify({ type: 'spectate', roomCode: '4821' }));
     expect(m).toEqual({ type: 'spectate', roomCode: '4821' });
   });
+  it('preserves a supported display locale', () => {
+    expect(parseClientMessage(JSON.stringify({ type: 'spectate', roomCode: '4821', locale: 'pt-BR' })))
+      .toEqual({ type: 'spectate', roomCode: '4821', locale: 'pt-BR' });
+  });
   it('parses leave (shared-screen play toggle → back to spectator)', () => {
     const m = parseClientMessage(JSON.stringify({ type: 'leave' }));
     expect(m).toEqual({ type: 'leave' });

@@ -66,14 +66,15 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); c
 }
 
 /* ── Twilio brand header (matches Voice Racer's eyebrow → red wordmark → state) ── */
-.vm-head { text-align: center; margin-bottom: 18px; }
+.vm-head { min-height: 88px; text-align: center; margin-bottom: 18px; }
 .vm-eyebrow { font-family: var(--mono); font-size: 13px; letter-spacing: .22em; text-transform: uppercase;
   color: var(--ink-dim); display: flex; align-items: center; justify-content: center; gap: 10px; }
 .vm-eyebrow img { width: 18px; height: 18px; opacity: .9; }
-.vm-title { font-family: var(--disp); font-weight: 800; font-size: 46px; line-height: 1; letter-spacing: .1em;
+.vm-title { height: 48px; display: flex; align-items: center; justify-content: center; white-space: nowrap;
+  font-family: var(--disp); font-weight: 800; font-size: clamp(22px, 4.2vw, 46px); line-height: 1; letter-spacing: .08em;
   margin: 8px 0 4px; text-transform: uppercase; color: var(--red);
   text-shadow: 0 0 30px rgba(239,34,58,.45), 0 6px 26px rgba(239,34,58,.30); }
-.vm-sub { color: var(--ink-dim); font-size: 15px; }
+.vm-sub { min-height: 24px; color: var(--ink-dim); font-size: 15px; }
 .vm-dim { color: var(--ink-dim); font-size: 14px; margin-top: 14px; }
 
 /* Card + chips + buttons — Twilio glass, red accents. NEARLY-OPAQUE navy fill so text stays crisp over
@@ -130,7 +131,8 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); c
 .vm-mon .portrait { flex: 1 1 auto; min-height: 0; width: 100%; display: flex; align-items: center; justify-content: center;
   background: radial-gradient(circle at 50% 42%, rgba(255,255,255,.06), transparent 70%); border-radius: 12px; margin-bottom: 6px; }
 .vm-mon .portrait img { max-width: 100%; max-height: 100%; width: auto; height: auto; object-fit: contain; image-rendering: pixelated; }
-.vm-mon-name { font-family: var(--disp); font-weight: 800; font-size: 18px; }
+.vm-mon-name { flex: 0 0 42px; width: 100%; display: flex; align-items: center; justify-content: center;
+  overflow-wrap: anywhere; font-family: var(--disp); font-weight: 800; font-size: clamp(13px, 1.45vw, 18px); line-height: 1.05; }
 .vm-type { display: inline-block; margin-top: 6px; font-family: var(--mono); font-size: 10px; text-transform: uppercase;
   letter-spacing: .06em; padding: 3px 10px; border-radius: 999px; color: #06110a; font-weight: 700; background: var(--tc, #c8d4e6); }
 .vm-win { color: var(--red); }
@@ -142,8 +144,9 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); c
 /* Lobby: auto-height card (override the grid card's viewport cap) with a TWO-COLUMN row inside —
    join flow left, controls legend right — exactly like Voice Racer's lobby. */
 .vm-card.vm-lobby { max-height: none; display: block; }
-.vm-lobby-grid { display: flex; flex-direction: row; align-items: center; justify-content: center; gap: 48px; flex-wrap: wrap; }
-.vm-lobby-main { display: flex; flex-direction: column; align-items: center; gap: 20px; }
+.vm-lobby-grid { min-height: 480px; display: grid; grid-template-columns: minmax(0, 1fr) 384px;
+  align-items: center; justify-content: center; gap: 48px; }
+.vm-lobby-main { width: 100%; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 20px; }
 .vm-lobby-main .vm-chips { margin: 0; }
 
 .vm-join { display: flex; flex-direction: column; align-items: center; gap: 18px; }
@@ -163,12 +166,13 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); c
    way). Shown in the lobby. Uses the vm palette. ── */
 /* In the lobby's two-column row the legend is a self-contained bordered glass PANEL (like VR's), not a
    full-width stacked section. */
-.controls-legend { text-align: left; background: rgba(18,26,52,.5); border: 1px solid var(--glass-brd);
-  border-top: 3px solid var(--red); border-radius: 16px; padding: 20px 24px; min-width: 340px; }
+.controls-legend { box-sizing: border-box; width: 384px; min-width: 0; height: 348px; overflow: hidden;
+  text-align: left; background: rgba(18,26,52,.5); border: 1px solid var(--glass-brd);
+  border-top: 3px solid var(--red); border-radius: 16px; padding: 20px 24px; }
 .controls-legend .cl-title { font-family: var(--disp); font-weight: 800; font-size: 20px; letter-spacing: .01em;
   background: linear-gradient(90deg, var(--red), var(--red-2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
 .controls-legend .cl-sub { color: var(--ink-dim); font-size: 12px; margin: 2px 0 12px; }
-.cl-row { display: grid; grid-template-columns: 160px 1fr; align-items: center; gap: 14px; padding: 8px 0; border-top: 1px solid var(--glass-brd); }
+.cl-row { min-height: 58px; display: grid; grid-template-columns: 160px 1fr; align-items: center; gap: 14px; padding: 8px 0; border-top: 1px solid var(--glass-brd); }
 .cl-row:first-of-type { border-top: none; }
 .cl-say { font-family: var(--disp); font-size: 14px; font-weight: 700; color: var(--ink);
   background: rgba(239,34,58,.14); border: 1px solid rgba(239,34,58,.4); border-radius: 9px; padding: 5px 10px; text-align: center; }
@@ -177,3 +181,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); c
 .cl-row.cl-power { background: rgba(216,97,201,.09); border-radius: 11px; padding: 9px 12px; margin: 6px -12px 0; border-top: none; }
 .cl-row.cl-power .cl-say { background: rgba(216,97,201,.16); border-color: var(--t-psychic, #d861c9); color: #f0a6e6; }
 .cl-row.cl-power .cl-action { color: #f0a6e6; }
+@media (max-width: 900px) {
+  .vm-lobby-grid { grid-template-columns: 1fr; }
+  .controls-legend { width: min(100%, 384px); justify-self: center; }
+}

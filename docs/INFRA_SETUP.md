@@ -83,6 +83,8 @@ Open **Settings > Secrets and variables > Actions > Variables** and configure as
 |---|---|---|
 | `GAME_PHONE_NUMBER` | Recommended for live events | Public phone number displayed and QR-encoded in all game lobbies; empty displays a setup placeholder |
 | `CR_TTS_VOICE` | No | ElevenLabs voice ID for Conversation Relay TTS; empty uses the Relay default |
+| `CR_TTS_VOICE_PT_BR` | No | Optional Brazilian Portuguese ElevenLabs voice ID; empty uses Relay's `pt-BR` default |
+| `DEFAULT_LOCALE` | No | Locale used when no localized display is connected; defaults to `en-US` |
 | `OPENAI_MODEL` | No | OpenAI model name; empty defaults to `gpt-4o-mini` |
 | `ANALYTICS_ALLOWED_EMAIL` | No | One exact verified Google email allowed to view analytics in addition to `@twilio.com` accounts |
 

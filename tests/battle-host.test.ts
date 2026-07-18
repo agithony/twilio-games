@@ -102,6 +102,12 @@ describe('BATTLE_HOST_TOOLS', () => {
 });
 
 describe('battleHostTurn', () => {
+  it('refuses an English LLM reply on a Portuguese call', async () => {
+    const english = new FakeLlm({ say: 'Choose your monster.', toolCalls: [] });
+    const portuguese = new FakeLlm({ say: 'Escolha seu monstro.', toolCalls: [] });
+    expect(await battleHostTurn(english, ctx(), [], 'pt-BR')).toBeNull();
+    expect(await battleHostTurn(portuguese, ctx(), [], 'pt-BR')).toBeNull();
+  });
   it('returns null when the LLM is disabled (scripted fallback)', async () => {
     const llm = new FakeLlm({ say: '', toolCalls: [] }, false);
     expect(await battleHostTurn(llm, ctx(), [])).toBeNull();

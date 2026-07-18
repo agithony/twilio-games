@@ -1,6 +1,9 @@
 import type { Intent, GameEvent } from '../shared/types';
 import { intentsFromTranscript } from './voice-intent';
 import { greetingLines, lineForEvent, isChattyEvent, raceOverLine } from './voice-lines';
+import { DEFAULT_LOCALE, resolveLocale, type SupportedLocale } from '../shared/i18n/locales';
+import { RACER_MESSAGES } from '../shared/i18n/racer';
+import { createTranslator } from '../shared/i18n/translate';
 
 export type CrMessage =
   | { type:'setup'; callSid:string; from?:string; customParameters: Record<string,string> }
@@ -69,7 +72,7 @@ export interface AdapterDeps {
    *  SAY back (having also executed any game actions), or null to fall back to scripted behavior.
    *  Wired to the LLM game-host. Absent → no conversational AI (scripted-only, current behavior).
    *  `phase` lets the caller decide command-vs-chat routing. */
-  converse?: (roomCode: string, playerId: string, utterance: string) => Promise<string | null>;
+  converse?: (roomCode: string, playerId: string, utterance: string, locale: SupportedLocale) => Promise<string | null>;
   /** The room's current phase, so the adapter routes: race → fast commands; else → conversation. */
   phaseOf?: (roomCode: string) => string;
   /** Accepted semantic commands only; raw transcripts are deliberately never exposed to analytics. */
@@ -88,12 +91,15 @@ export class ConversationRelayAdapter {
   // conversational reply captures the epoch it was requested under; if the epoch has since moved
   // (caller interrupted or spoke again), the stale reply is DROPPED instead of spoken over them.
   private turnEpoch = 0;
+  private commandLocale: SupportedLocale = DEFAULT_LOCALE;
   constructor(private deps: AdapterDeps) {}
 
   /** The caller's bound player id (null until setup binds them) — for event targeting. */
   get boundPlayerId(): string | null { return this.playerId; }
   /** The caller's room code (null until bound) — so the registry can route events. */
   get boundRoomCode(): string | null { return this.roomCode; }
+  /** Language selected by Conversation Relay setup; defaults to English for legacy callers. */
+  get locale(): SupportedLocale { return this.commandLocale; }
 
   /** Called by the voice registry when THIS caller's room emits a game event. Speaks the caller-
    *  relevant lines. Key moments (countdown/go/finish) always speak; mid-race "arcade" lines
@@ -117,7 +123,7 @@ export class ConversationRelayAdapter {
     }
     if (isChattyEvent(ev.kind)) {
       if (this.clockMs - this.lastChattyAt < CHATTY_GAP_MS) return;   // too soon → stay quiet
-      const line = lineForEvent(ev, this.playerId, this.lineSeq);
+      const line = lineForEvent(ev, this.playerId, this.lineSeq, this.commandLocale);
       if (line) { this.lastChattyAt = this.clockMs; this.lineSeq++; this.deps.say?.(line); }
       return;
     }
@@ -130,15 +136,16 @@ export class ConversationRelayAdapter {
       this.recapDone = true;
       if (this.deps.converse && this.roomCode) {
         const epoch = ++this.turnEpoch;
-        void this.deps.converse(this.roomCode, this.playerId, '(The race is over. In a calm, measured tone: congratulate the caller if they won, or encourage them if they lost. Then give a quick spoken recap of the race results and a short overview of the all-time leaderboard. Ask if they want another round.)')
-          .then(reply => { if (epoch === this.turnEpoch) this.deps.say?.(reply || raceOverLine(this.myFinishPlace)); })
-          .catch(() => { this.deps.say?.(raceOverLine(this.myFinishPlace)); });
+        const prompt = createTranslator(this.commandLocale, RACER_MESSAGES)('voice.raceOverPrompt');
+        void this.deps.converse(this.roomCode, this.playerId, prompt, this.commandLocale)
+          .then(reply => { if (epoch === this.turnEpoch) this.deps.say?.(reply || raceOverLine(this.myFinishPlace, this.commandLocale)); })
+          .catch(() => { this.deps.say?.(raceOverLine(this.myFinishPlace, this.commandLocale)); });
         return;
       }
-      this.deps.say?.(raceOverLine(this.myFinishPlace));
+      this.deps.say?.(raceOverLine(this.myFinishPlace, this.commandLocale));
       return;
     }
-    const line = lineForEvent(ev, this.playerId, this.lineSeq);
+    const line = lineForEvent(ev, this.playerId, this.lineSeq, this.commandLocale);
     if (line) { this.lineSeq++; this.deps.say?.(line); }
   }
 
@@ -147,21 +154,36 @@ export class ConversationRelayAdapter {
     switch (msg.type) {
       case 'setup': {
         const code = msg.customParameters['roomCode'];
-        console.log(`[CR] setup callSid=${msg.callSid} roomCode=${code ?? '(none)'}`);
+        this.commandLocale = resolveLocale(msg.customParameters['commandLocale'] ?? msg.customParameters['locale'], DEFAULT_LOCALE);
+        console.log(`[CR] setup callSid=${msg.callSid} roomCode=${code ?? '(none)'} commandLocale=${this.commandLocale}`);
         if (!code) { console.log('[CR] no roomCode → unbound'); return; }
         const room = this.deps.findOrCreateRoom(code);
         if (!room) { console.log(`[CR] room ${code} not found → unbound`); return; }
-        const res = room.addPlayer(playerName(msg.from));
-        if ('error' in res) { console.log(`[CR] addPlayer rejected: ${res.error} → unbound (caller cannot drive)`); return; }
+        const res = room.addPlayer(playerName(msg.from, this.commandLocale));
+        if ('error' in res) {
+          console.log(`[CR] addPlayer rejected: ${res.error} → unbound (caller cannot drive)`);
+          this.deps.say?.(createTranslator(this.commandLocale, RACER_MESSAGES)('voice.roomFull'));
+          return;
+        }
         this.room = room; this.playerId = res.playerId; this.roomCode = code;
         console.log(`[CR] bound caller to player ${res.playerId} lane ${res.lane} in room ${code}`);
         // Register for this room's game events + greet the caller. Send each greeting SENTENCE as its
         // own utterance so Relay TTS pauses naturally between them (one long string read run-on).
         this.deps.register?.(code, this);
-        for (const line of greetingLines()) this.deps.say?.(line);
+        for (const line of greetingLines(this.commandLocale)) this.deps.say?.(line);
         break;
       }
       case 'prompt': {
+        if (msg.last && isHelpRequest(msg.voicePrompt, this.commandLocale)) {
+          this.firedIntents = [];
+          const phase = this.roomCode ? this.deps.phaseOf?.(this.roomCode) : null;
+          const key = phase === 'car_select' ? 'voice.helpCar'
+            : phase === 'map_select' ? 'voice.helpMap'
+              : phase === 'results' || phase === 'finished' ? 'voice.helpResults'
+                : phase === 'racing' || phase === 'countdown' ? 'voice.help' : 'voice.helpLobby';
+          this.deps.say?.(createTranslator(this.commandLocale, RACER_MESSAGES)(key));
+          break;
+        }
         // ROUTE by phase: during a live RACE, keep the fast local command path (no LLM latency in the
         // hot loop). In menus/results, route the FINAL utterance to the conversational AI host so the
         // caller can talk naturally ("which car is fastest?", "pick me a fast one", "start the race").
@@ -173,7 +195,7 @@ export class ConversationRelayAdapter {
           // Fast command path. CR sends ACCUMULATING partials that ASR also REVISES ("left" →
           // "right"); dedup by CONTENT (longest common prefix) so a corrected word still fires and
           // true appends/repeats don't double-fire.
-          const cur = intentsFromTranscript(msg.voicePrompt);
+          const cur = intentsFromTranscript(msg.voicePrompt, this.commandLocale);
           const p = commonPrefixLen(this.firedIntents, cur);
           const fresh = cur.slice(p);
           console.log(`[CR] prompt last=${msg.last} text="${msg.voicePrompt}" → fired ${fresh.length} new: [${fresh.join(',')}]${this.playerId ? '' : ' (NOT BOUND — dropped)'}`);
@@ -187,7 +209,7 @@ export class ConversationRelayAdapter {
           const text = msg.voicePrompt.trim();
           if (text) {
             const epoch = ++this.turnEpoch;
-            void this.deps.converse(this.roomCode, this.playerId, text)
+            void this.deps.converse(this.roomCode, this.playerId, text, this.commandLocale)
               .then(reply => { if (reply && epoch === this.turnEpoch) this.deps.say?.(reply); })
               .catch(() => { /* LLM failure → stay quiet, never break the call */ });
           }
@@ -229,9 +251,17 @@ export class ConversationRelayAdapter {
   }
 }
 
-function playerName(from?: string): string {
-  if (from && from.length >= 4) return `Racer ${from.slice(-4)}`;
-  return 'Racer';
+function playerName(from: string | undefined, locale: SupportedLocale): string {
+  const racer = createTranslator(locale, RACER_MESSAGES)('voice.playerName');
+  if (from && from.length >= 4) return `${racer} ${from.slice(-4)}`;
+  return racer;
+}
+
+function isHelpRequest(spoken: string, locale: SupportedLocale): boolean {
+  const text = spoken.normalize('NFD').replace(/\p{M}+/gu, '').toLocaleLowerCase(locale);
+  return locale === 'pt-BR'
+    ? /\b(ajuda|instrucoes|comandos|como jogar|o que posso dizer)\b/.test(text)
+    : /\b(help|instructions|commands|how do i play|what can i say)\b/.test(text);
 }
 
 /** Length of the shared leading run of two intent arrays (how many already-fired intents the new

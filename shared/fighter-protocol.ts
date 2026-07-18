@@ -1,5 +1,6 @@
 import type { FighterCommand, FighterEvent, FighterWorld } from './fighter-world';
 import type { FighterMapEntry, FighterRosterEntry } from './fighter-roster';
+import { isSupportedLocale, type SupportedLocale } from './i18n/locales';
 
 export type FighterPhase = 'lobby' | 'fighter_select' | 'map_select' | 'loading' | 'intro' | 'countdown' | 'fight' | 'victory' | 'results';
 export type FighterIntroStage = 'p1' | 'versus' | 'p2' | 'faceoff';
@@ -23,8 +24,8 @@ export interface FighterState {
 }
 
 export type FighterClientMessage =
-  | { type: 'join'; roomCode: string; name: string; sessionId?: string }
-  | { type: 'spectate'; roomCode: string }
+  | { type: 'join'; roomCode: string; name: string; sessionId?: string; locale?: SupportedLocale }
+  | { type: 'spectate'; roomCode: string; locale?: SupportedLocale }
   | { type: 'display_auth'; roomCode: string; token: string }
   | { type: 'select_fighter'; fighterId: string }
   | { type: 'select_map'; mapId: string }
@@ -54,8 +55,11 @@ export function parseFighterClientMessage(raw: string): FighterClientMessage | {
       if (!short(m.roomCode, 16) || !short(m.name, 40)) return error('bad_join', 'roomCode + name required');
       if (m.sessionId !== undefined && !short(m.sessionId, 128)) return error('bad_join', 'invalid sessionId');
       return { type: 'join', roomCode: m.roomCode as string, name: m.name as string,
-        ...(typeof m.sessionId === 'string' ? { sessionId: m.sessionId } : {}) };
-    case 'spectate': return short(m.roomCode, 16) ? { type: 'spectate', roomCode: m.roomCode as string } : error('bad_spectate', 'roomCode required');
+        ...(typeof m.sessionId === 'string' ? { sessionId: m.sessionId } : {}),
+        ...(isSupportedLocale(m.locale) ? { locale: m.locale } : {}) };
+    case 'spectate': return short(m.roomCode, 16)
+      ? { type: 'spectate', roomCode: m.roomCode as string, ...(isSupportedLocale(m.locale) ? { locale: m.locale } : {}) }
+      : error('bad_spectate', 'roomCode required');
     case 'display_auth':
       if (!short(m.roomCode, 16) || !short(m.token, 256)) return error('bad_display_auth', 'roomCode + token required');
       return { type: 'display_auth', roomCode: m.roomCode as string, token: m.token as string };

@@ -81,3 +81,21 @@ describe('commentaryForBattleEvent', () => {
     expect(commentaryForBattleEvent({ kind: 'turn_start', turn: 3 }, ctx(), 0)).toBeNull();
   });
 });
+
+describe('Brazilian Portuguese commentary', () => {
+  it('localizes intros, monster names, and move names', () => {
+    expect(battleIntro('Rato-Faísca', 'Serpente-Tempestade', 0, 'pt-BR')).toMatch(/contra|batalha/i);
+    const move = commentaryForBattleEvent(
+      { kind: 'move_used', by: 'a', moveId: 'sparkmouse.jolt', moveName: 'Thunder Jolt' },
+      ctx({ aName: 'Rato-Faísca', bName: 'Serpente-Tempestade' }), 0, 'pt-BR',
+    )!;
+    expect(move).toContain('Rato-Faísca');
+    expect(move).toContain('Choque Trovejante');
+
+    const effective = commentaryForBattleEvent(
+      { kind: 'effectiveness', on: 'b', multiplier: 2, label: "It's super effective!" },
+      ctx(), 0, 'pt-BR',
+    )!;
+    expect(effective.toLowerCase()).toMatch(/eficaz|fraqueza|fraco/);
+  });
+});

@@ -54,4 +54,18 @@ describe('commentaryFor', () => {
     const m = commentaryFor({ kind: 'map_picked', map: 'Silver Lake' }, 0)!;
     expect(m).toContain('Silver Lake');
   });
+
+  it.each([
+    [{ kind: 'go' } as GameEvent, /vai|largaram/i],
+    [{ kind: 'enter_car_select' } as GameEvent, /carro|máquina/i],
+    [{ kind: 'enter_map_select' } as GameEvent, /pista|circuito/i],
+    [{ kind: 'race_over' } as GameEvent, /bandeira|corrida|isso/i],
+  ])('localizes deterministic commentary for %s', (event, expected) => {
+    expect(commentaryFor(event, 0, 'pt-BR')).toMatch(expected);
+  });
+
+  it('uses Portuguese placement and keeps player names in localized commentary', () => {
+    const line = commentaryFor({ kind: 'finish', playerId: 'p1', name: 'Bia', place: 2 }, 0, 'pt-BR');
+    expect(line).toBe('Bia termina em 2º.');
+  });
 });

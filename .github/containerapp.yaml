@@ -56,6 +56,10 @@ properties:
           # from the GAME_PHONE_NUMBER repo variable via envsubst; empty → the lobby shows a placeholder.
           - name: GAME_PHONE_NUMBER
             value: "${GAME_PHONE_NUMBER}"
+          # Locale used when no shared display is connected. The display's picker overrides this for
+          # incoming calls while it is online.
+          - name: DEFAULT_LOCALE
+            value: "${DEFAULT_LOCALE}"
           # Persistent data dir (Azure Files mount) — start.sh symlinks /app/data here.
           - name: DATA_MOUNT
             value: /app/appdata
@@ -78,6 +82,9 @@ properties:
           # from the CR_TTS_VOICE repo variable (falls back to empty if unset).
           - name: CR_TTS_VOICE
             value: "${CR_TTS_VOICE}"
+          # Optional Portuguese-specific ElevenLabs voice. Empty uses Relay's pt-BR default.
+          - name: CR_TTS_VOICE_PT_BR
+            value: "${CR_TTS_VOICE_PT_BR}"
           # Conversational AI host (OpenAI). Rendered from the OPENAI_API_KEY GitHub secret via
           # envsubst — a PLAIN env value (not a Container App secretRef) so the deploy works whether
           # the key is set OR unset: empty → the server disables the AI and falls back to scripted

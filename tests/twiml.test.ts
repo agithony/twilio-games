@@ -14,6 +14,12 @@ describe('twimlGatherRoomCode', () => {
     const xml = twimlGatherRoomCode({ actionUrl: 'https://x.test/join?a=1&b=2' });
     expect(xml).toContain('https://x.test/join?a=1&amp;b=2');
   });
+  it('localizes the legacy room-code prompt', () => {
+    const xml = twimlGatherRoomCode({ actionUrl: 'https://x.test/voice/join', locale: 'pt-BR' });
+    expect(xml).toContain('language="pt-BR"');
+    expect(xml).toContain('Corrida por Voz');
+    expect(xml).toContain('código de quatro números');
+  });
 });
 
 describe('twimlConnectRelay', () => {
@@ -38,6 +44,8 @@ describe('twimlConnectRelay', () => {
   });
   it('sets the required transcription provider', () => {
     expect(xml).toContain('transcriptionProvider="Deepgram"');
+    expect(xml).toContain('transcriptionLanguage="en-US"');
+    expect(xml).toContain('ttsLanguage="en-US"');
   });
   it('omits tts voice attrs when no voice is configured (Relay default)', () => {
     expect(xml).toContain('welcomeGreeting=""');
@@ -72,6 +80,17 @@ describe('twimlConnectRelay', () => {
   });
   it('passes the room code as a Parameter', () => {
     expect(xml).toContain('<Parameter name="roomCode" value="ABCD"');
+    expect(xml).toContain('<Parameter name="commandLocale" value="en-US"');
+  });
+  it('configures Brazilian Portuguese recognition and speech', () => {
+    const x = twimlConnectRelay({
+      wsUrl: 'wss://x.test/voice', sessionEndedUrl: 'https://x.test/e', roomCode: 'ABCD',
+      locale: 'pt-BR', hints: 'esquerda, direita, nitro',
+    });
+    expect(x).toContain('transcriptionLanguage="pt-BR"');
+    expect(x).toContain('ttsLanguage="pt-BR"');
+    expect(x).toContain('<Parameter name="commandLocale" value="pt-BR"');
+    expect(x).toContain('hints="esquerda, direita, nitro"');
   });
   it('escapes XML-special characters in the room code', () => {
     const x = twimlConnectRelay({ wsUrl: 'wss://x.test/voice',

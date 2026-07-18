@@ -210,6 +210,8 @@ jobs:
           export ACR_PASSWORD="${{ steps.acr-creds.outputs.password }}"
           # ElevenLabs voiceId for Conversation Relay talk-back (optional repo var; empty → default voice).
           export CR_TTS_VOICE="${{ vars.CR_TTS_VOICE }}"
+          export CR_TTS_VOICE_PT_BR="${{ vars.CR_TTS_VOICE_PT_BR }}"
+          export DEFAULT_LOCALE="${{ vars.DEFAULT_LOCALE }}"
           # OpenAI model for the conversational AI host (optional repo var; empty → server default).
           export OPENAI_MODEL="${{ vars.OPENAI_MODEL }}"
           # OpenAI key rendered as a PLAIN env value (empty when the secret is unset → AI disabled,
@@ -220,7 +222,7 @@ jobs:
           # One optional non-Twilio Google account that may access activation analytics.
           export ANALYTICS_ALLOWED_EMAIL="${{ vars.ANALYTICS_ALLOWED_EMAIL }}"
           # Restrict substitution to our known vars so no other ${...} in the template is touched.
-          SUBST='${APP_NAME} ${CONTAINER_IMAGE} ${BASE_URL} ${ACR_SERVER} ${ACR_USERNAME} ${ACR_PASSWORD} ${CR_TTS_VOICE} ${OPENAI_MODEL} ${OPENAI_API_KEY} ${GAME_PHONE_NUMBER} ${ANALYTICS_ALLOWED_EMAIL}'
+          SUBST='${APP_NAME} ${CONTAINER_IMAGE} ${BASE_URL} ${ACR_SERVER} ${ACR_USERNAME} ${ACR_PASSWORD} ${CR_TTS_VOICE} ${CR_TTS_VOICE_PT_BR} ${DEFAULT_LOCALE} ${OPENAI_MODEL} ${OPENAI_API_KEY} ${GAME_PHONE_NUMBER} ${ANALYTICS_ALLOWED_EMAIL}'
           envsubst "$SUBST" < .github/containerapp.yaml > /tmp/containerapp.yaml
 
           # Retry an `az containerapp` write on ACA's transient control-plane race

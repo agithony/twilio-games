@@ -93,4 +93,22 @@ describe('voice-lines', () => {
     expect(ordinal(13)).toBe('13th');
     expect(ordinal(21)).toBe('21st');
   });
+
+  it.each([
+    [1, /primeiro lugar.*venceu/i],
+    [2, /segundo lugar/i],
+    [3, /terceiro lugar.*pódio/i],
+    [5, /5º/],
+  ] as const)('localizes Portuguese place %i', (place, expected) => {
+    expect(placeLine(place, 'pt-BR')).toMatch(expected);
+  });
+
+  it('localizes greetings, events, and race-over recaps in Brazilian Portuguese', () => {
+    expect(greetingLine('pt-BR')).toMatch(/voz|voice racer|nome/i);
+    expect(lineForEvent({ kind: 'go' }, 'p1', 0, 'pt-BR')).toBe('Vai!');
+    expect(lineForEvent({ kind: 'lead_change', playerId: 'p1', name: 'Eu' }, 'p1', 0, 'pt-BR'))
+      .toMatch(/liderança|frente|primeiro/i);
+    expect(raceOverLine(2, 'pt-BR')).toMatch(/fim de corrida.*2º.*classificação/i);
+    expect(ordinal(21, 'pt-BR')).toBe('21º');
+  });
 });

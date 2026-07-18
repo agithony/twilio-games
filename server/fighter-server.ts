@@ -5,8 +5,9 @@ import { FighterRoom } from './fighter-room';
 import { FIGHTER_MAPS, FIGHTER_ROSTER } from '../shared/fighter-roster';
 import { parseFighterClientMessage, type FighterServerMessage } from '../shared/fighter-protocol';
 import type { FighterCommand, FighterEvent } from '../shared/fighter-world';
+import { DEFAULT_LOCALE, type SupportedLocale } from '../shared/i18n/locales';
 
-interface Conn { ws: WebSocket; roomCode?: string; playerId?: string; sessionId?: string; display?: boolean; hostAuthorized?: boolean; }
+interface Conn { ws: WebSocket; roomCode?: string; playerId?: string; sessionId?: string; display?: boolean; hostAuthorized?: boolean; locale?: SupportedLocale; }
 interface Session {
   roomCode: string; playerId: string; conn: Conn | null; timer: ReturnType<typeof setTimeout> | null;
   display: boolean; wasHost: boolean;
@@ -38,6 +39,10 @@ export class FighterServer {
     this.wss.handleUpgrade(req, socket, head, ws => this.onConnection(ws));
   }
   get connectionCount(): number { return this.conns.size; }
+  preferredLocale(roomCode?: string, fallback: SupportedLocale = DEFAULT_LOCALE): SupportedLocale {
+    const matching = [...this.conns].filter(conn => (!roomCode || conn.roomCode === roomCode) && conn.locale);
+    return matching.find(conn => conn.display)?.locale ?? matching[0]?.locale ?? fallback;
+  }
   getOrCreateRoom(code: string): FighterRoom { return this.room(canonicalRoomCode(code)); }
   findRoom(code: string): FighterRoom | undefined { return this.rooms.get(canonicalRoomCode(code)); }
   setOnRoomEvents(fn: (code: string, events: FighterEvent[]) => void): void { this.onRoomEvents = fn; }
@@ -74,6 +79,7 @@ export class FighterServer {
     const msg = parseFighterClientMessage(raw);
     if (msg.type === 'error') { this.send(conn, msg); return; }
     if (msg.type === 'join') {
+      if (msg.locale) conn.locale = msg.locale;
       const code = canonicalRoomCode(msg.roomCode);
       if (conn.playerId && conn.roomCode) { this.send(conn, { type: 'joined', playerId: conn.playerId, roomCode: conn.roomCode }); return; }
       if (conn.roomCode && conn.roomCode !== code) this.detachDisplay(conn);
@@ -99,6 +105,7 @@ export class FighterServer {
       return;
     }
     if (msg.type === 'spectate') {
+      if (msg.locale) conn.locale = msg.locale;
       if (conn.playerId) { this.send(conn, { type: 'error', code: 'already_joined', message: 'Leave before spectating.' }); return; }
       const code = canonicalRoomCode(msg.roomCode);
       if (conn.roomCode && conn.roomCode !== code) this.detachDisplay(conn);

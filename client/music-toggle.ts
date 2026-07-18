@@ -3,6 +3,7 @@
  */
 
 import { getMusicManager } from './music-manager';
+import { commonText } from './i18n';
 
 
 const ICON_UNMUTED = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -20,8 +21,8 @@ export function createMusicToggle(): HTMLButtonElement {
   const btn = document.createElement('button');
   btn.id = 'music-toggle';
   btn.className = 'music-toggle';
-  btn.title = 'Toggle music on/off';
-  btn.setAttribute('aria-label', 'Toggle music');
+  btn.title = commonText('music.toggleTitle');
+  btn.setAttribute('aria-label', commonText('music.toggleAria'));
 
   const icon = document.createElement('span');
   icon.className = 'music-toggle-icon';
@@ -35,7 +36,7 @@ export function createMusicToggle(): HTMLButtonElement {
   const updateButton = () => {
     const isMuted = getMusicManager().getIsMuted();
     icon.innerHTML = isMuted ? ICON_MUTED : ICON_UNMUTED;
-    label.textContent = isMuted ? 'Music Off' : 'Music On';
+    label.textContent = isMuted ? commonText('music.off') : commonText('music.on');
     btn.setAttribute('aria-pressed', String(!isMuted));
   };
 

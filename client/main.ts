@@ -19,13 +19,42 @@ import { BOOST_MAX, BOOST_MIN, DEFAULT_ROOM } from '../shared/constants';
 import { getMusicManager } from './music-manager';
 import { injectMusicToggle } from './music-toggle';
 import { getSoundEffectsManager } from './sound-effects';
+import { commonText, locale } from './i18n';
+import { RACER_MESSAGES, type RacerMessageKey } from '../shared/i18n/racer';
+import { createTranslator } from '../shared/i18n/translate';
+import { carName as localizedCarName } from '../shared/i18n/content';
 
+const text = createTranslator(locale, RACER_MESSAGES);
+
+function setText(id: string, key: RacerMessageKey): void {
+  const element = document.getElementById(id);
+  if (element) element.textContent = text(key);
+}
+
+function localizeStaticPage(): void {
+  document.title = text('game.title');
+  document.querySelector('.game-home')?.setAttribute('aria-label', commonText('navigation.homeAria'));
+  const homeLabel = document.querySelector('.game-home > span');
+  if (homeLabel) homeLabel.textContent = commonText('navigation.home');
+  setText('veil-title', 'game.title');
+  setText('hud-title', 'game.title');
+  setText('hint-shout', 'hud.shout');
+  setText('hint-left', 'hud.command.left');
+  setText('hint-right', 'hud.command.right');
+  setText('hint-boost', 'hud.command.boost');
+  setText('hint-brake', 'hud.command.brake');
+  setText('hint-nitro', 'hud.command.nitro');
+  setText('gPowerLabel', 'hud.power.readyInitial');
+  document.getElementById('gBoost')?.setAttribute('title', text('hud.boostBrakeTitle'));
+}
+
+localizeStaticPage();
 // Game WebSocket URL. Production is same-origin; local Vite proxies /game to GAME_SERVER_URL.
 // An explicit ?ws= override still wins for edge setups.
 const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
 const wsOverride = new URLSearchParams(location.search).get('ws');
 const url = wsOverride ?? `${wsProto}://${location.host}/game`;
-const conn = new GameConnection(url);
+const conn = new GameConnection(url, locale);
 const input = new KeyboardAdapter();
 const assets = new AssetLoader();
 const renderer = new Renderer(document.getElementById('app')!, assets);
@@ -45,6 +74,16 @@ const lobbyEl = document.getElementById('lobby')!;
 
 // Inject music toggle button
 injectMusicToggle('music-toggle-container');
+const musicToggle = document.getElementById('music-toggle');
+function localizeMusicToggle(): void {
+  if (!musicToggle) return;
+  musicToggle.title = commonText('music.toggleTitle');
+  musicToggle.setAttribute('aria-label', commonText('music.toggleAria'));
+  const label = musicToggle.querySelector<HTMLElement>('.music-toggle-label');
+  if (label) label.textContent = commonText(musicToggle.getAttribute('aria-pressed') === 'true' ? 'music.on' : 'music.off');
+}
+localizeMusicToggle();
+musicToggle?.addEventListener('click', localizeMusicToggle);
 
 // ── Personal in-race gauge (power charge + boost/brake bar) ──────────────────────────────────────
 // Painted each frame from the LOCAL player's car (hud-state.ts decides show/hide). On a shared
@@ -74,10 +113,10 @@ function paintGauge(snap: import('../shared/types').WorldSnapshot | null): void 
   // count + prompt to say "power"); else empty → go grab an orb.
   const charges = h.charges ?? 0;
   gPowerLabel.textContent = h.powerActive
-    ? 'DASH — SMASH!'
+    ? text('hud.power.active')
     : h.powerReady
-      ? `DASH READY ×${charges} — say “nitro”`
-      : 'grab an orb';
+      ? text('hud.power.ready', { charges })
+      : text('hud.power.empty');
   // Boost bar: fill from center — right/green when boosting, left/red when braking. Normalize the
   // boost modifier against its sim bounds so the bar caps out exactly when the sim does.
   const b = h.boost ?? 0;
@@ -93,10 +132,10 @@ lobbyEl.style.display = 'none';   // legacy overlay retired; the Screens overlay
 const screens = new Screens(document.getElementById('app')!, {
   onAdvance: () => { enableHost(); conn.advance(); },
   onBack: () => conn.back(),
-});
+}, locale);
 
 const roomCode = new URLSearchParams(location.search).get('room') ?? DEFAULT_ROOM;
-const name = new URLSearchParams(location.search).get('name') ?? 'You';
+const name = new URLSearchParams(location.search).get('name') ?? text('player.you');
 const urlMap = new URLSearchParams(location.search).get('map');   // legacy/manual override (?map=)
 const isDisplay = new URLSearchParams(location.search).get('display') === '1';
 // Garage / car viewer: ?garage=1 shows one car at a time (← → to cycle models) at its real
@@ -151,7 +190,7 @@ function pushLine(text: string) {
   while (tickerEl.children.length > 5) tickerEl.lastChild!.remove();
   setTimeout(() => div.remove(), 6000);
 }
-const announcer = new Announcer({ sink: browserSpeechSink(), onLine: pushLine });
+const announcer = new Announcer({ sink: browserSpeechSink(locale), onLine: pushLine, locale });
 // Start muted-safe; unlock audio on the first user gesture (Enter-to-start counts).
 announcer.setMuted(true);
 let hostOn = false;
@@ -253,13 +292,13 @@ conn.onResults((m) => {
   // Render with the cached board if it's for THIS map (so a repeat broadcast doesn't strip it back to
   // the race-only view); otherwise show race-only until the fetch lands the board (one fold-in).
   const cached = lastBoard && lastBoard.map === m.map ? lastBoard : undefined;
-  screens.renderResults(m.results, (i) => assets.carName(i), cached);
+  screens.renderResults(m.results, (i) => localizedCarName(locale, assets.carName(i)), cached);
   const q = m.map ? `?map=${encodeURIComponent(m.map)}&limit=10` : '?limit=10';
   fetch(`/api/leaderboard${q}`)
     .then(r => r.ok ? r.json() : { entries: [] })
     .then((data) => {
       lastBoard = { map: m.map, entries: data.entries ?? [] };
-      if (epoch === flowEpoch) screens.renderResults(m.results, (i) => assets.carName(i), lastBoard);
+      if (epoch === flowEpoch) screens.renderResults(m.results, (i) => localizedCarName(locale, assets.carName(i)), lastBoard);
     })
     .catch(() => { /* keep whatever view is up */ });
 });
@@ -268,15 +307,15 @@ conn.onEvent((e) => {
   const sfx = getSoundEffectsManager();
 
   if (e.kind === 'countdown') {
-    big.textContent = countdownDisplay(e.n);
+    big.textContent = countdownDisplay(e.n, locale);
     // The audio clip says "3, 2, 1, go", so start it on the visible numeric 3 beat,
     // not during the staged "On your mark / Get ready / Get set" lead-in.
-    if (isCountdownSoundCue(e.n) && !countdownSoundPlayed) {
+    if (locale === 'en-US' && isCountdownSoundCue(e.n) && !countdownSoundPlayed) {
       countdownSoundPlayed = true;
       sfx.playCountdown();
     }
   } else if (e.kind === 'go') {
-    big.textContent = 'GO!';
+    big.textContent = text('hud.go');
     setTimeout(() => (big.textContent = ''), 900);
   } else if (e.kind === 'hit') {
     sfx.playCrash();
@@ -291,7 +330,7 @@ conn.onEvent((e) => {
 });
 conn.onError((code, message) => {
   console.error(`Server error [${code}]: ${message}`);
-  big.textContent = message;
+  big.textContent = text(code === 'room_full' ? 'error.roomFull' : 'error.generic');
 });
 
 const GANTRY_FILES = { start: 'racer/track/starting_line.glb', finish: 'racer/track/finish_line.glb' };
@@ -341,7 +380,7 @@ async function applyLevel(mapName: string | null | undefined): Promise<void> {
 async function loadAssetsInBackground(): Promise<void> {
   try { await assets.loadManifest(); } catch { /* primitives — game still runs */ }
   // Friendly names are cheap → publish them now so the car grid has labels right away.
-  try { screens.setCarCatalog(assets.carNames(), []); } catch { /* no manifest */ }
+  try { screens.setCarCatalog(assets.carNames().map(name => localizedCarName(locale, name)), []); } catch { /* no manifest */ }
   // Load a map for the backdrop: an explicit ?map= wins; otherwise grab the first authored map so
   // the attract-mode demo races a real neon track (not the bare generated straight). The race itself
   // re-applies the lobby's chosen map on start (via onItems), so this is just the menu backdrop.
@@ -461,7 +500,7 @@ function boot() {
       renderer.render(snap);
       // Keep the big countdown number visible even though the "Get Ready" overlay is up; clear it
       // once racing starts (GO! is set by the event handler and self-clears).
-      if (snap.phase === 'countdown') big.textContent = countdownDisplay(snap.countdown);
+      if (snap.phase === 'countdown') big.textContent = countdownDisplay(snap.countdown, locale);
 
       // Detect power/nitro activation for SFX — play turbo sound for any car that just activated
       for (const car of snap.cars) {
@@ -477,7 +516,7 @@ function boot() {
       lastPowerActive = nowActive;
     }
     // Before the first server message (and before attract starts), show a branded waiting beat.
-    else if (!started && !screens.isVisible) big.textContent = 'Connecting…';
+    else if (!started && !screens.isVisible) big.textContent = `${commonText('connection.connecting')}…`;
     else if (screens.isVisible) big.textContent = '';
     paintGauge(snap);
   }

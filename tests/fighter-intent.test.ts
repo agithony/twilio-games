@@ -15,4 +15,28 @@ describe('fighter voice intent', () => {
     expect(matchFighterCommands('move forward then block')).toEqual(['forward', 'block']);
     expect(matchFighterCommands('can I punch now')).toEqual([]);
   });
+
+  it.each([
+    ['frente', 'forward'], ['avançar', 'forward'], ['aproximar', 'forward'],
+    ['trás', 'back'], ['recuar', 'back'], ['afastar', 'back'],
+    ['pular', 'jump'], ['saltar', 'jump'], ['soco', 'punch'], ['socar', 'punch'], ['golpear', 'punch'],
+    ['chute', 'kick'], ['chutar', 'kick'], ['bloquear', 'block'], ['defender', 'block'],
+  ] as const)('matches Portuguese %s -> %s', (spoken, command) => {
+    expect(matchFighterCommand(spoken, 'pt-BR')).toBe(command);
+  });
+
+  it.each([
+    ['avance', 'forward'], ['aproxime-se', 'forward'], ['recue', 'back'], ['afaste-se', 'back'],
+    ['pule', 'jump'], ['dê um soco', 'punch'], ['dê um chute', 'kick'], ['defenda-se', 'block'],
+  ] as const)('accepts natural Portuguese imperative %s', (spoken, command) => {
+    expect(matchFighterCommand(spoken, 'pt-BR')).toBe(command);
+  });
+
+  it('normalizes Unicode and parses Portuguese repeats and filler', () => {
+    expect(matchFighterCommand('ＴＲＡ́Ｓ!', 'pt-BR')).toBe('back');
+    expect(matchFighterCommands('soco três vezes', 'pt-BR')).toEqual(['punch', 'punch', 'punch']);
+    expect(matchFighterCommands('chutar duas vezes', 'pt-BR')).toEqual(['kick', 'kick']);
+    expect(matchFighterCommands('ir para frente e depois bloquear', 'pt-BR')).toEqual(['forward', 'block']);
+    expect(matchFighterCommands('posso socar agora', 'pt-BR')).toEqual([]);
+  });
 });

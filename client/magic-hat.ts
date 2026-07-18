@@ -1,3 +1,5 @@
+import { commonText } from './i18n';
+
 const STYLE_ID = 'magic-hat-style';
 
 export function injectMagicHat(): void {
@@ -7,7 +9,7 @@ export function injectMagicHat(): void {
     document.head.appendChild(style);
   }
   const badge = document.createElement('aside');
-  badge.className = 'magic-hat'; badge.tabIndex = 0; badge.setAttribute('aria-label', 'Built by the Twilio Magician');
+  badge.className = 'magic-hat'; badge.tabIndex = 0; badge.setAttribute('aria-label', commonText('attribution.builtBy'));
   badge.innerHTML = `
     <svg class="magic-hat-svg" viewBox="0 0 64 64" fill="none" aria-hidden="true">
       <ellipse cx="32" cy="54" rx="28" ry="5" fill="#0A0A0A"/>
@@ -23,9 +25,9 @@ export function injectMagicHat(): void {
     <span class="magic-hat-sparkle mh2" aria-hidden="true">&#10022;</span>
     <span class="magic-hat-sparkle mh3" aria-hidden="true">&#10023;</span>
     <div class="magic-hat-bubble">
-      <strong>Built by the Twilio Magician</strong>
-      <a href="https://twil.io/magic" target="_blank" rel="noopener noreferrer">Visit twil.io/magic</a>
-      <div class="magic-hat-slack">Slack: Anthony Dellavecchia</div>
+      <strong>${commonText('attribution.builtBy')}</strong>
+      <a href="https://twil.io/magic" target="_blank" rel="noopener noreferrer">${commonText('attribution.visit')}</a>
+      <div class="magic-hat-slack">${commonText('attribution.slack')}</div>
     </div>`;
   document.body.appendChild(badge);
 }

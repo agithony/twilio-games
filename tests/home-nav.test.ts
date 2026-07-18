@@ -56,7 +56,7 @@ describe('in-game home navigation', () => {
       expect(html).toContain('class="game-home"');
       expect(html).toContain('href="/"');
       expect(html).toContain('aria-label="Return to Twilio Games home"');
-      expect(html).toContain('<span>Home</span>');
+      expect(html).toMatch(/<span(?:\s+id="[^"]+")?>Home<\/span>/);
     });
   }
 

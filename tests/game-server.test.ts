@@ -252,6 +252,21 @@ describe('HttpServer voice routing seams', () => {
   let LB = '';
   afterEach(async () => { await http?.stop(); if (LB) { try { await unlink(LB); } catch {} } });
 
+  it('does not capture Portuguese advance phrases as a caller name', async () => {
+    http = new HttpServer({ port: 0, publicBaseUrl: 'http://localhost', validateSignatures: false });
+    await http.start();
+    const game = (http as unknown as { game: GameServer }).game;
+    game.setRoomConfigProvider(() => ({ carCount: 1, carNames: ['Roadster'], maps: ['Silver Lake'] }));
+    const room = game.getOrCreateRoom('PTADV');
+    const result = room.addPlayer('Piloto 9999') as { playerId: string };
+
+    const reply = http.directSelectionForTest(room, result.playerId, 'vamos começar', 'pt-BR');
+
+    expect(room.phase).toBe('car_select');
+    expect(room.lobbyPlayers()[0]?.name).toBe('Piloto 9999');
+    expect(reply).toContain('Escolha seu carro');
+  });
+
   it('does not treat internal race-over recap prompts as rematch commands', async () => {
     http = new HttpServer({
       port: 0, publicBaseUrl: 'http://localhost', validateSignatures: false,

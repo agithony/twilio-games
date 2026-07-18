@@ -18,6 +18,10 @@ The current games are:
 
 All three games support a spectator display, phone callers, keyboard testing, music, sound effects, spoken guidance, and reconnectable WebSocket sessions. Voice Racer also includes an SMS concierge for joining and selecting cars or maps.
 
+The home and playable games support US English and Brazilian Portuguese. The language picker updates
+the shared display, deterministic commands, Conversation Relay recognition, and spoken responses.
+See [Localization](docs/localization.md) to add another language.
+
 ## Screenshots
 
 <table>
@@ -184,6 +188,8 @@ The application runs locally without Twilio or OpenAI credentials. Configure the
 | `GAME_PHONE_NUMBER` | Number displayed and QR-encoded on game lobbies | Placeholder when unset |
 | `VOICE_RELAY_TOKEN` | Validates Conversation Relay setup frames | Falls back to `TWILIO_AUTH_TOKEN` |
 | `CR_TTS_VOICE` | ElevenLabs voice ID used by Conversation Relay talk-back | Relay default voice |
+| `CR_TTS_VOICE_PT_BR` | Optional Brazilian Portuguese ElevenLabs voice ID | Relay's `pt-BR` default voice |
+| `DEFAULT_LOCALE` | Call locale when no localized game display is connected | `en-US` |
 | `OPENAI_API_KEY` | Enables conversational hosting for Voice Racer and Voice Monsters | Conversational host disabled when unset; deterministic and scripted flows remain |
 | `OPENAI_MODEL` | OpenAI model used by the optional host | Server default |
 | `EDITOR_TOKEN` | Requires authentication for editor and manifest writes | Writes open when unset |

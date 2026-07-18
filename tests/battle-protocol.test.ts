@@ -9,6 +9,11 @@ describe('parseBattleClientMessage', () => {
       .toEqual({ type: 'spectate', roomCode: '4821' });
   });
 
+  it('preserves a supported display locale', () => {
+    expect(parseBattleClientMessage(JSON.stringify({ type: 'spectate', roomCode: '4821', locale: 'pt-BR' })))
+      .toEqual({ type: 'spectate', roomCode: '4821', locale: 'pt-BR' });
+  });
+
   it('parses and validates the optional reconnect session id', () => {
     expect(parseBattleClientMessage(JSON.stringify({ type: 'join', roomCode: '4821', name: 'Ada', sessionId: 'session-1' })))
       .toEqual({ type: 'join', roomCode: '4821', name: 'Ada', sessionId: 'session-1' });

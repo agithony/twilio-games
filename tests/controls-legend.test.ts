@@ -43,4 +43,15 @@ describe('controlsLegendHtml', () => {
   it('frames it as talking, not typing', () => {
     expect(controlsLegendHtml().toLowerCase()).toMatch(/talk|shout|say/);
   });
+
+  it.each(['Esquerda', 'Direita', 'Acelerar', 'Frear', 'Nitro'])('shows Portuguese command %s', (command) => {
+    expect(controlsLegendHtml('', 'pt-BR')).toContain(command);
+  });
+
+  it('localizes Portuguese instructions and orb accessibility text', () => {
+    const html = controlsLegendHtml('orb.png', 'pt-BR');
+    expect(html).toContain('Como jogar');
+    expect(html).toContain('grite seus comandos');
+    expect(html).toContain('alt="esfera de nitro"');
+  });
 });

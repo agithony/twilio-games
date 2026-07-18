@@ -6,6 +6,10 @@
 // host keys. See [[lobby-character-select-vision]].
 import type { LobbyPlayer, RaceResult } from '../shared/types';
 import { controlsLegendHtml } from './controls-legend';
+import { DEFAULT_LOCALE, type SupportedLocale } from '../shared/i18n/locales';
+import { RACER_MESSAGES, type RacerMessageKey } from '../shared/i18n/racer';
+import { createTranslator } from '../shared/i18n/translate';
+import { trackName as localizedTrackName, playerName as localizedPlayerName } from '../shared/i18n/content';
 
 /** One row of the persistent global leaderboard (best all-time times). */
 export interface GlobalEntry { name: string; map: string; carIndex: number; finishT: number; at: number }
@@ -20,7 +24,6 @@ export interface ScreensCallbacks {
 }
 
 const BUG = '/brand/Twilio_Logo_Bug_White.svg';
-const PLACE_LABEL = (p: number) => p === 1 ? '1st' : p === 2 ? '2nd' : p === 3 ? '3rd' : `${p}th`;
 const PLACE_COLOR = ['var(--gold)', 'var(--silver)', 'var(--bronze)'];
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
 /** Defense-in-depth: only let an obvious CSS color literal into a style attribute (server also
@@ -30,6 +33,7 @@ const cssColor = (c: string, fallback = '#888') =>
 
 export class Screens {
   private root: HTMLElement;
+  private text: ReturnType<typeof createTranslator<RacerMessageKey>>;
   private carNames: string[] = [];
   private carThumbs: string[] = [];
   private mapPreviews: Record<string, string> = {};
@@ -49,7 +53,9 @@ export class Screens {
    *  in the lobby footer so the screen's state ("spectating" vs "you're racing") is never ambiguous. */
   private selfPlaying = false;
 
-  constructor(host: HTMLElement, private cb: ScreensCallbacks) {
+  constructor(host: HTMLElement, private cb: ScreensCallbacks,
+              private locale: SupportedLocale = DEFAULT_LOCALE) {
+    this.text = createTranslator(locale, RACER_MESSAGES);
     this.root = document.createElement('div');
     this.root.id = 'screens';
     host.appendChild(this.root);
@@ -143,34 +149,35 @@ export class Screens {
     void roomCode;   // no longer shown — calls bind straight to the single game (instant join)
     if (this.unchanged(`lobby:${this.selfPlaying ? 'P' : 'p'}:${this.phoneNumber}:${this.boostThumb ? 'orb' : 'noorb'}:${this.rosterKey(players)}`)) return;
     const n = players.length;
-    const sub = n === 0 ? 'Scan, call in, and race' : `${n} ${n === 1 ? 'racer' : 'racers'} in the room`;
+    const sub = n === 0 ? this.text('screen.lobby.emptySubtitle')
+      : this.text(n === 1 ? 'screen.lobby.oneRacer' : 'screen.lobby.manyRacers', { count: n });
     // JOIN FLOW: scan the QR → it dials the number → you're IN the race (no room code to type — the
     // call binds straight to this game). The number comes from /api/config (placeholder if unset).
     const num = this.phoneNumber
       ? `<a class="num" href="tel:${esc(this.phoneNumber)}">${esc(this.phoneNumber)}</a>`
-      : `<span class="num num-unset">set GAME_PHONE_NUMBER</span>`;
+      : `<span class="num num-unset">${this.text('screen.lobby.phoneUnset')}</span>`;
     const foot = n === 0
-      ? `<span>Everyone can join</span>`
-      : `<span>Say <span class="say">“start”</span> when everyone's in</span>`;
+      ? `<span>${this.text('screen.lobby.everyoneCanJoin')}</span>`
+      : `<span>${this.text('screen.lobby.sayStart')}</span>`;
     this.root.innerHTML = `
-      ${this.head('Lobby', sub)}
+      ${this.head(this.text('screen.lobby.title'), sub)}
       <div class="scr-center lobby-grid">
         <div class="lobby-main">
           <div class="join-flow">
             <div class="join-qr">
-              <img src="/brand/join-qr.png?v=2" alt="Scan to call and join" onerror="this.style.display='none'">
-              <div class="join-qr-cap">Scan to join</div>
+              <img src="/brand/join-qr.png?v=2" alt="${this.text('screen.lobby.qrAlt')}" onerror="this.style.display='none'">
+              <div class="join-qr-cap">${this.text('screen.lobby.qrCaption')}</div>
             </div>
             <ol class="join-steps">
-              <li><span class="step-n">1</span> <span class="step-t">Scan the QR code with your phone</span></li>
-              <li><span class="step-n">2</span> <span class="step-t">Call ${num}</span></li>
-              <li><span class="step-n">3</span> <span class="step-t">You're in, talk to the AI!</span></li>
+              <li><span class="step-n">1</span> <span class="step-t">${this.text('screen.lobby.scanStep')}</span></li>
+              <li><span class="step-n">2</span> <span class="step-t">${this.text('screen.lobby.callStep')} ${num}</span></li>
+              <li><span class="step-n">3</span> <span class="step-t">${this.text('screen.lobby.joinStep')}</span></li>
             </ol>
           </div>
           ${this.chips(players)}
           <div class="scr-foot">${foot}</div>
         </div>
-        ${controlsLegendHtml(this.boostThumb)}
+        ${controlsLegendHtml(this.boostThumb, this.locale)}
       </div>`;
   }
 
@@ -197,11 +204,12 @@ export class Screens {
     const n = this.carNames.length;
     const cols = Math.max(4, Math.min(8, Math.ceil(Math.sqrt(n * 1.9))));
     this.root.innerHTML = `
-      ${this.head('Choose Your Ride', allReady ? 'All locked in — ready to roll' : 'Text a car number to lock in')}
+      ${this.head(this.text('screen.car.title'), allReady
+        ? this.text('screen.car.readySubtitle') : this.text('screen.car.pickSubtitle'))}
       ${this.chips(players)}
       <div class="scr-body"><div class="grid" style="--cols:${cols}">${tiles}</div></div>
       <div class="scr-foot">
-        <span>${allReady ? 'All locked in — say <span class="say">“next”</span> to pick the track' : 'Say a car name or number to lock in'}</span></div>`;
+        <span>${this.text(allReady ? 'screen.car.readyFooter' : 'screen.car.pickFooter')}</span></div>`;
   }
 
   private carTile(i: number, name: string, claimedBy: LobbyPlayer[]): string {
@@ -210,7 +218,7 @@ export class Screens {
     const url = this.carThumbs[i];
     const portrait = url
       ? `<div class="portrait"><img data-car-thumb="${i}" src="${url}" alt="" style="opacity:1"></div>`
-      : `<div class="portrait"><img data-car-thumb="${i}" alt="" style="opacity:0"><span class="ph" data-ph="${i}">CAR ${i + 1}</span></div>`;
+      : `<div class="portrait"><img data-car-thumb="${i}" alt="" style="opacity:0"><span class="ph" data-ph="${i}">${this.text('screen.car.placeholder', { number: i + 1 })}</span></div>`;
     const badges = claimedBy.map(p =>
       `<span class="badge" style="background:${cssColor(p.color)}">${esc(p.name)}</span>`).join('');
     return `
@@ -238,25 +246,28 @@ export class Screens {
       const prev = this.mapPreviews[m];
       const thumb = prev
         ? `<img src="${esc(prev)}" alt="">`
-        : `<span class="ph">TRACK ${i + 1}</span>`;
+        : `<span class="ph">${this.text('screen.map.placeholder', { number: i + 1 })}</span>`;
       // A vote badge (count + label) so it's clear this is a vote, and which track is winning.
-      const voteBadge = `<div class="votes${n > 0 ? ' has' : ''}">${n} ${n === 1 ? 'vote' : 'votes'}</div>`;
+      const voteBadge = `<div class="votes${n > 0 ? ' has' : ''}">${this.text(n === 1 ? 'screen.map.oneVote' : 'screen.map.manyVotes', { count: n })}</div>`;
       return `
         <div class="map${leading ? ' sel' : ''}">
           <div class="thumb">${thumb}<div class="num">${i + 1}</div>${voteBadge}</div>
-          <div class="mname">${esc(m)}${leading ? ' <span class="check">▶ leading</span>' : ''}</div>
+          <div class="mname">${esc(localizedTrackName(this.locale, m))}${leading ? ` <span class="check">▶ ${this.text('screen.map.leading')}</span>` : ''}</div>
         </div>`;
     }).join('');
     // Headline messaging that makes the vote (and tie-break) explicit.
-    const sub = totalVotes === 0 ? 'Say your track to vote — most votes wins!'
-      : votes.tie ? `It's a TIE — a random track will be picked!`
-      : `${totalVotes} vote${totalVotes === 1 ? '' : 's'} in · leading: ${selectedMap ?? '—'}`;
+    const sub = totalVotes === 0 ? this.text('screen.map.noVotesSubtitle')
+      : votes.tie ? this.text('screen.map.tieSubtitle')
+      : this.text('screen.map.leadingSubtitle', {
+          count: totalVotes, plural: totalVotes === 1 ? '' : 's', map: esc(selectedMap ? localizedTrackName(this.locale, selectedMap) : '—'),
+        });
     this.root.innerHTML = `
-      ${this.head('Vote Your Track', sub)}
+      ${this.head(this.text('screen.map.title'), sub)}
       ${this.chips(players)}
       <div class="scr-center"><div class="maps">${tiles}</div></div>
       <div class="scr-foot">
-        <span>${selectedMap ? `Say <span class="say">“start”</span> to race ${votes.tie ? '(random from the tie)' : 'the winner'}` : 'Say a track name or number to vote'}</span></div>`;
+        <span>${selectedMap ? this.text(votes.tie ? 'screen.map.startTieFooter' : 'screen.map.startWinnerFooter')
+          : this.text('screen.map.pickFooter')}</span></div>`;
   }
 
   // ── Results — this race + all-time board ─────────────────────────────────────────────────────
@@ -272,10 +283,10 @@ export class Screens {
     const rows = results.map((r) => {
       const win = r.place === 1;
       const accent = PLACE_COLOR[r.place - 1] ?? 'var(--cyan)';
-      const time = r.finished ? `${r.finishT.toFixed(2)}s` : 'DNF';
+      const time = r.finished ? this.formatSeconds(r.finishT) : this.text('screen.results.dnf');
       return `
         <div class="res-row${win ? ' win' : ''}">
-          <div class="place" style="color:${accent};font-size:${win ? '30px' : '22px'}">${PLACE_LABEL(r.place)}</div>
+          <div class="place" style="color:${accent};font-size:${win ? '30px' : '22px'}">${this.placeLabel(r.place)}</div>
           <div class="rname" style="font-size:${win ? '26px' : '19px'}">${esc(r.name)}</div>
           <div class="rcar">${esc(carNameFor(r.carIndex))}</div>
           <div class="rtime" style="font-size:${win ? '24px' : '19px'}">${time}</div>
@@ -283,24 +294,24 @@ export class Screens {
     }).join('');
     const board = global ? this.boardHtml(global.map, global.entries, carNameFor) : '';
     this.root.innerHTML = `
-      ${this.head('Results', '')}
+      ${this.head(this.text('screen.results.title'), '')}
       <div class="results-wrap">
-        <div class="res-list"><div class="col-label">This race</div>${rows}</div>
+        <div class="res-list"><div class="col-label">${this.text('screen.results.thisRace')}</div>${rows}</div>
         ${board}
       </div>
-      <div class="scr-foot">Say <span class="say">“race again”</span> to run it back</div>`;
+      <div class="scr-foot">${this.text('screen.results.againFooter')}</div>`;
   }
 
   private boardHtml(map: string | null, entries: GlobalEntry[], carNameFor: (i: number) => string): string {
     const rows = entries.length ? entries.map((e, i) => `
       <div class="board-row">
         <div class="bn">${i + 1}</div>
-        <div class="rname">${esc(e.name)}</div>
+        <div class="rname">${esc(localizedPlayerName(this.locale, e.name))}</div>
         <div class="rcar">${esc(carNameFor(e.carIndex))}</div>
-        <div class="rtime">${e.finishT.toFixed(2)}s</div>
+        <div class="rtime">${this.formatSeconds(e.finishT)}</div>
       </div>`).join('')
-      : `<div class="board-empty">No records yet — set the first time!</div>`;
-    return `<div class="board"><div class="col-label">All-time best${map ? ' · ' + esc(map) : ''}</div>${rows}</div>`;
+      : `<div class="board-empty">${this.text('screen.results.noRecords')}</div>`;
+    return `<div class="board"><div class="col-label">${this.text('screen.results.allTime')}${map ? ' · ' + esc(localizedTrackName(this.locale, map)) : ''}</div>${rows}</div>`;
   }
 
   // ── shared bits ──────────────────────────────────────────────────────────────────────────────
@@ -311,7 +322,7 @@ export class Screens {
     return `
       <div class="scr-head">
         <div class="scr-eyebrow"><img src="${BUG}" alt="">Twilio</div>
-        <div class="scr-title">Voice Racer</div>
+        <div class="scr-title">${this.text('game.title')}</div>
         <div class="scr-state">${esc(state)}</div>
         ${sub ? `<div class="scr-sub">${sub}</div>` : ''}
       </div>`;
@@ -319,25 +330,35 @@ export class Screens {
 
   private chips(players: LobbyPlayer[]): string {
     if (players.length === 0)
-      return `<div class="chips"><div class="chip-empty">Waiting for players…</div></div>`;
+      return `<div class="chips"><div class="chip-empty">${this.text('screen.waitingPlayers')}</div></div>`;
     const chips = players.map((p, i) => {
       const col = cssColor(p.color);
       // Only show a car label once the player has actually picked one. In the lobby nobody has
       // chosen yet, so showing a placeholder "…" on every pill looked broken.
       const carLabel = p.carIndex !== null
-        ? `<span class="car">${esc(this.carNames[p.carIndex] ?? `Car ${p.carIndex + 1}`)}</span>` : '';
+        ? `<span class="car">${esc(this.carNames[p.carIndex]
+            ?? this.text('screen.carFallback', { number: p.carIndex + 1 }))}</span>` : '';
       // Two-line identity stack: a small "Player N" eyebrow over the player's NAME (the main text).
       return `
         <div class="chip${p.ready ? ' ready' : ''}"${p.ready ? ` style="border-color:${col}"` : ''}>
           <span class="dot" style="background:${col};color:${col}"></span>
           <span class="who">
-            <span class="plabel">Player ${i + 1}</span>
+            <span class="plabel">${this.text('screen.playerLabel', { number: i + 1 })}</span>
             <span class="nm">${esc(p.name)}</span>
           </span>
           ${carLabel}
         </div>`;
     }).join('');
     return `<div class="chips">${chips}</div>`;
+  }
+
+  private placeLabel(place: number): string {
+    if (this.locale === 'pt-BR') return `${place}º`;
+    return place === 1 ? '1st' : place === 2 ? '2nd' : place === 3 ? '3rd' : `${place}th`;
+  }
+
+  private formatSeconds(seconds: number): string {
+    return `${new Intl.NumberFormat(this.locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(seconds)}s`;
   }
 
   /** Wire host keyboard: ← back, → / Enter advance. Returns a disposer. */

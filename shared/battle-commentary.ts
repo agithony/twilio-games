@@ -7,121 +7,99 @@
 // live LLM commentator (battle-host.ts) gets its own richer, context-aware prompt; both read the same
 // events. No I/O here — the caller decides when to speak a returned line.
 import type { BattleEvent, Side } from './battle-world';
+import { DEFAULT_LOCALE, type SupportedLocale } from './i18n/locales';
+import { MONSTERS_MESSAGES, type MonstersMessageKey } from './i18n/monsters';
+import { createTranslator, type MessageValues } from './i18n/translate';
+import { monsterName, moveName } from './i18n/content';
 
 /** What the commentator knows about the two fighters (for naming sides in a line). */
 export interface CommentaryCtx {
   aName: string;   // side 'a' monster display name
   bName: string;   // side 'b' monster display name
+  locale?: SupportedLocale;
 }
 
 /** A dramatic "it's X versus Y!" scene-setter spoken when a battle kicks off. `mine`/`foe` are the two
  *  monster display names. Varied + hype, one punchy line. */
-export function battleIntro(mine: string, foe: string, seq = 0): string {
-  return pick(INTROS, seq).replace('{me}', mine).replace('{foe}', foe);
+export function battleIntro(mine: string, foe: string, seq = 0, locale: SupportedLocale = DEFAULT_LOCALE): string {
+  return render(INTROS, seq, locale, { me: mine, foe });
 }
 const INTROS = [
-  "It's {me} versus {foe} — the arena is set, let the battle begin!",
-  'Here we go — {me} squares off against {foe}! This is going to be good!',
-  '{me} steps into the arena to face {foe} — may the best monster win!',
-  'The crowd roars as {me} and {foe} face off — battle stations!',
-];
+  'commentary.intro0', 'commentary.intro1', 'commentary.intro2', 'commentary.intro3',
+] as const satisfies readonly MonstersMessageKey[];
 
 /** A spoken/shown line for a battle event (or null when this event shouldn't be narrated). `seq` picks
  *  a phrase-bank variant so repeated events don't read identically — pass a per-battle counter. */
-export function commentaryForBattleEvent(ev: BattleEvent, ctx: CommentaryCtx, seq = 0): string | null {
+export function commentaryForBattleEvent(
+  ev: BattleEvent,
+  ctx: CommentaryCtx,
+  seq = 0,
+  locale: SupportedLocale = ctx.locale ?? DEFAULT_LOCALE,
+): string | null {
   const name = (s: Side) => (s === 'a' ? ctx.aName : ctx.bName);
+  const line = (keys: readonly MonstersMessageKey[], values: MessageValues) => render(keys, seq, locale, values);
   switch (ev.kind) {
     case 'turn_start':
       return null;   // the on-screen banner shows "Turn N"; no need to speak every turn
 
     case 'move_used':
-      return pick(MOVE_USED, seq).replace('{who}', name(ev.by)).replace('{move}', ev.moveName);
+      return line(MOVE_USED, { who: name(ev.by), move: localizedMove(locale, ev.moveId, ev.moveName) });
 
     case 'miss':
-      return pick(MISS, seq).replace('{who}', name(ev.by)).replace('{move}', ev.moveName);
+      return line(MISS, { who: name(ev.by), move: moveName(locale, ev.moveName) });
 
     case 'damage':
       // Only the DRAMATIC hits get a line — a crit. Ordinary chip damage stays quiet (the HP bar +
       // the move callout already told the story) so we don't narrate every single swing.
-      return ev.crit ? pick(CRIT, seq).replace('{who}', name(ev.on)) : null;
+      return ev.crit ? line(CRIT, { who: name(ev.on) }) : null;
 
     case 'effectiveness':
-      if (ev.multiplier >= 2) return pick(SUPER, seq).replace('{who}', name(ev.on));
-      if (ev.multiplier <= 0.5) return pick(RESIST, seq).replace('{who}', name(ev.on));
+      if (ev.multiplier >= 2) return line(SUPER, { who: name(ev.on) });
+      if (ev.multiplier <= 0.5) return line(RESIST, { who: name(ev.on) });
       return null;
 
     case 'guard':
-      return pick(GUARD, seq).replace('{who}', ev.monsterName);
+      return line(GUARD, { who: monsterName(locale, ev.monsterName) });
 
     case 'item':
-      return pick(ITEM, seq).replace('{who}', name(ev.by)).replace('{item}', ev.itemName);
+      return line(ITEM, {
+        who: name(ev.by),
+        item: ev.item === 'potion' ? createTranslator(locale, MONSTERS_MESSAGES)('content.potion') : ev.itemName,
+      });
 
     case 'taunt':
-      return pick(TAUNT, seq).replace('{who}', ev.monsterName).replace('{foe}', ev.targetName);
+      return line(TAUNT, { who: monsterName(locale, ev.monsterName), foe: monsterName(locale, ev.targetName) });
 
     case 'faint':
-      return pick(FAINT, seq).replace('{who}', ev.monsterName);
+      return line(FAINT, { who: monsterName(locale, ev.monsterName) });
 
     case 'battle_over':
-      return pick(WIN, seq).replace('{who}', ev.winnerName);
+      return line(WIN, { who: ev.winnerName });
 
     default:
       return null;
   }
 }
 
+function localizedMove(locale: SupportedLocale, id: string, fallback: string): string {
+  const localized = moveName(locale, id);
+  return localized === id ? moveName(locale, fallback) : localized;
+}
+
 // ── phrase banks (each line uses {who}/{move}/{item}/{foe} placeholders) ──────────────────────────
-const MOVE_USED = [
-  '{who} lets loose {move}!',
-  "{who} goes for {move}!",
-  '{who} unleashes {move}!',
-  'Here comes {move} from {who}!',
-];
-const MISS = [
-  'But {move} whiffs — {who} missed!',
-  '{who} swung big and MISSED!',
-  'Dodged it! {move} sails wide.',
-];
-const CRIT = [
-  'A critical hit! {who} takes a monster of a blow.',
-  'A critical hit — that one really stung {who}.',
-  "Critical! {who} reels from the impact.",
-];
-const SUPER = [
-  "It's super effective! {who}'s type is weak to that!",
-  'Super effective — {who} is taking heavy damage from that matchup!',
-  "Ouch — that's a type it's weak against, huge hit on {who}!",
-];
-const RESIST = [
-  "Barely a scratch — {who} resists that type.",
-  '{who} shrugs most of it off — not very effective.',
-  'Not much there — {who}\'s type resists it.',
-];
-const GUARD = [
-  '{who} braces — the next hit will land soft.',
-  '{who} throws up a guard and steadies itself.',
-  '{who} defends, halving the incoming blow.',
-];
-const ITEM = [
-  '{who} downs a {item} and patches up!',
-  '{who} uses a {item} — health restored!',
-  'A {item} for {who} — back in the fight!',
-];
-const TAUNT = [
-  '{who} taunts {foe} — rattled, its aim will slip!',
-  '{who} gets in {foe}\'s head — {foe} is shaken!',
-  '{who} jeers at {foe}, throwing off its next move!',
-];
-const FAINT = [
-  '{who} is down! It can\'t battle on!',
-  'And {who} faints — out of the fight!',
-  '{who} hits the dirt — that\'s all for it!',
-];
-const WIN = [
-  '{who} takes the win — what a battle!',
-  'Victory for {who}! What a finish.',
-  '{who} stands tall — {who} wins it!',
-];
+const MOVE_USED = ['commentary.move0', 'commentary.move1', 'commentary.move2', 'commentary.move3'] as const;
+const MISS = ['commentary.miss0', 'commentary.miss1', 'commentary.miss2'] as const;
+const CRIT = ['commentary.crit0', 'commentary.crit1', 'commentary.crit2'] as const;
+const SUPER = ['commentary.super0', 'commentary.super1', 'commentary.super2'] as const;
+const RESIST = ['commentary.resist0', 'commentary.resist1', 'commentary.resist2'] as const;
+const GUARD = ['commentary.guard0', 'commentary.guard1', 'commentary.guard2'] as const;
+const ITEM = ['commentary.item0', 'commentary.item1', 'commentary.item2'] as const;
+const TAUNT = ['commentary.taunt0', 'commentary.taunt1', 'commentary.taunt2'] as const;
+const FAINT = ['commentary.faint0', 'commentary.faint1', 'commentary.faint2'] as const;
+const WIN = ['commentary.win0', 'commentary.win1', 'commentary.win2'] as const;
 
 /** Deterministic phrase-bank pick by seq (mirrors voice-lines' pick). */
-function pick(arr: string[], seq: number): string { return arr[Math.abs(seq) % arr.length]!; }
+function render(keys: readonly MonstersMessageKey[], seq: number, locale: SupportedLocale, values: MessageValues): string {
+  const key = keys[Math.abs(seq) % keys.length]!;
+  return createTranslator(locale, MONSTERS_MESSAGES)(key, values);
+}

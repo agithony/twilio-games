@@ -1,6 +1,7 @@
 import type { GameEvent } from '../shared/types';
 import { speechSafeText } from '../shared/speech-text';
 import { commentaryFor } from './commentary';
+import { DEFAULT_LOCALE, type SupportedLocale } from '../shared/i18n/locales';
 
 export interface SpeechSink { speak(text: string, opts: { priority: boolean }): void; }
 
@@ -11,16 +12,18 @@ export class Announcer {
   private muted = false;
   private sink: SpeechSink | null;
   private onLine?: (text: string) => void;
+  private locale: SupportedLocale;
 
-  constructor(deps: { sink?: SpeechSink | null; onLine?: (text: string) => void }) {
+  constructor(deps: { sink?: SpeechSink | null; onLine?: (text: string) => void; locale?: SupportedLocale }) {
     this.sink = deps.sink ?? null;
     this.onLine = deps.onLine;
+    this.locale = deps.locale ?? DEFAULT_LOCALE;
   }
 
   setMuted(m: boolean): void { this.muted = m; }
 
   handle(event: GameEvent): void {
-    const line = commentaryFor(event, this.seq);
+    const line = commentaryFor(event, this.seq, this.locale);
     if (line === null) return;
     this.seq++;
     this.onLine?.(line);
@@ -31,14 +34,14 @@ export class Announcer {
 }
 
 /** Build a SpeechSink over the browser speechSynthesis, or null if unavailable. */
-export function browserSpeechSink(): SpeechSink | null {
+export function browserSpeechSink(locale: SupportedLocale = DEFAULT_LOCALE): SpeechSink | null {
   const synth = typeof window !== 'undefined' ? window.speechSynthesis : undefined;
   if (!synth) return null;
   let lastAt = 0;
   return {
     speak(text, opts) {
       try {
-        const spoken = speechSafeText(text);
+        const spoken = speechSafeText(text, 500, locale);
         if (!spoken) return;
         const now = performance.now();
         // priority lines cancel the queue; normal lines respect a small min-gap
@@ -46,6 +49,7 @@ export function browserSpeechSink(): SpeechSink | null {
         else if (now - lastAt < 700) return;
         lastAt = now;
         const u = new SpeechSynthesisUtterance(spoken);
+        u.lang = locale;
         u.rate = 1.05; u.pitch = 1.0;
         synth.speak(u);
       } catch { /* ignore */ }

@@ -36,14 +36,14 @@
     <!-- The Game Boy battle canvas lives here (BattleRenderer appends its <canvas>). -->
     <div id="stage"></div>
     <!-- Lobby / monster-select / results overlay (hidden during a live battle). -->
-    <div id="overlay"></div>
+    <div id="overlay" role="region"></div>
   </div>
 
-  <a class="game-home" href="/" aria-label="Return to Twilio Games home">
+  <a id="game-home" class="game-home" href="/" aria-label="Return to Twilio Games home">
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <path d="M3 11.5 12 4l9 7.5M5.5 10v10h13V10M9.5 20v-6h5v6" />
     </svg>
-    <span>Home</span>
+    <span id="game-home-label">Home</span>
   </a>
 
   <div id="vm-hud">

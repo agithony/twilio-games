@@ -1,8 +1,11 @@
 import { parseCrMessage } from './conversation-relay';
-import { parseSpokenName, isAdvanceWord } from './battle-voice';
+import { parseSpokenName as parseEnglishSpokenName, isAdvanceWord as isEnglishAdvanceWord } from './battle-voice';
 import { matchFighterCommand, matchFighterCommands } from '../shared/fighter-intent';
 import type { FighterCommand, FighterEvent } from '../shared/fighter-world';
 import { FIGHTER_INTRO_SECONDS, fighterIntroStage, type FighterIntroStage, type FighterPhase } from '../shared/fighter-protocol';
+import { DEFAULT_LOCALE, resolveLocale, type SupportedLocale } from '../shared/i18n/locales';
+import { FIGHTER_MESSAGES, type FighterMessageKey } from '../shared/i18n/fighter';
+import { createTranslator, formatNumber, normalizeForMatching } from '../shared/i18n/translate';
 
 export interface FighterVoiceSnapshot {
   phase: FighterPhase;
@@ -38,7 +41,7 @@ export interface FighterVoiceDeps {
   selectMap(code: string, id: string, mapId: string): boolean;
   advance(code: string, id: string): boolean;
   command(code: string, id: string, command: FighterCommand): boolean;
-  snapshot(code: string, id: string): FighterVoiceSnapshot | null;
+  snapshot(code: string, id: string, locale?: SupportedLocale): FighterVoiceSnapshot | null;
   say(text: string): void;
 }
 
@@ -56,38 +59,44 @@ export class FighterVoiceSession {
   private interimCount = 0;
   private interimFiredCommand: FighterCommand | null = null;
   private interimSelectionId: string | null = null;
+  private commandLocale: SupportedLocale = DEFAULT_LOCALE;
+  private t = createTranslator(this.commandLocale, FIGHTER_MESSAGES);
   constructor(private deps: FighterVoiceDeps) {}
+  get locale(): SupportedLocale { return this.commandLocale; }
 
   handleMessage(raw: string): void {
     const message = parseCrMessage(raw);
     if (message.type === 'setup') {
       const code = message.customParameters['roomCode']?.trim().toUpperCase(); if (!code || this.playerId) return;
-      const joined = this.deps.join(code, 'Caller', message.callSid);
-      if (!joined) { this.deps.say('This Voice Fighter arena is full. Please wait for the next match.'); return; }
+      this.commandLocale = resolveLocale(message.customParameters['commandLocale'] ?? message.customParameters['locale']);
+      this.t = createTranslator(this.commandLocale, FIGHTER_MESSAGES);
+      const joined = this.deps.join(code, this.t('voice.callerPlaceholder'), message.callSid);
+      if (!joined) { this.deps.say(this.t('voice.arenaFull')); return; }
       this.code = code; this.playerId = joined.playerId; this.callSid = message.callSid;
-      const snapshot = this.deps.snapshot(code, joined.playerId); this.lastPhase = snapshot?.phase ?? null;
+      const snapshot = this.deps.snapshot(code, joined.playerId, this.commandLocale); this.lastPhase = snapshot?.phase ?? null;
       this.lastFoeFighterId = snapshot?.foeFighterId ?? null;
       this.lastFoeName = snapshot?.foeName ?? null;
       if (joined.resumed && snapshot) {
-        this.deps.say(`You're back${snapshot.myName && snapshot.myName !== 'Caller' ? `, ${snapshot.myName}` : ''}.`);
+        this.deps.say(!this.isPlaceholderName(snapshot.myName)
+          ? this.t('voice.returnedName', { name: snapshot.myName ?? '' }) : this.t('voice.returned'));
         this.speakContext(snapshot);
       } else {
-        this.deps.say('Welcome to Voice Fighter, powered by Twilio Conversation Relay. Reduce your rival to zero health. During the fight, say forward, back, jump, punch, kick, or block. First, what is your name?');
+        this.deps.say(this.t('voice.welcome'));
       }
       return;
     }
     if (message.type === 'interrupt') { this.resetInterim(); return; }
     if (message.type === 'prompt' && this.code && this.playerId) {
-      const snapshot = this.deps.snapshot(this.code, this.playerId);
+      const snapshot = this.deps.snapshot(this.code, this.playerId, this.commandLocale);
       if (!message.last) {
         if (snapshot?.phase === 'fighter_select' || snapshot?.phase === 'map_select') {
           const choices = snapshot.phase === 'fighter_select' ? snapshot.fighters : snapshot.maps;
-          const choice = matchChoice(message.voicePrompt, choices);
+          const choice = matchChoice(message.voicePrompt, choices, this.commandLocale);
           if (choice && choice.id !== this.interimSelectionId) { this.interimSelectionId = choice.id; this.handleUtterance(message.voicePrompt); }
           return;
         }
         if (snapshot?.phase !== 'fight') return;
-        const command = matchFighterCommand(message.voicePrompt);
+        const command = matchFighterCommand(message.voicePrompt, this.commandLocale);
         if (!command) { this.interimCandidate = null; this.interimCount = 0; return; }
         if (command === this.interimCandidate) this.interimCount += 1;
         else { this.interimCandidate = command; this.interimCount = 1; }
@@ -97,11 +106,11 @@ export class FighterVoiceSession {
       }
       if (this.interimSelectionId) {
         const choices = snapshot?.phase === 'fighter_select' ? snapshot.fighters : snapshot?.phase === 'map_select' ? snapshot.maps : [];
-        const finalChoice = matchChoice(message.voicePrompt, choices);
+        const finalChoice = matchChoice(message.voicePrompt, choices, this.commandLocale);
         if (finalChoice?.id === this.interimSelectionId) { this.resetInterim(); return; }
       }
       if (this.interimFiredCommand) {
-        const commands = matchFighterCommands(message.voicePrompt);
+        const commands = matchFighterCommands(message.voicePrompt, this.commandLocale);
         if (commands[0] === this.interimFiredCommand) commands.shift();
         const correctedSingle = commands.length === 1 && commands[0] !== this.interimFiredCommand;
         this.resetInterim();
@@ -113,56 +122,64 @@ export class FighterVoiceSession {
   }
 
   private handleUtterance(spoken: string): void {
-    const snapshot = this.deps.snapshot(this.code!, this.playerId!); if (!snapshot) return;
-    const unnamed = !snapshot.myName || snapshot.myName === 'Caller';
-    if (isHelpRequest(spoken)) { this.speakContext(snapshot); return; }
-    if (unnamed && (snapshot.phase === 'lobby' || isExplicitName(spoken))) {
-      const name = parseSpokenName(spoken);
-      if (name && !isAdvanceWord(spoken)) {
+    const snapshot = this.deps.snapshot(this.code!, this.playerId!, this.commandLocale); if (!snapshot) return;
+    const unnamed = this.isPlaceholderName(snapshot.myName);
+    if (isHelpRequest(spoken, this.commandLocale)) {
+      if (snapshot.phase === 'fight') this.deps.say(this.t('voice.fightHelp'));
+      else this.speakContext(snapshot);
+      return;
+    }
+    const phaseChoices = snapshot.phase === 'fighter_select' ? snapshot.fighters : snapshot.phase === 'map_select' ? snapshot.maps : [];
+    const looksLikeChoice = phaseChoices.length > 0 && !!matchChoice(spoken, phaseChoices, this.commandLocale);
+    if (unnamed && (snapshot.phase === 'lobby' || isExplicitName(spoken, this.commandLocale) || !looksLikeChoice)) {
+      const name = parseFighterSpokenName(spoken, this.commandLocale);
+      if (name && !isFighterAdvanceWord(spoken, this.commandLocale)) {
         this.deps.setName(this.code!, this.playerId!, name);
-        const next = this.deps.snapshot(this.code!, this.playerId!) ?? snapshot;
-        if (next.phase === 'lobby') this.deps.say(`Welcome, ${name}. Say start when you are ready to choose fighters.`);
-        else { this.deps.say(`Welcome, ${name}.`); this.speakContext(next); }
+        const next = this.deps.snapshot(this.code!, this.playerId!, this.commandLocale) ?? snapshot;
+        if (next.phase === 'lobby') this.deps.say(this.t('voice.welcomeStart', { name }));
+        else { this.deps.say(this.t('voice.welcomeName', { name })); this.speakContext(next); }
         return;
       }
     }
     if (snapshot.phase === 'fighter_select') {
-      const fighter = matchChoice(spoken, snapshot.fighters);
+      const fighter = matchChoice(spoken, snapshot.fighters, this.commandLocale);
       if (fighter) {
-        if (!this.deps.selectFighter(this.code!, this.playerId!, fighter.id)) this.deps.say(`${fighter.name} is unavailable. Choose another fighter.`);
+        if (!this.deps.selectFighter(this.code!, this.playerId!, fighter.id)) this.deps.say(this.t('voice.fighterUnavailable', { name: fighter.name }));
         else {
-          const next = this.deps.snapshot(this.code!, this.playerId!) ?? snapshot;
-          const namePrompt = unnamed ? ' Tell me your name by saying, my name is, followed by your name.' : '';
-          if (!next.allFightersSelected) this.deps.say(`${fighter.name} locked in. Waiting for the other player.${namePrompt}`);
-          else if (next.isController) this.deps.say(`${fighter.name} locked in. Say next to choose the arena.${namePrompt}`);
-          else this.deps.say(`${fighter.name} locked in. Player one will choose the arena.${namePrompt}`);
+          const next = this.deps.snapshot(this.code!, this.playerId!, this.commandLocale) ?? snapshot;
+          const namePrompt = unnamed ? this.t('voice.namePromptSuffix') : '';
+          const values = { name: fighter.name, namePrompt };
+          if (!next.allFightersSelected) this.deps.say(this.t('voice.fighterLockedWaiting', values));
+          else if (next.isController) this.deps.say(this.t('voice.fighterLockedNext', values));
+          else this.deps.say(this.t('voice.fighterLockedPlayerOne', values));
         }
         return;
       }
-      if (isAdvanceWord(spoken)) { this.advanceOrExplain(snapshot); return; }
-      this.deps.say(`I didn't recognize that fighter. ${choicePrompt('fighter')}`); return;
+      if (isFighterAdvanceWord(spoken, this.commandLocale)) { this.advanceOrExplain(snapshot); return; }
+      this.deps.say(this.t('voice.fighterUnknown', { prompt: this.t('voice.choiceFighter') })); return;
     }
     if (snapshot.phase === 'map_select') {
-      const map = matchChoice(spoken, snapshot.maps);
+      const map = matchChoice(spoken, snapshot.maps, this.commandLocale);
       if (map) {
-        if (!snapshot.isController) this.deps.say('Player one controls the arena choice. Please wait for the match to start.');
-        else this.deps.say(this.deps.selectMap(this.code!, this.playerId!, map.id) ? `${map.name} selected. Say fight to begin.` : `${map.name} is unavailable.`);
+        if (!snapshot.isController) this.deps.say(this.t('voice.playerOneArenaControl'));
+        else this.deps.say(this.deps.selectMap(this.code!, this.playerId!, map.id)
+          ? this.t('voice.mapSelected', { name: this.localizedMapName(map) }) : this.t('voice.mapUnavailable', { name: this.localizedMapName(map) }));
         return;
       }
-      if (isAdvanceWord(spoken)) { this.advanceOrExplain(snapshot); return; }
-      this.deps.say(`I didn't recognize that arena. ${choicePrompt('arena')}`); return;
+      if (isFighterAdvanceWord(spoken, this.commandLocale)) { this.advanceOrExplain(snapshot); return; }
+      this.deps.say(this.t('voice.arenaUnknown', { prompt: this.t('voice.choiceArena') })); return;
     }
     if (snapshot.phase === 'fight') {
-      for (const command of matchFighterCommands(spoken)) this.deps.command(this.code!, this.playerId!, command);
+      for (const command of matchFighterCommands(spoken, this.commandLocale)) this.deps.command(this.code!, this.playerId!, command);
       return;
     }
-    if (isAdvanceWord(spoken)) { this.advanceOrExplain(snapshot); return; }
+    if (isFighterAdvanceWord(spoken, this.commandLocale)) { this.advanceOrExplain(snapshot); return; }
     this.speakContext(snapshot);
   }
 
   onStateChanged(): void {
     if (!this.code || !this.playerId) return;
-    const snapshot = this.deps.snapshot(this.code, this.playerId); if (!snapshot) return;
+    const snapshot = this.deps.snapshot(this.code, this.playerId, this.commandLocale); if (!snapshot) return;
     if (snapshot.phase === 'countdown') {
       const count = Math.ceil(snapshot.countdown ?? 0);
       if (count > 0 && count <= 3 && count !== this.lastCountdown) { this.lastCountdown = count; this.deps.say(String(count)); }
@@ -172,13 +189,19 @@ export class FighterVoiceSession {
       if (stage !== this.lastIntroStage) { this.lastIntroStage = stage; this.speakIntroCue(snapshot, stage); }
     } else this.lastIntroStage = null;
     if (snapshot.phase !== this.lastPhase) {
-      if (snapshot.phase === 'map_select' && this.lastPhase === 'loading') this.deps.say('The arena failed to load. Choose another map.');
+      if (snapshot.phase === 'map_select' && this.lastPhase === 'loading') this.deps.say(this.t('voice.arenaLoadFailed'));
       else if (snapshot.phase === 'intro') { /* synchronized segment cue emitted above */ }
       else this.speakContext(snapshot);
-    } else if (snapshot.foeName && snapshot.foeName !== 'Caller' && snapshot.foeName !== this.lastFoeName) {
-      this.deps.say(`${snapshot.foeName} joined as your opponent${snapshot.foeFighterName ? ` and locked in ${snapshot.foeFighterName}` : ''}.`);
-    } else if (snapshot.phase === 'fighter_select' && snapshot.foeName !== 'Caller' && snapshot.foeFighterId && snapshot.foeFighterId !== this.lastFoeFighterId) {
-      this.deps.say(`${snapshot.foeName ?? 'Your opponent'} locked in ${snapshot.foeFighterName ?? 'a fighter'}.${snapshot.allFightersSelected && snapshot.isController ? ' Say next to choose the arena.' : ''}`);
+    } else if (snapshot.foeName && !this.isPlaceholderName(snapshot.foeName) && snapshot.foeName !== this.lastFoeName) {
+      this.deps.say(snapshot.foeFighterName
+        ? this.t('voice.opponentJoinedFighter', { name: snapshot.foeName, fighter: snapshot.foeFighterName })
+        : this.t('voice.opponentJoined', { name: snapshot.foeName }));
+    } else if (snapshot.phase === 'fighter_select' && !this.isPlaceholderName(snapshot.foeName) && snapshot.foeFighterId && snapshot.foeFighterId !== this.lastFoeFighterId) {
+      const values = {
+        name: snapshot.foeName ?? this.t('voice.opponentFallback'),
+        fighter: snapshot.foeFighterName ?? this.t('voice.fighterFallback'),
+      };
+      this.deps.say(this.t(snapshot.allFightersSelected && snapshot.isController ? 'voice.opponentLockedNext' : 'voice.opponentLocked', values));
     }
     this.lastFoeFighterId = snapshot.foeFighterId;
     this.lastFoeName = snapshot.foeName;
@@ -187,55 +210,74 @@ export class FighterVoiceSession {
 
   onFighterEvent(event: FighterEvent): void {
     if (!this.code || !this.playerId) return;
-    const snapshot = this.deps.snapshot(this.code, this.playerId); if (!snapshot) return;
+    const snapshot = this.deps.snapshot(this.code, this.playerId, this.commandLocale); if (!snapshot) return;
     if (event.type === 'hit' && Date.now() - this.lastCombatCueAt > 1200) {
       this.lastCombatCueAt = Date.now();
-      if (event.defender === snapshot.mySide) this.deps.say(event.blocked ? 'Blocked.' : `You took ${event.damage}.`);
-      else if (event.attacker === snapshot.mySide) this.deps.say(event.blocked ? 'They blocked.' : `Hit for ${event.damage}.`);
+      const damage = formatNumber(this.commandLocale, event.damage);
+      if (event.defender === snapshot.mySide) this.deps.say(event.blocked ? this.t('voice.selfBlocked') : this.t('voice.tookDamage', { damage }));
+      else if (event.attacker === snapshot.mySide) this.deps.say(event.blocked ? this.t('voice.theyBlocked') : this.t('voice.hitDamage', { damage }));
     } else if (event.type === 'miss' && event.attacker === snapshot.mySide && Date.now() - this.lastCombatCueAt > 1200) {
-      this.lastCombatCueAt = Date.now(); this.deps.say('Missed. Move closer.');
+      this.lastCombatCueAt = Date.now(); this.deps.say(this.t('voice.missed'));
     }
   }
 
   private advanceOrExplain(snapshot: FighterVoiceSnapshot): void {
-    if (!snapshot.isController) { this.deps.say('Player one controls the shared menu. Please wait for the next screen.'); return; }
-    if ((!snapshot.myName || snapshot.myName === 'Caller') && snapshot.phase === 'lobby') { this.deps.say('Tell me your name before we start.'); return; }
+    if (!snapshot.isController) { this.deps.say(this.t('voice.sharedMenuControl')); return; }
+    if (this.isPlaceholderName(snapshot.myName) && snapshot.phase === 'lobby') { this.deps.say(this.t('voice.nameBeforeStart')); return; }
     if (!this.deps.advance(this.code!, this.playerId!)) {
-      this.deps.say(snapshot.phase === 'fighter_select' ? 'Waiting for every player to choose a fighter.'
-        : snapshot.phase === 'map_select' ? 'Choose an arena before starting.'
-          : snapshot.phase === 'victory' ? 'The victory celebration is still playing.' : 'The room is not ready yet.');
+      this.deps.say(this.t(snapshot.phase === 'fighter_select' ? 'voice.waitingFighterChoices'
+        : snapshot.phase === 'map_select' ? 'voice.chooseArenaFirst'
+          : snapshot.phase === 'victory' ? 'voice.victoryPlaying' : 'voice.roomNotReady'));
     }
   }
 
   private speakContext(snapshot: FighterVoiceSnapshot): void {
     if (snapshot.phase === 'lobby') {
-      if (!snapshot.myName || snapshot.myName === 'Caller') this.deps.say('Tell me your name.');
-      else if (snapshot.isController) this.deps.say('Say start to choose fighters.');
-      else this.deps.say('Waiting for player one to start fighter selection.');
+      if (this.isPlaceholderName(snapshot.myName)) this.deps.say(this.t('voice.tellName'));
+      else if (snapshot.isController) this.deps.say(this.t('voice.sayStart'));
+      else this.deps.say(this.t('voice.waitingPlayerOneStart'));
     } else if (snapshot.phase === 'fighter_select') {
-      if (snapshot.myFighterName) this.deps.say(`${snapshot.myFighterName} is your fighter.${snapshot.allFightersSelected && snapshot.isController ? ' Say next to choose the arena.' : ' Waiting for the other player.'}`);
-      else this.deps.say(choicePrompt('fighter'));
+      if (snapshot.myFighterName) this.deps.say(this.t(snapshot.allFightersSelected && snapshot.isController
+        ? 'voice.yourFighterNext' : 'voice.yourFighterWaiting', { name: snapshot.myFighterName }));
+      else this.deps.say(this.t('voice.choiceFighter'));
     } else if (snapshot.phase === 'map_select') {
-      if (!snapshot.isController) this.deps.say('Player one is choosing the arena.');
-      else if (snapshot.selectedMap) this.deps.say(`${choiceName(snapshot.selectedMap, snapshot.maps)} is selected. Say fight to begin.`);
-      else this.deps.say(choicePrompt('arena'));
+      if (!snapshot.isController) this.deps.say(this.t('voice.playerOneChoosingArena'));
+      else if (snapshot.selectedMap) {
+        const choice = snapshot.maps.find(map => map.id === snapshot.selectedMap);
+        this.deps.say(this.t('voice.mapIsSelected', { name: choice ? this.localizedMapName(choice) : snapshot.selectedMap }));
+      }
+      else this.deps.say(this.t('voice.choiceArena'));
     } else if (snapshot.phase === 'loading') return;
     else if (snapshot.phase === 'intro') {
       const stage = fighterIntroStage(snapshot.intro ?? FIGHTER_INTRO_SECONDS); this.lastIntroStage = stage; this.speakIntroCue(snapshot, stage);
     }
-    else if (snapshot.phase === 'countdown') this.deps.say('Get ready. The fight starts after the countdown.');
-    else if (snapshot.phase === 'fight') this.deps.say(this.lastPhase === 'countdown' ? 'Fight!' : `Fight in progress. You have ${snapshot.myHealth ?? 100} health.`);
+    else if (snapshot.phase === 'countdown') this.deps.say(this.t('voice.getReady'));
+    else if (snapshot.phase === 'fight') this.deps.say(this.lastPhase === 'countdown' ? this.t('voice.fight')
+      : this.t('voice.fightProgress', { health: formatNumber(this.commandLocale, snapshot.myHealth ?? 100) }));
     else if (snapshot.phase === 'victory') {
-      const outcome = snapshot.winnerSide === snapshot.mySide ? 'You win!' : `${snapshot.winnerName ?? 'The winner'} wins.`;
-      this.deps.say(`${outcome} Victory!`);
-    } else if (snapshot.phase === 'results') this.deps.say(snapshot.isController ? 'Say rematch to play again.' : 'Player one can start the rematch.');
+      this.deps.say(snapshot.winnerSide === snapshot.mySide ? this.t('voice.youWin')
+        : this.t('voice.winnerWins', { name: snapshot.winnerName ?? this.t('voice.winnerFallback') }));
+    } else if (snapshot.phase === 'results') this.deps.say(this.t(snapshot.isController ? 'voice.controllerRematch' : 'voice.playerOneRematch'));
   }
 
   private speakIntroCue(snapshot: FighterVoiceSnapshot, stage: FighterIntroStage): void {
-    if (stage === 'p1') this.deps.say(`Player one, ${snapshot.playerOneName ?? 'Player one'}, as ${snapshot.playerOneFighterName ?? 'their fighter'}.`);
-    else if (stage === 'versus') this.deps.say('Versus.');
-    else if (stage === 'p2') this.deps.say(`Player two, ${snapshot.playerTwoName ?? 'the rival'}, as ${snapshot.playerTwoFighterName ?? 'their fighter'}.`);
-    else this.deps.say('Fighters ready.');
+    if (stage === 'p1') this.deps.say(this.t('voice.introPlayerOne', {
+      name: snapshot.playerOneName ?? this.t('voice.playerOneFallback'), fighter: snapshot.playerOneFighterName ?? this.t('voice.theirFighter'),
+    }));
+    else if (stage === 'versus') this.deps.say(this.t('voice.versus'));
+    else if (stage === 'p2') this.deps.say(this.t('voice.introPlayerTwo', {
+      name: snapshot.playerTwoName ?? this.t('voice.rivalFallback'), fighter: snapshot.playerTwoFighterName ?? this.t('voice.theirFighter'),
+    }));
+    else this.deps.say(this.t('voice.fightersReady'));
+  }
+
+  private localizedMapName(map: { id: string; name: string }): string {
+    const key = FIGHTER_MAP_NAME_KEYS[map.id];
+    return key ? this.t(key) : map.name;
+  }
+
+  private isPlaceholderName(name: string | null): boolean {
+    return !name || name === 'Caller' || name === 'Jogador';
   }
 
   private resetInterim(): void { this.interimCandidate = null; this.interimCount = 0; this.interimFiredCommand = null; this.interimSelectionId = null; }
@@ -245,20 +287,26 @@ export class FighterVoiceSession {
   private clear(): void { this.code = null; this.playerId = null; this.callSid = null; }
 }
 
-export function matchVoiceChoice(spoken: string, maps: { id: string; name: string }[]): { id: string; name: string } | null {
-  const text = normalize(spoken);
-  const numberWords = ['one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve'];
-  const ordinals = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth', 'eleventh', 'twelfth'];
+export function matchVoiceChoice(spoken: string, maps: { id: string; name: string }[], locale: SupportedLocale = DEFAULT_LOCALE): { id: string; name: string } | null {
+  const text = normalizeForMatching(spoken, locale);
+  const numberWords = locale === 'pt-BR'
+    ? ['(?:um|uma)', '(?:dois|duas)', 'tres', 'quatro', 'cinco', 'seis', 'sete', 'oito', 'nove', 'dez', 'onze', 'doze']
+    : ['one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve'];
+  const ordinals = locale === 'pt-BR'
+    ? ['primeir[oa]', 'segund[oa]', 'terceir[oa]', 'quart[oa]', 'quint[oa]', 'sext[oa]', 'setim[oa]', 'oitav[oa]', 'non[oa]', 'decim[oa]']
+    : ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth', 'eleventh', 'twelfth'];
   const digit = text.match(/\b(1[0-2]|[1-9])\b/);
   const wordIndex = numberWords.findIndex(word => new RegExp(`\\b${word}\\b`).test(text));
-  const ordinalIndex = ordinals.findIndex(word => new RegExp(`\\b${word}\\b`).test(text));
+  const compoundOrdinal = locale === 'pt-BR' ? text.match(/\bdecim[oa] (primeir[oa]|segund[oa])\b/) : null;
+  const ordinalIndex = compoundOrdinal ? (compoundOrdinal[1]!.startsWith('primeir') ? 10 : 11)
+    : ordinals.findIndex(word => new RegExp(`\\b${word}\\b`).test(text));
   const choiceIndex = digit ? Number(digit[1]) - 1 : ordinalIndex >= 0 ? ordinalIndex : wordIndex;
   if (choiceIndex >= 0 && maps[choiceIndex]) return maps[choiceIndex];
-  return maps.find(map => text.includes(normalize(map.id)) || text.includes(normalize(map.name)))
-    ?? maps.find(map => (VOICE_CHOICE_ALIASES[map.id] ?? []).some(alias => text.includes(normalize(alias))))
+  return maps.find(map => text.includes(normalizeForMatching(map.id, locale)) || text.includes(normalizeForMatching(map.name, locale)))
+    ?? maps.find(map => (VOICE_CHOICE_ALIASES[map.id] ?? []).some(alias => text.includes(normalizeForMatching(alias, locale))))
     ?? maps.find(map => {
-      const first = normalize(map.name).split(' ')[0];
-      return first && text === first && maps.filter(candidate => normalize(candidate.name).split(' ')[0] === first).length === 1;
+      const first = normalizeForMatching(map.name, locale).split(' ')[0];
+      return first && text === first && maps.filter(candidate => normalizeForMatching(candidate.name, locale).split(' ')[0] === first).length === 1;
     })
     ?? (text.includes('neon') ? maps.find(map => map.id === 'foundry') : text.includes('circuit') ? maps.find(map => map.id === 'void') : null)
     ?? null;
@@ -266,13 +314,45 @@ export function matchVoiceChoice(spoken: string, maps: { id: string; name: strin
 
 const matchChoice = matchVoiceChoice;
 const VOICE_CHOICE_ALIASES: Record<string, string[]> = {
-  nyx: ['nix', 'nicks', 'nick'], wraith: ['wreath', 'raith'], 'remy-riot': ['remy', 'remi riot'],
-  'cinder-capone': ['cinder'], 'rune-warden': ['rune'], 'shroom-boom': ['shroom', 'mushroom'],
-  'gran-slam': ['grand slam', 'gran'], 'bass-nova': ['bass'], 'velvet-thunder': ['velvet'],
-  'iron-oni': ['iron'], bulkhead: ['bulk head'], 'sir-knockout': ['knockout'],
+  nyx: ['nix', 'nicks', 'nick'], wraith: ['wreath', 'raith', 'espectro'], 'remy-riot': ['remy', 'remi riot', 'remy revolta'],
+  'cinder-capone': ['cinder', 'brasa capone'], 'rune-warden': ['rune', 'guardiao runico'], 'shroom-boom': ['shroom', 'mushroom', 'cogumelo bomba'],
+  'gran-slam': ['grand slam', 'gran', 'vo pancada'], 'bass-nova': ['bass', 'grave nova'], 'velvet-thunder': ['velvet', 'trovao de veludo'],
+  'iron-oni': ['iron', 'oni de ferro'], bulkhead: ['bulk head', 'blindado'], 'sir-knockout': ['knockout', 'sir nocaute'],
+  foundry: ['fundição neon', 'fundicao neon'], void: ['circuito do vazio'],
+  'cyberpunk-city': ['cidade cyberpunk'], inakaya: ['restaurante inakaya'], rain: ['chuva'],
 };
-const normalize = (text: string) => text.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
-const isExplicitName = (spoken: string) => /^(?:my name is|i am|i'm|call me)\b/i.test(spoken.trim());
-const isHelpRequest = (spoken: string) => /\b(?:help|instructions|what can i say|where am i|status)\b/i.test(spoken);
-function choicePrompt(kind: string): string { return `Choose your ${kind}. Say the name or number shown on screen.`; }
-function choiceName(id: string, choices: { id: string; name: string }[]): string { return choices.find(choice => choice.id === id)?.name ?? id; }
+const FIGHTER_MAP_NAME_KEYS: Record<string, FighterMessageKey> = {
+  foundry: 'content.mapName.foundry', void: 'content.mapName.void', 'cyberpunk-city': 'content.mapName.cyberpunk-city',
+  inakaya: 'content.mapName.inakaya', rain: 'content.mapName.rain',
+};
+
+function isFighterAdvanceWord(spoken: string, locale: SupportedLocale): boolean {
+  if (locale === 'en-US') return isEnglishAdvanceWord(spoken);
+  const text = normalizeForMatching(spoken, locale);
+  if (/\b(?:comecar|iniciar|avancar|proxim[oa]|continuar|lutar|luta|combater|pront[oa]|revanche|jogar de novo|jogar novamente|mais uma vez|sim)\b/.test(text)) return true;
+  return /\b(?:escolher|escolha|selecionar|selecione)\b/.test(text) && /\b(?:lutador|personagem|campeao)\b/.test(text);
+}
+
+function parseFighterSpokenName(spoken: string, locale: SupportedLocale): string | null {
+  if (locale === 'en-US') return parseEnglishSpokenName(spoken);
+  let text = spoken.trim().replace(/[.!?,]+$/u, '');
+  if (!text || /[?]/.test(spoken) || isFighterAdvanceWord(text, locale) || isHelpRequest(text, locale)) return null;
+  text = text.replace(/^(?:meu nome (?:é|e)|eu sou|sou|me chamo|chame-me de|pode me chamar de)\s+/iu, '');
+  const words = text.match(/\p{L}[\p{L}'’-]*/gu)?.slice(0, 2) ?? [];
+  if (!words.length) return null;
+  const name = words.map(word => word[0]!.toLocaleUpperCase(locale) + word.slice(1).toLocaleLowerCase(locale)).join(' ');
+  return name.length >= 2 && name.length <= 20 ? name : null;
+}
+
+function isExplicitName(spoken: string, locale: SupportedLocale): boolean {
+  return locale === 'pt-BR'
+    ? /^(?:meu nome (?:é|e)|eu sou|sou|me chamo|chame-me de|pode me chamar de)(?:\s|$)/iu.test(spoken.trim())
+    : /^(?:my name is|i am|i'm|call me)\b/i.test(spoken.trim());
+}
+
+function isHelpRequest(spoken: string, locale: SupportedLocale): boolean {
+  const text = normalizeForMatching(spoken, locale);
+  return locale === 'pt-BR'
+    ? /\b(?:ajuda|instrucoes|o que posso dizer|onde estou|status)\b/.test(text)
+    : /\b(?:help|instructions|what can i say|where am i|status)\b/.test(text);
+}

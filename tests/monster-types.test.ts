@@ -1,7 +1,7 @@
 // Type-effectiveness chart for Voice Monsters — a Pokémon-STYLE match-up table (2x super-effective,
 // 0.5x resisted, 1x neutral). All original; no Pokémon data. Pure lookup, fully testable.
 import { describe, it, expect } from 'vitest';
-import { typeMultiplier, MONSTER_TYPES, type MonsterType } from '../shared/monster-types';
+import { effectivenessLabel, monsterTypeLabel, typeMultiplier, MONSTER_TYPES, type MonsterType } from '../shared/monster-types';
 
 describe('typeMultiplier', () => {
   it('is 1x (neutral) for an unrelated pairing', () => {
@@ -44,5 +44,15 @@ describe('typeMultiplier', () => {
   it('exposes exactly 9 types', () => {
     expect(MONSTER_TYPES).toHaveLength(9);
     expect(new Set(MONSTER_TYPES).size).toBe(9);
+  });
+});
+
+describe('localized type labels', () => {
+  it('keeps English defaults and provides Brazilian Portuguese labels', () => {
+    expect(monsterTypeLabel('water')).toBe('water');
+    expect(monsterTypeLabel('water', 'pt-BR')).toBe('água');
+    expect(monsterTypeLabel('psychic', 'pt-BR')).toBe('psíquico');
+    expect(effectivenessLabel(2, 'pt-BR')).toMatch(/eficaz/i);
+    expect(effectivenessLabel(0.5, 'pt-BR')).toMatch(/não.*eficaz/i);
   });
 });

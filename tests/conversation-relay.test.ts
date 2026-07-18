@@ -296,6 +296,35 @@ describe('ConversationRelayAdapter', () => {
     ]);
   });
 
+  it('resolves commandLocale and localizes Portuguese commands, greeting, and event lines', () => {
+    const room = fakeRoom(); const said: string[] = [];
+    const a = new ConversationRelayAdapter({
+      findOrCreateRoom: () => room,
+      say: text => said.push(text),
+      phaseOf: () => 'racing',
+    });
+    a.handleMessage(JSON.stringify({
+      type: 'setup', callSid: 'CA1',
+      customParameters: { roomCode: '4821', commandLocale: 'pt_BR' },
+    }));
+    expect(a.locale).toBe('pt-BR');
+    expect(said.join(' ')).toMatch(/voz|nome/i);
+
+    said.length = 0;
+    a.handleMessage(JSON.stringify({
+      type: 'prompt', voicePrompt: 'esquerda direita acelerar nitro frear', last: true,
+    }));
+    a.onGameEvent({ kind: 'go' });
+
+    expect(room.applied.map(entry => entry.intent)).toEqual([
+      'MOVE_LEFT', 'MOVE_RIGHT', 'BOOST', 'USE_POWER', 'BRAKE',
+    ]);
+    expect(said).toEqual(['Vai!']);
+    said.length = 0;
+    a.handleMessage(JSON.stringify({ type: 'prompt', voicePrompt: 'ajuda', last: true }));
+    expect(said.join(' ')).toMatch(/esquerda.*direita.*acelerar.*frear.*nitro/i);
+  });
+
   it('only converses on the FINAL transcript, not interim partials', async () => {
     const room = fakeRoom(); let calls = 0;
     const a = new ConversationRelayAdapter({

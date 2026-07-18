@@ -1,5 +1,7 @@
-import { describe, it, expect } from 'vitest';
-import { Announcer } from '../client/announcer';
+import { afterEach, describe, it, expect, vi } from 'vitest';
+import { Announcer, browserSpeechSink } from '../client/announcer';
+
+afterEach(() => vi.unstubAllGlobals());
 
 function setup() {
   const spoken: { text: string; priority: boolean }[] = [];
@@ -47,5 +49,26 @@ describe('Announcer', () => {
     a.handle({ kind: 'hit', playerId: 'p1' });
     a.handle({ kind: 'hit', playerId: 'p1' });
     expect(new Set(lines).size).toBeGreaterThan(1);
+  });
+
+  it('uses localized commentary and sets the browser utterance language', () => {
+    const utterances: Array<{ text: string; lang: string }> = [];
+    class FakeUtterance {
+      lang = '';
+      rate = 1;
+      pitch = 1;
+      constructor(public text: string) {}
+    }
+    vi.stubGlobal('window', {
+      speechSynthesis: { cancel: vi.fn(), speak: (utterance: FakeUtterance) => utterances.push(utterance) },
+    });
+    vi.stubGlobal('SpeechSynthesisUtterance', FakeUtterance);
+
+    const lines: string[] = [];
+    const announcer = new Announcer({ sink: browserSpeechSink('pt-BR'), onLine: line => lines.push(line), locale: 'pt-BR' });
+    announcer.handle({ kind: 'go' });
+
+    expect(lines[0]).toMatch(/vai|largaram/i);
+    expect(utterances[0]!.lang).toBe('pt-BR');
   });
 });

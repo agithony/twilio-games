@@ -93,6 +93,8 @@ The deployed specification currently sets these variables:
 | `ANALYTICS_ALLOWED_EMAIL` | GitHub repository variable | Allows one exact verified Google email in addition to `@twilio.com` accounts |
 | `GAME_PHONE_NUMBER` | GitHub repository variable | Number displayed and QR-encoded in game lobbies; empty shows a configuration placeholder |
 | `CR_TTS_VOICE` | GitHub repository variable | ElevenLabs Conversation Relay voice ID; empty uses the Relay default |
+| `CR_TTS_VOICE_PT_BR` | GitHub repository variable | Optional Brazilian Portuguese ElevenLabs voice ID; empty uses Relay's `pt-BR` default |
+| `DEFAULT_LOCALE` | GitHub repository variable | Locale used when no localized display is connected; empty defaults to `en-US` |
 | `OPENAI_API_KEY` | GitHub Actions secret rendered as a plain environment value | Enables the OpenAI host; empty uses deterministic/scripted behavior |
 | `OPENAI_MODEL` | GitHub repository variable | OpenAI model; empty defaults to `gpt-4o-mini` |
 

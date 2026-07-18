@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { fighterIntroStage, parseFighterClientMessage } from '../shared/fighter-protocol';
 
 describe('fighter protocol', () => {
+  it('preserves a supported display locale', () => {
+    expect(parseFighterClientMessage(JSON.stringify({ type: 'spectate', roomCode: '4821', locale: 'pt-BR' })))
+      .toEqual({ type: 'spectate', roomCode: '4821', locale: 'pt-BR' });
+  });
   it('parses every combat command', () => {
     for (const command of ['forward', 'back', 'jump', 'punch', 'kick', 'block']) {
       expect(parseFighterClientMessage(JSON.stringify({ type: 'command', command }))).toEqual({ type: 'command', command });

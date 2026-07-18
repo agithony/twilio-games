@@ -1,4 +1,5 @@
 import type { Intent, Item, WorldSnapshot, GameEvent, LobbyPlayer, Phase, RaceResult } from '../shared/types';
+import type { SupportedLocale } from '../shared/i18n/locales';
 
 export interface LobbyMsg { roomCode: string; players: LobbyPlayer[]; phase: Phase }
 export interface SelectStateMsg { roomCode: string; phase: Phase; players: LobbyPlayer[]; maps: string[]; selectedMap: string | null; mapVotes?: Record<string, number>; mapTie?: boolean }
@@ -21,9 +22,9 @@ export class GameConnection {
   private backoff = 500;                        // ms; doubles per failed attempt, capped
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   /** The identity to replay on reconnect (last join or spectate), so we rejoin the same room. */
-  private identity: { type: 'join'; roomCode: string; name: string } | { type: 'spectate'; roomCode: string } | null = null;
+  private identity: { type: 'join'; roomCode: string; name: string; locale?: SupportedLocale } | { type: 'spectate'; roomCode: string; locale?: SupportedLocale } | null = null;
 
-  constructor(private url: string) {
+  constructor(private url: string, private locale?: SupportedLocale) {
     this.connect();
   }
 
@@ -72,10 +73,10 @@ export class GameConnection {
     if (this.ws.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(o));
     else this.ws.addEventListener('open', () => this.ws.send(JSON.stringify(o)), { once: true });
   }
-  join(roomCode: string, name: string) { this.identity = { type: 'join', roomCode, name }; this.send({ type: 'join', roomCode, name }); }
-  spectate(roomCode: string) { this.identity = { type: 'spectate', roomCode }; this.send({ type: 'spectate', roomCode }); }
+  join(roomCode: string, name: string) { this.identity = { type: 'join', roomCode, name, ...(this.locale ? { locale: this.locale } : {}) }; this.send(this.identity); }
+  spectate(roomCode: string) { this.identity = { type: 'spectate', roomCode, ...(this.locale ? { locale: this.locale } : {}) }; this.send(this.identity); }
   /** Drop this connection's player slot but stay connected as a spectator (shared-screen toggle). */
-  leave() { if (this.identity?.type === 'join') this.identity = { type: 'spectate', roomCode: this.identity.roomCode }; this.send({ type: 'leave' }); }
+  leave() { if (this.identity?.type === 'join') this.identity = { type: 'spectate', roomCode: this.identity.roomCode, ...(this.locale ? { locale: this.locale } : {}) }; this.send({ type: 'leave' }); }
   ready() { this.send({ type: 'ready' }); }
   restart() { this.send({ type: 'restart' }); }
   sendIntent(i: Intent) { this.send({ type: 'intent', intent: i }); }

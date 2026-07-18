@@ -55,6 +55,14 @@ const ctx = (over: Partial<BattleMenuCtx> = {}): BattleMenuCtx => ({
 });
 
 describe('matchBattleAction — ROOT keywords', () => {
+  it('executes Portuguese fight plus a localized move in one utterance', () => {
+    const localized = { moves: [
+      { id: 'sparkmouse.jolt', name: 'Choque Trovejante' },
+      { id: 'sparkmouse.zap', name: 'Descarga Estática' },
+    ], potions: 2, level: 'root' as const };
+    expect(matchBattleAction('lutar dois', localized, 'pt-BR')).toEqual({ kind: 'fight', moveId: 'sparkmouse.zap' });
+    expect(matchBattleAction('ataque com choque trovejante', localized, 'pt-BR')).toEqual({ kind: 'fight', moveId: 'sparkmouse.jolt' });
+  });
   it('"fight"/"attack" open the fight submenu', () => {
     expect(matchBattleAction('fight', ctx())).toEqual({ kind: 'openFight' });
     expect(matchBattleAction('attack!', ctx())).toEqual({ kind: 'openFight' });
@@ -148,5 +156,34 @@ describe('matchBattleAction — FIGHT submenu', () => {
     // Callers shouldn't have to say "back" first — a clear root command from the fight level acts.
     expect(matchBattleAction('guard', fightCtx())).toEqual({ kind: 'guard' });
     expect(matchBattleAction('taunt', fightCtx())).toEqual({ kind: 'taunt' });
+  });
+});
+
+describe('battle commands in Brazilian Portuguese', () => {
+  it('recognizes the localized root command aliases', () => {
+    expect(matchBattleAction('lutar', ctx(), 'pt-BR')).toEqual({ kind: 'openFight' });
+    expect(matchBattleAction('atacar!', ctx(), 'pt-BR')).toEqual({ kind: 'openFight' });
+    for (const command of ['defender', 'bloquear', 'proteger']) {
+      expect(matchBattleAction(command, ctx(), 'pt-BR')).toEqual({ kind: 'guard' });
+    }
+    expect(matchBattleAction('usar poção', ctx(), 'pt-BR')).toEqual({ kind: 'item', item: 'potion' });
+    expect(matchBattleAction('curar', ctx(), 'pt-BR')).toEqual({ kind: 'item', item: 'potion' });
+    expect(matchBattleAction('provocar', ctx(), 'pt-BR')).toEqual({ kind: 'taunt' });
+    expect(matchBattleAction('zombar', ctx(), 'pt-BR')).toEqual({ kind: 'taunt' });
+  });
+
+  it('normalizes Unicode and understands Portuguese cardinals and ordinals', () => {
+    const decomposedPotion = 'poção'.normalize('NFD');
+    expect(matchBattleAction(decomposedPotion, ctx(), 'pt-BR')).toEqual({ kind: 'item', item: 'potion' });
+    expect(matchBattleAction('dois', ctx(), 'pt-BR')).toEqual({ kind: 'guard' });
+    expect(matchBattleAction('a terceira', ctx(), 'pt-BR')).toEqual({ kind: 'item', item: 'potion' });
+    expect(matchBattleAction('quarta', ctx(), 'pt-BR')).toEqual({ kind: 'taunt' });
+    expect(matchBattleAction('segundo', ctx({ level: 'fight' }), 'pt-BR')).toEqual({ kind: 'fight', moveId: moves[1].id });
+  });
+
+  it('keeps canonical English move names selectable and localizes back navigation', () => {
+    expect(matchBattleAction('Thunder Jolt', ctx(), 'pt-BR')).toEqual({ kind: 'fight', moveId: moves[0].id });
+    expect(matchBattleAction('voltar', ctx({ level: 'fight' }), 'pt-BR')).toEqual({ kind: 'back' });
+    expect(matchBattleAction('cancelar', ctx({ level: 'fight' }), 'pt-BR')).toEqual({ kind: 'back' });
   });
 });

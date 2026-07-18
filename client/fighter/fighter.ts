@@ -9,13 +9,42 @@ import { isInteractiveShortcutTarget, resolveNumericSelection } from './fighter-
 import { getSoundEffectsManager } from '../sound-effects';
 import { getMusicManager } from '../music-manager';
 import { injectMusicToggle } from '../music-toggle';
+import { commonText, locale } from '../i18n';
 import { isCountdownSoundCue } from '../../shared/countdown';
 import { DEFAULT_ROOM } from '../../shared/constants';
 import { FIGHTER_RUN_BACKWARD_DURATION, FIGHTER_RUN_FORWARD_DURATION,
   type FighterCommand, type FighterEvent, type FighterId, type FighterWorld } from '../../shared/fighter-world';
 import type { FighterMapEntry, FighterRosterEntry } from '../../shared/fighter-roster';
 import { fighterIntroStage, type FighterState } from '../../shared/fighter-protocol';
+import { FIGHTER_MESSAGES, type FighterMessageKey } from '../../shared/i18n/fighter';
+import { createTranslator } from '../../shared/i18n/translate';
+import { fighterName as translatedFighterName } from '../../shared/i18n/content';
 
+const t = createTranslator(locale, FIGHTER_MESSAGES);
+const COMMAND_MESSAGE_KEYS: Record<FighterCommand, FighterMessageKey> = {
+  back: 'command.back', forward: 'command.forward', jump: 'command.jump',
+  punch: 'command.punch', kick: 'command.kick', block: 'command.block',
+};
+const FIGHTER_TITLE_KEYS: Record<string, FighterMessageKey> = {
+  nyx: 'content.fighter.nyx', wraith: 'content.fighter.wraith', 'remy-riot': 'content.fighter.remy-riot',
+  'cinder-capone': 'content.fighter.cinder-capone', 'rune-warden': 'content.fighter.rune-warden',
+  'shroom-boom': 'content.fighter.shroom-boom', 'gran-slam': 'content.fighter.gran-slam',
+  'bass-nova': 'content.fighter.bass-nova', 'velvet-thunder': 'content.fighter.velvet-thunder',
+  'iron-oni': 'content.fighter.iron-oni', bulkhead: 'content.fighter.bulkhead', 'sir-knockout': 'content.fighter.sir-knockout',
+};
+const MAP_BLURB_KEYS: Record<string, FighterMessageKey> = {
+  foundry: 'content.map.foundry', void: 'content.map.void', 'cyberpunk-city': 'content.map.cyberpunk-city',
+  inakaya: 'content.map.inakaya', rain: 'content.map.rain',
+};
+const MAP_NAME_KEYS: Record<string, FighterMessageKey> = {
+  foundry: 'content.mapName.foundry', void: 'content.mapName.void', 'cyberpunk-city': 'content.mapName.cyberpunk-city',
+  inakaya: 'content.mapName.inakaya', rain: 'content.mapName.rain',
+};
+const SERVER_ERROR_KEYS: Record<string, FighterMessageKey> = {
+  already_joined: 'error.alreadyJoined', bad_display_auth: 'error.invalidDisplay', select_rejected: 'error.selectionRejected',
+  not_ready: 'error.notReady', stale_ready: 'error.staleReady', forbidden: 'error.displayControl', room_full: 'error.roomFull',
+  bad_json: 'error.invalidResponse',
+};
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const arena = $('arena'), overlay = $('overlay'), loading = $('loading');
 const loadingLabel = $('loading-label'), loadingFill = $('loading-fill'), loadingPercent = $('loading-percent');
@@ -29,11 +58,12 @@ const p1FighterName = $('p1-fighter-name'), p2FighterName = $('p2-fighter-name')
 const p1PlayerName = $('p1-player-name'), p2PlayerName = $('p2-player-name');
 const commandButtons = [...document.querySelectorAll<HTMLButtonElement>('[data-command]')];
 injectMusicToggle('music-toggle-container');
+localizeStaticUi();
 
 const params = new URLSearchParams(location.search);
 const roomCode = params.get('room') || DEFAULT_ROOM;
 const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-const connection = new FighterConnection(`${wsProtocol}//${location.host}/fighter`);
+const connection = new FighterConnection(`${wsProtocol}//${location.host}/fighter`, locale);
 connection.setDisplayAuth(roomCode, params.get('displayToken') ?? params.get('hostToken'));
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -53,7 +83,7 @@ let state: FighterState | null = null;
 let playerId: string | null = null;
 let roster: FighterRosterEntry[] = [];
 let maps: FighterMapEntry[] = [];
-let phoneNumber = 'Call the number on screen';
+let phoneNumber = t('phone.fallback');
 let movement: Partial<Record<FighterId, { from: number; to: number; elapsed: number; jump: boolean; duration: number }>> = {};
 const actionDurations: Record<FighterId, number> = { p1: FIGHTER_RUN_FORWARD_DURATION, p2: FIGHTER_RUN_FORWARD_DURATION };
 let lastTime = performance.now();
@@ -92,11 +122,11 @@ let countdownSoundPlayed = false;
 connection.onRoster((fighters, mapEntries) => { roster = fighters; maps = mapEntries; renderFlow(); });
 connection.onJoined(id => { playerId = id; renderFlow(); });
 connection.onEvents(handleEvents);
-connection.onError((_code, message) => { flowMessage = message; lastOverlayKey = ''; renderFlow(); });
+connection.onError((code, message) => { console.error(`[fighter] ${code}: ${message}`); flowMessage = localizedServerError(code) ?? t('error.invalidResponse'); lastOverlayKey = ''; renderFlow(); });
 connection.onHostIdentity(host => { isHost = host; lastOverlayKey = ''; renderFlow(); });
 connection.onConnectionState(status => {
   connectionStatus.dataset.state = status;
-  connectionStatus.textContent = status === 'connected' ? 'Connected' : status === 'reconnecting' ? 'Reconnecting...' : status === 'closed' ? 'Disconnected' : 'Connecting...';
+  connectionStatus.textContent = commonText(status === 'closed' ? 'connection.closed' : `connection.${status}`);
 });
 connection.onState(next => {
   const previousPhase = state?.phase;
@@ -118,7 +148,7 @@ connection.onState(next => {
   state = next;
   if (next.phase === 'countdown') {
     const count = Math.ceil(next.countdown ?? 0);
-    if (isCountdownSoundCue(count) && !countdownSoundPlayed) { countdownSoundPlayed = true; getSoundEffectsManager().playCountdown(); }
+    if (locale === 'en-US' && isCountdownSoundCue(count) && !countdownSoundPlayed) { countdownSoundPlayed = true; getSoundEffectsManager().playCountdown(); }
   }
   if (phaseChanged && next.phase === 'map_select') { readySentFor = ''; if (readyTimer) { clearTimeout(readyTimer); readyTimer = null; } }
   document.body.dataset.phase = next.phase;
@@ -150,23 +180,23 @@ function setLoading(progress: number, label: string): void {
 async function initialize(): Promise<void> {
   const attempt = ++initializationAttempt;
   loading.classList.remove('done'); loading.setAttribute('aria-busy', 'true'); hideAssetError();
-  setLoading(.05, 'Opening lobby');
+  setLoading(.05, t('loading.openingLobby'));
   setTimeout(() => {
     if (attempt !== initializationAttempt) return;
     loading.classList.add('done'); loading.setAttribute('aria-busy', 'false'); renderFlow();
   }, 250);
   try {
-    animationSources = await loadAnimationSources((loaded, total, label) => setLoading(loaded / total, `Preparing ${label}`));
+    animationSources = await loadAnimationSources((loaded, total) => setLoading(loaded / total, t('loading.preparingAssets')));
     if (attempt !== initializationAttempt) return;
-    setLoading(1, 'Ready');
+    setLoading(1, t('loading.ready'));
     if (state?.phase === 'loading' || state?.phase === 'intro' || state?.phase === 'countdown' || state?.phase === 'fight') prepareFight(state);
     maybeSignalReady(); renderFlow();
   } catch (error) {
     if (attempt !== initializationAttempt) return;
     loading.classList.add('done'); loading.setAttribute('aria-busy', 'false');
-    showAssetError('Unable to load animations', error, [
-      { label: 'Retry', action: () => void initialize() },
-      { label: 'Cancel', secondary: true, action: () => { hideAssetError(); connection.back(); } },
+    showAssetError(t('error.animations'), error, [
+      { label: t('action.retry'), action: () => void initialize() },
+      { label: t('action.cancel'), secondary: true, action: () => { hideAssetError(); connection.back(); } },
     ]);
   }
 }
@@ -186,22 +216,22 @@ function renderFlow(): void {
   lastOverlayKey = key;
   lastPhase = state.phase;
   if (state.phase === 'lobby') {
-    overlay.innerHTML = `<section class="flow-panel lobby-panel"><div class="lobby-head"><span class="flow-kicker">Twilio Games · Room ${escapeHtml(roomCode)}</span><h1>Voice Fighter</h1><p>Call in, choose a champion, and command every move with your voice.</p></div><div class="lobby-layout"><div class="qr-card"><img src="/brand/join-qr.png?v=2" alt="Scan to call and join Voice Fighter"><strong>Scan to join</strong><span>${escapeHtml(phoneNumber)}</span></div><div class="lobby-center"><h2>Get started</h2><ol class="join-steps"><li><b>1</b><span>Scan the QR code with your phone</span></li><li><b>2</b><span>Call the number and tell the host your name</span></li><li><b>3</b><span>Pick a fighter and arena, then say “fight”</span></li></ol><div class="player-list"><h2>${state.players.length ? 'Challengers' : 'Fight lobby'}</h2>${state.players.length ? state.players.map(playerChip).join('') : '<p>Waiting for the first challenger...</p>'}</div></div><aside class="how-to"><h2>How to fight</h2><p>Reduce your rival’s health to zero. Attacks need range and have recovery time.</p><div class="instruction-grid"><span><b>Forward</b> close distance</span><span><b>Back</b> create space</span><span><b>Jump</b> evade and cross over</span><span><b>Punch</b> quick attack</span><span><b>Kick</b> heavy attack</span><span><b>Block</b> reduce damage</span></div><p class="voice-tip">Say commands clearly over the call. The screen and phone host react together.</p></aside></div><div class="flow-actions lobby-actions"><button id="local-join">${playerId ? 'Playing here' : 'Press P to play here'}</button><button id="flow-next" ${state.players.length && isHost ? '' : 'disabled'}>Choose fighters</button></div>${isHost ? '' : '<p class="flow-hint">Viewing only — the host display controls setup.</p>'}</section>`;
+    overlay.innerHTML = `<section class="flow-panel lobby-panel"><div class="lobby-head"><span class="flow-kicker">${escapeHtml(t('lobby.room', { room: roomCode }))}</span><h1>${t('app.title')}</h1><p>${t('lobby.tagline')}</p></div><div class="lobby-layout"><div class="qr-card"><img src="/brand/join-qr.png?v=2" alt="${t('lobby.qrAlt')}"><strong>${t('lobby.scanToJoin')}</strong><span>${escapeHtml(phoneNumber)}</span></div><div class="lobby-center"><h2>${t('lobby.getStarted')}</h2><ol class="join-steps"><li><b>1</b><span>${t('lobby.step1')}</span></li><li><b>2</b><span>${t('lobby.step2')}</span></li><li><b>3</b><span>${t('lobby.step3')}</span></li></ol><div class="player-list"><h2>${t(state.players.length ? 'lobby.challengers' : 'lobby.title')}</h2>${state.players.length ? state.players.map(playerChip).join('') : `<p>${t('lobby.waitingFirst')}</p>`}</div></div><aside class="how-to"><h2>${t('lobby.howToFight')}</h2><p>${t('lobby.rules')}</p><div class="instruction-grid"><span><b>${t('command.forward')}</b> ${t('instruction.forward')}</span><span><b>${t('command.back')}</b> ${t('instruction.back')}</span><span><b>${t('command.jump')}</b> ${t('instruction.jump')}</span><span><b>${t('command.punch')}</b> ${t('instruction.punch')}</span><span><b>${t('command.kick')}</b> ${t('instruction.kick')}</span><span><b>${t('command.block')}</b> ${t('instruction.block')}</span></div><p class="voice-tip">${t('lobby.voiceTip')}</p></aside></div><div class="flow-actions lobby-actions"><button id="local-join">${t(playerId ? 'lobby.playingHere' : 'lobby.pressP')}</button><button id="flow-next" ${state.players.length && isHost ? '' : 'disabled'}>${t('lobby.chooseFighters')}</button></div>${isHost ? '' : `<p class="flow-hint">${t('lobby.viewOnly')}</p>`}</section>`;
   } else if (state.phase === 'fighter_select') {
     const allPicked = state.players.length > 0 && state.players.every(player => player.fighterId);
-    overlay.innerHTML = selectScreen('Choose your fighter', 'Say a fighter name or choose a card.', roster.map((fighter, index) => {
+    overlay.innerHTML = selectScreen(t('select.fighterTitle'), t('select.fighterDescription'), roster.map((fighter, index) => {
       const owner = state!.players.find(player => player.fighterId === fighter.id);
-      return { id: fighter.id, name: fighter.name, detail: owner ? `Selected by ${owner.name}` : fighter.title, color: fighter.color, number: index + 1, selected: !!owner, taken: !!owner };
+      return { id: fighter.id, name: localizedFighterName(fighter), detail: owner ? t('select.selectedBy', { name: owner.name }) : localizedFighterTitle(fighter), color: fighter.color, number: index + 1, selected: !!owner, taken: !!owner };
     }), 'fighter', allPicked && isHost);
   } else if (state.phase === 'map_select') {
-    overlay.innerHTML = selectScreen('Choose the arena', 'Pick the battleground for this fight.', maps.map((map, index) => ({ id: map.id, name: map.name, detail: map.blurb, color: map.color, number: index + 1, selected: state!.selectedMap === map.id, taken: false })), 'map', !!state.selectedMap && isHost);
+    overlay.innerHTML = selectScreen(t('select.arenaTitle'), t('select.arenaDescription'), maps.map((map, index) => ({ id: map.id, name: localizedMapName(map), detail: localizedMapBlurb(map), color: map.color, number: index + 1, selected: state!.selectedMap === map.id, taken: false })), 'map', !!state.selectedMap && isHost);
   } else if (state.phase === 'loading') {
-    overlay.innerHTML = `<section class="countdown-screen loading-arena"><span>Preparing stage</span><strong>LOADING</strong><small>${escapeHtml(maps.find(map => map.id === state!.selectedMap)?.name ?? '')}</small></section>`;
+    overlay.innerHTML = `<section class="countdown-screen loading-arena"><span>${t('loading.preparingStage')}</span><strong>${t('loading.loading')}</strong><small>${escapeHtml(localizedMapName(maps.find(map => map.id === state!.selectedMap)))}</small></section>`;
   } else if (state.phase === 'intro') {
     overlay.innerHTML = introHtml(state);
   } else if (state.phase === 'countdown') {
     const count = Math.ceil(state.countdown ?? 0);
-    overlay.innerHTML = `<section class="countdown-screen"><span>${count > 3 ? 'Loading arena' : 'Match begins in'}</span><strong>${count > 3 ? 'READY' : count}</strong><small>${state.selectedMap ? escapeHtml(maps.find(map => map.id === state!.selectedMap)?.name ?? '') : ''}</small></section>`;
+    overlay.innerHTML = `<section class="countdown-screen"><span>${t(count > 3 ? 'loading.loadingArena' : 'loading.matchBeginsIn')}</span><strong>${count > 3 ? t('loading.readyCall') : count}</strong><small>${state.selectedMap ? escapeHtml(localizedMapName(maps.find(map => map.id === state!.selectedMap))) : ''}</small></section>`;
   }
   if (flowMessage && state.phase !== 'countdown') overlay.insertAdjacentHTML('beforeend', `<div class="flow-error" role="alert">${escapeHtml(flowMessage)}</div>`);
   wireFlowButtons();
@@ -214,7 +244,7 @@ function renderFlow(): void {
 }
 
 function selectScreen(title: string, description: string, cards: { id: string; name: string; detail: string; color: string; number: number; selected: boolean; taken: boolean }[], kind: string, ready: boolean): string {
-  return `<section class="flow-panel selection-panel"><span class="flow-kicker">Voice Fighter</span><h1 tabindex="-1">${title}</h1><p>${description}</p><div class="select-grid ${kind}-grid">${cards.map(card => { const preview = kind === 'fighter' ? roster.find(entry => entry.id === card.id)?.preview : maps.find(map => map.id === card.id)?.preview; return `<button class="select-card ${card.selected ? 'selected' : ''} ${card.taken ? 'taken' : ''}" data-${kind}="${card.id}" aria-pressed="${card.selected}" aria-label="${String(card.number).padStart(2, '0')}, ${escapeHtml(card.name)}, ${escapeHtml(card.detail)}" style="--card-color:${card.color}" ${card.taken && kind === 'fighter' ? 'disabled' : ''}><div class="card-preview" aria-hidden="true" ${preview ? `style="background-image:url('${preview}')"` : ''}></div><span class="number">${String(card.number).padStart(2, '0')}</span><strong>${escapeHtml(card.name)}</strong><span>${escapeHtml(card.detail)}</span></button>`; }).join('')}</div><div class="flow-actions"><button id="flow-back" class="secondary">Back</button><button id="flow-next" ${ready ? '' : 'disabled'}>${kind === 'map' ? 'Start fight' : 'Choose arena'}</button></div><div class="flow-hint">Type a card number · Enter to continue</div></section>`;
+  return `<section class="flow-panel selection-panel"><span class="flow-kicker">${t('app.title')}</span><h1 tabindex="-1">${title}</h1><p>${description}</p><div class="select-grid ${kind}-grid">${cards.map(card => { const preview = kind === 'fighter' ? roster.find(entry => entry.id === card.id)?.preview : maps.find(map => map.id === card.id)?.preview; return `<button class="select-card ${card.selected ? 'selected' : ''} ${card.taken ? 'taken' : ''}" data-${kind}="${card.id}" aria-pressed="${card.selected}" aria-label="${String(card.number).padStart(2, '0')}, ${escapeHtml(card.name)}, ${escapeHtml(card.detail)}" style="--card-color:${card.color}" ${card.taken && kind === 'fighter' ? 'disabled' : ''}><div class="card-preview" aria-hidden="true" ${preview ? `style="background-image:url('${preview}')"` : ''}></div><span class="number">${String(card.number).padStart(2, '0')}</span><strong>${escapeHtml(card.name)}</strong><span>${escapeHtml(card.detail)}</span></button>`; }).join('')}</div><div class="flow-actions"><button id="flow-back" class="secondary">${t('select.back')}</button><button id="flow-next" ${ready ? '' : 'disabled'}>${t(kind === 'map' ? 'select.startFight' : 'select.chooseArena')}</button></div><div class="flow-hint">${t('select.hint')}</div></section>`;
 }
 
 function focusedControlKey(): string | null {
@@ -231,7 +261,8 @@ function showAssetError(title: string, error: unknown, actions: ErrorAction[]): 
   if (errorBox.hidden) focusBeforeError = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   errorBox.replaceChildren();
   const heading = document.createElement('strong'); heading.textContent = title;
-  const detail = document.createElement('p'); detail.textContent = error instanceof Error ? error.message : String(error);
+  const detail = document.createElement('p'); detail.textContent = t('error.assetDetail');
+  console.error(error);
   const controls = document.createElement('div'); controls.className = 'error-actions';
   for (const item of actions) {
     const button = document.createElement('button'); button.type = 'button'; button.textContent = item.label;
@@ -258,12 +289,13 @@ function wireFlowButtons(): void {
 function introHtml(current: FighterState): string {
   const stage = fighterIntroStage(current.intro ?? 0);
   const p1 = current.players.find(player => player.side === 'p1'), p2 = current.players.find(player => player.side === 'p2');
-  const p1Fighter = roster.find(fighter => fighter.id === p1?.fighterId)?.name ?? 'Fighter One';
-  const p2Fighter = roster.find(fighter => fighter.id === p2?.fighterId)?.name ?? 'Fighter Two';
-  if (stage === 'versus') return `<section class="intro-screen versus-beat"><span>Tonight's matchup</span><strong>VS</strong></section>`;
-  if (stage === 'faceoff') return `<section class="intro-screen faceoff-beat"><div><small>${escapeHtml(p1?.name ?? 'Player One')}</small><b>${escapeHtml(p1Fighter)}</b></div><strong>VS</strong><div><small>${escapeHtml(p2?.name ?? 'Rival')}</small><b>${escapeHtml(p2Fighter)}</b></div></section>`;
+  const p1Entry = roster.find(fighter => fighter.id === p1?.fighterId), p2Entry = roster.find(fighter => fighter.id === p2?.fighterId);
+  const p1Fighter = p1Entry ? localizedFighterName(p1Entry) : t('intro.fighterOne');
+  const p2Fighter = p2Entry ? localizedFighterName(p2Entry) : t('intro.fighterTwo');
+  if (stage === 'versus') return `<section class="intro-screen versus-beat"><span>${t('intro.tonight')}</span><strong>${t('intro.versusMark')}</strong></section>`;
+  if (stage === 'faceoff') return `<section class="intro-screen faceoff-beat"><div><small>${escapeHtml(p1?.name ?? t('hud.playerOne'))}</small><b>${escapeHtml(p1Fighter)}</b></div><strong>${t('intro.versusMark')}</strong><div><small>${escapeHtml(p2?.name ?? t('intro.rival'))}</small><b>${escapeHtml(p2Fighter)}</b></div></section>`;
   const player = stage === 'p1' ? p1 : p2, fighter = stage === 'p1' ? p1Fighter : p2Fighter;
-  return `<section class="intro-screen fighter-beat ${stage}"><span>${stage === 'p1' ? 'Player One' : 'The Challenger'}</span><strong>${escapeHtml(fighter)}</strong><small>${escapeHtml(player?.name ?? 'Rival')}</small></section>`;
+  return `<section class="intro-screen fighter-beat ${stage}"><span>${t(stage === 'p1' ? 'intro.playerOne' : 'intro.challenger')}</span><strong>${escapeHtml(fighter)}</strong><small>${escapeHtml(player?.name ?? t('intro.rival'))}</small></section>`;
 }
 
 function beginIntro(current: FighterState): void {
@@ -340,7 +372,7 @@ async function ensureFightActors(p1Id: string, p2Id: string, expectedKey: string
     const existing = loadedActors.get(id); if (existing) return Promise.resolve(existing);
     let pending = actorLoads.get(id);
     if (!pending) {
-      const spec = FIGHTERS.find(fighter => fighter.id === id); if (!spec) return Promise.reject(new Error(`Unknown fighter ${id}`));
+      const spec = FIGHTERS.find(fighter => fighter.id === id); if (!spec) return Promise.reject(new Error(t('error.unknownFighter', { id })));
       pending = FighterActor.load(spec, animationSources!); actorLoads.set(id, pending);
       void pending.then(actor => { loadedActors.set(id, actor); trimActorCache(new Set([p1Id, p2Id])); })
         .finally(() => actorLoads.delete(id)).catch(() => {});
@@ -356,10 +388,10 @@ async function ensureFightActors(p1Id: string, p2Id: string, expectedKey: string
       prepareFight(state); if (state.phase === 'intro') beginIntro(state); maybeSignalReady();
     }
   } catch (error) {
-    showAssetError('Fighter failed to load', error, [
-      { label: 'Retry', action: () => { hideAssetError(); void ensureFightActors(p1Id, p2Id, expectedKey); } },
-      { label: 'Use fallback', action: () => installFallbackActors(p1Id, p2Id, expectedKey) },
-      { label: 'Cancel', secondary: true, action: () => { hideAssetError(); connection.back(); } },
+    showAssetError(t('error.fighterLoad'), error, [
+      { label: t('action.retry'), action: () => { hideAssetError(); void ensureFightActors(p1Id, p2Id, expectedKey); } },
+      { label: t('action.fallback'), action: () => installFallbackActors(p1Id, p2Id, expectedKey) },
+      { label: t('action.cancel'), secondary: true, action: () => { hideAssetError(); connection.back(); } },
     ]);
   }
 }
@@ -385,7 +417,7 @@ function beginFight(next: FighterState): void {
 function startFightPresentation(key: string): void {
   if (fightStartedKey === key) return;
   fightStartedKey = key; hideAssetError(); result.hidden = true; setFightControlsEnabled(true);
-  fightCall.classList.remove('show'); void fightCall.offsetWidth; fightCall.classList.add('show'); announce('Fight!');
+  fightCall.classList.remove('show'); void fightCall.offsetWidth; fightCall.classList.add('show'); announce(t('event.fight'));
 }
 
 function handleEvents(events: FighterEvent[]): void {
@@ -409,10 +441,10 @@ function applyEvents(events: FighterEvent[]): void {
         actionDurations[event.fighter] = actionDuration || (event.command === 'forward' ? FIGHTER_RUN_FORWARD_DURATION : FIGHTER_RUN_BACKWARD_DURATION);
       }
       const player = state?.players.find(candidate => candidate.side === event.fighter);
-      if (player && !player.isAi) { announce(`${player.name}: ${event.command}`); flashButton(event.command); }
+      if (player && !player.isAi) { announce(t('event.playerCommand', { name: player.name, command: commandLabel(event.command).toLocaleLowerCase(locale) })); flashButton(event.command); }
     } else if (event.type === 'move') movement[event.fighter] = { from: event.from, to: event.to, elapsed: 0, jump: event.jump === true, duration: event.jump ? .82 : actionDurations[event.fighter] };
-    else if (event.type === 'hit') { if (!event.blocked) actors[event.defender].playRandom('reaction', { speed: 1.15 }); showImpact(event.blocked ? 'Blocked' : `-${event.damage}`, event.defender); }
-    else if (event.type === 'miss' && event.attacker === mySide) announce('Missed - move closer');
+    else if (event.type === 'hit') { if (!event.blocked) actors[event.defender].playRandom('reaction', { speed: 1.15 }); showImpact(event.blocked ? t('event.blocked') : `-${event.damage}`, event.defender); }
+    else if (event.type === 'miss' && event.attacker === mySide) announce(t('event.missed'));
     else if (event.type === 'ko') {
       actors[event.loser].playRandom('fall', { hold: true, lockFloor: true });
       getMusicManager().switchContext('fighter-victory');
@@ -465,11 +497,11 @@ function applyActorTransforms(): void {
 function updateNames(next: FighterState): void {
   for (const [side, fighterEl, playerEl] of [['p1', p1FighterName, p1PlayerName], ['p2', p2FighterName, p2PlayerName]] as const) {
     const player = next.players.find(row => row.side === side); const fighter = roster.find(row => row.id === player?.fighterId);
-    fighterEl.textContent = fighter?.name ?? side.toUpperCase(); playerEl.textContent = player?.isAi ? 'CPU Rival' : player?.name ?? 'Waiting';
+    fighterEl.textContent = fighter ? localizedFighterName(fighter) : side.toUpperCase(); playerEl.textContent = player?.isAi ? t('hud.cpuRival') : player?.name ?? t('hud.waiting');
   }
 }
-function playerChip(player: FighterState['players'][number]): string { return `<div class="player-chip"><strong>${escapeHtml(player.name)}</strong><span>${player.isAi ? 'CPU' : 'Connected'}</span></div>`; }
-function toggleLocalPlayer(): void { if (playerId) { connection.leave(roomCode); playerId = null; } else connection.join(roomCode, 'Keyboard Fighter'); renderFlow(); }
+function playerChip(player: FighterState['players'][number]): string { return `<div class="player-chip"><strong>${escapeHtml(player.name)}</strong><span>${t(player.isAi ? 'status.cpu' : 'status.connected')}</span></div>`; }
+function toggleLocalPlayer(): void { if (playerId) { connection.leave(roomCode); playerId = null; } else connection.join(roomCode, t('player.keyboard')); renderFlow(); }
 function announce(text: string): void { voiceCommand.textContent = text.replace('-', ' '); voiceFeed.classList.remove('heard'); void (voiceFeed as HTMLElement).offsetWidth; voiceFeed.classList.add('heard'); }
 function flashButton(command: FighterCommand): void { const button = commandButtons.find(item => item.dataset.command === command); button?.classList.add('active'); setTimeout(() => button?.classList.remove('active'), 220); }
 function showImpact(text: string, defender: FighterId): void { document.body.classList.remove('shake'); void document.body.offsetWidth; document.body.classList.add('shake'); const element = document.createElement('div'); element.className = 'impact'; element.style.left = defender === 'p1' ? '39%' : '61%'; element.textContent = text; document.body.appendChild(element); setTimeout(() => element.remove(), 600); }
@@ -482,7 +514,7 @@ function showResult(winner: FighterId): void {
     return;
   }
   const player = state?.players.find(row => row.side === winner); const fighter = roster.find(row => row.id === player?.fighterId);
-  resultTitle.textContent = `${fighter?.name ?? winner} wins`; result.hidden = false; setFightControlsEnabled(false);
+  resultTitle.textContent = t('result.wins', { name: fighter ? localizedFighterName(fighter) : winner }); result.hidden = false; setFightControlsEnabled(false);
   if (!result.contains(document.activeElement)) requestAnimationFrame(() => rematch.focus());
 }
 function setFightControlsEnabled(enabled: boolean): void { for (const button of commandButtons) button.disabled = !enabled; }
@@ -643,6 +675,51 @@ function updateCameraProjection(): void {
     ? THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(authored / 2) * referenceAspect / camera.aspect))
     : cameraBase.fov;
   camera.updateProjectionMatrix();
+}
+function commandLabel(command: FighterCommand): string { return t(COMMAND_MESSAGE_KEYS[command]); }
+function localizedFighterTitle(fighter: FighterRosterEntry): string { const key = FIGHTER_TITLE_KEYS[fighter.id]; return key ? t(key) : fighter.title; }
+function localizedFighterName(fighter: FighterRosterEntry): string { return translatedFighterName(locale, fighter.id, fighter.name); }
+function localizedMapBlurb(map: FighterMapEntry): string { const key = MAP_BLURB_KEYS[map.id]; return key ? t(key) : map.blurb; }
+function localizedMapName(map: FighterMapEntry | undefined): string { if (!map) return ''; const key = MAP_NAME_KEYS[map.id]; return key ? t(key) : map.name; }
+function localizedServerError(code: string): string | null { const key = SERVER_ERROR_KEYS[code]; return key ? t(key) : null; }
+
+function localizeStaticUi(): void {
+  document.title = t('app.title');
+  const loadingMark = document.querySelector<HTMLElement>('#loading .mark b'); if (loadingMark) loadingMark.textContent = t('app.initials');
+  const loadingTitle = document.querySelector<HTMLElement>('#loading > span'); if (loadingTitle) loadingTitle.textContent = t('app.title');
+  arena.setAttribute('aria-label', t('arena.aria'));
+  connectionStatus.textContent = commonText('connection.connecting');
+  const home = document.querySelector<HTMLAnchorElement>('.game-home');
+  if (home) { home.setAttribute('aria-label', commonText('navigation.homeAria')); const label = home.querySelector('span'); if (label) label.textContent = commonText('navigation.home'); }
+  p1PlayerName.textContent = t('hud.playerOne'); p2PlayerName.textContent = t('hud.cpuRival');
+  p1Meter.setAttribute('aria-label', t('hud.playerOneHealth')); p2Meter.setAttribute('aria-label', t('hud.playerTwoHealth'));
+  const round = document.querySelector('.round-hud');
+  const roundLabel = round?.querySelector('span'), roundRule = round?.querySelector('small');
+  if (roundLabel) roundLabel.textContent = t('hud.round'); if (roundRule) roundRule.textContent = t('hud.firstToKo');
+  const feedLabel = voiceFeed.querySelector('span'); if (feedLabel) feedLabel.textContent = t('voiceFeed.channel');
+  voiceCommand.textContent = t('voiceFeed.chooseMove');
+  const deck = document.querySelector<HTMLElement>('.command-deck'); deck?.setAttribute('aria-label', t('commands.aria'));
+  const deckTitle = deck?.querySelector('.deck-title');
+  const deckLabel = deckTitle?.querySelector('span'), deckHint = deckTitle?.querySelector('small');
+  if (deckLabel) deckLabel.textContent = t('commands.say'); if (deckHint) deckHint.textContent = t('commands.keyboardHint');
+  for (const button of commandButtons) {
+    const label = button.querySelector('b'), command = button.dataset.command as FighterCommand;
+    if (label) label.textContent = commandLabel(command);
+  }
+  fightCall.textContent = t('fight.call');
+  $('result-kicker').textContent = t('result.knockout'); resultTitle.textContent = t('result.wins', { name: 'Nyx' });
+  rematch.textContent = t('result.rematch'); const exit = result.querySelector('a'); if (exit) exit.textContent = t('result.exit');
+  loadingLabel.textContent = t('loading.combatSystem'); loadingFill.parentElement?.setAttribute('aria-label', t('loading.combatSystem'));
+  const lockStyle = document.createElement('style');
+  lockStyle.textContent = `.select-card.selected::after{content:${JSON.stringify(t('select.locked'))}}`;
+  document.head.append(lockStyle);
+  const music = document.querySelector<HTMLButtonElement>('#music-toggle');
+  const localizeMusic = () => {
+    if (!music) return;
+    music.title = commonText('music.toggleTitle'); music.setAttribute('aria-label', commonText('music.toggleAria'));
+    const label = music.querySelector('.music-toggle-label'); if (label) label.textContent = commonText(music.getAttribute('aria-pressed') === 'true' ? 'music.on' : 'music.off');
+  };
+  localizeMusic(); music?.addEventListener('click', localizeMusic);
 }
 function escapeHtml(value: string): string { return value.replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[char]!); }
 

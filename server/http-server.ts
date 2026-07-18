@@ -33,10 +33,33 @@ import { AnalyticsStore, validDate } from './analytics-store';
 import { AnalyticsObserver } from './analytics-observer';
 import { analyticsPdf } from './analytics-pdf';
 import { GoogleAnalyticsAuth } from './google-analytics-auth';
+import { DEFAULT_LOCALE, SUPPORTED_LOCALES, resolveLocale, type SupportedLocale } from '../shared/i18n/locales';
+import { RACER_MESSAGES } from '../shared/i18n/racer';
+import { MONSTERS_MESSAGES } from '../shared/i18n/monsters';
+import { createTranslator, normalizeForMatching } from '../shared/i18n/translate';
+import {
+  carName as localizedCarName,
+  trackName as localizedTrackName,
+  localizedCarAliases,
+  localizedTrackAliases,
+  monsterName as localizedMonsterName,
+  moveName as localizedMoveName,
+  fighterName as localizedFighterName,
+  fighterMapName as localizedFighterMapName,
+  localizedMonsterAliases,
+  localizedMoveAliases,
+  localizedFighterAliases,
+} from '../shared/i18n/content';
 
-const VOICE_RACER_CONTROLS_INTRO = 'Before you start, check the controls on the screen. Say left or right to steer. Say boost to speed up. Say brake to slow down. Say nitro to break through a wall.';
 const BATTLE_VOICE_RECONNECT_GRACE_MS = 30_000;
 const FIGHTER_VOICE_RECONNECT_GRACE_MS = 30_000;
+
+export function isRacerAdvanceWord(spoken: string, locale: SupportedLocale = DEFAULT_LOCALE): boolean {
+  const text = normalizeForMatching(spoken, locale);
+  return locale === 'pt-BR'
+    ? /\b(comecar|iniciar|proximo|proxima|continuar|pronto|pronta|revanche|correr|corrida|de novo|correr de novo|vamos correr|sim)\b/.test(text)
+    : /\b(start|begin|go|next|continue|ready|race|rematch|again|race again|go again|yes)\b/.test(text);
+}
 
 interface BattleVoiceCallBinding {
   code: string;
@@ -82,6 +105,7 @@ export class HttpServer {
    *  voice). A high-energy announcer voiceId is the intended default set in deploy config. */
   private readonly crVoice: string;
   private readonly voiceRelayToken: string;
+  private readonly defaultLocale: SupportedLocale;
   /** Cached selectable cars/maps for the lobby (refreshed from manifest + maps.json periodically). */
   private roomConfigCache: { carCount: number; maps: string[]; carNames: string[] } = { carCount: 0, maps: [], carNames: [] };
   private roomConfigTimer: ReturnType<typeof setInterval> | null = null;
@@ -172,6 +196,7 @@ export class HttpServer {
     this.fighterPreviewDir = opts.fighterPreviewDir ?? 'data/fighter-previews';
     this.crVoice = (process.env.CR_TTS_VOICE ?? '').trim();
     this.voiceRelayToken = (process.env.VOICE_RELAY_TOKEN ?? this.authToken ?? '').trim();
+    this.defaultLocale = resolveLocale(process.env.DEFAULT_LOCALE, DEFAULT_LOCALE);
     // Conversational AI host: OpenAI when OPENAI_API_KEY is set (model via OPENAI_MODEL), else a
     // null client so the game degrades gracefully to the scripted phrase-bank lines.
     const openaiKey = (process.env.OPENAI_API_KEY ?? '').trim();
@@ -340,13 +365,14 @@ export class HttpServer {
 
   private onVoiceConnection(ws: WebSocket): void {
     console.log('[CR] voice WebSocket connected (Conversation Relay)');
+    let relayLocale = this.defaultLocale;
     // Per-CALLER conversation history (this WS only), so the AI host has context across turns.
     const history: LlmTurn[] = [];
     const adapter = new ConversationRelayAdapter({
       findOrCreateRoom: (code) => this.game.getOrCreateRoom(code),
       // SPEAK to the caller: Conversation Relay TTS-synthesizes {type:'text'} tokens onto the call.
       // `last:true` marks a complete utterance so Relay flushes it promptly.
-      say: (text) => sendRelayText(ws, text),
+      say: (text) => sendRelayText(ws, text, relayLocale),
       register: (roomCode, a) => {
         let set = this.voiceAdapters.get(roomCode);
         if (!set) { set = new Set(); this.voiceAdapters.set(roomCode, set); }
@@ -363,17 +389,20 @@ export class HttpServer {
       onIntent: () => this.analyticsObserver.voiceCommand('racer'),
       // Conversational AI turn: build the host context from the live room, run the LLM (with history),
       // return what to say. Null when the LLM is disabled → adapter stays quiet (scripted fallback).
-      converse: async (roomCode, playerId, utterance) => {
+      converse: async (roomCode, playerId, utterance, locale) => {
         const room = this.game.findRoom(roomCode);
         if (!room) return null;
         // DETERMINISTIC fast-path: in car/map select, if the caller CLEARLY picked one (a number or a
         // strong name match, not a question), act on it immediately — no LLM round-trip, and it works
         // even with the LLM disabled. This is what makes "two" / "the second one" reliably select.
-        const direct = this.directSelection(room, playerId, utterance);
+        const direct = this.directSelection(room, playerId, utterance, locale);
         if (direct) return direct;
+        // Portuguese gameplay is fully deterministic. Keep optional free-form LLM replies disabled
+        // until a model-level locale guarantee exists, so an English response can never reach pt-BR TTS.
+        if (locale === 'pt-BR') return null;
         if (!this.llm.enabled) return null;
         history.push({ role: 'user', content: utterance });
-        const reply = await hostTurn(this.llm, this.hostContext(room, playerId), history);
+        const reply = await hostTurn(this.llm, this.hostContext(room, playerId, locale), history, locale);
         if (reply) history.push({ role: 'assistant', content: reply });
         // Bound history so a long call doesn't grow unbounded (keep the last ~12 turns).
         if (history.length > 12) history.splice(0, history.length - 12);
@@ -389,9 +418,15 @@ export class HttpServer {
     let route: 'racer' | 'battle' | 'fighter' | null = null;
     let battle: BattleVoiceSession | null = null;
     let fighter: FighterVoiceSession | null = null;
-    const say = (text: string) => sendRelayText(ws, text);
+    const say = (text: string) => sendRelayText(ws, text, relayLocale);
     ws.on('message', (d) => {
       const raw = d.toString();
+      if (route === null) {
+        try {
+          const parameters = JSON.parse(raw)?.customParameters;
+          relayLocale = resolveLocale(parameters?.commandLocale ?? parameters?.locale, this.defaultLocale);
+        } catch { /* session handlers validate malformed frames */ }
+      }
       if (route === null && this.voiceRelayToken) {
         try {
           if (String(JSON.parse(raw)?.customParameters?.relayToken ?? '') !== this.voiceRelayToken) { ws.close(1008, 'unauthorized relay'); return; }
@@ -443,6 +478,40 @@ export class HttpServer {
     return live[0]?.game ?? 'racer';
   }
 
+  private recentVoiceLocale(game: 'racer' | 'battle' | 'fighter', roomCode: string): SupportedLocale {
+    if (game === 'battle' && this.battle.connectionCount > 0) return this.battle.preferredLocale(roomCode, this.defaultLocale);
+    if (game === 'fighter' && this.fighter.connectionCount > 0) return this.fighter.preferredLocale(roomCode, this.defaultLocale);
+    if (game === 'racer' && this.game.connectionCount > 0) return this.game.preferredLocale(roomCode, this.defaultLocale);
+    return this.defaultLocale;
+  }
+
+  private voiceHints(game: 'racer' | 'battle' | 'fighter', locale: SupportedLocale): string {
+    if (game === 'battle') {
+      const commands = locale === 'pt-BR'
+        ? ['lutar', 'lute', 'atacar', 'ataque', 'defender', 'defenda-se', 'bloquear', 'bloqueie', 'proteger', 'proteja-se', 'item', 'poção', 'curar', 'provocar', 'provoque', 'zombar', 'zombe', 'voltar', 'volte', 'cancelar', 'começar', 'batalhar', 'revanche', 'próximo', 'sim']
+        : ['fight', 'guard', 'item', 'potion', 'taunt', 'attack', 'heal', 'back', 'cancel', 'start', 'battle', 'rematch', 'next'];
+      const content = rosterEntries().flatMap(monster => [
+        ...localizedMonsterAliases(monster.id, monster.name),
+        ...monster.moves.flatMap(move => localizedMoveAliases(move.id, move.name)),
+      ]);
+      return [...commands, 'um', 'dois', 'três', 'quatro', 'primeiro', 'segundo', 'terceiro', 'quarto', ...content].join(', ');
+    }
+    if (game === 'fighter') {
+      const commands = locale === 'pt-BR'
+        ? ['frente', 'avançar', 'avance', 'aproximar', 'aproxime-se', 'trás', 'recuar', 'recue', 'afastar', 'afaste-se', 'pular', 'pule', 'saltar', 'soco', 'socar', 'dê um soco', 'golpear', 'chute', 'chutar', 'dê um chute', 'bloquear', 'bloqueie', 'defender', 'defenda-se', 'começar', 'próximo', 'lutar', 'revanche', 'ajuda']
+        : ['forward', 'closer', 'back', 'backward', 'away', 'jump', 'leap', 'hop', 'punch', 'jab', 'strike', 'kick', 'roundhouse', 'block', 'guard', 'defend', 'start', 'next', 'fight', 'rematch', 'help'];
+      const fighters = FIGHTER_ROSTER.flatMap(fighter => localizedFighterAliases(fighter.id, fighter.name));
+      const maps = this.fighterMaps.flatMap(map => [map.name, localizedFighterMapName(locale, map.id, map.name)]);
+      return [...fighters, ...maps, ...commands, 'um', 'dois', 'três', 'primeiro', 'segundo', 'terceiro', 'vezes'].join(', ');
+    }
+    const commands = locale === 'pt-BR'
+      ? ['esquerda', 'direita', 'acelerar', 'acelere', 'acelera', 'vai', 'frear', 'freie', 'freia', 'devagar', 'reduzir', 'reduza', 'desacelerar', 'desacelere', 'parar', 'nitro', 'turbo', 'poder', 'começar', 'iniciar', 'próximo', 'próxima', 'corrida', 'correr', 'revanche', 'sim']
+      : ['left', 'right', 'boost', 'go', 'brake', 'slow', 'stop', 'nitro', 'power', 'start', 'next', 'race', 'rematch'];
+    const cars = this.roomConfigCache.carNames.flatMap(localizedCarAliases);
+    const tracks = this.roomConfigCache.maps.flatMap(localizedTrackAliases);
+    return [...commands, 'um', 'dois', 'três', 'primeiro', 'segundo', 'terceiro', ...cars, ...tracks].join(', ');
+  }
+
   private makeFighterSession(say: (text: string) => void): FighterVoiceSession {
     let session: FighterVoiceSession;
     session = new FighterVoiceSession({
@@ -465,18 +534,21 @@ export class HttpServer {
         if (accepted) this.analyticsObserver.voiceCommand('fighter');
         return accepted;
       },
-      snapshot: (code, id) => this.fighterVoiceSnapshot(code, id),
+      snapshot: (code, id, locale) => this.fighterVoiceSnapshot(code, id, locale),
     });
     return session;
   }
 
-  private fighterVoiceSnapshot(code: string, playerId: string): FighterVoiceSnapshot | null {
+  private fighterVoiceSnapshot(code: string, playerId: string, locale: SupportedLocale = DEFAULT_LOCALE): FighterVoiceSnapshot | null {
     const room = this.fighter.findRoom(code); if (!room || !room.hasPlayer(playerId)) return null;
     const state = room.state(); const me = state.players.find(player => player.playerId === playerId);
     const mySide = me?.side === 'p2' ? 'p2' : 'p1'; const foeSide = mySide === 'p1' ? 'p2' : 'p1';
     const foe = state.players.find(player => player.side === foeSide);
     const playerOne = state.players.find(player => player.side === 'p1'), playerTwo = state.players.find(player => player.side === 'p2');
-    const fighterName = (id: string | null | undefined) => FIGHTER_ROSTER.find(fighter => fighter.id === id)?.name ?? null;
+    const fighterName = (id: string | null | undefined) => {
+      const fighter = FIGHTER_ROSTER.find(entry => entry.id === id);
+      return fighter ? localizedFighterName(locale, fighter.id, fighter.name) : null;
+    };
     return { phase: state.phase, myName: me?.name ?? null, myFighterId: me?.fighterId ?? null, myFighterName: fighterName(me?.fighterId),
       foeName: foe?.name ?? null, foeFighterId: foe?.fighterId ?? null, foeFighterName: fighterName(foe?.fighterId), selectedMap: state.selectedMap,
       mySide, myHealth: state.world?.[mySide].health ?? null, foeHealth: state.world?.[foeSide].health ?? null,
@@ -487,8 +559,8 @@ export class HttpServer {
       playerCount: state.players.filter(player => !player.isAi).length,
       allFightersSelected: state.players.filter(player => !player.isAi).length > 0 && state.players.filter(player => !player.isAi).every(player => player.fighterId),
       isController: room.canControlSetup(playerId),
-      fighters: FIGHTER_ROSTER.map(fighter => ({ id: fighter.id, name: fighter.name })),
-      maps: this.fighterMaps.map(map => ({ id: map.id, name: map.name })) };
+      fighters: FIGHTER_ROSTER.map(fighter => ({ id: fighter.id, name: localizedFighterName(locale, fighter.id, fighter.name) })),
+      maps: this.fighterMaps.map(map => ({ id: map.id, name: localizedFighterMapName(locale, map.id, map.name) })) };
   }
 
   private registerFighterVoiceSession(code: string, session: FighterVoiceSession): void {
@@ -564,13 +636,14 @@ export class HttpServer {
       },
       advance: (code: string) => this.battle.voiceAdvance(code),
       setTimer: (fn: () => void, ms: number) => { setTimeout(fn, ms); },
-      snapshot: (code: string, id: string) => this.battleVoiceSnapshot(code, id),
-      converse: async (code: string, id: string, utterance: string, isCurrent: () => boolean) => {
+      snapshot: (code: string, id: string, locale?: SupportedLocale) => this.battleVoiceSnapshot(code, id, locale),
+      converse: async (code: string, id: string, utterance: string, isCurrent: () => boolean, locale: SupportedLocale) => {
+        if (locale === 'pt-BR') return null;
         if (!this.llm.enabled) return null;
-        const ctx = this.battleHostContext(code, id, isCurrent);
+        const ctx = this.battleHostContext(code, id, isCurrent, locale);
         if (!ctx) return null;
         history.push({ role: 'user', content: utterance });
-        const reply = await battleHostTurn(this.llm, ctx, history);
+        const reply = await battleHostTurn(this.llm, ctx, history, locale);
         if (!isCurrent()) return null;
         if (reply) history.push({ role: 'assistant', content: reply });
         if (history.length > 12) history.splice(0, history.length - 12);
@@ -668,7 +741,11 @@ export class HttpServer {
    *  CLEARLY picked one (a number or strong name, not a question), do it now + return the confirmation.
    *  Returns null when it's not a clear pick (a question, chit-chat, or wrong phase) → the LLM handles
    *  it. Makes numeric/name picks reliable regardless of the model, and works with the LLM disabled. */
-  private directSelection(room: Room, playerId: string, utterance: string): string | null {
+  private directSelection(room: Room, playerId: string, utterance: string, locale: SupportedLocale = DEFAULT_LOCALE): string | null {
+    const text = createTranslator(locale, RACER_MESSAGES);
+    const controls = text('voice.controlsIntro');
+    const carChoices = this.roomConfigCache.carNames.map(name => localizedCarAliases(name).join(' '));
+    const mapChoices = room.mapChoices.map(name => localizedTrackAliases(name).join(' '));
     // Internal prompts are wrapped in parentheses by the voice adapter. They are instructions to the
     // host brain, not caller commands, so they must never drive room state (for example race-over
     // recap prompts mentioning a rematch must not advance results back to car select).
@@ -680,42 +757,42 @@ export class HttpServer {
     // if it's off/slow). Only in the lobby — in car_select a car pick must win over a name guess.
     if (room.phase === 'lobby') {
       const me = room.lobbyPlayers().find(p => p.playerId === playerId);
-      const hasRealName = me && !/^Racer(\s|$)/.test(me.name);
-      if (!hasRealName) {
-        const name = parseSpokenName(utterance);
+      const hasRealName = me && !/^(Racer|Piloto)(\s|$)/.test(me.name);
+      if (!hasRealName && !isRacerAdvanceWord(utterance, locale)) {
+        const name = parseSpokenName(utterance, locale);
         if (name) {
           this.game.voiceSetName(room.code, playerId, name);
-          return `Nice to meet you, ${name}! ${VOICE_RACER_CONTROLS_INTRO} Say "start" when you're ready to pick your car.`;
+          return text('voice.niceMeetStart', { name, controls });
         }
       }
     }
     if (room.phase === 'car_select') {
-      const i = clearSelectionIndex(utterance, this.roomConfigCache.carNames);
+      const i = clearSelectionIndex(utterance, carChoices, locale);
       if (i !== null) {
         this.game.voiceSelectCar(room.code, playerId, i);
-        return `Locked in — the ${room.carName(i)}! Say "next" when you're ready for the track.`;
+        return text('voice.lockedCarNext', { car: localizedCarName(locale, room.carName(i)) });
       }
       // "next"/"start" advances to the track — but only once they've actually picked a car.
-      if (isAdvanceWord(utterance)) {
+      if (isRacerAdvanceWord(utterance, locale)) {
         const me = room.lobbyPlayers().find(p => p.playerId === playerId);
-        if ((me?.carIndex ?? null) === null) return 'Pick your car first — say a car name or number.';
-        return this.game.voiceAdvance(room.code) ? 'On to the track — say a track name or number!' : null;
+        if ((me?.carIndex ?? null) === null) return text('voice.pickCarFirst');
+        return this.game.voiceAdvance(room.code) ? text('voice.onTrack') : null;
       }
       return null;
     }
     if (room.phase === 'map_select') {
-      const i = clearSelectionIndex(utterance, room.mapChoices);
+      const i = clearSelectionIndex(utterance, mapChoices, locale);
       if (i === null) {
-        if (!isAdvanceWord(utterance)) return null;
+        if (!isRacerAdvanceWord(utterance, locale)) return null;
         const ok = this.game.voiceAdvance(room.code);
-        return ok ? "Here we go — let's race!" : 'Pick a track first — say a track name or number.';
+        return ok ? text('voice.goRace') : text('voice.pickTrackFirst');
       }
       this.game.voiceSelectMap(room.code, room.mapChoices[i]!, playerId);
-      return `Your vote's in for ${room.mapChoices[i]}! Say "start" when you're ready to race.`;
+      return text('voice.voteTrackStart', { map: localizedTrackName(locale, room.mapChoices[i]!) });
     }
     // ADVANCE / REMATCH (deterministic, LLM-independent): "start"/"go"/"next"/"race"/"rematch" moves the
     // flow forward — this was previously LLM-only, so "start" did nothing when the model was off/slow.
-    if (isAdvanceWord(utterance)) {
+    if (isRacerAdvanceWord(utterance, locale)) {
       const me = room.lobbyPlayers().find(p => p.playerId === playerId);
       // (car_select is handled by its own branch above; reaching here means lobby/map_select/results.)
       const ok = this.game.voiceAdvance(room.code);
@@ -723,36 +800,43 @@ export class HttpServer {
       // room.phase is now the NEW phase we advanced INTO — describe that screen.
       const landed = String(room.phase);
       void me;
-      return landed === 'car_select' ? 'Choose your car — say a name or number!'
-        : landed === 'map_select' ? 'On to the track — say a track name or number!'
-        : "Here we go — let's race!";
+      return landed === 'car_select' ? text('voice.chooseCar')
+        : landed === 'map_select' ? text('voice.chooseTrack')
+        : text('voice.goRace');
     }
     return null;
   }
 
   /** Test seam for deterministic voice routing without opening a WebSocket. */
-  directSelectionForTest(room: Room, playerId: string, utterance: string): string | null {
-    return this.directSelection(room, playerId, utterance);
+  directSelectionForTest(room: Room, playerId: string, utterance: string, locale: SupportedLocale = DEFAULT_LOCALE): string | null {
+    return this.directSelection(room, playerId, utterance, locale);
   }
 
   /** Build the AI host's view of a live room for one caller: what it can see + the actions it can take
    *  (pick a car/map by fuzzy name, start the race). Actions delegate to the same Room methods + the
    *  game-server broadcast, so a voice-driven pick shows up on the screen exactly like a texted one. */
-  private hostContext(room: Room, playerId: string): HostContext {
-    const cars = this.roomConfigCache.carNames;
+  private hostContext(room: Room, playerId: string, locale: SupportedLocale = DEFAULT_LOCALE): HostContext {
+    const text = createTranslator(locale, RACER_MESSAGES);
+    const controls = text('voice.controlsIntro');
+    const canonicalCars = this.roomConfigCache.carNames;
+    const canonicalMaps = room.mapChoices;
+    const cars = canonicalCars.map(name => localizedCarName(locale, name));
+    const maps = canonicalMaps.map(name => localizedTrackName(locale, name));
+    const carChoices = canonicalCars.map(name => localizedCarAliases(name).join(' '));
+    const mapChoices = canonicalMaps.map(name => localizedTrackAliases(name).join(' '));
     const me = room.lobbyPlayers().find(p => p.playerId === playerId);
     const myCarIdx = me?.carIndex ?? null;
     // A caller starts with an auto placeholder name ("Racer 1234" from their number). Treat that as
     // "no real name yet" so the host asks for one and displays what they actually say.
     const rawName = me?.name ?? '';
-    const realName = /^Racer(\s|$)/.test(rawName) ? null : rawName || null;
+    const realName = /^(Racer|Piloto)(\s|$)/.test(rawName) ? null : rawName || null;
     const board = this.leaderboardSummaryForMap(room.selectedMap, room.results());
     const myResult = room.results().find(r => r.playerId === playerId) ?? null;
     return {
       phase: room.phase as HostContext['phase'],
-      cars, maps: room.mapChoices, selectedMap: room.selectedMap,
+      cars, maps, selectedMap: room.selectedMap ? localizedTrackName(locale, room.selectedMap) : null,
       myName: realName,
-      myCar: myCarIdx !== null ? room.carName(myCarIdx) : null,
+      myCar: myCarIdx !== null ? localizedCarName(locale, room.carName(myCarIdx)) : null,
       myPlace: myResult?.place ?? null,
       myFinishTime: myResult && myResult.finished && myResult.finishT > 0 ? myResult.finishT : null,
       racerCount: room.playerCount,
@@ -768,25 +852,25 @@ export class HttpServer {
         // Always chain into the NEXT step so a bare tool call never leaves dead air (the "it just said
         // 'nice to meet you' and stopped" issue). In the lobby, point them at getting into the race.
         return room.phase === 'lobby'
-          ? `Nice to meet you, ${clean}! ${VOICE_RACER_CONTROLS_INTRO} Others can still call in — say "start" whenever you're ready to pick your car.`
-          : `Nice to meet you, ${clean}!`;
+          ? text('voice.niceMeetOthers', { name: clean, controls })
+          : text('voice.niceMeet', { name: clean });
       },
       selectCarByName: (name) => {
-        const i = matchChoice(name, cars);
+        const i = matchChoice(name, carChoices, locale);
         // No match → the model likely invented a name; DON'T act, and tell it (so it re-asks with the
         // real list) rather than confirming a car that doesn't exist.
         if (i < 0) return null;
         if (room.phase !== 'car_select') return null;
         this.game.voiceSelectCar(room.code, playerId, i);
         // Confirm using the ACTUAL matched car name — never the caller's/model's raw words.
-        return `Locked in — the ${room.carName(i)}!`;
+        return text('voice.lockedCar', { car: localizedCarName(locale, room.carName(i)) });
       },
       selectMapByName: (name) => {
-        const i = matchChoice(name, room.mapChoices);
+        const i = matchChoice(name, mapChoices, locale);
         if (i < 0) return null;   // invented/unknown track → do nothing (no hallucinated confirmation)
         if (room.phase !== 'map_select') return null;
         this.game.voiceSelectMap(room.code, room.mapChoices[i]!, playerId);   // vote
-        return `Your vote's in for ${room.mapChoices[i]}!`;
+        return text('voice.voteTrack', { map: localizedTrackName(locale, room.mapChoices[i]!) });
       },
       startRace: () => {
         // Guard against SKIPPING a step: don't leave car_select until THIS caller has actually picked
@@ -794,10 +878,10 @@ export class HttpServer {
         // this in the prompt; this is the hard backstop.
         const meNow = room.lobbyPlayers().find(p => p.playerId === playerId);
         if (room.phase === 'car_select' && (meNow?.carIndex ?? null) === null) {
-          return "Pick your car first — say a car name or number.";
+          return text('voice.pickCarFirst');
         }
         const ok = this.game.voiceAdvance(room.code);
-        return ok ? "Here we go — let's race!" : null;
+        return ok ? text('voice.goRace') : null;
       },
     };
   }
@@ -825,8 +909,8 @@ export class HttpServer {
   }
 
   /** Test seam for verifying voice host context. */
-  hostContextForTest(room: Room, playerId: string): HostContext {
-    return this.hostContext(room, playerId);
+  hostContextForTest(room: Room, playerId: string, locale: SupportedLocale = DEFAULT_LOCALE): HostContext {
+    return this.hostContext(room, playerId, locale);
   }
 
   // ── Voice Monsters voice helpers: flatten a battle room for one caller ────────────────────────────
@@ -840,10 +924,10 @@ export class HttpServer {
   }
 
   /** Flatten a battle room into the voice session's snapshot (for deterministic routing). */
-  private battleVoiceSnapshot(code: string, playerId: string): BattleVoiceSnapshot | null {
+  private battleVoiceSnapshot(code: string, playerId: string, locale: SupportedLocale = DEFAULT_LOCALE): BattleVoiceSnapshot | null {
     const room = this.battle.findRoom(code);
     if (!room) return null;
-    const monsterNames = rosterEntries().map(m => m.name);
+    const monsterNames = rosterEntries().map(monster => localizedMonsterName(locale, monster.id));
     const players = room.lobbyPlayers();
     const player = players.find(p => p.playerId === playerId);
     const pickedCount = players.filter(p => p.monsterId).length;
@@ -851,7 +935,7 @@ export class HttpServer {
       ? (players.length >= 2 ? players.every(p => !!p.monsterId) : pickedCount === 1)
       : false;
     const rawName = player?.name ?? '';
-    const myName = /^(Challenger|Player)(\s|$)/.test(rawName) ? null : (rawName || null);
+    const myName = /^(Challenger|Player|Desafiante|Jogador)(\s|$)/.test(rawName) ? null : (rawName || null);
     const snap = room.snapshot();
     const res = room.result();
     const battleSide = this.battleSideOf(room, playerId);
@@ -861,7 +945,7 @@ export class HttpServer {
       return {
         phase: room.phase, mySide: side, monsterNames, myName,
         myMonsterId: player?.monsterId ?? null,
-        myMonsterName: mon?.name ?? null,
+        myMonsterName: mon ? localizedMonsterName(locale, mon.id) : null,
         myMonsterType: mon?.type ?? null,
         canStartBattle,
         canRematch: room.canRematch,
@@ -874,12 +958,12 @@ export class HttpServer {
     const activeSide = room.activeSide();
     return {
       phase: room.phase, mySide: side, monsterNames, myName,
-      myMonsterId: me.monsterId, myMonsterName: me.monsterName,
+      myMonsterId: me.monsterId, myMonsterName: localizedMonsterName(locale, me.monsterId),
       myMonsterType: me.type,
       canStartBattle,
       canRematch: room.canRematch,
       foeName: foe.name,
-      foeMonsterName: foe.monsterName,
+      foeMonsterName: localizedMonsterName(locale, foe.monsterId),
       foeMonsterType: foe.type,
       myHp: me.hp, myMaxHp: me.maxHp, foeHp: foe.hp, foeMaxHp: foe.maxHp,
       myPotions: side === 'a' ? snap.potions.a : snap.potions.b,
@@ -887,17 +971,19 @@ export class HttpServer {
       activeSide,
       activeMenu: room.activeMenu(),
       whoseTurn: room.phase === 'battle' && activeSide ? (activeSide === side ? 'me' : 'foe') : null,
-      myMoves: me.moves.map(m => ({ id: m.id, name: m.name })),
+      myMoves: me.moves.map(move => ({ id: move.id, name: localizedMoveName(locale, move.id) })),
       winnerName: res?.winnerName ?? null,
     };
   }
 
   /** Build the battle LLM host's context for one caller (delegating actions to the BattleServer). */
-  private battleHostContext(code: string, playerId: string, isCurrent: () => boolean = () => true): BattleHostContext | null {
+  private battleHostContext(code: string, playerId: string, isCurrent: () => boolean = () => true,
+    locale: SupportedLocale = DEFAULT_LOCALE): BattleHostContext | null {
     const room = this.battle.findRoom(code);
     if (!room) return null;
-    const s = this.battleVoiceSnapshot(code, playerId);
+    const s = this.battleVoiceSnapshot(code, playerId, locale);
     if (!s) return null;
+    const text = createTranslator(locale, MONSTERS_MESSAGES);
     return {
       phase: s.phase, monsters: s.monsterNames, myName: s.myName,
       myMonster: s.myMonsterName, foeMonster: s.foeMonsterName,
@@ -907,21 +993,21 @@ export class HttpServer {
       setName: (name) => {
         if (!isCurrent() || (room.phase !== 'lobby' && room.phase !== 'monster_select')) return null;
         const c = name.trim().slice(0, 20); if (!c) return null;
-        this.battle.voiceSetName(code, playerId, c); return `Nice to meet you, ${c}!`;
+        this.battle.voiceSetName(code, playerId, c); return text('voice.niceMeet', { name: c });
       },
       selectMonster: (name) => {
         if (!isCurrent()) return null;
-        const i = matchChoice(name, s.monsterNames);
+        const i = matchChoice(name, s.monsterNames, locale);
         if (i < 0 || room.phase !== 'monster_select') return null;
-        const id = s.monsterNames[i]!.toLowerCase().replace(/\s+/g, '');
+        const id = rosterEntries()[i]!.id;
         this.battle.voiceSelectMonster(code, playerId, id);
-        return `Locked in — ${s.monsterNames[i]}!`;
+        return text('voice.lockedMonster', { name: s.monsterNames[i]! });
       },
       chooseAction: (action) => {
         // Gate on the caller's TURN, not just the phase: after the caller acts, the room may still be
         // in battle while the other side/AI is active. Do not let the LLM act out of turn.
         if (!isCurrent()) return null;
-        const current = this.battleVoiceSnapshot(code, playerId);
+        const current = this.battleVoiceSnapshot(code, playerId, locale);
         if (room.phase !== 'battle' || current?.whoseTurn !== 'me' || current.turn !== s.turn) return null;
         const parsed = this.parseVoiceHostAction(action, current.myMoves);
         if (!parsed) return null;
@@ -995,22 +1081,20 @@ export class HttpServer {
         : DEFAULT_ROOM;
       // MULTI-GAME: one number. Auto-route to whichever game's screen most recently opened.
       const voiceGame = this.recentVoiceGame();
+      const voiceLocale = this.recentVoiceLocale(voiceGame, roomCode);
       const xml = twimlConnectRelay({
         wsUrl: `${this.publicBaseUrl.replace(/^http/, 'ws')}/voice`,
         sessionEndedUrl: `${this.publicBaseUrl}/voice/session-ended`,
         roomCode,
         // ElevenLabs voice for the announcer talk-back; swap via the CR_TTS_VOICE env.
         ttsProvider: 'ElevenLabs',
-        voice: this.crVoice,
+        voice: voiceLocale === 'pt-BR'
+          ? (process.env.CR_TTS_VOICE_PT_BR ?? '').trim()
+          : this.crVoice,
         game: voiceGame === 'battle' ? 'monsters' : voiceGame,
+        locale: voiceLocale,
         relayToken: this.voiceRelayToken || undefined,
-        hints: voiceGame === 'battle'
-          ? 'fight, guard, item, potion, taunt, attack, heal, sparkmouse, embertail, shellback, thornling, galecoil, voltcrest, dazeduck, psyclone, ember, thunder, jolt, water, vine, psystrike'
-          : voiceGame === 'fighter'
-            ? [...FIGHTER_ROSTER.map(fighter => fighter.name), ...this.fighterMaps.map(map => map.name),
-                'forward', 'closer', 'back', 'backward', 'away', 'jump', 'leap', 'hop', 'punch', 'jab', 'strike',
-                'kick', 'roundhouse', 'block', 'guard', 'defend', 'start', 'next', 'fight', 'rematch', 'help'].join(', ')
-            : 'left, right, boost, go, brake, slow, stop, nitro, power',
+        hints: this.voiceHints(voiceGame, voiceLocale),
         // NO welcomeGreeting here on purpose: the game's WS `setup` handler speaks the greeting (and
         // asks the caller's name) as its FIRST utterance. Setting it here too made the caller hear
         // "Welcome to Voice Monsters" TWICE (TwiML greeting + the WS greeting).
@@ -1074,7 +1158,11 @@ export class HttpServer {
     //      the lobby can show it + encode the QR. Empty string when unset (lobby shows a placeholder).
     if (path === '/api/config' && req.method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-      res.end(JSON.stringify({ phoneNumber: this.gamePhoneNumber }));
+      res.end(JSON.stringify({
+        phoneNumber: this.gamePhoneNumber,
+        defaultLocale: this.defaultLocale,
+        supportedLocales: SUPPORTED_LOCALES,
+      }));
       return;
     }
     // ---- manifest API ----
@@ -1448,8 +1536,8 @@ export class HttpServer {
 const RELAY_CHUNK_GAP_MS = 420;
 const relayQueues = new WeakMap<WebSocket, { tail: Promise<void>; lastAt: number; generation: number }>();
 
-function sendRelayText(ws: WebSocket, text: string): void {
-  const chunks = relayTextChunks(text);
+function sendRelayText(ws: WebSocket, text: string, locale: SupportedLocale = DEFAULT_LOCALE): void {
+  const chunks = relayTextChunks(text, locale);
   if (!chunks.length || ws.readyState !== ws.OPEN) return;
   let queue = relayQueues.get(ws);
   if (!queue) {
@@ -1464,7 +1552,7 @@ function sendRelayText(ws: WebSocket, text: string): void {
       if (elapsed < RELAY_CHUNK_GAP_MS) await sleep(RELAY_CHUNK_GAP_MS - elapsed);
       if (generation !== queue.generation) return;
       if (ws.readyState !== ws.OPEN) return;
-      ws.send(JSON.stringify({ type: 'text', token, last: true }));
+      ws.send(JSON.stringify({ type: 'text', token, last: true, lang: locale }));
       queue.lastAt = Date.now();
     }
   }).catch(() => {
@@ -1482,8 +1570,8 @@ function clearRelayTextQueue(ws: WebSocket): void {
   queue.lastAt = 0;
 }
 
-export function relayTextChunks(text: string): string[] {
-  const token = speechSafeText(text);
+export function relayTextChunks(text: string, locale: SupportedLocale = DEFAULT_LOCALE): string[] {
+  const token = speechSafeText(text, 500, locale);
   if (!token) return [];
   const controls = splitControlText(token);
   return controls.length > 1 ? controls : [token];
@@ -1491,12 +1579,14 @@ export function relayTextChunks(text: string): string[] {
 
 function splitControlText(text: string): string[] {
   const lower = text.toLowerCase();
-  const isInstruction = lower.includes('say ') || lower.includes('voice controls') || lower.includes('quick rules') || lower.includes('how to play') || lower.includes('controls on the screen');
+  const isInstruction = lower.includes('say ') || lower.includes('voice controls') || lower.includes('quick rules') || lower.includes('how to play') || lower.includes('controls on the screen')
+    || lower.includes('diga ') || lower.includes('comandos de voz') || lower.includes('regras') || lower.includes('como jogar') || lower.includes('controles na tela');
   if (!isInstruction || text.length < 90) return [];
   return text
     .replace(/:\s+/g, '. ')
     .replace(/;\s+/g, '. ')
     .replace(/\s+or\s+say\s+/gi, '. Or say ')
+    .replace(/\s+ou\s+diga\s+/gi, '. Ou diga ')
     .replace(/\s+and\s+nitro\s+/gi, '. And nitro ')
     .split(/(?<=[.!?])\s+/)
     .map(s => s.trim())

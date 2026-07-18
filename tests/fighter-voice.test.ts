@@ -125,6 +125,49 @@ describe('fighter voice session', () => {
     expect(matchVoiceChoice('rain temple', choices)?.id).toBe('rain-temple');
     expect(matchVoiceChoice('neon foundry', choices)?.id).toBe('neon-foundry');
     expect(matchVoiceChoice('Nicks', FIGHTER_ROSTER)?.id).toBe('nyx');
+    expect(matchVoiceChoice('a segunda', choices, 'pt-BR')?.id).toBe('rain-temple');
+    expect(matchVoiceChoice('número três', choices, 'pt-BR')?.id).toBe('void-circuit');
+  });
+
+  it('uses the setup command locale for Portuguese menus, choices, commands, and speech', () => {
+    const game = voiceGame();
+    const ana = game.connect('CA-PT', 'VOICE', 'pt-BR');
+    expect(ana.spoken[0]).toContain('Durante a luta, diga avançar, recuar, pular, soco, chute ou bloquear.');
+
+    ana.prompt('meu nome é ana');
+    expect(ana.spoken.at(-1)).toBe('Boas-vindas, Ana. Diga começar quando quiser escolher os lutadores.');
+    ana.prompt('começar');
+    expect(ana.spoken.at(-1)).toBe('Escolha seu lutador. Diga o nome ou número exibido na tela.');
+    ana.prompt('primeira');
+    expect(game.room.state().players.find(player => player.playerId === ana.playerId)?.fighterId).toBe('nyx');
+    ana.prompt('próximo');
+    expect(ana.spoken.at(-1)).toBe('Escolha sua arena. Diga o nome ou número exibido na tela.');
+    ana.prompt('segunda');
+    expect(game.room.state().selectedMap).toBe('void');
+    expect(ana.spoken.at(-1)).toBe('Arena selecionada: Circuito do Vazio. Diga lutar para começar.');
+    ana.prompt('lutar');
+    expect(game.room.phase).toBe('loading');
+
+    game.room.ready(game.room.state().loadingGeneration); game.stateChanged();
+    advanceIntro(game); game.tick(6);
+    ana.prompt('ajuda');
+    expect(ana.spoken.at(-1)).toMatch(/avançar.*recuar.*pular.*soco.*chute.*bloquear/i);
+    ana.prompt('frente');
+    expect(game.commands.at(-1)).toEqual({ playerId: ana.playerId, command: 'forward' });
+    expect(ana.spoken).toContain('Contra.');
+    expect(ana.spoken).toContain('Lutadores prontos.');
+  });
+
+  it('captures a late Portuguese caller name without requiring an explicit prefix', () => {
+    const game = voiceGame();
+    const ana = game.connect('CA-PT-HOST', 'VOICE', 'pt-BR');
+    ana.prompt('Ana'); ana.prompt('começar');
+    const bia = game.connect('CA-PT-LATE', 'VOICE', 'pt-BR');
+
+    bia.prompt('Bia');
+
+    expect(game.room.state().players.find(player => player.playerId === bia.playerId)?.name).toBe('Bia');
+    expect(bia.spoken.some(line => line.includes('Boas-vindas, Bia'))).toBe(true);
   });
 
   it('expands a finalized command burst after a low-latency interim command', () => {
@@ -213,7 +256,7 @@ function voiceGame() {
     };
   };
 
-  const connect = (callSid: string, roomCode = 'VOICE') => {
+  const connect = (callSid: string, roomCode = 'VOICE', commandLocale?: string) => {
     const spoken: string[] = [];
     let playerId = '';
     const session = new FighterVoiceSession({
@@ -235,7 +278,7 @@ function voiceGame() {
       snapshot: (_code, id) => snapshot(id),
     });
     sessions.push(session);
-    session.handleMessage(JSON.stringify({ type: 'setup', callSid, customParameters: { roomCode } }));
+    session.handleMessage(JSON.stringify({ type: 'setup', callSid, customParameters: { roomCode, ...(commandLocale ? { commandLocale } : {}) } }));
     return {
       session,
       spoken,

@@ -24,4 +24,18 @@ describe('countdown cues', () => {
     expect(isCountdownSoundCue(3)).toBe(true);
     expect(isCountdownSoundCue(2)).toBe(false);
   });
+
+  it.each([
+    [6, 'Às suas marcas'],
+    [5, 'Prepare-se'],
+    [4, 'Atenção'],
+    [3, '3'],
+  ] as const)('localizes countdown cue %i in Brazilian Portuguese', (beat, expected) => {
+    expect(countdownCue(beat, 'pt-BR')).toBe(expected);
+  });
+
+  it('localizes staged countdown displays while preserving numeric beats', () => {
+    expect(countdownDisplay(6.2, 'pt-BR')).toBe('Às suas marcas');
+    expect(countdownDisplay(3, 'pt-BR')).toBe('3');
+  });
 });

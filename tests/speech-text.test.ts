@@ -12,6 +12,10 @@ describe('speechSafeText', () => {
       .toBe('Beetle or Fusca, say "NITRO".');
   });
 
+  it('uses Portuguese conjunctions for Portuguese speech', () => {
+    expect(speechSafeText('esquerda / direita', 500, 'pt-BR')).toBe('esquerda ou direita');
+  });
+
   it('drops empty/control-only speech', () => {
     expect(speechSafeText('\u0000\u200b\n')).toBe('');
   });

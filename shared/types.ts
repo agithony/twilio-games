@@ -1,3 +1,5 @@
+import type { SupportedLocale } from './i18n/locales';
+
 export type Intent = 'MOVE_LEFT' | 'MOVE_RIGHT' | 'BOOST' | 'BRAKE' | 'USE_POWER';
 export const INTENTS: readonly Intent[] = ['MOVE_LEFT','MOVE_RIGHT','BOOST','BRAKE','USE_POWER'];
 
@@ -42,11 +44,11 @@ export interface WorldSnapshot {
 
 // ---- Protocol: client -> server ----
 export type ClientMessage =
-  | { type: 'join'; roomCode: string; name: string; color?: string }
+  | { type: 'join'; roomCode: string; name: string; color?: string; locale?: SupportedLocale }
   | { type: 'intent'; intent: Intent }
   | { type: 'ready' }
   | { type: 'restart' }
-  | { type: 'spectate'; roomCode: string }
+  | { type: 'spectate'; roomCode: string; locale?: SupportedLocale }
   | { type: 'leave' }                              // drop this conn's player slot but stay connected (→ spectator)
   | { type: 'select_car'; carIndex: number }      // player claims a car (car_select phase)
   | { type: 'select_map'; map: string }           // pick the level (map_select phase)

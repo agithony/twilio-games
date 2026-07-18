@@ -17,16 +17,21 @@ import { spriteCandidateUrls } from './sprite-sources';
 import type { RosterEntry } from '../../shared/battle-protocol';
 import type { BattleEvent, BattleAction } from '../../shared/battle-world';
 import { dwellForEvent, HANDOFF_PAUSE_MS } from '../../shared/battle-timing';
-import { effectivenessLabel } from '../../shared/monster-types';
+import { effectivenessLabel, monsterTypeLabel, type MonsterType } from '../../shared/monster-types';
 import { matchBattleAction } from '../../shared/battle-intent';
+import { MONSTERS_MESSAGES } from '../../shared/i18n/monsters';
+import { createTranslator } from '../../shared/i18n/translate';
+import { locale, commonText } from '../i18n';
+import { monsterName as localizedMonsterName, moveName as localizedMoveName } from '../../shared/i18n/content';
 import { getMusicManager } from '../music-manager';
 import { injectMusicToggle } from '../music-toggle';
 import { getSoundEffectsManager } from '../sound-effects';
 
 const params = new URLSearchParams(location.search);
+const text = createTranslator(locale, MONSTERS_MESSAGES);
 const isDisplay = params.get('display') === '1';
 const roomCode = params.get('room') ?? '4821';
-const name = params.get('name') ?? 'Player';
+const name = params.get('name') ?? text('player.default');
 
 const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
 const wsUrl = params.get('ws')
@@ -36,8 +41,27 @@ const overlay = document.getElementById('overlay')!;
 const stageEl = document.getElementById('stage')!;
 const appEl = document.getElementById('app')!;
 
+document.title = text('game.title');
+const gameTitleLabel = document.querySelector<HTMLElement>('#vm-hud .htitle');
+if (gameTitleLabel) gameTitleLabel.textContent = text('game.title');
+
+document.getElementById('game-home')?.setAttribute('aria-label', commonText('navigation.homeAria'));
+const homeLabel = document.getElementById('game-home-label');
+if (homeLabel) homeLabel.textContent = commonText('navigation.home');
+overlay.setAttribute('aria-label', text('access.menuOverlay'));
+
 // Inject music toggle button
 injectMusicToggle('music-toggle-container');
+const musicToggle = document.getElementById('music-toggle');
+const localizeMusicToggle = (): void => {
+  if (!musicToggle) return;
+  musicToggle.title = commonText('music.toggleTitle');
+  musicToggle.setAttribute('aria-label', commonText('music.toggleAria'));
+  const label = musicToggle.querySelector<HTMLElement>('.music-toggle-label');
+  if (label) label.textContent = commonText(getMusicManager().getIsMuted() ? 'music.off' : 'music.on');
+};
+localizeMusicToggle();
+musicToggle?.addEventListener('click', localizeMusicToggle);
 
 // The OUTER background FX layer: fills #app AROUND the stage + flashes the attack's color across the
 // whole screen. Separate from the 3D arena/stage (those are untouched).
@@ -62,12 +86,12 @@ function buildCollage(): void {
   }).join('');
 }
 
-const conn = new BattleConnection(wsUrl);
+const conn = new BattleConnection(wsUrl, locale);
 // The 3D spinning arena sits BEHIND the GB battle canvas (both live in #stage). Created first so its
 // canvas is under the renderer's. Loaded lazily when a battle actually starts (no 3D cost in menus).
 const arena = new ArenaBackground(stageEl);
 let arenaLoaded = false;
-const renderer = new BattleRenderer(stageEl);
+const renderer = new BattleRenderer(stageEl, locale);
 
 let roster: RosterEntry[] = [];
 let myId: string | null = null;
@@ -78,13 +102,30 @@ let menuLevel: 'root' | 'fight' = 'root';   // two-level command menu: root acti
 let phoneNumber = '';   // the number players call to join (from /api/config) — shown in the lobby join flow
 let joinedHere = false;
 
+function localizeBattleState(message: BattleStateMsg): BattleStateMsg {
+  if (!message.snapshot) return message;
+  const side = (combatant: typeof message.snapshot.a) => ({
+    ...combatant,
+    monsterName: localizedMonsterName(locale, combatant.monsterId),
+    moves: combatant.moves.map(move => ({ ...move, name: localizedMoveName(locale, move.id) })),
+  });
+  return { ...message, snapshot: { ...message.snapshot, a: side(message.snapshot.a), b: side(message.snapshot.b) } };
+}
+
 // Fetch the join phone number so the lobby QR + copy show the real number (matches the racer). Fire-
 // and-forget: the lobby renders immediately with a placeholder, then re-renders when this lands.
 void fetch('/api/config').then(r => r.ok ? r.json() : null).then((cfg) => {
   if (cfg && typeof cfg.phoneNumber === 'string') { phoneNumber = cfg.phoneNumber; lastOverlayKey = ''; renderOverlay(); }
 }).catch(() => { /* keep the placeholder */ });
 
-conn.onRoster((m) => { roster = m; renderOverlay(); });
+conn.onRoster((entries) => {
+  roster = entries.map(entry => ({
+    ...entry,
+    name: localizedMonsterName(locale, entry.id),
+    moves: entry.moves.map(move => ({ ...move, name: localizedMoveName(locale, move.id) })),
+  }));
+  renderOverlay();
+});
 conn.onJoined((id) => { myId = id; joinedHere = true; lastOverlayKey = ''; renderOverlay(); });
 conn.onError((code, msg) => {
   console.error(`[battle] ${code}: ${msg}`);
@@ -94,7 +135,8 @@ conn.onError((code, msg) => {
 });
 conn.onEvents((events) => queueEvents(events));
 
-conn.onState((m) => {
+conn.onState((incoming) => {
+  const m = localizeBattleState(incoming);
   const prevPhase = state?.phase;
   const prevPlayerCount = state?.players?.length ?? 0;
   const prevMonsterSelections = state?.players?.filter(p => p.monsterId).length ?? 0;
@@ -155,7 +197,7 @@ function chosenForMe(m: BattleStateMsg): boolean {
   return m.snapshot.chosen[side];
 }
 const opponentName = (m: BattleStateMsg): string => {
-  const snap = m.snapshot; if (!snap) return 'the rival';
+  const snap = m.snapshot; if (!snap) return text('battle.rival');
   return mySide(m) === 'b' ? snap.a.name : snap.b.name;
 };
 
@@ -183,10 +225,12 @@ function paintBattle(): void {
   const sideForMenu = mySide(state) ?? state.activeSide ?? 'a';
   if (state.snapshot) {
     const myMon = (sideForMenu === 'b' ? state.snapshot.b : state.snapshot.a).monsterName;
-    if (uiPhase === 'awaiting-input') status = menuLevel === 'fight' ? `${myMon}'s moves:` : `What will ${myMon} do?`;
-    else if (uiPhase === 'command-locked') status = `${lockedMoveName ? lockedMoveName + '! ' : ''}Waiting for ${opponentName(state)}…`;
-    else if (state.snapshot.phase === 'choosing' && state.activeSide) status = `${actorName(state.activeSide)} is choosing…`;
-    else if (uiPhase === 'finished') status = state.result ? `${state.result.winnerName} wins!` : '';
+    if (uiPhase === 'awaiting-input') status = menuLevel === 'fight'
+      ? text('status.moves', { monster: myMon })
+      : text('status.whatWillDo', { monster: myMon });
+    else if (uiPhase === 'command-locked') status = `${lockedMoveName ? lockedMoveName + ' ' : ''}${text('status.waitingFor', { opponent: opponentName(state) })}`;
+    else if (state.snapshot.phase === 'choosing' && state.activeSide) status = text('status.choosing', { monster: actorName(state.activeSide) });
+    else if (uiPhase === 'finished') status = state.result ? text('status.wins', { winner: state.result.winnerName }) : '';
   }
   // The foe's type → the renderer shows move pips as effectiveness vs THIS opponent.
   const foeType = state.snapshot ? (sideForMenu === 'b' ? state.snapshot.a.type : state.snapshot.b.type) : null;
@@ -219,7 +263,12 @@ function drainNext(): void {
     draining = false; renderer.setActiveSide(null);
     // Battle just ended? Don't jump straight to the results modal — hold on the arena with a
     // "▶ Continue" prompt so the win lands, and wait for the player to acknowledge.
-    if (state?.phase === 'results') { awaitingContinue = true; renderer.setEventBanner(`${state.result?.winnerName ?? 'Winner'} wins!  ▶ Press Enter / tap`); renderOverlay(); return; }
+    if (state?.phase === 'results') {
+      awaitingContinue = true;
+      renderer.setEventBanner(text('battle.continue', { winner: state.result?.winnerName ?? text('results.winner') }));
+      renderOverlay();
+      return;
+    }
     paintBattle(); renderOverlay(); return;
   }
 
@@ -254,8 +303,8 @@ function drainNext(): void {
 /** "▶ YOUR TURN" when it's the local player's monster, else "▶ RIVAL'S TURN" (names the foe). */
 function handoffText(side: 'a' | 'b'): string {
   const me = state ? mySide(state) : null;
-  if (me && side === me) return '▶ YOUR TURN';
-  return `▶ ${actorName(side).toUpperCase()}'S TURN`;
+  if (me && side === me) return text('battle.handoffYour');
+  return text('battle.handoffNamed', { monster: actorName(side).toLocaleUpperCase(locale) });
 }
 
 function sideForActionEvent(ev: BattleEvent): 'a' | 'b' | null {
@@ -268,23 +317,23 @@ function sideForActionEvent(ev: BattleEvent): 'a' | 'b' | null {
 const dwellFor = dwellForEvent;
 /** The monster name for a side, from the current snapshot (for "X used Move!" banners). */
 function actorName(side: 'a' | 'b'): string {
-  const snap = state?.snapshot; if (!snap) return side === 'a' ? 'You' : 'Foe';
+  const snap = state?.snapshot; if (!snap) return side === 'a' ? text('battle.actorYou') : text('battle.actorFoe');
   return (side === 'a' ? snap.a : snap.b).monsterName;
 }
 function bannerFor(ev: BattleEvent): string | null {
   switch (ev.kind) {
-    case 'turn_start': return `— Turn ${ev.turn} —`;
+    case 'turn_start': return text('battle.eventTurn', { turn: ev.turn });
     // Name the attacker so it's unmistakable WHOSE turn it is ("Sparkmouse used Thunder Jolt!").
-    case 'move_used': return `${actorName(ev.by)} used ${ev.moveName}!`;
-    case 'miss': return 'But it missed!';
-    case 'guard': return `${ev.monsterName} braced for impact!`;
-    case 'item': return `${actorName(ev.by)} used a ${ev.itemName}!`;
-    case 'taunt': return `${ev.monsterName} taunts ${ev.targetName}!`;
+    case 'move_used': return text('battle.eventMove', { monster: actorName(ev.by), move: localizedMoveName(locale, ev.moveId) });
+    case 'miss': return text('battle.eventMiss');
+    case 'guard': return text('battle.eventGuard', { monster: localizedMonsterName(locale, ev.monsterName) });
+    case 'item': return text('battle.eventItem', { monster: actorName(ev.by), item: text('content.potion') });
+    case 'taunt': return text('battle.eventTaunt', { monster: localizedMonsterName(locale, ev.monsterName), target: localizedMonsterName(locale, ev.targetName) });
     case 'heal': return null;   // the HP bar rising tells the story; no separate banner
-    case 'damage': return ev.crit ? 'A critical hit!' : null;   // a normal hit shows no banner
-    case 'effectiveness': return effectivenessLabel(ev.multiplier);
-    case 'faint': return `${ev.monsterName} fainted!`;
-    case 'battle_over': return `${ev.winnerName} wins!`;
+    case 'damage': return ev.crit ? text('battle.eventCritical') : null;   // a normal hit shows no banner
+    case 'effectiveness': return effectivenessLabel(ev.multiplier, locale);
+    case 'faint': return text('battle.eventFaint', { monster: localizedMonsterName(locale, ev.monsterName) });
+    case 'battle_over': return text('battle.eventWin', { winner: ev.winnerName });
     default: return null;
   }
 }
@@ -337,43 +386,44 @@ function lobbyHtml(): string {
   // add a KEYBOARD tester with P. Advance ("Choose your monster") once at least one player is in — no
   // separate "play on this screen" step.
   const players = state?.players ?? [];
-  const chips = players.map(p => `<span class="vm-chip">${esc(p.name)}${p.monsterId ? ' ✓' : ''}</span>`).join('') || '<span class="vm-dim">Waiting for challengers…</span>';
+  const chips = players.map(p => `<span class="vm-chip">${esc(p.name)}${p.monsterId ? ' ✓' : ''}</span>`).join('')
+    || `<span class="vm-dim">${text('lobby.waitingChallengers')}</span>`;
   const havePlayers = players.length > 0;
   let action: string;
   if (havePlayers && canDrive()) {
-    action = `<button class="vm-btn" data-act="advance">Choose your monster ▶</button>`;
+    action = `<button class="vm-btn" data-act="advance">${text('lobby.chooseMonster')}</button>`;
   } else if (isDisplay) {
     // Shared screen, nobody in yet: wait for callers, or press P to add a keyboard tester player.
-    action = `<div class="vm-dim">Anyone can join.</div>`;
+    action = `<div class="vm-dim">${text('lobby.anyoneCanJoin')}</div>`;
   } else {
-    action = '<div class="vm-dim">Waiting for the host to start…</div>';
+    action = `<div class="vm-dim">${text('lobby.waitingHost')}</div>`;
   }
   // TWO-COLUMN layout matching Voice Racer's lobby: LEFT = join flow (QR + numbered steps stacked) +
   // chips + action; RIGHT = the "How to battle" legend panel. Side by side, not one tall stack.
   const num = phoneNumber
     ? `<a class="vm-num" href="tel:${esc(phoneNumber)}">${esc(phoneNumber)}</a>`
-    : `<span class="vm-num vm-num-unset">set GAME_PHONE_NUMBER</span>`;
+    : `<span class="vm-num vm-num-unset">${text('lobby.phoneUnset')}</span>`;
   const left = `
     <div class="vm-lobby-main">
       <div class="vm-join">
         <div class="vm-join-qr">
-          <img src="/brand/join-qr.png?v=2" alt="Scan to call and join" onerror="this.style.display='none'">
-          <div class="vm-join-cap">Scan to join</div>
+          <img src="/brand/join-qr.png?v=2" alt="${text('lobby.qrAlt')}" onerror="this.style.display='none'">
+          <div class="vm-join-cap">${text('lobby.scanToJoin')}</div>
         </div>
         <ol class="vm-join-steps">
-          <li><span class="vm-step-n">1</span> Scan the QR code with your phone</li>
-          <li><span class="vm-step-n">2</span> Call ${num}</li>
-          <li><span class="vm-step-n">3</span> You're in — pick a monster and battle by voice!</li>
+          <li><span class="vm-step-n">1</span> ${text('lobby.stepScan')}</li>
+          <li><span class="vm-step-n">2</span> ${text('lobby.stepCall', { number: num })}</li>
+          <li><span class="vm-step-n">3</span> ${text('lobby.stepBattle')}</li>
         </ol>
       </div>
       <div class="vm-chips">${chips}</div>
       ${action}
     </div>`;
   return `<div class="vm-card wide vm-lobby">
-    ${brandHead('VOICE MONSTERS', 'Call in to battle')}
+    ${brandHead(text('lobby.title'), text('lobby.subtitle'))}
     <div class="vm-lobby-grid">
       ${left}
-      ${battleControlsLegendHtml()}
+      ${battleControlsLegendHtml(locale)}
     </div>
   </div>`;
 }
@@ -434,35 +484,37 @@ function monsterSelectHtml(): string {
   const cards = roster.map(m => {
     const pickers = pickedBy.get(m.id) ?? [];
     const selected = pickers.length > 0;
+    const typeLabel = monsterTypeLabel(m.type as MonsterType, locale);
     return `
-    <button class="vm-mon t-${m.type}${selected ? ' sel' : ''}" data-mon="${m.id}">
+    <button class="vm-mon t-${m.type}${selected ? ' sel' : ''}" data-mon="${m.id}"
+      aria-label="${esc(text('access.monsterOption', { name: m.name, type: typeLabel }))}">
       <div class="portrait"><img data-mon-portrait="${m.id}" src="${placeholderPortrait(m.id, m.type)}" alt=""></div>
       <div class="vm-mon-name">${esc(m.name)}</div>
-      <div class="vm-type t-${m.type}">${m.type}</div>
+      <div class="vm-type t-${m.type}">${typeLabel}</div>
       ${selected ? `<div class="vm-picked-by">${esc(pickers.join(' + '))}</div>` : ''}
     </button>`;
   }).join('');
   return `<div class="vm-card wide">
-    ${brandHead('CHOOSE YOUR MONSTER', 'Pick your fighter — say its name or tap it')}
+    ${brandHead(text('select.title'), text('select.subtitle'))}
     <div class="vm-grid">${cards}</div>
     ${canDrive() && canBattle
-      ? '<button class="vm-btn" data-act="advance">Battle ▶</button>'
+      ? `<button class="vm-btn" data-act="advance">${text('select.battle')}</button>`
       : canDrive()
-        ? `<div class="vm-dim">${anyPick ? 'Waiting for every player to pick a monster.' : 'Pick a monster first (say its name or tap it).'}</div>`
-      : '<div class="vm-dim">Say a monster\'s name or tap it.</div>'}
+        ? `<div class="vm-dim">${anyPick ? text('select.waitingAll') : text('select.pickFirst')}</div>`
+      : `<div class="vm-dim">${text('select.pick')}</div>`}
   </div>`;
 }
 
 function resultsHtml(): string {
-  const w = state?.result?.winnerName ?? 'Nobody';
+  const w = state?.result?.winnerName ?? text('results.nobody');
   const action = !state?.canRematch
-    ? '<div class="vm-dim">Final result is being announced…</div>'
+    ? `<div class="vm-dim">${text('results.announcing')}</div>`
     : isDisplay || joinedHere
-      ? '<button class="vm-btn" data-act="advance">Rematch ▶</button>'
-      : '<div class="vm-dim">Good battle!</div>';
+      ? `<button class="vm-btn" data-act="advance">${text('results.rematch')}</button>`
+      : `<div class="vm-dim">${text('results.goodBattle')}</div>`;
   return `<div class="vm-card">
-    ${brandHead('VOICE MONSTERS', 'Battle complete')}
-    <div class="vm-title vm-win" style="font-size:36px">${esc(w)} WINS!</div>
+    ${brandHead(text('lobby.title'), text('results.subtitle'))}
+    <div class="vm-title vm-win" style="font-size:36px">${esc(text('results.wins', { winner: w }))}</div>
     ${action}
   </div>`;
 }
@@ -551,7 +603,7 @@ export function handleVoiceUtterance(text: string): boolean {
     moves: mySnapMoves().map(m => ({ id: m.id, name: m.name })),
     potions: myPotions(),
     level: menuLevel,
-  });
+  }, locale);
   if (!action) return false;   // unrecognized → caller stays put (server/relay may re-prompt)
   applyMenuAction(action);
   return true;
@@ -566,9 +618,9 @@ function applyMenuAction(action: BattleAction | { kind: 'openFight' } | { kind: 
   switch (action.kind) {
     case 'openFight': menuLevel = 'fight'; conn.openFight(); paintBattle(); return;
     case 'back':      menuLevel = 'root';  conn.backMenu(); paintBattle(); return;
-    case 'guard':     commitAction({ kind: 'guard' }, 'Guard!'); return;
-    case 'taunt':     commitAction({ kind: 'taunt' }, 'Taunt!'); return;
-    case 'item':      if (myPotions() > 0) commitAction({ kind: 'item', item: 'potion' }, 'Potion!'); return;
+    case 'guard':     commitAction({ kind: 'guard' }, text('battle.lockGuard')); return;
+    case 'taunt':     commitAction({ kind: 'taunt' }, text('battle.lockTaunt')); return;
+    case 'item':      if (myPotions() > 0) commitAction({ kind: 'item', item: 'potion' }, text('battle.lockPotion')); return;
     case 'fight': {
       const mv = mySnapMoves().find(m => m.id === action.moveId);
       if (mv) commitAction({ kind: 'fight', moveId: mv.id }, mv.name);
