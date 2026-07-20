@@ -738,6 +738,7 @@ export class ArcadeStateStore {
   private state: ArcadeState = createEmptyArcadeState();
   private transactionQueue: Promise<unknown> = Promise.resolve();
   private initialized = false;
+  private durabilityFailure: unknown = null;
   private readonly fs: ArcadeStateFileSystem;
   private readonly temporaryId: () => string;
 
@@ -771,9 +772,10 @@ export class ArcadeStateStore {
       assertArcadeState(next);
       this.state = cloneJson(next);
       this.initialized = true;
+      this.durabilityFailure = null;
       return freezeDeep(cloneJson(this.state));
     });
-    this.transactionQueue = task;
+    this.transactionQueue = task.then(() => undefined, () => undefined);
     return task;
   }
 
@@ -783,7 +785,7 @@ export class ArcadeStateStore {
   }
 
   async read(): Promise<ArcadeState> {
-    await this.transactionQueue.catch(() => undefined);
+    await this.transactionQueue;
     return this.snapshot();
   }
 
@@ -794,11 +796,17 @@ export class ArcadeStateStore {
       const result = await mutate(draft);
       const serializable = cloneJson(draft);
       assertArcadeState(serializable);
-      await this.persist(serializable);
+      try {
+        await this.persist(serializable);
+        this.durabilityFailure = null;
+      } catch (error) {
+        this.durabilityFailure = error;
+        throw error;
+      }
       this.state = serializable;
       return cloneJson(result);
     });
-    this.transactionQueue = task;
+    this.transactionQueue = task.then(() => undefined, () => undefined);
     return task;
   }
 
@@ -808,6 +816,7 @@ export class ArcadeStateStore {
 
   async flush(): Promise<void> {
     await this.transactionQueue;
+    if (this.durabilityFailure) throw this.durabilityFailure;
   }
 
   private async persist(next: ArcadeState): Promise<void> {

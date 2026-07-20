@@ -118,6 +118,18 @@ export interface ArcadeQueueStatus {
   readonly reservation: Readonly<{ amount: number; status: WalletReservation['status'] }> | null;
 }
 
+export interface ArcadeChallengeStatus {
+  readonly id: string;
+  readonly title: string;
+  readonly rewardCoins: number;
+  readonly displayOrder: number;
+  readonly claimCount: number;
+  readonly maxClaimsPerPlayer: number;
+  readonly available: boolean;
+  readonly startsAt: string | null;
+  readonly endsAt: string | null;
+}
+
 export interface ClaimArcadeChallengeInput {
   readonly playerId: string;
   readonly challengeId: string;
@@ -428,6 +440,37 @@ export class ArcadeService {
       checkedInAt: entry.checkedInAt,
       reservation: reservation ? Object.freeze({ amount: reservation.amount, status: reservation.status }) : null,
     });
+  }
+
+  async listChallenges(playerIdInput: string): Promise<readonly ArcadeChallengeStatus[]> {
+    const playerId = requireIdentifier(playerIdInput, 'playerId');
+    const config = this.config();
+    this.requireOn(config);
+    const state = await this.store.read();
+    this.requirePlayer(state, playerId);
+    if (!config.earning.enabled) return Object.freeze([]);
+    const wallet = this.requireWallet(state, playerId);
+    const now = Date.parse(this.now());
+    return Object.freeze(config.earning.challenges
+      .filter(challenge => challenge.enabled)
+      .slice()
+      .sort((a, b) => a.displayOrder - b.displayOrder || a.id.localeCompare(b.id))
+      .map(challenge => {
+        const claimCount = wallet.challengeClaims.filter(claim => claim.challengeId === challenge.id).length;
+        const started = challenge.startsAt === null || Date.parse(challenge.startsAt) <= now;
+        const notEnded = challenge.endsAt === null || now < Date.parse(challenge.endsAt);
+        return Object.freeze({
+          id: challenge.id,
+          title: challenge.title,
+          rewardCoins: challenge.rewardCoins,
+          displayOrder: challenge.displayOrder,
+          claimCount,
+          maxClaimsPerPlayer: challenge.maxClaimsPerPlayer,
+          available: started && notEnded && claimCount < challenge.maxClaimsPerPlayer,
+          startsAt: challenge.startsAt,
+          endsAt: challenge.endsAt,
+        });
+      }));
   }
 
   async identifyCoinOnly(input: IdentifyCoinOnlyInput): Promise<PlayerWalletResult> {
@@ -952,7 +995,7 @@ export class ArcadeService {
     playerId: string | null,
     payload: unknown,
     mutate: (state: ArcadeState, config: ArcadeConfigSnapshot, at: string) => Result,
-    authorizeBeforeReplay?: (config: ArcadeConfigSnapshot, at: string) => void,
+    validateBeforeMutation?: (config: ArcadeConfigSnapshot, at: string) => void,
   ): Promise<Result> {
     const idempotencyKey = requireIdentifier(
       idempotencyKeyInput,
@@ -961,13 +1004,6 @@ export class ArcadeService {
     );
     const requestFingerprint = fingerprint(payload);
     return this.store.transaction(state => {
-      let config: ArcadeConfigSnapshot | undefined;
-      let at: string | undefined;
-      if (authorizeBeforeReplay) {
-        config = this.config();
-        at = this.now();
-        authorizeBeforeReplay(config, at);
-      }
       const existing = own(state.idempotencyRecords, idempotencyKey);
       if (existing) {
         if (existing.operation !== operation || existing.fingerprint !== requestFingerprint) {
@@ -978,8 +1014,9 @@ export class ArcadeService {
         }
         return copyJson(existing.result) as Result;
       }
-      config ??= this.config();
-      at ??= this.now();
+      const config = this.config();
+      const at = this.now();
+      validateBeforeMutation?.(config, at);
       const result = mutate(state, config, at);
       const record: ArcadeServiceIdempotencyRecord = {
         key: idempotencyKey,

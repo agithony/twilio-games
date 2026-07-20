@@ -519,4 +519,79 @@ describe('Arcade API', () => {
     expect(await left.json()).toMatchObject({ status: 'LEFT_QUEUE', queue: null });
     expect((await createPlayerSession(baseUrl, 'new-off-session')).status).toBe(409);
   });
+
+  it('issues player-bound challenge tokens and claims rewards atomically through POST', async () => {
+    const { baseUrl, store } = await harness({ playerMode: 'lead_capture' });
+    const cookie = cookieFrom(await createPlayerSession(baseUrl, 'challenge-player'));
+    const registration = await fetch(`${baseUrl}/api/arcade/register`, {
+      method: 'POST',
+      headers: {
+        Cookie: cookie, Origin: 'http://localhost',
+        'Content-Type': 'application/json', 'Idempotency-Key': 'challenge-register',
+      },
+      body: JSON.stringify(REGISTRATION),
+    });
+    expect(registration.status).toBe(200);
+
+    const listed = await fetch(`${baseUrl}/api/arcade/challenges`, { headers: { Cookie: cookie } });
+    const listBody = await listed.json() as Record<string, any>;
+    expect(listBody.challenges).toEqual([{
+      id: 'voice-docs',
+      title: 'Read the Voice docs',
+      rewardCoins: 1,
+      displayOrder: 0,
+      claimCount: 0,
+      maxClaimsPerPlayer: 1,
+      available: true,
+      startsAt: null,
+      endsAt: null,
+    }]);
+    expect(JSON.stringify(listBody)).not.toMatch(/twilio\.com|destination|token|player:/i);
+
+    const tokenResponse = await fetch(`${baseUrl}/api/arcade/challenges/voice-docs/token`, {
+      method: 'POST',
+      headers: { Cookie: cookie, Origin: 'http://localhost', 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+    expect(tokenResponse.status).toBe(200);
+    const tokenBody = await tokenResponse.json() as Record<string, any>;
+    expect(tokenBody.challengeId).toBe('voice-docs');
+    expect(typeof tokenBody.token).toBe('string');
+
+    const claim = (key: string) => fetch(`${baseUrl}/api/arcade/challenges/voice-docs/claim`, {
+      method: 'POST',
+      headers: {
+        Cookie: cookie, Origin: 'http://localhost',
+        'Content-Type': 'application/json', 'Idempotency-Key': key,
+      },
+      body: JSON.stringify({ token: tokenBody.token }),
+    });
+    const first = await claim('challenge-claim');
+    expect(first.status).toBe(200);
+    expect(await first.json()).toEqual({
+      challengeId: 'voice-docs',
+      rewardCoins: 1,
+      availableBalance: 2,
+      destinationUrl: 'https://www.twilio.com/docs/voice',
+    });
+    expect((await claim('challenge-claim')).status).toBe(200);
+    const replayedToken = await claim('challenge-token-replay');
+    expect(replayedToken.status).toBe(409);
+    expect((await replayedToken.json() as Record<string, any>).error.code).toBe('CHALLENGE_TOKEN_REPLAYED');
+
+    const movedCabinet = JSON.parse(JSON.stringify(settings('lead_capture'))) as Record<string, any>;
+    movedCabinet.arcade.cabinetId = 'ARCADE-02';
+    await store.update({
+      expectedVersion: 2,
+      idempotencyKey: 'challenge-cabinet-change',
+      updatedBy: 'admin@twilio.com',
+      settings: movedCabinet,
+    });
+    expect((await claim('challenge-claim')).status).toBe(200);
+
+    const after = await (await fetch(`${baseUrl}/api/arcade/challenges`, {
+      headers: { Cookie: cookie },
+    })).json() as Record<string, any>;
+    expect(after.challenges[0]).toMatchObject({ claimCount: 1, available: false });
+  });
 });

@@ -3,6 +3,7 @@ import type { ArcadeMode } from '../shared/arcade-config';
 import type { ArcadeConfigStore } from './arcade-config-store';
 import type { ArcadeEventHub } from './arcade-events';
 import { ArcadePlayerSessionService } from './arcade-player-session';
+import { ArcadeChallengeTokenService } from './arcade-challenge-token';
 import { ArcadeService } from './arcade-service';
 import { ArcadeStateStore } from './arcade-state-store';
 
@@ -13,6 +14,7 @@ export type ArcadePlayerRuntimeResources = Readonly<{
   store: ArcadeStateStore;
   service: ArcadeService;
   sessions: ArcadePlayerSessionService;
+  challenges: ArcadeChallengeTokenService;
 }>;
 
 export type ArcadePlayerRuntimeStatus = Readonly<{
@@ -195,7 +197,8 @@ export class ArcadePlayerRuntime {
     const sessions = new ArcadePlayerSessionService(sessionSecret, {
       secureCookies: this.secureCookies,
     });
-    return Object.freeze({ store, service, sessions });
+    const challenges = new ArcadeChallengeTokenService(challengeSecret);
+    return Object.freeze({ store, service, sessions, challenges });
   }
 }
 

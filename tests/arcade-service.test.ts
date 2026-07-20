@@ -183,6 +183,31 @@ describe('ArcadeService durable journey', () => {
     expect(JSON.stringify(status)).not.toMatch(/playerId|event|reason|configVersion/);
   });
 
+  it('lists ordered challenge availability without destination URLs or token metadata', async () => {
+    const h = await harness();
+    await h.service.registerPlayer(registration('p1'));
+    const before = await h.service.listChallenges('p1');
+    expect(before).toEqual([{
+      id: 'voice-docs',
+      title: 'Read the Voice docs',
+      rewardCoins: 1,
+      displayOrder: 0,
+      claimCount: 0,
+      maxClaimsPerPlayer: 1,
+      available: true,
+      startsAt: null,
+      endsAt: null,
+    }]);
+    for (const privateField of ['url', 'playerId', 'token', 'jti', 'destinationUrl']) {
+      expect(Object.keys(before[0]!)).not.toContain(privateField);
+    }
+    await h.service.claimChallenge({
+      playerId: 'p1', challengeId: 'voice-docs', idempotencyKey: 'list:claim',
+      token: challengeToken('p1', 'list-token'),
+    });
+    expect((await h.service.listChallenges('p1'))[0]).toMatchObject({ claimCount: 1, available: false });
+  });
+
   it('identifies coin-only players and issues the starting grant once', async () => {
     const h = await harness(arcadeConfig('coin_only', { startingBalance: 2 }));
     const first = await h.service.identifyCoinOnly({
@@ -455,8 +480,11 @@ describe('ArcadeService atomicity and idempotency', () => {
     ]);
     expect(replay).toEqual(first);
     expect(h.store.snapshot().wallets.p1?.challengeClaims).toHaveLength(1);
+    h.setTime(T0 + 901_000);
+    expect(await h.service.claimChallenge(same)).toEqual(first);
+    h.setTime(T0);
     await expect(h.service.claimChallenge({ ...same, token: `${same.token}x` }))
-      .rejects.toMatchObject({ code: 'INVALID_CHALLENGE_TOKEN' });
+      .rejects.toMatchObject({ code: 'IDEMPOTENCY_CONFLICT' });
 
     await expect(h.service.claimChallenge({
       ...same, idempotencyKey: 'claim-token-replay',

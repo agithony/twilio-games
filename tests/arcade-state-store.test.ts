@@ -139,6 +139,7 @@ describe('ArcadeStateStore', () => {
     injected.fail();
 
     await expect(store.transaction(addPlayer('p2'))).rejects.toThrow('injected rename failure');
+    await expect(store.flush()).rejects.toThrow('injected rename failure');
     expect(store.snapshot()).toEqual(before);
     expect((await ArcadeStateStore.open(file)).snapshot()).toEqual(before);
   });
@@ -165,6 +166,14 @@ describe('ArcadeStateStore', () => {
     await store.transaction(addPlayer('committed'));
     expect(store.snapshot().players.discarded).toBeUndefined();
     expect(store.snapshot().players.committed).toBeDefined();
+  });
+
+  it('flushes cleanly after a rejected business mutation', async () => {
+    const file = await stateFile();
+    const store = await ArcadeStateStore.open(file);
+    await expect(store.transaction(() => { throw new Error('rejected mutation'); }))
+      .rejects.toThrow('rejected mutation');
+    await expect(store.flush()).resolves.toBeUndefined();
   });
 
   it('returns deeply frozen detached snapshots', async () => {

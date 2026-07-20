@@ -1,5 +1,5 @@
 import type http from 'node:http';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   ArcadeConfigValidationError,
   projectPublicArcadeConfig,
@@ -29,6 +29,10 @@ import {
 import { ArcadeRateLimiter } from './arcade-rate-limiter';
 import { ArcadeServiceError, type ArcadeQueueStatus } from './arcade-service';
 import { ArcadeStateStoreError } from './arcade-state-store';
+import {
+  ARCADE_CHALLENGE_TOKEN_MAX_TTL_SECONDS,
+  ARCADE_CHALLENGE_TOKEN_VERSION,
+} from './arcade-challenge-token';
 
 const ADMIN_CONFIG_BODY_LIMIT = 512 * 1024;
 const DEFAULT_HEARTBEAT_MS = 15_000;
@@ -38,6 +42,7 @@ const PLAYER_IDEMPOTENCY_KEY_LIMIT = 128;
 const SESSION_BODY_LIMIT = 2 * 1024;
 const REGISTRATION_BODY_LIMIT = 8 * 1024;
 const QUEUE_BODY_LIMIT = 4 * 1024;
+const CHALLENGE_BODY_LIMIT = 8 * 1024;
 
 export interface ArcadeAdminPrincipal {
   readonly email: string;
@@ -76,6 +81,7 @@ export class ArcadeApi {
   private readonly maxEventStreams: number;
   private readonly tacStatus?: () => unknown;
   private readonly playerRuntime?: ArcadePlayerRuntime;
+  private readonly now: () => number;
   private readonly rateLimiter: ArcadeRateLimiter;
   private readonly processRateLimiter: ArcadeRateLimiter;
   private readonly streams = new Set<EventStream>();
@@ -91,8 +97,9 @@ export class ArcadeApi {
     this.maxEventStreams = options.maxEventStreams ?? DEFAULT_MAX_EVENT_STREAMS;
     this.tacStatus = options.tacStatus;
     this.playerRuntime = options.playerRuntime;
-    this.rateLimiter = new ArcadeRateLimiter(options.now ?? Date.now);
-    this.processRateLimiter = new ArcadeRateLimiter(options.now ?? Date.now, 16);
+    this.now = options.now ?? Date.now;
+    this.rateLimiter = new ArcadeRateLimiter(this.now);
+    this.processRateLimiter = new ArcadeRateLimiter(this.now, 16);
     if (!Number.isSafeInteger(this.heartbeatMs) || this.heartbeatMs < 10) {
       throw new TypeError('Arcade API heartbeatMs must be an integer of at least 10ms');
     }
@@ -160,6 +167,21 @@ export class ArcadeApi {
 
       if (pathname === '/api/arcade/wallet') {
         await this.handleWalletStatus(request, response);
+        return;
+      }
+
+      if (pathname === '/api/arcade/challenges') {
+        await this.handleChallengeList(request, response);
+        return;
+      }
+
+      const challengeRoute = parseChallengeRoute(pathname);
+      if (challengeRoute) {
+        if (challengeRoute.action === 'token') {
+          await this.handleChallengeToken(request, response, challengeRoute.challengeId);
+        } else {
+          await this.handleChallengeClaim(request, response, challengeRoute.challengeId);
+        }
         return;
       }
 
@@ -271,7 +293,7 @@ export class ArcadeApi {
     if (config.arcade.mode === 'off') {
       throw new ArcadeHttpError(409, 'ARCADE_MODE_DISABLED', 'Arcade mode is off');
     }
-    const audience = config.arcade.cabinetId;
+    const audience = this.expectedOrigin;
     let playerId: string | null = null;
     try {
       playerId = resources.sessions.readCookie(request.headers.cookie, audience)?.player ?? null;
@@ -386,6 +408,88 @@ export class ArcadeApi {
     this.enforceProcessRate('read-process', 3_000, 60_000);
     const queue = await resources.service.getQueueStatus(playerId);
     sendJson(response, 200, { queue: publicQueueStatus(queue) }, { 'Cache-Control': 'no-store' });
+  }
+
+  private async handleChallengeList(
+    request: http.IncomingMessage,
+    response: http.ServerResponse,
+  ): Promise<void> {
+    this.requireMethod(request, ['GET']);
+    const resources = await this.requirePlayerRuntime().getActive();
+    const playerId = this.requirePlayerSession(request, resources.sessions);
+    this.enforceRate(`read-player:${playerId}`, 120, 60_000);
+    this.enforceProcessRate('read-process', 3_000, 60_000);
+    const challenges = await resources.service.listChallenges(playerId);
+    sendJson(response, 200, { challenges }, { 'Cache-Control': 'no-store' });
+  }
+
+  private async handleChallengeToken(
+    request: http.IncomingMessage,
+    response: http.ServerResponse,
+    challengeId: string,
+  ): Promise<void> {
+    this.requireMethod(request, ['POST']);
+    this.requireSameOrigin(request);
+    requireJsonContentType(request);
+    requireExactObject(await readJson(request, SESSION_BODY_LIMIT), [], []);
+    const resources = await this.requirePlayerRuntime().getActive();
+    const playerId = this.requirePlayerSession(request, resources.sessions);
+    this.enforceRate(`mutation-player:${playerId}`, 30, 60_000);
+    this.enforceProcessRate('mutation-process', 600, 60_000);
+    const challenge = (await resources.service.listChallenges(playerId))
+      .find(candidate => candidate.id === challengeId);
+    if (!challenge || !challenge.available) {
+      throw new ArcadeHttpError(409, 'CHALLENGE_UNAVAILABLE', 'Arcade challenge is unavailable');
+    }
+    const issuedAt = Math.floor(this.now() / 1000);
+    if (!Number.isSafeInteger(issuedAt) || issuedAt <= 0) {
+      throw new ArcadeHttpError(500, 'ARCADE_INTERNAL_ERROR', 'Arcade challenge token clock is invalid');
+    }
+    const expiry = issuedAt + ARCADE_CHALLENGE_TOKEN_MAX_TTL_SECONDS;
+    const token = resources.challenges.sign({
+      v: ARCADE_CHALLENGE_TOKEN_VERSION,
+      player: playerId,
+      challenge: challengeId,
+      audience: this.configStore.getSnapshot().arcade.cabinetId,
+      jti: `challenge:${randomUUID()}`,
+      issuedAt,
+      expiry,
+    });
+    sendJson(response, 200, {
+      challengeId,
+      token,
+      expiresAt: new Date(expiry * 1000).toISOString(),
+    }, { 'Cache-Control': 'no-store' });
+  }
+
+  private async handleChallengeClaim(
+    request: http.IncomingMessage,
+    response: http.ServerResponse,
+    challengeId: string,
+  ): Promise<void> {
+    this.requireMethod(request, ['POST']);
+    this.requireSameOrigin(request);
+    requireJsonContentType(request);
+    const idempotencyKey = requireHeader(
+      request.headers['idempotency-key'], 'Idempotency-Key', PLAYER_IDEMPOTENCY_KEY_LIMIT,
+    );
+    const body = requireExactObject(await readJson(request, CHALLENGE_BODY_LIMIT), ['token'], []);
+    const resources = await this.requirePlayerRuntime().getActive();
+    const playerId = this.requirePlayerSession(request, resources.sessions);
+    this.enforceRate(`mutation-player:${playerId}`, 30, 60_000);
+    this.enforceProcessRate('mutation-process', 600, 60_000);
+    const result = await resources.service.claimChallenge({
+      playerId,
+      challengeId,
+      token: body.token as string,
+      idempotencyKey: playerServiceKey(playerId, `challenge-${challengeId}`, idempotencyKey),
+    });
+    sendJson(response, 200, {
+      challengeId: result.challengeId,
+      rewardCoins: result.rewardCoins,
+      availableBalance: result.availableBalance,
+      destinationUrl: result.destinationUrl,
+    }, { 'Cache-Control': 'no-store' });
   }
 
   private async handleJoinQueue(
@@ -526,8 +630,7 @@ export class ArcadeApi {
     request: http.IncomingMessage,
     sessions: ArcadePlayerSessionService,
   ): string {
-    const audience = this.configStore.getSnapshot().arcade.cabinetId;
-    const session = sessions.readCookie(request.headers.cookie, audience);
+    const session = sessions.readCookie(request.headers.cookie, this.expectedOrigin);
     if (!session) {
       throw new ArcadeHttpError(401, 'ARCADE_SESSION_REQUIRED', 'Arcade player session is required');
     }
@@ -659,6 +762,15 @@ function requestPath(request: http.IncomingMessage): string {
   }
 }
 
+function parseChallengeRoute(pathname: string): {
+  challengeId: string;
+  action: 'token' | 'claim';
+} | null {
+  const match = /^\/api\/arcade\/challenges\/([a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?)\/(token|claim)$/.exec(pathname);
+  if (!match) return null;
+  return { challengeId: match[1]!, action: match[2]! as 'token' | 'claim' };
+}
+
 function configEtag(version: number): string {
   return `"arcade-config-${version}"`;
 }
@@ -744,6 +856,11 @@ function playerServiceError(serviceCode: string): { status: number; code: string
     case 'QUEUE_FULL':
     case 'GAME_NOT_ELIGIBLE':
       return { status: 409, code: serviceCode, message: 'Arcade queue operation cannot be completed' };
+    case 'CHALLENGE_UNAVAILABLE':
+    case 'CHALLENGE_TOKEN_REPLAYED':
+      return { status: 409, code: serviceCode, message: 'Arcade challenge cannot be claimed' };
+    case 'INVALID_CHALLENGE_TOKEN':
+      return { status: 400, code: serviceCode, message: 'Arcade challenge token is invalid' };
     case 'QUEUE_ENTRY_NOT_FOUND':
     case 'QUEUE_ENTRY_FORBIDDEN':
       return { status: 409, code: 'QUEUE_ENTRY_REQUIRED', message: 'player has no active queue entry' };
@@ -753,7 +870,8 @@ function playerServiceError(serviceCode: string): { status: number; code: string
 }
 
 function playerDomainError(domainCode: string): { status: number; code: string; message: string } {
-  if (domainCode === 'INSUFFICIENT_BALANCE' || domainCode === 'IDEMPOTENCY_CONFLICT') {
+  if (domainCode === 'INSUFFICIENT_BALANCE' || domainCode === 'IDEMPOTENCY_CONFLICT'
+    || domainCode === 'CHALLENGE_CLAIM_LIMIT' || domainCode === 'CHALLENGE_UNAVAILABLE') {
     return { status: 409, code: domainCode, message: 'Arcade wallet operation cannot be completed' };
   }
   return { status: 400, code: 'INVALID_REQUEST', message: 'Arcade request is invalid' };
