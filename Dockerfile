@@ -3,7 +3,7 @@
 # extensionless imports, so there's no clean tsc→node step); the client is a Vite build the server
 # then serves statically. One process serves the client, the GLB assets, the API, and the
 # game/voice WebSockets — required because room state is in-memory in this one process.
-FROM node:20-bookworm-slim
+FROM node:22-bookworm-slim
 
 WORKDIR /app
 

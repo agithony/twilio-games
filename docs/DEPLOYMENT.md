@@ -19,7 +19,7 @@ flowchart LR
 `.github/workflows/deploy.yml` runs on pushes to `main` and manual `workflow_dispatch` events. Production deployments are serialized and are not canceled in progress.
 
 1. The `ci` job calls `.github/workflows/ci.yml`; it does not inherit deployment secrets.
-2. CI checks out Git LFS objects with `actions/checkout@v6`, installs Node 20 with `actions/setup-node@v6`, runs `npm ci`, `npm run typecheck`, `npm test`, and `npm run build`.
+2. CI checks out Git LFS objects with `actions/checkout@v6`, installs Node 22.13 with `actions/setup-node@v6`, runs `npm ci`, `npm run typecheck`, `npm test`, and `npm run build`.
 3. `npm audit --audit-level=high` is informational because the workflow appends `|| true`.
 4. The deploy job checks out Git LFS objects again and signs in with `azure/login@v3` using the `AZURE_CREDENTIALS` service-principal JSON secret.
 5. Azure CLI commands idempotently ensure the resource group, Basic ACR, Standard LRS storage account, 5 GiB Azure Files share, Log Analytics workspace, Container Apps environment, and environment storage attachment.
@@ -31,7 +31,7 @@ The Container App specification does not define an Azure liveness, readiness, or
 
 ## Image and process model
 
-The `Dockerfile` uses `node:20-bookworm-slim`, installs `ca-certificates` and `tini`, and runs `npm ci --include=dev`. Development dependencies remain necessary in the production image because Vite and TypeScript build the client and `tsx` runs the TypeScript server directly.
+The `Dockerfile` uses `node:22-bookworm-slim`, installs `ca-certificates` and `tini`, and runs `npm ci --include=dev`. Development dependencies remain necessary in the production image because Vite and TypeScript build the client and `tsx` runs the TypeScript server directly. Node 22.13 or later is required by `twilio-agent-connect`.
 
 `npm run build` typechecks the server and client and writes the Vite multi-page build to `client/dist`. `tini` runs as PID 1. `scripts/start.sh` prepares persistent storage and executes:
 
@@ -87,10 +87,14 @@ The deployed specification currently sets these variables:
 | `PUBLIC_BASE_URL` | Resolved Container App FQDN | Absolute Twilio callback URLs and the Conversation Relay `wss://` URL |
 | `DATA_MOUNT` | Literal `/app/appdata` | Persistent mount used by `scripts/start.sh` |
 | `TWILIO_AUTH_TOKEN` | Container App secret `twilio-token` | Enables fail-closed Twilio webhook signature validation when non-empty; also becomes the Conversation Relay setup token unless `VOICE_RELAY_TOKEN` is set |
+| `TWILIO_ACCOUNT_SID`, `TWILIO_API_KEY`, `TWILIO_API_SECRET` | Container App secrets populated from matching GitHub secrets | TAC Orchestrator and Memory credentials; not read while Arcade mode is `off` |
+| `TWILIO_PHONE_NUMBER` | GitHub `GAME_PHONE_NUMBER` variable | TAC sender identity when Arcade mode is enabled |
+| `TWILIO_CONVERSATION_CONFIGURATION_ID` | Matching GitHub repository variable | Enables TAC Orchestrator and Conversation Memory when Arcade mode is enabled |
 | `EDITOR_TOKEN` | Container App secret `editor-token` | Requires `x-editor-token` or `?token=` on disk-writing editor and garage APIs when non-empty |
 | `GOOGLE_OAUTH_CLIENT_ID` | Container App secret `google-oauth-client-id` | Identifies the Google OAuth web client used by `/analytics` |
 | `GOOGLE_OAUTH_CLIENT_SECRET` | Container App secret `google-oauth-client-secret` | Server-side Google authorization-code exchange |
 | `ANALYTICS_ALLOWED_EMAIL` | GitHub repository variable | Allows one exact verified Google email in addition to `@twilio.com` accounts |
+| `ARCADE_ADMIN_EMAILS` | GitHub repository variable | Comma-separated authenticated emails allowed to update Arcade runtime configuration; empty disables admin updates |
 | `GAME_PHONE_NUMBER` | GitHub repository variable | Number displayed and QR-encoded in game lobbies; empty shows a configuration placeholder |
 | `CR_TTS_VOICE` | GitHub repository variable | ElevenLabs Conversation Relay voice ID; empty uses the Relay default |
 | `CR_TTS_VOICE_PT_BR` | GitHub repository variable | Optional Brazilian Portuguese ElevenLabs voice ID; empty uses Relay's `pt-BR` default |

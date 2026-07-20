@@ -30,13 +30,13 @@ When Conversation Relay ends a session, Twilio calls `POST /voice/session-ended`
 
 ## Requirements
 
-- Node.js 20 or later
+- Node.js 22.13 or later
 - A Twilio account and a voice-capable Twilio number
 - The account Auth Token for webhook signature validation
 - A public HTTPS URL that forwards to the server on port `8080`
 - A public WebSocket path on the same host; the server derives `wss://<public-host>/voice` from `PUBLIC_BASE_URL`
 
-The application does not read the Twilio Account SID. It also does not read `TWILIO_PHONE_NUMBER`; use `GAME_PHONE_NUMBER` to show the callable number and QR code in the UI.
+The existing Conversation Relay gameplay path does not read the Twilio Account SID or `TWILIO_PHONE_NUMBER`; use `GAME_PHONE_NUMBER` to show the callable number and QR code in the UI. The feature-gated TAC Memory gateway reads `TWILIO_ACCOUNT_SID`, `TWILIO_PHONE_NUMBER`, API key credentials, and `TWILIO_CONVERSATION_CONFIGURATION_ID` only when Arcade mode is enabled.
 
 ## Run Locally With a Public Tunnel
 

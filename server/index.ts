@@ -1,4 +1,9 @@
 import { HttpServer } from './http-server';
+import { ArcadeApi } from './arcade-api';
+import { ArcadeConfigStore } from './arcade-config-store';
+import { ArcadeEventHub } from './arcade-events';
+import { ArcadeTacGateway } from './arcade-tac-gateway';
+import { GoogleAnalyticsAuth } from './google-analytics-auth';
 
 const port = Number(process.env.PORT ?? 8080);
 const publicBaseUrl = process.env.PUBLIC_BASE_URL ?? `http://localhost:${port}`;
@@ -17,15 +22,46 @@ if (validateSignatures && !authToken) {
 // When EDITOR_TOKEN is set, /api writes (manifest + maps) require it — gate the editor on a public
 // deploy. Unset (local dev) leaves writes open so the editor works with zero setup.
 const editorToken = process.env.EDITOR_TOKEN;
+const analyticsAuth = new GoogleAnalyticsAuth({
+  clientId: process.env.GOOGLE_OAUTH_CLIENT_ID,
+  clientSecret: process.env.GOOGLE_OAUTH_CLIENT_SECRET,
+  redirectUri: `${publicBaseUrl.replace(/\/$/, '')}/auth/google/callback`,
+  allowedEmail: process.env.ANALYTICS_ALLOWED_EMAIL,
+});
+const arcadeAdminEmails = new Set((process.env.ARCADE_ADMIN_EMAILS ?? '')
+  .split(',')
+  .map(email => email.trim().toLowerCase())
+  .filter(Boolean));
+if (arcadeAdminEmails.size === 0) {
+  console.warn('[security] ARCADE_ADMIN_EMAILS is unset; Arcade admin APIs are disabled.');
+}
+const arcadeEvents = new ArcadeEventHub(error => {
+  console.error('[arcade-events] subscriber failed:', error instanceof Error ? error.message : String(error));
+});
+const arcadeConfigStore = new ArcadeConfigStore({
+  directory: process.env.ARCADE_CONFIG_DIRECTORY ?? 'data',
+  deploymentMode: 'single-process',
+  events: arcadeEvents,
+});
+const arcadeTacGateway = new ArcadeTacGateway({ configStore: arcadeConfigStore, events: arcadeEvents });
+const arcadeApi = new ArcadeApi({
+  configStore: arcadeConfigStore,
+  events: arcadeEvents,
+  publicBaseUrl,
+  tacStatus: () => arcadeTacGateway.getStatus(),
+  authorizeAdmin: request => {
+    const principal = analyticsAuth.currentUser(request);
+    return principal && arcadeAdminEmails.has(principal.email) ? principal : null;
+  },
+});
 // Deploy-safe levels: the LIVE maps file lives on the persistent mount (data/maps.json) so editor-
 // authored levels survive redeploys; the image's committed assets/maps/maps.json is the one-time
 // SEED copied in on first boot when the persistent file doesn't exist yet.
 const srv = new HttpServer({
   port, publicBaseUrl, authToken, validateSignatures, editorToken,
+  analyticsAuth, arcadeApi, arcadeTacGateway,
   analyticsPath: process.env.ANALYTICS_PATH ?? 'data/analytics.json',
-  googleOAuthClientId: process.env.GOOGLE_OAUTH_CLIENT_ID,
   googleOAuthClientSecret: process.env.GOOGLE_OAUTH_CLIENT_SECRET,
-  analyticsAllowedEmail: process.env.ANALYTICS_ALLOWED_EMAIL,
   mapsPath: process.env.MAPS_PATH ?? 'data/maps.json',
   bundledMapsPath: process.env.BUNDLED_MAPS_PATH ?? 'assets/maps/maps.json',
   // Voice Monsters arena config — live on the persistent mount, seeded from the committed default.

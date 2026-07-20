@@ -22,6 +22,11 @@ The home and playable games support US English and Brazilian Portuguese. The lan
 the shared display, deterministic commands, Conversation Relay recognition, and spoken responses.
 See [Localization](docs/localization.md) to add another language.
 
+The approved future product direction is documented in the canonical
+[Twilio Arcade and TAC plan](docs/TWILIO_ARCADE_PLAN.md). It covers runtime-configurable lead capture,
+digital coins, earning challenges, one-display multiplayer queues, post-game summaries, Conversation
+Memory, and Conversation Intelligence.
+
 ## Screenshots
 
 <table>
@@ -106,7 +111,7 @@ Incoming calls join the default room `4821` immediately. The current `/voice/inc
 
 Requirements:
 
-- Node.js 20 or later
+- Node.js 22.13 or later
 - npm
 - Git LFS, because Fighter source FBX files and map GLBs are LFS-managed
 
@@ -197,6 +202,9 @@ The application runs locally without Twilio or OpenAI credentials. Configure the
 | `GOOGLE_OAUTH_CLIENT_SECRET` | Google OAuth web client secret | Analytics access disabled when unset |
 | `ANALYTICS_ALLOWED_EMAIL` | One exact verified Google email allowed in addition to `@twilio.com` accounts | No exception account |
 | `ANALYTICS_PATH` | Persistent daily analytics rollup file | `data/analytics.json` |
+| `ARCADE_ADMIN_EMAILS` | Comma-separated Google-authenticated emails allowed to update Arcade runtime configuration | Admin APIs disabled when unset |
+| `ARCADE_CONFIG_DIRECTORY` | Persistent Arcade configuration and audit directory | `data/` |
+| `TWILIO_ACCOUNT_SID`, `TWILIO_API_KEY`, `TWILIO_API_SECRET`, `TWILIO_PHONE_NUMBER`, `TWILIO_CONVERSATION_CONFIGURATION_ID` | TAC Orchestrator and Memory initialization when Arcade mode is enabled | Not read while Arcade mode is `off` |
 | `FIGHTER_DISPLAY_TOKEN` | Requires host authentication for the Fighter display | Unset |
 | `GAME_SERVER_URL` | Vite development proxy target | `http://localhost:8080` |
 | `MAPS_PATH`, `ARENA_PATH`, `FIGHTER_MAPS_PATH` | Live writable game configuration paths | Files under `data/` |
@@ -221,7 +229,7 @@ npm run typecheck
 npm run build
 ```
 
-The current Vitest suite contains 718 passing tests across 86 files. It covers game worlds and protocols, room and reconnect behavior, Conversation Relay routing, voice command parsing, TwiML, webhook signatures, HTTP APIs, persistence, analytics, Google OAuth authorization, asset governance, render helpers, audio management, and WebSocket integration.
+The current Vitest suite contains 990 passing tests across 98 files. It covers game worlds and protocols, room and reconnect behavior, Conversation Relay routing, voice command parsing, TwiML, webhook signatures, HTTP APIs, persistence, analytics, Google OAuth authorization, Arcade runtime configuration, TAC lifecycle gating, asset governance, render helpers, audio management, and WebSocket integration.
 
 Additional Chromium-based render checks are available when a compatible browser is installed:
 
@@ -230,7 +238,7 @@ npm run smoke
 npm run smoke:editor
 ```
 
-GitHub Actions runs Node.js 20, restores Git LFS assets, installs with `npm ci`, typechecks, runs the test suite, builds the Vite client, and reports high-severity dependency audit results without making that audit step blocking.
+GitHub Actions runs Node.js 22.13, restores Git LFS assets, installs with `npm ci`, typechecks, runs the test suite, builds the Vite client, and reports high-severity dependency audit results without making that audit step blocking.
 
 ## Deployment
 

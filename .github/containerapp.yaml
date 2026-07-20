@@ -22,6 +22,9 @@ properties:
     # registry's PasswordSecretRef dangles → "PasswordSecretRef not found").
     secrets:
       - name: twilio-token
+      - name: twilio-account-sid
+      - name: twilio-api-key
+      - name: twilio-api-secret
       - name: editor-token
       - name: google-oauth-client-id
       - name: google-oauth-client-secret
@@ -66,6 +69,17 @@ properties:
           # Twilio webhook signature validation is ON whenever this is set (fail-closed in index.ts).
           - name: TWILIO_AUTH_TOKEN
             secretRef: twilio-token
+          # TAC Orchestrator/Memory credentials. They are not read while Arcade mode is off.
+          - name: TWILIO_ACCOUNT_SID
+            secretRef: twilio-account-sid
+          - name: TWILIO_API_KEY
+            secretRef: twilio-api-key
+          - name: TWILIO_API_SECRET
+            secretRef: twilio-api-secret
+          - name: TWILIO_PHONE_NUMBER
+            value: "${GAME_PHONE_NUMBER}"
+          - name: TWILIO_CONVERSATION_CONFIGURATION_ID
+            value: "${TWILIO_CONVERSATION_CONFIGURATION_ID}"
           # Gate the editor's /api writes on a public deploy. Empty = writes open (not recommended public).
           - name: EDITOR_TOKEN
             secretRef: editor-token
@@ -76,6 +90,8 @@ properties:
             secretRef: google-oauth-client-secret
           - name: ANALYTICS_ALLOWED_EMAIL
             value: "${ANALYTICS_ALLOWED_EMAIL}"
+          - name: ARCADE_ADMIN_EMAILS
+            value: "${ARCADE_ADMIN_EMAILS}"
           # ElevenLabs voiceId for Conversation Relay talk-back (greeting/countdown/result to callers).
           # Empty → Relay's default voice (talk-back still speaks). Set to a high-energy sports-
           # announcer voiceId from the ElevenLabs library for the racing vibe. Rendered via envsubst

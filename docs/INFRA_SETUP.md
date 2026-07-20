@@ -65,13 +65,16 @@ Open **Settings > Secrets and variables > Actions > Secrets** and configure:
 | Secret | Required | Use |
 |---|---|---|
 | `AZURE_CREDENTIALS` | Yes | `azure/login@v3` service-principal JSON |
-| `TWILIO_AUTH_TOKEN` | Required for authenticated Twilio voice/SMS | Stored as Container App secret `twilio-token`; validates Twilio webhook signatures and currently also authenticates Conversation Relay setup frames |
+| `TWILIO_AUTH_TOKEN` | Required for authenticated Twilio voice/SMS and TAC | Stored as Container App secret `twilio-token`; validates Twilio webhook signatures, authenticates Conversation Relay setup frames, and is required when Arcade mode enables TAC |
+| `TWILIO_ACCOUNT_SID` | Required when Arcade mode is enabled | TAC account identity; ignored while Arcade mode is `off` |
+| `TWILIO_API_KEY` | Required when Arcade mode is enabled | TAC API key SID; ignored while Arcade mode is `off` |
+| `TWILIO_API_SECRET` | Required when Arcade mode is enabled | TAC API key secret; ignored while Arcade mode is `off` |
 | `EDITOR_TOKEN` | Strongly recommended for public deployments | Stored as Container App secret `editor-token`; protects disk-writing editor and garage APIs |
 | `GOOGLE_OAUTH_CLIENT_ID` | Required for analytics | Stored as Container App secret `google-oauth-client-id`; Google OAuth web client ID |
 | `GOOGLE_OAUTH_CLIENT_SECRET` | Required for analytics | Stored as Container App secret `google-oauth-client-secret`; Google OAuth web client secret |
 | `OPENAI_API_KEY` | No | Enables the OpenAI conversational host; empty uses scripted/deterministic behavior |
 
-The workflow creates Container App secret references for `TWILIO_AUTH_TOKEN`, `EDITOR_TOKEN`, both Google OAuth credentials, and the generated ACR password. `OPENAI_API_KEY` is substituted into `.github/containerapp.yaml` as a plain Container App environment value, not a Container App secret reference.
+The workflow creates Container App secret references for Twilio authentication and optional TAC credentials, `EDITOR_TOKEN`, both Google OAuth credentials, and the generated ACR password. Missing TAC credentials are stored as the non-secret placeholder `disabled`, which is never read while Arcade mode is `off`. `OPENAI_API_KEY` is substituted into `.github/containerapp.yaml` as a plain Container App environment value, not a Container App secret reference.
 
 An empty `TWILIO_AUTH_TOKEN` disables signature validation by default. An empty `EDITOR_TOKEN` leaves editor and garage writes open. Missing Google OAuth credentials disable analytics sign-in. Do not leave required protections empty on a public event deployment.
 
@@ -81,12 +84,14 @@ Open **Settings > Secrets and variables > Actions > Variables** and configure as
 
 | Variable | Required | Use |
 |---|---|---|
-| `GAME_PHONE_NUMBER` | Recommended for live events | Public phone number displayed and QR-encoded in all game lobbies; empty displays a setup placeholder |
+| `GAME_PHONE_NUMBER` | Required for live events and enabled Arcade mode | Public phone number displayed and QR-encoded in game lobbies and supplied to TAC as `TWILIO_PHONE_NUMBER` |
 | `CR_TTS_VOICE` | No | ElevenLabs voice ID for Conversation Relay TTS; empty uses the Relay default |
 | `CR_TTS_VOICE_PT_BR` | No | Optional Brazilian Portuguese ElevenLabs voice ID; empty uses Relay's `pt-BR` default |
 | `DEFAULT_LOCALE` | No | Locale used when no localized display is connected; defaults to `en-US` |
 | `OPENAI_MODEL` | No | OpenAI model name; empty defaults to `gpt-4o-mini` |
 | `ANALYTICS_ALLOWED_EMAIL` | No | One exact verified Google email allowed to view analytics in addition to `@twilio.com` accounts |
+| `ARCADE_ADMIN_EMAILS` | Required to edit Arcade configuration | Comma-separated Google-authenticated emails allowed to use Arcade admin APIs; empty disables updates |
+| `TWILIO_CONVERSATION_CONFIGURATION_ID` | Required when Arcade mode is enabled | TAC Orchestrator configuration linked to the Arcade Memory store |
 
 These values are rendered into the Container App specification on every deployment.
 

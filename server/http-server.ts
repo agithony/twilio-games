@@ -33,6 +33,8 @@ import { AnalyticsStore, validDate } from './analytics-store';
 import { AnalyticsObserver } from './analytics-observer';
 import { analyticsPdf } from './analytics-pdf';
 import { GoogleAnalyticsAuth } from './google-analytics-auth';
+import type { ArcadeApi } from './arcade-api';
+import type { ArcadeTacGateway } from './arcade-tac-gateway';
 import { DEFAULT_LOCALE, SUPPORTED_LOCALES, resolveLocale, type SupportedLocale } from '../shared/i18n/locales';
 import { RACER_MESSAGES } from '../shared/i18n/racer';
 import { MONSTERS_MESSAGES } from '../shared/i18n/monsters';
@@ -95,6 +97,8 @@ export class HttpServer {
   private readonly analytics: AnalyticsStore;
   private readonly analyticsObserver: AnalyticsObserver;
   private readonly analyticsAuth: GoogleAnalyticsAuth;
+  private readonly arcadeApi?: ArcadeApi;
+  private readonly arcadeTacGateway?: ArcadeTacGateway;
   /** The Vite-built client directory served in production (one-process container). */
   private readonly clientDir: string;
   /** Phone number players CALL to join (from GAME_PHONE_NUMBER). '' = unset → the lobby shows a
@@ -167,6 +171,8 @@ export class HttpServer {
     googleOAuthClientSecret?: string;
     analyticsAllowedEmail?: string;
     analyticsAuth?: GoogleAnalyticsAuth;
+    arcadeApi?: ArcadeApi;
+    arcadeTacGateway?: ArcadeTacGateway;
   }) {
     this.port = opts.port;
     this.authToken = opts.authToken;
@@ -185,6 +191,8 @@ export class HttpServer {
       clientId: opts.googleOAuthClientId, clientSecret: opts.googleOAuthClientSecret,
       redirectUri: `${this.publicBaseUrl}/auth/google/callback`, allowedEmail: opts.analyticsAllowedEmail,
     });
+    this.arcadeApi = opts.arcadeApi;
+    this.arcadeTacGateway = opts.arcadeTacGateway;
     this.analytics = new AnalyticsStore(opts.analyticsPath ?? 'data/analytics.json', opts.googleOAuthClientSecret?.trim() || 'twilio-games-analytics');
     this.analyticsObserver = new AnalyticsObserver(this.analytics);
     if (process.env.NODE_ENV === 'production' && !this.editorToken) console.warn('[security] EDITOR_TOKEN is unset; editor writes remain open');
@@ -1051,6 +1059,11 @@ export class HttpServer {
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
       res.end(JSON.stringify({ authenticated: Boolean(user), configured: this.analyticsAuth.configured, email: user?.email })); return;
     }
+    if (this.arcadeApi
+      && (path.startsWith('/api/arcade/') || path.startsWith('/api/admin/arcade/'))) {
+      await this.arcadeApi.handle(req, res, path);
+      return;
+    }
     if (req.method === 'POST' && (path === '/voice/incoming' || path === '/voice/join')) {
       const body = await readBody(req);
       const params = Object.fromEntries(new URLSearchParams(body));
@@ -1483,6 +1496,8 @@ export class HttpServer {
 
   async start(): Promise<number> {
     await this.analytics.load();
+    await this.arcadeApi?.start();
+    await this.arcadeTacGateway?.start();
     await this.seedMapsFile();
     await this.refreshFighterMaps();
     // Re-read the (possibly just-seeded) maps into the lobby cache so map choices are correct on the
@@ -1516,7 +1531,7 @@ export class HttpServer {
   }
 
   stop(): Promise<void> {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       if (this.roomConfigTimer) { clearInterval(this.roomConfigTimer); this.roomConfigTimer = null; }
       if (this.smsSweepTimer) { clearInterval(this.smsSweepTimer); this.smsSweepTimer = null; }
       for (const binding of this.battleVoiceCallBindings.values()) {
@@ -1528,7 +1543,11 @@ export class HttpServer {
       this.game.stopLoopOnly();
       this.battle.stopLoopOnly();
       this.fighter.stopLoopOnly();
-      this.server.close(() => { void this.analytics.flush().then(resolve); });
+      const arcadeStop = this.arcadeApi?.stop() ?? Promise.resolve();
+      const arcadeTacStop = this.arcadeTacGateway?.stop() ?? Promise.resolve();
+      this.server.close(() => {
+        void Promise.all([this.analytics.flush(), arcadeStop, arcadeTacStop]).then(() => resolve(), reject);
+      });
     });
   }
 }

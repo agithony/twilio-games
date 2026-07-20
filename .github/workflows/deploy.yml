@@ -162,12 +162,14 @@ jobs:
       - name: Set app secrets
         # secret set does NOT create a new revision (preserves the registry secret); the deploy step
         # below rolls the revision once with image + env + mount. Each secret is referenced by
-        # containerapp.yaml via secretRef. An empty GitHub secret renders as an empty Container App
-        # secret (the app then treats an empty TWILIO_AUTH_TOKEN as "validation off", per
-        # server/index.ts). Secrets are passed via env (not inline ${{ }}) so a value with shell
-        # metacharacters can't break the command or leak through arg parsing.
+        # containerapp.yaml via secretRef. Optional TAC secrets use a non-empty `disabled` placeholder
+        # when unset; mode-off never reads them. Secrets are passed via env (not inline ${{ }}) so a
+        # value with shell metacharacters can't break the command or leak through arg parsing.
         env:
           TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
+          TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
+          TWILIO_API_KEY: ${{ secrets.TWILIO_API_KEY }}
+          TWILIO_API_SECRET: ${{ secrets.TWILIO_API_SECRET }}
           EDITOR_TOKEN: ${{ secrets.EDITOR_TOKEN }}
           GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
@@ -178,6 +180,9 @@ jobs:
             --resource-group "$RESOURCE_GROUP" \
             --secrets \
               "twilio-token=$TWILIO_AUTH_TOKEN" \
+              "twilio-account-sid=${TWILIO_ACCOUNT_SID:-disabled}" \
+              "twilio-api-key=${TWILIO_API_KEY:-disabled}" \
+              "twilio-api-secret=${TWILIO_API_SECRET:-disabled}" \
               "editor-token=$EDITOR_TOKEN" \
               "google-oauth-client-id=$GOOGLE_OAUTH_CLIENT_ID" \
               "google-oauth-client-secret=$GOOGLE_OAUTH_CLIENT_SECRET" \
@@ -188,6 +193,9 @@ jobs:
         # minimal create and the --yaml spec update). Passed via env, not inline, for safety.
         env:
           TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
+          TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
+          TWILIO_API_KEY: ${{ secrets.TWILIO_API_KEY }}
+          TWILIO_API_SECRET: ${{ secrets.TWILIO_API_SECRET }}
           EDITOR_TOKEN: ${{ secrets.EDITOR_TOKEN }}
           GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
@@ -221,8 +229,10 @@ jobs:
           export GAME_PHONE_NUMBER="${{ vars.GAME_PHONE_NUMBER }}"
           # One optional non-Twilio Google account that may access activation analytics.
           export ANALYTICS_ALLOWED_EMAIL="${{ vars.ANALYTICS_ALLOWED_EMAIL }}"
+          export ARCADE_ADMIN_EMAILS="${{ vars.ARCADE_ADMIN_EMAILS }}"
+          export TWILIO_CONVERSATION_CONFIGURATION_ID="${{ vars.TWILIO_CONVERSATION_CONFIGURATION_ID }}"
           # Restrict substitution to our known vars so no other ${...} in the template is touched.
-          SUBST='${APP_NAME} ${CONTAINER_IMAGE} ${BASE_URL} ${ACR_SERVER} ${ACR_USERNAME} ${ACR_PASSWORD} ${CR_TTS_VOICE} ${CR_TTS_VOICE_PT_BR} ${DEFAULT_LOCALE} ${OPENAI_MODEL} ${OPENAI_API_KEY} ${GAME_PHONE_NUMBER} ${ANALYTICS_ALLOWED_EMAIL}'
+          SUBST='${APP_NAME} ${CONTAINER_IMAGE} ${BASE_URL} ${ACR_SERVER} ${ACR_USERNAME} ${ACR_PASSWORD} ${CR_TTS_VOICE} ${CR_TTS_VOICE_PT_BR} ${DEFAULT_LOCALE} ${OPENAI_MODEL} ${OPENAI_API_KEY} ${GAME_PHONE_NUMBER} ${ANALYTICS_ALLOWED_EMAIL} ${ARCADE_ADMIN_EMAILS} ${TWILIO_CONVERSATION_CONFIGURATION_ID}'
           envsubst "$SUBST" < .github/containerapp.yaml > /tmp/containerapp.yaml
 
           # Retry an `az containerapp` write on ACA's transient control-plane race
@@ -279,6 +289,9 @@ jobs:
               --resource-group "$RESOURCE_GROUP" \
               --secrets \
                 "twilio-token=${TWILIO_AUTH_TOKEN:-}" \
+                "twilio-account-sid=${TWILIO_ACCOUNT_SID:-disabled}" \
+                "twilio-api-key=${TWILIO_API_KEY:-disabled}" \
+                "twilio-api-secret=${TWILIO_API_SECRET:-disabled}" \
                 "editor-token=${EDITOR_TOKEN:-}" \
                 "google-oauth-client-id=${GOOGLE_OAUTH_CLIENT_ID:-}" \
                 "google-oauth-client-secret=${GOOGLE_OAUTH_CLIENT_SECRET:-}" \
