@@ -34,6 +34,7 @@ export default defineConfig(({ mode }) => {
     server: {
       proxy: {
         '/api': { target: gameServer, changeOrigin: true },
+        '/auth': { target: gameServer, changeOrigin: true },
         '/game': { target: gameServer, ws: true, bypass: bypassNonWebSocket },
         '/battle': { target: gameServer, ws: true, bypass: bypassNonWebSocket },
         '/fighter': { target: gameServer, ws: true, bypass: bypassNonWebSocket },
