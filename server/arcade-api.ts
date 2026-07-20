@@ -27,7 +27,11 @@ import {
   type ArcadePlayerSessionService,
 } from './arcade-player-session';
 import { ArcadeRateLimiter } from './arcade-rate-limiter';
-import { ArcadeServiceError, type ArcadeQueueStatus } from './arcade-service';
+import {
+  ArcadeServiceError,
+  type ArcadeOperatorQueueStatus,
+  type ArcadeQueueStatus,
+} from './arcade-service';
 import { ArcadeStateStoreError } from './arcade-state-store';
 import {
   ARCADE_CHALLENGE_TOKEN_MAX_TTL_SECONDS,
@@ -258,6 +262,33 @@ export class ArcadeApi {
           tac: this.tacStatus?.() ?? null,
           players: this.playerRuntime?.getStatus() ?? null,
         }, { 'Cache-Control': 'no-store' });
+        return;
+      }
+
+      if (pathname === '/api/admin/arcade/queue') {
+        await this.handleOperatorQueue(request, response);
+        return;
+      }
+
+      const operatorQueueRoute = parseOperatorQueueRoute(pathname);
+      if (operatorQueueRoute) {
+        await this.handleOperatorQueueAction(
+          request,
+          response,
+          operatorQueueRoute.queueEntryId,
+          operatorQueueRoute.action,
+        );
+        return;
+      }
+
+      if (pathname === '/api/admin/arcade/matches/start') {
+        await this.handleOperatorMatchStart(request, response);
+        return;
+      }
+
+      const operatorMatchRoute = parseOperatorMatchRoute(pathname);
+      if (operatorMatchRoute) {
+        await this.handleOperatorMatchComplete(request, response, operatorMatchRoute.matchId);
         return;
       }
 
@@ -573,6 +604,130 @@ export class ArcadeApi {
     }, { 'Cache-Control': 'no-store' });
   }
 
+  private async handleOperatorQueue(
+    request: http.IncomingMessage,
+    response: http.ServerResponse,
+  ): Promise<void> {
+    this.requireMethod(request, ['GET']);
+    this.requireAdmin(request);
+    const resources = await this.requirePlayerRuntime().getForCleanup();
+    const queue = (await resources.service.listOperatorQueue()).map(publicOperatorQueueStatus);
+    sendJson(response, 200, { queue }, { 'Cache-Control': 'no-store' });
+  }
+
+  private async handleOperatorQueueAction(
+    request: http.IncomingMessage,
+    response: http.ServerResponse,
+    queueEntryId: string,
+    action: 'approach' | 'call' | 'expire' | 'requeue' | 'activate' | 'release',
+  ): Promise<void> {
+    this.requireMethod(request, ['POST']);
+    const principal = this.requireAdmin(request);
+    this.requireSameOrigin(request);
+    requireJsonContentType(request);
+    const idempotencyKey = requireHeader(
+      request.headers['idempotency-key'], 'Idempotency-Key', PLAYER_IDEMPOTENCY_KEY_LIMIT,
+    );
+    const body = requireExactObject(await readJson(request, QUEUE_BODY_LIMIT), ['reason'], []);
+    const runtime = this.requirePlayerRuntime();
+    const resources = action === 'release'
+      ? await runtime.getForCleanup()
+      : await runtime.getActive();
+    const entry = await resources.service.getOperatorQueueEntry(queueEntryId);
+    if (!entry) throw new ArcadeHttpError(404, 'QUEUE_ENTRY_NOT_FOUND', 'queue entry was not found');
+    const input = {
+      playerId: entry.playerId,
+      queueEntryId,
+      idempotencyKey: playerServiceKey(
+        `operator:${principal.email}`,
+        `queue-${action}:${queueEntryId}`,
+        idempotencyKey,
+      ),
+      reason: operatorReason(body.reason),
+      authorization: resources.operatorAuthorization(principal.email),
+    };
+    const result = action === 'approach'
+      ? await resources.service.markApproaching(input)
+      : action === 'call'
+        ? await resources.service.callQueueEntry(input)
+        : action === 'expire'
+          ? await resources.service.expireQueueEntry(input)
+          : action === 'requeue'
+            ? await resources.service.requeueEntry(input)
+            : action === 'activate'
+              ? await resources.service.activateLobby(input)
+              : await resources.service.releaseQueueEntry(input);
+    sendJson(response, 200, {
+      queueEntryId,
+      status: result.entry.status,
+      availableBalance: result.availableBalance,
+      reservation: result.reservation
+        ? { amount: result.reservation.amount, status: result.reservation.status }
+        : null,
+    }, { 'Cache-Control': 'no-store' });
+  }
+
+  private async handleOperatorMatchStart(
+    request: http.IncomingMessage,
+    response: http.ServerResponse,
+  ): Promise<void> {
+    this.requireMethod(request, ['POST']);
+    const principal = this.requireAdmin(request);
+    this.requireSameOrigin(request);
+    requireJsonContentType(request);
+    const idempotencyKey = requireHeader(
+      request.headers['idempotency-key'], 'Idempotency-Key', PLAYER_IDEMPOTENCY_KEY_LIMIT,
+    );
+    const body = requireExactObject(
+      await readJson(request, QUEUE_BODY_LIMIT), ['queueEntryIds', 'game', 'reason'], [],
+    );
+    const resources = await this.requirePlayerRuntime().getActive();
+    const result = await resources.service.startMatch({
+      queueEntryIds: body.queueEntryIds as string[],
+      game: body.game as 'racer' | 'monsters' | 'fighter' | 'trivia',
+      reason: operatorReason(body.reason),
+      idempotencyKey: playerServiceKey(`operator:${principal.email}`, 'match-start', idempotencyKey),
+      authorization: resources.operatorAuthorization(principal.email),
+    });
+    sendJson(response, 200, {
+      matchId: result.matchId,
+      entries: result.entries.map(entry => ({ queueEntryId: entry.id, status: entry.status })),
+    }, { 'Cache-Control': 'no-store' });
+  }
+
+  private async handleOperatorMatchComplete(
+    request: http.IncomingMessage,
+    response: http.ServerResponse,
+    matchId: string,
+  ): Promise<void> {
+    this.requireMethod(request, ['POST']);
+    const principal = this.requireAdmin(request);
+    this.requireSameOrigin(request);
+    requireJsonContentType(request);
+    const idempotencyKey = requireHeader(
+      request.headers['idempotency-key'], 'Idempotency-Key', PLAYER_IDEMPOTENCY_KEY_LIMIT,
+    );
+    const body = requireExactObject(
+      await readJson(request, QUEUE_BODY_LIMIT), ['queueEntryIds', 'reason'], [],
+    );
+    const resources = await this.requirePlayerRuntime().getForCleanup();
+    const entries = await resources.service.completeMatch({
+      queueEntryIds: body.queueEntryIds as string[],
+      matchId,
+      reason: operatorReason(body.reason),
+      idempotencyKey: playerServiceKey(
+        `operator:${principal.email}`,
+        `match-complete:${matchId}`,
+        idempotencyKey,
+      ),
+      authorization: resources.operatorAuthorization(principal.email),
+    });
+    sendJson(response, 200, {
+      matchId,
+      entries: entries.map(entry => ({ queueEntryId: entry.id, status: entry.status })),
+    }, { 'Cache-Control': 'no-store' });
+  }
+
   private openEventStream(request: http.IncomingMessage, response: http.ServerResponse): void {
     if (this.streams.size >= this.maxEventStreams) {
       throw new ArcadeHttpError(503, 'EVENT_STREAM_LIMIT', 'Arcade event stream capacity is exhausted');
@@ -771,6 +926,23 @@ function parseChallengeRoute(pathname: string): {
   return { challengeId: match[1]!, action: match[2]! as 'token' | 'claim' };
 }
 
+function parseOperatorQueueRoute(pathname: string): {
+  queueEntryId: string;
+  action: 'approach' | 'call' | 'expire' | 'requeue' | 'activate' | 'release';
+} | null {
+  const match = /^\/api\/admin\/arcade\/queue\/([A-Za-z0-9](?:[A-Za-z0-9:._-]{0,127}))\/(approach|call|expire|requeue|activate|release)$/.exec(pathname);
+  if (!match) return null;
+  return {
+    queueEntryId: match[1]!,
+    action: match[2]! as 'approach' | 'call' | 'expire' | 'requeue' | 'activate' | 'release',
+  };
+}
+
+function parseOperatorMatchRoute(pathname: string): { matchId: string } | null {
+  const match = /^\/api\/admin\/arcade\/matches\/([A-Za-z0-9](?:[A-Za-z0-9:._-]{0,127}))\/complete$/.exec(pathname);
+  return match ? { matchId: match[1]! } : null;
+}
+
 function configEtag(version: number): string {
   return `"arcade-config-${version}"`;
 }
@@ -829,9 +1001,24 @@ function playerServiceKey(playerId: string, route: string, externalKey: string):
   return `api:${digest}`;
 }
 
+function operatorReason(value: unknown): string {
+  if (typeof value !== 'string' || value.trim() === '' || value.length > 200
+    || /[\u0000-\u001f\u007f]/.test(value)) {
+    throw new ArcadeHttpError(400, 'INVALID_REQUEST', 'operator reason must be a non-empty bounded string');
+  }
+  return value.trim();
+}
+
 function publicQueueStatus(status: ArcadeQueueStatus | null): Omit<ArcadeQueueStatus, 'queueEntryId'> | null {
   if (!status) return null;
   const { queueEntryId: _queueEntryId, ...safe } = status;
+  return safe;
+}
+
+function publicOperatorQueueStatus(
+  status: ArcadeOperatorQueueStatus,
+): Omit<ArcadeOperatorQueueStatus, 'playerId'> {
+  const { playerId: _playerId, ...safe } = status;
   return safe;
 }
 
@@ -840,6 +1027,7 @@ function playerServiceError(serviceCode: string): { status: number; code: string
     case 'INVALID_INPUT':
     case 'INVALID_REGISTRATION':
     case 'INVALID_GAME':
+    case 'INVALID_MATCH':
       return { status: 400, code: serviceCode, message: 'Arcade request is invalid' };
     case 'TERMS_REQUIRED':
       return { status: 422, code: serviceCode, message: 'terms acknowledgement is required' };
@@ -859,6 +1047,11 @@ function playerServiceError(serviceCode: string): { status: number; code: string
     case 'CHALLENGE_UNAVAILABLE':
     case 'CHALLENGE_TOKEN_REPLAYED':
       return { status: 409, code: serviceCode, message: 'Arcade challenge cannot be claimed' };
+    case 'MATCH_NOT_READY':
+    case 'MATCH_NOT_ACTIVE':
+    case 'MATCH_PARTICIPANTS_MISMATCH':
+    case 'CABINET_CHANGED':
+      return { status: 409, code: serviceCode, message: 'Arcade match operation cannot be completed' };
     case 'INVALID_CHALLENGE_TOKEN':
       return { status: 400, code: serviceCode, message: 'Arcade challenge token is invalid' };
     case 'QUEUE_ENTRY_NOT_FOUND':

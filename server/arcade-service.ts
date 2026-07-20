@@ -130,6 +130,11 @@ export interface ArcadeChallengeStatus {
   readonly endsAt: string | null;
 }
 
+export interface ArcadeOperatorQueueStatus extends ArcadeQueueStatus {
+  readonly playerId: string;
+  readonly firstName: string | null;
+}
+
 export interface ClaimArcadeChallengeInput {
   readonly playerId: string;
   readonly challengeId: string;
@@ -169,7 +174,8 @@ export interface RefundArcadeQueueEntryInput extends Omit<QueueEntryActionInput,
   readonly authorization: unknown;
 }
 
-export interface OperatorQueueEntryActionInput extends QueueEntryActionInput {
+export interface OperatorQueueEntryActionInput extends Omit<QueueEntryActionInput, 'reason'> {
+  readonly reason: string;
   readonly authorization: unknown;
 }
 
@@ -183,6 +189,7 @@ export interface StartArcadeMatchInput {
   readonly queueEntryIds: readonly string[];
   readonly game: ArcadeGame;
   readonly idempotencyKey: string;
+  readonly reason: string;
   readonly authorization: unknown;
 }
 
@@ -195,7 +202,7 @@ export interface CompleteArcadeMatchInput {
   readonly queueEntryIds: readonly string[];
   readonly matchId: string;
   readonly idempotencyKey: string;
-  readonly reason?: string;
+  readonly reason: string;
   readonly authorization: unknown;
 }
 
@@ -219,6 +226,8 @@ const FORBIDDEN_RECORD_KEYS = new Set([
 const MAX_IDENTIFIER_LENGTH = 256;
 const MAX_IDEMPOTENCY_KEY_LENGTH = 128;
 const MAX_REASON_LENGTH = 500;
+const MAX_OPERATOR_REASON_LENGTH = 200;
+const MAX_AUDIT_REASON_LENGTH = 512;
 const MAX_METADATA_BYTES = 16 * 1024;
 const MAX_JSON_DEPTH = 10;
 const MAX_CANONICAL_JSON_DEPTH = 24;
@@ -240,6 +249,15 @@ function own<Value>(record: Record<string, Value>, key: string): Value | undefin
 
 function requireReason(value: unknown): string {
   return requireIdentifier(value, 'reason', MAX_REASON_LENGTH).trim();
+}
+
+function operatorAuditReason(principal: TrustedArcadeOperatorPrincipal, value: unknown): string {
+  const reason = requireIdentifier(value, 'operator reason', MAX_OPERATOR_REASON_LENGTH).trim();
+  const encoded = JSON.stringify({ operator: principal.subject, reason });
+  if (encoded.length > MAX_AUDIT_REASON_LENGTH) {
+    throw new ArcadeServiceError('INVALID_INPUT', 'operator audit reason exceeds the persisted limit');
+  }
+  return encoded;
 }
 
 function copyChallengeTokenSecret(secret: ArcadeChallengeTokenSecret | undefined): Buffer {
@@ -429,6 +447,71 @@ export class ArcadeService {
     const reservation = wallet ? findReservation(wallet, entry.id) : null;
     return Object.freeze({
       queueEntryId: entry.id,
+      status: entry.status,
+      preferredGame: entry.preferredGame,
+      flexibleGame: entry.flexibleGame,
+      position: positionIndex < 0 ? null : positionIndex + 1,
+      joinedAt: entry.joinedAt,
+      calledAt: entry.calledAt,
+      checkInExpiresAt: entry.checkInExpiresAt,
+      deferredUntil: entry.deferredUntil,
+      checkedInAt: entry.checkedInAt,
+      reservation: reservation ? Object.freeze({ amount: reservation.amount, status: reservation.status }) : null,
+    });
+  }
+
+  async listOperatorQueue(): Promise<readonly ArcadeOperatorQueueStatus[]> {
+    const config = this.config();
+    const state = await this.store.read();
+    const entries = Object.values(state.queueEntries)
+      .filter(entry => entry.cabinetId === config.arcade.cabinetId && !isTerminalQueueStatus(entry.status))
+      .sort((a, b) => (
+        Date.parse(a.originalJoinedAt) - Date.parse(b.originalJoinedAt) || a.id.localeCompare(b.id)
+      ));
+    const waiting = selectWaitingEntries(Object.values(state.queueEntries), {
+      cabinetId: config.arcade.cabinetId,
+      limit: Object.keys(state.queueEntries).length,
+    });
+    return Object.freeze(entries.map(entry => {
+      const wallet = own(state.wallets, entry.playerId);
+      const reservation = wallet ? findReservation(wallet, entry.id) : null;
+      const positionIndex = waiting.findIndex(candidate => candidate.id === entry.id);
+      return Object.freeze({
+        queueEntryId: entry.id,
+        playerId: entry.playerId,
+        firstName: own(state.players, entry.playerId)?.lead?.firstName ?? null,
+        status: entry.status,
+        preferredGame: entry.preferredGame,
+        flexibleGame: entry.flexibleGame,
+        position: positionIndex < 0 ? null : positionIndex + 1,
+        joinedAt: entry.joinedAt,
+        calledAt: entry.calledAt,
+        checkInExpiresAt: entry.checkInExpiresAt,
+        deferredUntil: entry.deferredUntil,
+        checkedInAt: entry.checkedInAt,
+        reservation: reservation ? Object.freeze({ amount: reservation.amount, status: reservation.status }) : null,
+      });
+    }));
+  }
+
+  async getOperatorQueueEntry(queueEntryIdInput: string): Promise<ArcadeOperatorQueueStatus | null> {
+    const queueEntryId = requireIdentifier(queueEntryIdInput, 'queueEntryId');
+    const config = this.config();
+    const state = await this.store.read();
+    const entry = own(state.queueEntries, queueEntryId);
+    if (!entry || entry.cabinetId !== config.arcade.cabinetId) return null;
+    const entries = Object.values(state.queueEntries);
+    const waiting = selectWaitingEntries(entries, {
+      cabinetId: config.arcade.cabinetId,
+      limit: entries.length,
+    });
+    const wallet = own(state.wallets, entry.playerId);
+    const reservation = wallet ? findReservation(wallet, entry.id) : null;
+    const positionIndex = waiting.findIndex(candidate => candidate.id === entry.id);
+    return Object.freeze({
+      queueEntryId: entry.id,
+      playerId: entry.playerId,
+      firstName: own(state.players, entry.playerId)?.lead?.firstName ?? null,
       status: entry.status,
       preferredGame: entry.preferredGame,
       flexibleGame: entry.flexibleGame,
@@ -712,7 +795,9 @@ export class ArcadeService {
     return this.execute('SNOOZE_QUEUE_ENTRY', input.idempotencyKey, playerId, {
       playerId, queueEntryId, reason: input.reason ?? null,
     }, (state, config, at) => {
+      this.requireQueueOn(config);
       const entry = this.requireOwnedEntry(state, playerId, queueEntryId);
+      this.requireCurrentCabinet(entry, config);
       const reduction = reduceSnoozeQueueEntry(entry, {
         eventId: this.id('queue-event'), at, reason: input.reason,
       }, this.queuePolicy(config));
@@ -725,13 +810,16 @@ export class ArcadeService {
     const playerId = requireIdentifier(input.playerId, 'playerId');
     const queueEntryId = requireIdentifier(input.queueEntryId, 'queueEntryId');
     const principal = this.authorizeOperator(input.authorization, 'QUEUE_ACTION_UNAUTHORIZED');
+    const reason = operatorAuditReason(principal, input.reason);
     return this.execute('EXPIRE_QUEUE_ENTRY', input.idempotencyKey, playerId, {
-      playerId, queueEntryId, authorizedBy: principal,
+      playerId, queueEntryId, reason, authorizedBy: principal,
     }, (state, config, at) => {
+      this.requireQueueOn(config);
       const entry = this.requireOwnedEntry(state, playerId, queueEntryId);
+      this.requireCurrentCabinet(entry, config);
       const reduction = expireCalledEntry(
         entry,
-        { eventId: this.id('queue-event'), at },
+        { eventId: this.id('queue-event'), at, reason },
         this.queuePolicy(config),
       );
       this.applyQueueReduction(state, reduction);
@@ -755,7 +843,9 @@ export class ArcadeService {
     return this.execute('CHECK_IN_QUEUE_ENTRY', input.idempotencyKey, playerId, {
       playerId, queueEntryId, game: input.game, reason: input.reason ?? null,
     }, (state, config, at) => {
+      this.requireQueueOn(config);
       const entry = this.requireOwnedEntry(state, playerId, queueEntryId);
+      this.requireCurrentCabinet(entry, config);
       if (entry.preferredGame !== input.game && !entry.flexibleGame) {
         throw new ArcadeServiceError('GAME_NOT_ELIGIBLE', `queue entry ${entry.id} is not eligible for ${input.game}`);
       }
@@ -803,14 +893,17 @@ export class ArcadeService {
     const queueEntryIds = this.requireEntryIds(input.queueEntryIds);
     if (!GAMES.has(input.game)) throw new ArcadeServiceError('INVALID_GAME', 'match game is not an Arcade game');
     const principal = this.authorizeOperator(input.authorization, 'MATCH_UNAUTHORIZED');
+    const reason = operatorAuditReason(principal, input.reason);
     return this.execute('START_MATCH', input.idempotencyKey, null, {
-      queueEntryIds, game: input.game, authorizedBy: principal,
-    }, (state, _config, at) => {
+      queueEntryIds, game: input.game, reason, authorizedBy: principal,
+    }, (state, config, at) => {
+      this.requireQueueOn(config);
       const entries = queueEntryIds.map(id => this.requireEntry(state, id));
       for (const entry of entries) {
         if (entry.status !== 'ACTIVE_LOBBY') {
           throw new ArcadeServiceError('MATCH_NOT_READY', `queue entry ${entry.id} is not in the active lobby`);
         }
+        this.requireCurrentCabinet(entry, config);
       }
       const snapshots = entries.map(entry => {
         const snapshot = own(state.queueEntryConfigs, entry.id);
@@ -851,7 +944,7 @@ export class ArcadeService {
           });
         }
         const reduction = reduceQueueEntry(entry, {
-          type: 'START_PLAYING', eventId: this.id('queue-event'), at,
+          type: 'START_PLAYING', eventId: this.id('queue-event'), at, reason,
         });
         state.queueEntryConfigs[entry.id] = {
           ...snapshot,
@@ -868,9 +961,22 @@ export class ArcadeService {
     const queueEntryIds = this.requireEntryIds(input.queueEntryIds);
     const matchId = requireIdentifier(input.matchId, 'matchId');
     const principal = this.authorizeOperator(input.authorization, 'MATCH_UNAUTHORIZED');
+    const reason = operatorAuditReason(principal, input.reason);
     return this.execute('COMPLETE_MATCH', input.idempotencyKey, null, {
-      queueEntryIds, matchId, reason: input.reason ?? null, authorizedBy: principal,
+      queueEntryIds, matchId, reason, authorizedBy: principal,
     }, (state, _config, at) => {
+      const suppliedIds = [...queueEntryIds].sort();
+      const expectedIds = Object.values(state.queueEntryConfigs)
+        .filter(snapshot => snapshot.matchId === matchId)
+        .map(snapshot => snapshot.queueEntryId)
+        .sort();
+      if (expectedIds.length === 0 || expectedIds.length !== suppliedIds.length
+        || expectedIds.some((id, index) => id !== suppliedIds[index])) {
+        throw new ArcadeServiceError(
+          'MATCH_PARTICIPANTS_MISMATCH',
+          'match completion must include every persisted participant',
+        );
+      }
       const completed: QueueEntry[] = [];
       for (const id of queueEntryIds) {
         const entry = this.requireEntry(state, id);
@@ -879,7 +985,7 @@ export class ArcadeService {
           throw new ArcadeServiceError('MATCH_NOT_ACTIVE', `queue entry ${id} is not playing in match ${matchId}`);
         }
         const reduction = reduceQueueEntry(entry, {
-          type: 'COMPLETE', eventId: this.id('queue-event'), at, reason: input.reason,
+          type: 'COMPLETE', eventId: this.id('queue-event'), at, reason,
         });
         this.applyQueueReduction(state, reduction);
         completed.push(reduction.entry);
@@ -892,12 +998,13 @@ export class ArcadeService {
     const playerId = requireIdentifier(input.playerId, 'playerId');
     const queueEntryId = requireIdentifier(input.queueEntryId, 'queueEntryId');
     const principal = this.authorizeOperator(input.authorization, 'QUEUE_ACTION_UNAUTHORIZED');
+    const reason = operatorAuditReason(principal, input.reason);
     return this.execute('RELEASE_QUEUE_ENTRY', input.idempotencyKey, playerId, {
-      playerId, queueEntryId, reason: input.reason ?? null, authorizedBy: principal,
+      playerId, queueEntryId, reason, authorizedBy: principal,
     }, (state, config, at) => {
       const entry = this.requireOwnedEntry(state, playerId, queueEntryId);
       const reduction = reduceQueueEntry(entry, {
-        type: 'RELEASE', eventId: this.id('queue-event'), at, reason: input.reason,
+        type: 'RELEASE', eventId: this.id('queue-event'), at, reason,
       });
       this.applyQueueReduction(state, reduction);
       this.releaseActiveReservation(state, reduction.entry, input.idempotencyKey, config, at);
@@ -963,7 +1070,12 @@ export class ArcadeService {
     ) => QueueAction,
   ): Promise<QueueEntryResult> {
     const principal = this.authorizeOperator(input.authorization, 'QUEUE_ACTION_UNAUTHORIZED');
-    return this.queueAction(operation, input, makeAction, principal);
+    return this.queueAction(
+      operation,
+      { ...input, reason: operatorAuditReason(principal, input.reason) },
+      makeAction,
+      principal,
+    );
   }
 
   private queueAction(
@@ -982,8 +1094,11 @@ export class ArcadeService {
     return this.execute(operation, input.idempotencyKey, playerId, {
       playerId, queueEntryId, reason: input.reason ?? null, authorizedBy: authorizedBy ?? null,
     }, (state, config, at) => {
+      this.requireQueueOn(config);
       const entry = this.requireOwnedEntry(state, playerId, queueEntryId);
-      const reduction = reduceQueueEntry(entry, makeAction(entry, this.id('queue-event'), at, config));
+      this.requireCurrentCabinet(entry, config);
+      const action = makeAction(entry, this.id('queue-event'), at, config);
+      const reduction = reduceQueueEntry(entry, authorizedBy ? { ...action, reason: input.reason } : action);
       this.applyQueueReduction(state, reduction);
       return queueResult(state, reduction.entry);
     });
@@ -1109,6 +1224,12 @@ export class ArcadeService {
       throw new ArcadeServiceError('QUEUE_ENTRY_FORBIDDEN', 'queue entry belongs to another player');
     }
     return entry;
+  }
+
+  private requireCurrentCabinet(entry: QueueEntry, config: ArcadeConfigSnapshot): void {
+    if (entry.cabinetId !== config.arcade.cabinetId) {
+      throw new ArcadeServiceError('CABINET_CHANGED', 'queue entry belongs to another cabinet');
+    }
   }
 
   private requireEntryIds(input: readonly string[]): string[] {

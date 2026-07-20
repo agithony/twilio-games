@@ -231,7 +231,7 @@ npm run typecheck
 npm run build
 ```
 
-The current Vitest suite contains 1,012 passing tests across 101 files. It covers game worlds and protocols, room and reconnect behavior, Conversation Relay routing, voice command parsing, TwiML, webhook signatures, HTTP APIs, persistence, analytics, Google OAuth authorization, Arcade runtime configuration, signed player sessions, wallet, queue, and atomic challenge APIs, TAC lifecycle gating, asset governance, render helpers, audio management, and WebSocket integration.
+The current Vitest suite contains 1,015 passing tests across 101 files. It covers game worlds and protocols, room and reconnect behavior, Conversation Relay routing, voice command parsing, TwiML, webhook signatures, HTTP APIs, persistence, analytics, Google OAuth authorization, Arcade runtime configuration, signed player sessions, wallet, queue, challenge, and audited operator match APIs, TAC lifecycle gating, asset governance, render helpers, audio management, and WebSocket integration.
 
 Additional Chromium-based render checks are available when a compatible browser is installed:
 

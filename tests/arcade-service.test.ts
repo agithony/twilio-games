@@ -21,7 +21,10 @@ const directories: string[] = [];
 const T0 = Date.parse('2026-07-20T10:00:00.000Z');
 const TOKEN_SECRET = '0123456789abcdef0123456789abcdef';
 const OPERATOR_AUTHORIZATION = Object.freeze({ token: 'trusted-test-operator' });
-const OPERATOR = Object.freeze({ authorization: OPERATOR_AUTHORIZATION });
+const OPERATOR = Object.freeze({
+  authorization: OPERATOR_AUTHORIZATION,
+  reason: 'test operator action',
+});
 
 afterEach(async () => {
   await Promise.all(directories.splice(0).map(directory => rm(directory, { recursive: true, force: true })));
@@ -413,7 +416,7 @@ describe('ArcadeService atomicity and idempotency', () => {
     });
     expect(() => h.service.markApproaching({
       playerId: 'p1', queueEntryId: joined.entry.id,
-      idempotencyKey: 'authorization:approach', authorization: {},
+      idempotencyKey: 'authorization:approach', reason: 'unauthorized attempt', authorization: {},
     })).toThrow(/trusted operator or system authorization/);
     expect(h.store.snapshot().queueEntries[joined.entry.id]?.status).toBe('WAITING');
 
@@ -443,7 +446,7 @@ describe('ArcadeService atomicity and idempotency', () => {
     })).rejects.toThrow(/checked in for racer/);
     await expect(h.service.startMatch({
       queueEntryIds: [joined.entry.id], game: 'fighter',
-      idempotencyKey: 'authorization:start', authorization: {},
+      idempotencyKey: 'authorization:start', reason: 'unauthorized attempt', authorization: {},
     })).rejects.toMatchObject({ code: 'MATCH_UNAUTHORIZED' });
 
     const started = await h.service.startMatch({
@@ -461,11 +464,25 @@ describe('ArcadeService atomicity and idempotency', () => {
     await expect(h.service.completeMatch({
       queueEntryIds: [joined.entry.id], matchId: 'different-match',
       idempotencyKey: 'authorization:wrong-match', ...OPERATOR,
-    })).rejects.toMatchObject({ code: 'MATCH_NOT_ACTIVE' });
+    })).rejects.toMatchObject({ code: 'MATCH_PARTICIPANTS_MISMATCH' });
     await h.service.completeMatch({
       queueEntryIds: [joined.entry.id], matchId: started.matchId,
       idempotencyKey: 'authorization:complete', ...OPERATOR,
     });
+  });
+
+  it('rechecks cabinet configuration inside queue mutations', async () => {
+    const h = await harness();
+    await h.service.registerPlayer(registration('p1'));
+    const joined = await h.service.joinQueue({
+      playerId: 'p1', preferredGame: 'racer', idempotencyKey: 'cabinet:join',
+    });
+    const changed = arcadeConfig('lead_capture', { version: 2 });
+    h.setConfig({ ...changed, arcade: { ...changed.arcade, cabinetId: 'ARCADE-02' } });
+    await expect(h.service.markApproaching({
+      playerId: 'p1', queueEntryId: joined.entry.id, idempotencyKey: 'cabinet:approach', ...OPERATOR,
+    })).rejects.toMatchObject({ code: 'CABINET_CHANGED' });
+    expect(h.store.snapshot().queueEntries[joined.entry.id]?.status).toBe('WAITING');
   });
 
   it('persists challenge idempotency, consumes tokens once, and honors the configured claim limit', async () => {
@@ -635,6 +652,16 @@ describe('ArcadeService atomicity and idempotency', () => {
     expect(started.entries.map(entry => entry.status)).toEqual(['PLAYING', 'PLAYING']);
     expect(h.store.snapshot().wallets.p1?.wallet.cachedBalance).toBe(0);
     expect(h.store.snapshot().wallets.p2?.wallet.cachedBalance).toBe(0);
+    await expect(h.service.completeMatch({
+      queueEntryIds: [p1Entry], matchId: started.matchId,
+      idempotencyKey: 'match:partial-complete', ...OPERATOR,
+    })).rejects.toMatchObject({ code: 'MATCH_PARTICIPANTS_MISMATCH' });
+    expect(h.store.snapshot().queueEntries[p1Entry]?.status).toBe('PLAYING');
+    expect(h.store.snapshot().queueEntries[p2Joined.entry.id]?.status).toBe('PLAYING');
+    await h.service.completeMatch({
+      queueEntryIds: [p1Entry, p2Joined.entry.id], matchId: started.matchId,
+      idempotencyKey: 'match:complete-all', ...OPERATOR,
+    });
   });
 });
 
@@ -662,16 +689,16 @@ describe('ArcadeService mode gate and cleanup', () => {
     const waiting = await h.service.joinQueue({
       playerId: 'p4', preferredGame: 'fighter', idempotencyKey: 'off-p4:join',
     });
+    const started = await h.service.startMatch({
+      queueEntryIds: [playingEntry], game: 'racer', idempotencyKey: 'off-p1:start', ...OPERATOR,
+    });
+    expect(h.store.snapshot().wallets.p1?.transactions.at(-1)?.configVersion).toBe(1);
 
     h.setConfig(arcadeConfig('off', { startingBalance: 2, version: 2 }));
     const beforeFailedCreation = h.store.snapshot();
     await expect(h.service.registerPlayer(registration('p3'))).rejects.toMatchObject({ code: 'MODE_DISABLED' });
     expect(h.store.snapshot()).toEqual(beforeFailedCreation);
 
-    const started = await h.service.startMatch({
-      queueEntryIds: [playingEntry], game: 'racer', idempotencyKey: 'off-p1:start', ...OPERATOR,
-    });
-    expect(h.store.snapshot().wallets.p1?.transactions.at(-1)?.configVersion).toBe(1);
     await h.service.completeMatch({
       queueEntryIds: [playingEntry], matchId: started.matchId,
       idempotencyKey: 'off:complete', ...OPERATOR,
@@ -680,6 +707,12 @@ describe('ArcadeService mode gate and cleanup', () => {
       playerId: 'p2', queueEntryId: checkedIn.entry.id, idempotencyKey: 'off:release', ...OPERATOR,
     });
     expect(released).toMatchObject({ entry: { status: 'RELEASED' }, reservation: { status: 'RELEASED' } });
+    expect(await h.service.releaseQueueEntry({
+      playerId: 'p2', queueEntryId: checkedIn.entry.id, idempotencyKey: 'off:release', ...OPERATOR,
+    })).toEqual(released);
+    await expect(h.service.markApproaching({
+      playerId: 'p4', queueEntryId: waiting.entry.id, idempotencyKey: 'off:approach', ...OPERATOR,
+    })).rejects.toMatchObject({ code: 'MODE_DISABLED' });
     const left = await h.service.leaveQueue({
       playerId: 'p4', queueEntryId: waiting.entry.id, idempotencyKey: 'off-p4:leave',
     });

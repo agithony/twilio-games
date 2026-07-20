@@ -594,4 +594,94 @@ describe('Arcade API', () => {
     })).json() as Record<string, any>;
     expect(after.challenges[0]).toMatchObject({ claimCount: 1, available: false });
   });
+
+  it('lets authenticated operators advance and release a player queue journey with audit reasons', async () => {
+    const { baseUrl, store, playerRuntime } = await harness({ playerMode: 'lead_capture' });
+    const cookie = cookieFrom(await createPlayerSession(baseUrl, 'operator-queue-player'));
+    const playerMutation = (path: string, key: string, body: unknown) => fetch(`${baseUrl}${path}`, {
+      method: 'POST',
+      headers: {
+        Cookie: cookie, Origin: 'http://localhost',
+        'Content-Type': 'application/json', 'Idempotency-Key': key,
+      },
+      body: JSON.stringify(body),
+    });
+    expect((await playerMutation('/api/arcade/register', 'operator-register', REGISTRATION)).status).toBe(200);
+    expect((await playerMutation('/api/arcade/queue/join', 'operator-join', {
+      preferredGame: 'racer', flexibleGame: false,
+    })).status).toBe(200);
+
+    expect((await fetch(`${baseUrl}/api/admin/arcade/queue`)).status).toBe(401);
+    const queueResponse = await fetch(`${baseUrl}/api/admin/arcade/queue`, { headers: ADMIN_HEADER });
+    const queueBody = await queueResponse.json() as Record<string, any>;
+    expect(queueBody.queue).toHaveLength(1);
+    expect(JSON.stringify(queueBody)).not.toMatch(/playerId|email|phone|company/i);
+    const queueEntryId = queueBody.queue[0].queueEntryId as string;
+    const operatorAction = (action: string, key: string, reason: string) => fetch(
+      `${baseUrl}/api/admin/arcade/queue/${queueEntryId}/${action}`,
+      {
+        method: 'POST',
+        headers: {
+          ...ADMIN_HEADER,
+          Origin: 'http://localhost',
+          'Content-Type': 'application/json',
+          'Idempotency-Key': key,
+        },
+        body: JSON.stringify({ reason }),
+      },
+    );
+
+    expect((await operatorAction(
+      'approach', 'operator-oversized-audit', '\ud800'.repeat(200),
+    )).status).toBe(400);
+    expect((await operatorAction('approach', 'operator-approach', 'two groups away')).status).toBe(200);
+    expect((await playerMutation('/api/arcade/queue/confirm', 'operator-player-confirm', {})).status).toBe(200);
+    expect((await operatorAction('call', 'operator-call', 'cabinet ready')).status).toBe(200);
+    const checkedIn = await playerMutation('/api/arcade/check-in', 'operator-check-in', { game: 'racer' });
+    expect(await checkedIn.json()).toMatchObject({
+      status: 'CHECKED_IN', availableBalance: 0, reservation: { amount: 1, status: 'ACTIVE' },
+    });
+    expect((await operatorAction('activate', 'operator-activate', 'player at cabinet')).status).toBe(200);
+    const state = (await playerRuntime.getActive()).store.snapshot();
+    expect(state.queueEvents.find(event => event.type === 'MARKED_APPROACHING')?.reason)
+      .toBe('{"operator":"admin@twilio.com","reason":"two groups away"}');
+    const started = await fetch(`${baseUrl}/api/admin/arcade/matches/start`, {
+      method: 'POST',
+      headers: {
+        ...ADMIN_HEADER, Origin: 'http://localhost',
+        'Content-Type': 'application/json', 'Idempotency-Key': 'operator-match-start',
+      },
+      body: JSON.stringify({
+        queueEntryIds: [queueEntryId], game: 'racer', reason: 'starting ready players',
+      }),
+    });
+    expect(started.status).toBe(200);
+    const startedBody = await started.json() as Record<string, any>;
+    expect(startedBody).toMatchObject({
+      entries: [{ queueEntryId, status: 'PLAYING' }],
+    });
+
+    await store.update({
+      expectedVersion: 2,
+      idempotencyKey: 'operator-switch-off',
+      updatedBy: 'admin@twilio.com',
+      settings: settings('off'),
+    });
+    const completed = await fetch(
+      `${baseUrl}/api/admin/arcade/matches/${startedBody.matchId}/complete`,
+      {
+        method: 'POST',
+        headers: {
+          ...ADMIN_HEADER, Origin: 'http://localhost',
+          'Content-Type': 'application/json', 'Idempotency-Key': 'operator-match-complete',
+        },
+        body: JSON.stringify({ queueEntryIds: [queueEntryId], reason: 'authoritative game result' }),
+      },
+    );
+    expect(completed.status).toBe(200);
+    expect(await completed.json()).toMatchObject({
+      matchId: startedBody.matchId,
+      entries: [{ queueEntryId, status: 'COMPLETED' }],
+    });
+  });
 });

@@ -32,6 +32,7 @@ export const ARCADE_STATE_MAX_QUEUE_EVENTS = 500_000;
 export const ARCADE_STATE_MAX_IDEMPOTENCY_RECORDS = 250_000;
 const MAX_AGGREGATE_ITEMS = 100_000;
 const MAX_IDENTIFIER_LENGTH = 256;
+const MAX_QUEUE_REASON_LENGTH = 512;
 const MAX_METADATA_BYTES = 16 * 1024;
 const MAX_RESULT_BYTES = 2 * 1024 * 1024;
 const MAX_JSON_DEPTH = 12;
@@ -221,8 +222,8 @@ function requireBoolean(value: unknown, field: string): void {
   if (typeof value !== 'boolean') throw new ArcadeStateStoreError('INVALID_STATE', `${field} must be boolean`);
 }
 
-function requireNullableString(value: unknown, field: string): void {
-  if (value !== null) requireString(value, field);
+function requireNullableString(value: unknown, field: string, maximum = MAX_IDENTIFIER_LENGTH): void {
+  if (value !== null) requireString(value, field, false, maximum);
 }
 
 function assertBoundedJson(
@@ -657,7 +658,7 @@ export function assertArcadeState(state: unknown): asserts state is ArcadeState 
     requireString(event.cabinetId, 'queueEvents[].cabinetId');
     requireString(event.playerId, 'queueEvents[].playerId');
     requireTimestamp(event.occurredAt, 'queueEvents[].occurredAt');
-    requireNullableString(event.reason, 'queueEvents[].reason');
+    requireNullableString(event.reason, 'queueEvents[].reason', MAX_QUEUE_REASON_LENGTH);
     requireInteger(event.configVersion, 'queueEvents[].configVersion', 1);
     void eventRecord;
     try {

@@ -1404,7 +1404,7 @@ without an extra step.
 - [ ] Add no-show, deferral, snooze, and removal policies
 - [ ] Add AI fallback rules
 - [ ] Add phone queue status and shared-display queue panel
-- [ ] Add operator queue controls and audit
+- [x] Add operator queue controls and audit
 - [ ] Add ETA moving averages
 
 **Exit criteria:** A queue larger than eight feeds one display fairly; no-show players do not block

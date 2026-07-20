@@ -15,6 +15,7 @@ export type ArcadePlayerRuntimeResources = Readonly<{
   service: ArcadeService;
   sessions: ArcadePlayerSessionService;
   challenges: ArcadeChallengeTokenService;
+  operatorAuthorization: (subject: string) => unknown;
 }>;
 
 export type ArcadePlayerRuntimeStatus = Readonly<{
@@ -114,7 +115,11 @@ export class ArcadePlayerRuntime {
     this.observeMode();
     if (this.mode !== 'off') return this.getActive();
     if (this.resources) return this.resources;
-    throw new ArcadePlayerRuntimeError('MODE_DISABLED', 'Arcade mode is off');
+    try {
+      return await this.initialize();
+    } catch {
+      throw new ArcadePlayerRuntimeError('STATE_UNAVAILABLE', 'Arcade player state is unavailable');
+    }
   }
 
   getStatus(): ArcadePlayerRuntimeStatus {
@@ -187,18 +192,26 @@ export class ArcadePlayerRuntime {
     const sessionSecret = deriveSecret(root, 'player-session');
     const challengeSecret = deriveSecret(root, 'challenge-token');
     const store = await this.openStateStore(this.stateFile);
+    const operatorMarker = Object.freeze({});
     const service = new ArcadeService({
       store,
       config: () => this.configStore.getSnapshot(),
       clock: () => Date.now(),
       idGenerator: kind => `${kind}:${randomUUID()}`,
       challengeTokenSecret: challengeSecret,
+      operatorAuthorizer: authorization => {
+        const value = authorization as { marker?: unknown; subject?: unknown } | null;
+        return value?.marker === operatorMarker && typeof value.subject === 'string'
+          ? { kind: 'operator', subject: value.subject }
+          : null;
+      },
     });
     const sessions = new ArcadePlayerSessionService(sessionSecret, {
       secureCookies: this.secureCookies,
     });
     const challenges = new ArcadeChallengeTokenService(challengeSecret);
-    return Object.freeze({ store, service, sessions, challenges });
+    const operatorAuthorization = (subject: string) => Object.freeze({ marker: operatorMarker, subject });
+    return Object.freeze({ store, service, sessions, challenges, operatorAuthorization });
   }
 }
 

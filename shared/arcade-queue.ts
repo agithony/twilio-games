@@ -628,7 +628,7 @@ export function snoozeQueueEntry(
 /** Applies expiry at a caller-supplied time: eligible misses defer, the next miss becomes NO_SHOW. */
 export function expireCalledEntry(
   entry: QueueEntry,
-  input: { eventId: string; at: ArcadeTimestamp },
+  input: { eventId: string; at: ArcadeTimestamp; reason?: string },
   policy: QueuePolicy,
 ): QueueReduction {
   assertQueueEntryInvariants(entry);
@@ -647,7 +647,7 @@ export function expireCalledEntry(
       eventId: input.eventId,
       at: input.at,
       deferredUntil: addSeconds(input.at, policy.snoozeSeconds),
-      reason: 'CALL_EXPIRED',
+      reason: input.reason ?? 'CALL_EXPIRED',
     });
     const next = {
       ...reduced.entry,
@@ -661,7 +661,7 @@ export function expireCalledEntry(
     type: 'MARK_NO_SHOW',
     eventId: input.eventId,
     at: input.at,
-    reason: 'CALL_EXPIRED',
+    reason: input.reason ?? 'CALL_EXPIRED',
   });
   return reduced;
 }

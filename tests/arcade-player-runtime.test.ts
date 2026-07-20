@@ -115,4 +115,66 @@ describe('ArcadePlayerRuntime', () => {
     expect(runtime.getStatus().mode).toBe('off');
     await runtime.stop();
   });
+
+  it('lazy-loads persisted state for authenticated cleanup after an off-mode restart', async () => {
+    const h = await harness();
+    await h.runtime.start();
+    await h.store.update({
+      expectedVersion: 1, idempotencyKey: 'enable-cleanup', updatedBy: 'admin@twilio.com',
+      settings: settings('lead_capture'),
+    });
+    const active = await h.runtime.getActive();
+    await active.service.registerPlayer({
+      playerId: 'player:cleanup',
+      idempotencyKey: 'cleanup-register',
+      lead: {
+        firstName: 'Ada', lastName: 'Lovelace', workEmail: 'ada@example.com',
+        companyName: 'Analytical Engines', phoneNumber: '+14155550199', countryCode: 'US',
+      },
+      termsAccepted: true,
+    });
+    const joined = await active.service.joinQueue({
+      playerId: 'player:cleanup', preferredGame: 'racer', idempotencyKey: 'cleanup-join',
+    });
+    const authorization = active.operatorAuthorization('admin@twilio.com');
+    await active.service.markApproaching({
+      playerId: 'player:cleanup', queueEntryId: joined.entry.id,
+      idempotencyKey: 'cleanup-approach', reason: 'approaching cabinet', authorization,
+    });
+    await active.service.confirmPresence({
+      playerId: 'player:cleanup', queueEntryId: joined.entry.id, idempotencyKey: 'cleanup-confirm',
+    });
+    await active.service.callQueueEntry({
+      playerId: 'player:cleanup', queueEntryId: joined.entry.id,
+      idempotencyKey: 'cleanup-call', reason: 'cabinet ready', authorization,
+    });
+    await active.service.checkInQueueEntry({
+      playerId: 'player:cleanup', queueEntryId: joined.entry.id,
+      game: 'racer', idempotencyKey: 'cleanup-check-in',
+    });
+    await h.store.update({
+      expectedVersion: 2, idempotencyKey: 'disable-cleanup', updatedBy: 'admin@twilio.com',
+      settings: settings('off'),
+    });
+    await h.runtime.stop();
+
+    const restarted = new ArcadePlayerRuntime({
+      configStore: h.store,
+      events: h.events,
+      stateFile: h.stateFile,
+      publicBaseUrl: 'https://arcade.example',
+      signingSecret: () => SECRET,
+    });
+    await restarted.start();
+    expect(restarted.getStatus().initialized).toBe(false);
+    const cleanup = await restarted.getForCleanup();
+    const released = await cleanup.service.releaseQueueEntry({
+      playerId: 'player:cleanup', queueEntryId: joined.entry.id,
+      idempotencyKey: 'cleanup-release-after-restart',
+      reason: 'restart cleanup',
+      authorization: cleanup.operatorAuthorization('admin@twilio.com'),
+    });
+    expect(released.reservation?.status).toBe('RELEASED');
+    await restarted.stop();
+  });
 });
