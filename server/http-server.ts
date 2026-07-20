@@ -1047,8 +1047,12 @@ export class HttpServer {
     const path = (req.url ?? '').split('?')[0] ?? '';
     // Unauthenticated liveness probe for the ACA deploy smoke + container health checks.
     if (req.method === 'GET' && path === '/healthz') {
-      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-      res.end(JSON.stringify({ status: 'ok', rooms: this.game.roomCount }));
+      const arcadeHealth = this.arcadeApi?.getHealthStatus();
+      const degraded = arcadeHealth?.degraded ?? false;
+      res.writeHead(degraded ? 503 : 200, {
+        'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*',
+      });
+      res.end(JSON.stringify({ status: degraded ? 'degraded' : 'ok', rooms: this.game.roomCount }));
       return;
     }
     if (req.method === 'GET' && path === '/auth/google') { this.analyticsAuth.begin(res); return; }

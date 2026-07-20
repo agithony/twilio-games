@@ -71,6 +71,9 @@ These default paths persist:
 | `data/arena.json` | Live Voice Monsters arena configuration | Read from the bundled `assets/arena/arena.json` fallback until the editor first saves a live copy |
 | `data/fighter-maps.json` | Live Fighter map catalog | Seeded from `assets/fighters/maps/maps.json` when the live catalog cannot be parsed |
 | `data/fighter-previews/*.png` | Fighter map previews captured in the editor | Created by editor uploads |
+| `data/arcade-config.json` | Current versioned Arcade runtime configuration | Defaults to mode `off`; created on the first admin update |
+| `data/arcade-config-audit.jsonl` | Hash-chained Arcade configuration audit | Appended on every admin update |
+| `data/arcade-state.json` | Arcade players, leads, wallets, queue entries, and idempotency records | Opened only after Arcade mode is enabled |
 
 `assets/manifest.json` is not persistent. Garage writes modify the running container's image layer and are lost on restart or redeploy unless the resulting manifest is copied back into the repository and included in a new image. Bundled GLB, FBX, audio, and preview files are also image-owned rather than Azure Files content.
 
@@ -95,6 +98,7 @@ The deployed specification currently sets these variables:
 | `GOOGLE_OAUTH_CLIENT_SECRET` | Container App secret `google-oauth-client-secret` | Server-side Google authorization-code exchange |
 | `ANALYTICS_ALLOWED_EMAIL` | GitHub repository variable | Allows one exact verified Google email in addition to `@twilio.com` accounts |
 | `ARCADE_ADMIN_EMAILS` | GitHub repository variable | Comma-separated authenticated emails allowed to update Arcade runtime configuration; empty disables admin updates |
+| `ARCADE_SIGNING_SECRET` | Container App secret populated from the matching GitHub secret | Root key for signed player sessions and challenge claims; ignored while Arcade mode is `off` |
 | `GAME_PHONE_NUMBER` | GitHub repository variable | Number displayed and QR-encoded in game lobbies; empty shows a configuration placeholder |
 | `CR_TTS_VOICE` | GitHub repository variable | ElevenLabs Conversation Relay voice ID; empty uses the Relay default |
 | `CR_TTS_VOICE_PT_BR` | GitHub repository variable | Optional Brazilian Portuguese ElevenLabs voice ID; empty uses Relay's `pt-BR` default |

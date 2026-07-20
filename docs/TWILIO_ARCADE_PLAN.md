@@ -1357,7 +1357,7 @@ the TAC callback receives Tony's confirmed profile context without affecting det
 - [x] Add authenticated admin API
 - [ ] Add operator/admin configuration UI
 - [x] Broadcast config updates live
-- [ ] Implement `off`, `coin_only`, and `lead_capture`
+- [x] Implement `off`, `coin_only`, and `lead_capture`
 - [ ] Add configuration snapshot IDs to sessions
 
 **Exit criteria:** Switching mode live changes new-player behavior without deployment or active-match
@@ -1366,13 +1366,13 @@ disruption.
 ### Phase 2: Registration, Lead, Profile, and Wallet
 
 - [ ] Build persistent cabinet registration page
-- [ ] Implement required default fields
-- [ ] Normalize country code
-- [ ] Create idempotent lead/player upsert
+- [x] Implement required default fields
+- [x] Normalize country code
+- [x] Create idempotent lead/player upsert
 - [ ] Add CRM integration seam
 - [ ] Link Orchestrator/Memory profile
-- [ ] Implement wallet and append-only ledger
-- [ ] Grant one starting coin exactly once
+- [x] Implement wallet and append-only ledger
+- [x] Grant one starting coin exactly once
 - [ ] Add wallet display on phone
 
 **Exit criteria:** A new lead completes all required fields, receives exactly one coin, and is
@@ -1382,8 +1382,8 @@ recognized on a later channel interaction.
 
 - [ ] Implement challenge CRUD and ordering
 - [ ] Implement tracked redirect endpoint
-- [ ] Implement signed player claim tokens
-- [ ] Implement one-time atomic rewards
+- [x] Implement signed player claim tokens
+- [x] Implement one-time atomic rewards
 - [ ] Add challenge list to wallet/post-game UI
 - [ ] Add challenge audit and metrics
 - [ ] Test disabled, expired, duplicate, and malicious destinations
@@ -1398,7 +1398,7 @@ without an extra step.
 - [ ] Add game preference and party creation/join
 - [ ] Add FIFO scheduler and party splitting
 - [ ] Add approaching notifications and still-here confirmation
-- [ ] Add check-in and coin reservation
+- [x] Add check-in and coin reservation
 - [ ] Add primary/standby wave promotion
 - [ ] Add ready grace and hard deadline
 - [ ] Add no-show, deferral, snooze, and removal policies

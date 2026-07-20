@@ -155,6 +155,34 @@ async function moveToLobby(h: Harness, playerId: string, prefix: string): Promis
 }
 
 describe('ArcadeService durable journey', () => {
+  it('returns narrow player and wallet projections without lead or ledger history', async () => {
+    const h = await harness();
+    expect(await h.service.getPlayerStatus('p1')).toBeNull();
+    expect(await h.service.getWalletStatus('p1')).toBeNull();
+    await h.service.registerPlayer(registration('p1'));
+
+    const player = await h.service.getPlayerStatus('p1');
+    const wallet = await h.service.getWalletStatus('p1');
+    expect(player).toEqual({ registered: true, firstName: 'Ada', preferredLocale: null });
+    expect(wallet).toMatchObject({ ledgerBalance: 2, reservedBalance: 0, availableBalance: 2 });
+    expect(JSON.stringify(player)).not.toMatch(/email|phone|company|destination|crm|lastName/i);
+    expect(JSON.stringify(wallet)).not.toMatch(/transaction|reservation|idempotency|player/i);
+  });
+
+  it('returns only the current player queue projection and FIFO position', async () => {
+    const h = await harness();
+    await h.service.registerPlayer(registration('p1'));
+    await h.service.registerPlayer(registration('p2'));
+    await h.service.joinQueue({ playerId: 'p1', preferredGame: 'racer', idempotencyKey: 'status:p1' });
+    await h.service.joinQueue({ playerId: 'p2', preferredGame: 'fighter', idempotencyKey: 'status:p2' });
+    const status = await h.service.getQueueStatus('p2');
+    expect(status).toMatchObject({
+      status: 'WAITING', preferredGame: 'fighter', flexibleGame: false, position: 2, reservation: null,
+    });
+    expect(status?.queueEntryId).toMatch(/^queue-entry-/);
+    expect(JSON.stringify(status)).not.toMatch(/playerId|event|reason|configVersion/);
+  });
+
   it('identifies coin-only players and issues the starting grant once', async () => {
     const h = await harness(arcadeConfig('coin_only', { startingBalance: 2 }));
     const first = await h.service.identifyCoinOnly({

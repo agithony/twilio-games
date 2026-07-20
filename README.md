@@ -204,6 +204,8 @@ The application runs locally without Twilio or OpenAI credentials. Configure the
 | `ANALYTICS_PATH` | Persistent daily analytics rollup file | `data/analytics.json` |
 | `ARCADE_ADMIN_EMAILS` | Comma-separated Google-authenticated emails allowed to update Arcade runtime configuration | Admin APIs disabled when unset |
 | `ARCADE_CONFIG_DIRECTORY` | Persistent Arcade configuration and audit directory | `data/` |
+| `ARCADE_SIGNING_SECRET` | Exactly 64 hexadecimal characters used to derive player-session and challenge-token keys when Arcade is enabled | Not read while Arcade mode is `off` |
+| `ARCADE_STATE_PATH` | Persistent player, wallet, and queue state | `data/arcade-state.json` |
 | `TWILIO_ACCOUNT_SID`, `TWILIO_API_KEY`, `TWILIO_API_SECRET`, `TWILIO_PHONE_NUMBER`, `TWILIO_CONVERSATION_CONFIGURATION_ID` | TAC Orchestrator and Memory initialization when Arcade mode is enabled | Not read while Arcade mode is `off` |
 | `FIGHTER_DISPLAY_TOKEN` | Requires host authentication for the Fighter display | Unset |
 | `GAME_SERVER_URL` | Vite development proxy target | `http://localhost:8080` |
@@ -229,7 +231,7 @@ npm run typecheck
 npm run build
 ```
 
-The current Vitest suite contains 990 passing tests across 98 files. It covers game worlds and protocols, room and reconnect behavior, Conversation Relay routing, voice command parsing, TwiML, webhook signatures, HTTP APIs, persistence, analytics, Google OAuth authorization, Arcade runtime configuration, TAC lifecycle gating, asset governance, render helpers, audio management, and WebSocket integration.
+The current Vitest suite contains 1,009 passing tests across 101 files. It covers game worlds and protocols, room and reconnect behavior, Conversation Relay routing, voice command parsing, TwiML, webhook signatures, HTTP APIs, persistence, analytics, Google OAuth authorization, Arcade runtime configuration, signed player sessions, wallet and queue APIs, TAC lifecycle gating, asset governance, render helpers, audio management, and WebSocket integration.
 
 Additional Chromium-based render checks are available when a compatible browser is installed:
 

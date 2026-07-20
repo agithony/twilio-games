@@ -25,6 +25,7 @@ properties:
       - name: twilio-account-sid
       - name: twilio-api-key
       - name: twilio-api-secret
+      - name: arcade-signing-secret
       - name: editor-token
       - name: google-oauth-client-id
       - name: google-oauth-client-secret
@@ -92,6 +93,11 @@ properties:
             value: "${ANALYTICS_ALLOWED_EMAIL}"
           - name: ARCADE_ADMIN_EMAILS
             value: "${ARCADE_ADMIN_EMAILS}"
+          # One root key derives separate player-session and challenge-token keys. Mode-off ignores it.
+          - name: ARCADE_SIGNING_SECRET
+            secretRef: arcade-signing-secret
+          - name: ARCADE_STATE_PATH
+            value: /app/data/arcade-state.json
           # ElevenLabs voiceId for Conversation Relay talk-back (greeting/countdown/result to callers).
           # Empty → Relay's default voice (talk-back still speaks). Set to a high-energy sports-
           # announcer voiceId from the ElevenLabs library for the racing vibe. Rendered via envsubst

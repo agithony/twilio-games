@@ -162,31 +162,37 @@ jobs:
       - name: Set app secrets
         # secret set does NOT create a new revision (preserves the registry secret); the deploy step
         # below rolls the revision once with image + env + mount. Each secret is referenced by
-        # containerapp.yaml via secretRef. Optional TAC secrets use a non-empty `disabled` placeholder
-        # when unset; mode-off never reads them. Secrets are passed via env (not inline ${{ }}) so a
-        # value with shell metacharacters can't break the command or leak through arg parsing.
+        # containerapp.yaml via secretRef. Optional Arcade/TAC secrets use a non-empty `disabled`
+        # placeholder when unset; mode-off never reads them. Secrets are passed via env (not inline
+        # ${{ }}) so a value with shell metacharacters can't break the command or leak through args.
         env:
           TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
           TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
           TWILIO_API_KEY: ${{ secrets.TWILIO_API_KEY }}
           TWILIO_API_SECRET: ${{ secrets.TWILIO_API_SECRET }}
+          ARCADE_SIGNING_SECRET: ${{ secrets.ARCADE_SIGNING_SECRET }}
           EDITOR_TOKEN: ${{ secrets.EDITOR_TOKEN }}
           GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
-          az containerapp secret set \
-            --name "$APP_NAME" \
-            --resource-group "$RESOURCE_GROUP" \
-            --secrets \
-              "twilio-token=$TWILIO_AUTH_TOKEN" \
-              "twilio-account-sid=${TWILIO_ACCOUNT_SID:-disabled}" \
-              "twilio-api-key=${TWILIO_API_KEY:-disabled}" \
-              "twilio-api-secret=${TWILIO_API_SECRET:-disabled}" \
-              "editor-token=$EDITOR_TOKEN" \
-              "google-oauth-client-id=$GOOGLE_OAUTH_CLIENT_ID" \
-              "google-oauth-client-secret=$GOOGLE_OAUTH_CLIENT_SECRET" \
-            --output none 2>/dev/null || echo "App does not exist yet — secrets set on create below."
+          if az containerapp show --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" --output none 2>/dev/null; then
+            az containerapp secret set \
+              --name "$APP_NAME" \
+              --resource-group "$RESOURCE_GROUP" \
+              --secrets \
+                "twilio-token=$TWILIO_AUTH_TOKEN" \
+                "twilio-account-sid=${TWILIO_ACCOUNT_SID:-disabled}" \
+                "twilio-api-key=${TWILIO_API_KEY:-disabled}" \
+                "twilio-api-secret=${TWILIO_API_SECRET:-disabled}" \
+                "arcade-signing-secret=${ARCADE_SIGNING_SECRET:-disabled}" \
+                "editor-token=$EDITOR_TOKEN" \
+                "google-oauth-client-id=$GOOGLE_OAUTH_CLIENT_ID" \
+                "google-oauth-client-secret=$GOOGLE_OAUTH_CLIENT_SECRET" \
+              --output none
+          else
+            echo "App does not exist yet — secrets set on create below."
+          fi
 
       - name: Deploy Container App
         # Secrets available here too, since a brand-new app sets them inside this step (between the
@@ -196,6 +202,7 @@ jobs:
           TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
           TWILIO_API_KEY: ${{ secrets.TWILIO_API_KEY }}
           TWILIO_API_SECRET: ${{ secrets.TWILIO_API_SECRET }}
+          ARCADE_SIGNING_SECRET: ${{ secrets.ARCADE_SIGNING_SECRET }}
           EDITOR_TOKEN: ${{ secrets.EDITOR_TOKEN }}
           GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
@@ -292,6 +299,7 @@ jobs:
                 "twilio-account-sid=${TWILIO_ACCOUNT_SID:-disabled}" \
                 "twilio-api-key=${TWILIO_API_KEY:-disabled}" \
                 "twilio-api-secret=${TWILIO_API_SECRET:-disabled}" \
+                "arcade-signing-secret=${ARCADE_SIGNING_SECRET:-disabled}" \
                 "editor-token=${EDITOR_TOKEN:-}" \
                 "google-oauth-client-id=${GOOGLE_OAUTH_CLIENT_ID:-}" \
                 "google-oauth-client-secret=${GOOGLE_OAUTH_CLIENT_SECRET:-}" \

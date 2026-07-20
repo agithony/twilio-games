@@ -9,6 +9,7 @@ import {
   claimChallengeReward,
   createPlayer,
   createWallet,
+  deriveLedger,
   grantRegistrationCoins,
   redeemReservation,
   refundReservation,
@@ -23,10 +24,12 @@ import {
   isTerminalQueueStatus,
   joinQueue as reduceJoinQueue,
   reduceQueueEntry,
+  selectWaitingEntries,
   snoozeQueueEntry as reduceSnoozeQueueEntry,
   type QueueAction,
   type QueueEntry,
   type QueueReduction,
+  type QueueStatus,
 } from '../shared/arcade-queue';
 import {
   ArcadeStateStore,
@@ -86,6 +89,33 @@ export interface RegisterArcadePlayerInput extends TrustedArcadeIdentity {
 export interface PlayerWalletResult {
   readonly player: ArcadePlayerRecord;
   readonly availableBalance: number;
+}
+
+export interface ArcadePlayerStatus {
+  readonly registered: boolean;
+  readonly firstName: string | null;
+  readonly preferredLocale: string | null;
+}
+
+export interface ArcadeWalletStatus {
+  readonly ledgerBalance: number;
+  readonly reservedBalance: number;
+  readonly availableBalance: number;
+  readonly updatedAt: string;
+}
+
+export interface ArcadeQueueStatus {
+  readonly queueEntryId: string;
+  readonly status: QueueStatus;
+  readonly preferredGame: string;
+  readonly flexibleGame: boolean;
+  readonly position: number | null;
+  readonly joinedAt: string;
+  readonly calledAt: string | null;
+  readonly checkInExpiresAt: string | null;
+  readonly deferredUntil: string | null;
+  readonly checkedInAt: string | null;
+  readonly reservation: Readonly<{ amount: number; status: WalletReservation['status'] }> | null;
 }
 
 export interface ClaimArcadeChallengeInput {
@@ -343,6 +373,61 @@ export class ArcadeService {
       this.challengeTokenSecret = copyChallengeTokenSecret(optionsOrStore.challengeTokenSecret);
       this.operatorAuthorizer = optionsOrStore.operatorAuthorizer ?? (() => null);
     }
+  }
+
+  async getPlayerStatus(playerIdInput: string): Promise<ArcadePlayerStatus | null> {
+    const playerId = requireIdentifier(playerIdInput, 'playerId');
+    const player = own((await this.store.read()).players, playerId);
+    if (!player) return null;
+    return Object.freeze({
+      registered: player.lead !== null,
+      firstName: player.lead?.firstName ?? null,
+      preferredLocale: player.preferredLocale,
+    });
+  }
+
+  async getWalletStatus(playerIdInput: string): Promise<ArcadeWalletStatus | null> {
+    const playerId = requireIdentifier(playerIdInput, 'playerId');
+    const wallet = own((await this.store.read()).wallets, playerId);
+    if (!wallet) return null;
+    const ledger = deriveLedger(wallet.transactions, wallet.reservations);
+    return Object.freeze({
+      ...ledger,
+      updatedAt: wallet.wallet.updatedAt,
+    });
+  }
+
+  async getQueueStatus(playerIdInput: string): Promise<ArcadeQueueStatus | null> {
+    const playerId = requireIdentifier(playerIdInput, 'playerId');
+    const config = this.config();
+    const state = await this.store.read();
+    const entries = Object.values(state.queueEntries);
+    const entry = entries.find(candidate => (
+      candidate.playerId === playerId
+      && candidate.cabinetId === config.arcade.cabinetId
+      && !isTerminalQueueStatus(candidate.status)
+    ));
+    if (!entry) return null;
+    const waiting = selectWaitingEntries(entries, {
+      cabinetId: config.arcade.cabinetId,
+      limit: entries.length,
+    });
+    const positionIndex = waiting.findIndex(candidate => candidate.id === entry.id);
+    const wallet = own(state.wallets, playerId);
+    const reservation = wallet ? findReservation(wallet, entry.id) : null;
+    return Object.freeze({
+      queueEntryId: entry.id,
+      status: entry.status,
+      preferredGame: entry.preferredGame,
+      flexibleGame: entry.flexibleGame,
+      position: positionIndex < 0 ? null : positionIndex + 1,
+      joinedAt: entry.joinedAt,
+      calledAt: entry.calledAt,
+      checkInExpiresAt: entry.checkInExpiresAt,
+      deferredUntil: entry.deferredUntil,
+      checkedInAt: entry.checkedInAt,
+      reservation: reservation ? Object.freeze({ amount: reservation.amount, status: reservation.status }) : null,
+    });
   }
 
   async identifyCoinOnly(input: IdentifyCoinOnlyInput): Promise<PlayerWalletResult> {

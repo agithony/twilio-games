@@ -69,6 +69,7 @@ Open **Settings > Secrets and variables > Actions > Secrets** and configure:
 | `TWILIO_ACCOUNT_SID` | Required when Arcade mode is enabled | TAC account identity; ignored while Arcade mode is `off` |
 | `TWILIO_API_KEY` | Required when Arcade mode is enabled | TAC API key SID; ignored while Arcade mode is `off` |
 | `TWILIO_API_SECRET` | Required when Arcade mode is enabled | TAC API key secret; ignored while Arcade mode is `off` |
+| `ARCADE_SIGNING_SECRET` | Required when Arcade mode is enabled | Exactly 64 hexadecimal characters; derives separate signed player-session and challenge-token keys |
 | `EDITOR_TOKEN` | Strongly recommended for public deployments | Stored as Container App secret `editor-token`; protects disk-writing editor and garage APIs |
 | `GOOGLE_OAUTH_CLIENT_ID` | Required for analytics | Stored as Container App secret `google-oauth-client-id`; Google OAuth web client ID |
 | `GOOGLE_OAUTH_CLIENT_SECRET` | Required for analytics | Stored as Container App secret `google-oauth-client-secret`; Google OAuth web client secret |

@@ -3,6 +3,7 @@ import { ArcadeApi } from './arcade-api';
 import { ArcadeConfigStore } from './arcade-config-store';
 import { ArcadeEventHub } from './arcade-events';
 import { ArcadeTacGateway } from './arcade-tac-gateway';
+import { ArcadePlayerRuntime } from './arcade-player-runtime';
 import { GoogleAnalyticsAuth } from './google-analytics-auth';
 
 const port = Number(process.env.PORT ?? 8080);
@@ -44,11 +45,19 @@ const arcadeConfigStore = new ArcadeConfigStore({
   events: arcadeEvents,
 });
 const arcadeTacGateway = new ArcadeTacGateway({ configStore: arcadeConfigStore, events: arcadeEvents });
+const arcadePlayerRuntime = new ArcadePlayerRuntime({
+  configStore: arcadeConfigStore,
+  events: arcadeEvents,
+  stateFile: process.env.ARCADE_STATE_PATH ?? 'data/arcade-state.json',
+  publicBaseUrl,
+  signingSecret: () => process.env.ARCADE_SIGNING_SECRET,
+});
 const arcadeApi = new ArcadeApi({
   configStore: arcadeConfigStore,
   events: arcadeEvents,
   publicBaseUrl,
   tacStatus: () => arcadeTacGateway.getStatus(),
+  playerRuntime: arcadePlayerRuntime,
   authorizeAdmin: request => {
     const principal = analyticsAuth.currentUser(request);
     return principal && arcadeAdminEmails.has(principal.email) ? principal : null;

@@ -1,8 +1,11 @@
 import type http from 'node:http';
+import { createHash } from 'node:crypto';
 import {
   ArcadeConfigValidationError,
   projectPublicArcadeConfig,
 } from '../shared/arcade-config';
+import { ArcadeDomainError, type LeadInput } from '../shared/arcade-domain';
+import { ArcadeQueueError } from '../shared/arcade-queue';
 import {
   ArcadeConfigDegradedError,
   ArcadeConfigIdempotencyConflictError,
@@ -15,11 +18,26 @@ import {
   ArcadeEventHub,
   type ArcadeEvent,
 } from './arcade-events';
+import {
+  ArcadePlayerRuntime,
+  ArcadePlayerRuntimeError,
+} from './arcade-player-runtime';
+import {
+  ArcadePlayerSessionError,
+  type ArcadePlayerSessionService,
+} from './arcade-player-session';
+import { ArcadeRateLimiter } from './arcade-rate-limiter';
+import { ArcadeServiceError, type ArcadeQueueStatus } from './arcade-service';
+import { ArcadeStateStoreError } from './arcade-state-store';
 
 const ADMIN_CONFIG_BODY_LIMIT = 512 * 1024;
 const DEFAULT_HEARTBEAT_MS = 15_000;
 const DEFAULT_MAX_EVENT_STREAMS = 100;
 const IDEMPOTENCY_KEY_LIMIT = 255;
+const PLAYER_IDEMPOTENCY_KEY_LIMIT = 128;
+const SESSION_BODY_LIMIT = 2 * 1024;
+const REGISTRATION_BODY_LIMIT = 8 * 1024;
+const QUEUE_BODY_LIMIT = 4 * 1024;
 
 export interface ArcadeAdminPrincipal {
   readonly email: string;
@@ -33,6 +51,8 @@ export interface ArcadeApiOptions {
   readonly heartbeatMs?: number;
   readonly maxEventStreams?: number;
   readonly tacStatus?: () => unknown;
+  readonly playerRuntime?: ArcadePlayerRuntime;
+  readonly now?: () => number;
 }
 
 type EventStream = {
@@ -55,6 +75,9 @@ export class ArcadeApi {
   private readonly heartbeatMs: number;
   private readonly maxEventStreams: number;
   private readonly tacStatus?: () => unknown;
+  private readonly playerRuntime?: ArcadePlayerRuntime;
+  private readonly rateLimiter: ArcadeRateLimiter;
+  private readonly processRateLimiter: ArcadeRateLimiter;
   private readonly streams = new Set<EventStream>();
   private started = false;
   private stopped = false;
@@ -67,6 +90,9 @@ export class ArcadeApi {
     this.heartbeatMs = options.heartbeatMs ?? DEFAULT_HEARTBEAT_MS;
     this.maxEventStreams = options.maxEventStreams ?? DEFAULT_MAX_EVENT_STREAMS;
     this.tacStatus = options.tacStatus;
+    this.playerRuntime = options.playerRuntime;
+    this.rateLimiter = new ArcadeRateLimiter(options.now ?? Date.now);
+    this.processRateLimiter = new ArcadeRateLimiter(options.now ?? Date.now, 16);
     if (!Number.isSafeInteger(this.heartbeatMs) || this.heartbeatMs < 10) {
       throw new TypeError('Arcade API heartbeatMs must be an integer of at least 10ms');
     }
@@ -79,7 +105,15 @@ export class ArcadeApi {
     if (this.stopped) throw new Error('Arcade API cannot restart after it has stopped');
     if (this.started) return;
     await this.configStore.load();
+    await this.playerRuntime?.start();
     this.started = true;
+  }
+
+  getHealthStatus(): { degraded: boolean } {
+    const players = this.playerRuntime?.getStatus();
+    return {
+      degraded: Boolean(players && players.mode !== 'off' && players.degraded),
+    };
   }
 
   async handle(
@@ -106,6 +140,56 @@ export class ArcadeApi {
       if (pathname === '/api/arcade/events') {
         this.requireMethod(request, ['GET']);
         this.openEventStream(request, response);
+        return;
+      }
+
+      if (pathname === '/api/arcade/session') {
+        await this.handlePlayerSession(request, response);
+        return;
+      }
+
+      if (pathname === '/api/arcade/register') {
+        await this.handleRegistration(request, response);
+        return;
+      }
+
+      if (pathname === '/api/arcade/player') {
+        await this.handlePlayerStatus(request, response);
+        return;
+      }
+
+      if (pathname === '/api/arcade/wallet') {
+        await this.handleWalletStatus(request, response);
+        return;
+      }
+
+      if (pathname === '/api/arcade/queue/status') {
+        await this.handleQueueStatus(request, response);
+        return;
+      }
+
+      if (pathname === '/api/arcade/queue/join') {
+        await this.handleJoinQueue(request, response);
+        return;
+      }
+
+      if (pathname === '/api/arcade/queue/confirm') {
+        await this.handleCurrentQueueAction(request, response, 'confirm');
+        return;
+      }
+
+      if (pathname === '/api/arcade/queue/snooze') {
+        await this.handleCurrentQueueAction(request, response, 'snooze');
+        return;
+      }
+
+      if (pathname === '/api/arcade/queue/leave') {
+        await this.handleCurrentQueueAction(request, response, 'leave');
+        return;
+      }
+
+      if (pathname === '/api/arcade/check-in') {
+        await this.handleCurrentQueueAction(request, response, 'check-in');
         return;
       }
 
@@ -150,6 +234,7 @@ export class ArcadeApi {
         sendJson(response, 200, {
           config: this.configStore.getStatus(),
           tac: this.tacStatus?.() ?? null,
+          players: this.playerRuntime?.getStatus() ?? null,
         }, { 'Cache-Control': 'no-store' });
         return;
       }
@@ -167,7 +252,221 @@ export class ArcadeApi {
     if (this.stopped) return;
     this.stopped = true;
     for (const stream of [...this.streams]) stream.close();
-    await this.configStore.flush();
+    await Promise.all([this.configStore.flush(), this.playerRuntime?.stop()]);
+  }
+
+  private async handlePlayerSession(
+    request: http.IncomingMessage,
+    response: http.ServerResponse,
+  ): Promise<void> {
+    this.requireMethod(request, ['POST']);
+    this.requireSameOrigin(request);
+    requireJsonContentType(request);
+    requireExactObject(await readJson(request, SESSION_BODY_LIMIT), [], []);
+    this.enforceProcessRate('session-process', 120, 60_000);
+
+    const runtime = this.requirePlayerRuntime();
+    const resources = await runtime.getActive();
+    const config = this.configStore.getSnapshot();
+    if (config.arcade.mode === 'off') {
+      throw new ArcadeHttpError(409, 'ARCADE_MODE_DISABLED', 'Arcade mode is off');
+    }
+    const audience = config.arcade.cabinetId;
+    let playerId: string | null = null;
+    try {
+      playerId = resources.sessions.readCookie(request.headers.cookie, audience)?.player ?? null;
+    } catch (error) {
+      if (error instanceof ArcadePlayerSessionError && error.code === 'DUPLICATE_COOKIE') throw error;
+      playerId = null;
+    }
+
+    let issuance: ReturnType<ArcadePlayerSessionService['issue']> | null = null;
+    if (!playerId) {
+      issuance = resources.sessions.issue(runtime.newPlayerId(), audience);
+      playerId = issuance.payload.player;
+    }
+
+    let player = await resources.service.getPlayerStatus(playerId);
+    if (config.arcade.mode === 'coin_only' && !player) {
+      await resources.service.identifyCoinOnly({
+        playerId,
+        destination: null,
+        idempotencyKey: playerServiceKey(playerId, 'session', issuance?.payload.jti ?? 'existing-session'),
+      });
+      player = await resources.service.getPlayerStatus(playerId);
+    }
+    const wallet = await resources.service.getWalletStatus(playerId);
+    sendJson(response, 200, {
+      mode: config.arcade.mode,
+      registered: player?.registered ?? false,
+      availableBalance: wallet?.availableBalance ?? null,
+    }, {
+      'Cache-Control': 'no-store',
+      ...(issuance ? { 'Set-Cookie': issuance.cookie } : {}),
+    });
+  }
+
+  private async handleRegistration(
+    request: http.IncomingMessage,
+    response: http.ServerResponse,
+  ): Promise<void> {
+    this.requireMethod(request, ['POST']);
+    this.requireSameOrigin(request);
+    requireJsonContentType(request);
+    const idempotencyKey = requireHeader(
+      request.headers['idempotency-key'],
+      'Idempotency-Key',
+      PLAYER_IDEMPOTENCY_KEY_LIMIT,
+    );
+    const body = requireExactObject(
+      await readJson(request, REGISTRATION_BODY_LIMIT),
+      ['lead', 'termsAccepted'],
+      ['marketingConsent'],
+    );
+    const resources = await this.requirePlayerRuntime().getActive();
+    const playerId = this.requirePlayerSession(request, resources.sessions);
+    this.enforceRate(`registration-player:${playerId}`, 5, 10 * 60_000);
+    this.enforceProcessRate('registration-process', 60, 60_000);
+    const result = await resources.service.registerPlayer({
+      playerId,
+      destination: null,
+      idempotencyKey: playerServiceKey(playerId, 'register', idempotencyKey),
+      lead: body.lead as LeadInput,
+      termsAccepted: body.termsAccepted as boolean,
+      marketingConsent: body.marketingConsent as boolean | undefined,
+    });
+    const player = await resources.service.getPlayerStatus(playerId);
+    sendJson(response, 200, {
+      ...player,
+      availableBalance: result.availableBalance,
+    }, { 'Cache-Control': 'no-store' });
+  }
+
+  private async handlePlayerStatus(
+    request: http.IncomingMessage,
+    response: http.ServerResponse,
+  ): Promise<void> {
+    this.requireMethod(request, ['GET']);
+    const resources = await this.requirePlayerRuntime().getActive();
+    const playerId = this.requirePlayerSession(request, resources.sessions);
+    this.enforceRate(`read-player:${playerId}`, 120, 60_000);
+    this.enforceProcessRate('read-process', 3_000, 60_000);
+    const player = await resources.service.getPlayerStatus(playerId);
+    sendJson(response, 200, player ?? {
+      registered: false,
+      firstName: null,
+      preferredLocale: null,
+    }, { 'Cache-Control': 'no-store' });
+  }
+
+  private async handleWalletStatus(
+    request: http.IncomingMessage,
+    response: http.ServerResponse,
+  ): Promise<void> {
+    this.requireMethod(request, ['GET']);
+    const resources = await this.requirePlayerRuntime().getActive();
+    const playerId = this.requirePlayerSession(request, resources.sessions);
+    this.enforceRate(`read-player:${playerId}`, 120, 60_000);
+    this.enforceProcessRate('read-process', 3_000, 60_000);
+    const wallet = await resources.service.getWalletStatus(playerId);
+    if (!wallet) {
+      throw new ArcadeHttpError(409, 'REGISTRATION_REQUIRED', 'player registration is required');
+    }
+    sendJson(response, 200, wallet, { 'Cache-Control': 'no-store' });
+  }
+
+  private async handleQueueStatus(
+    request: http.IncomingMessage,
+    response: http.ServerResponse,
+  ): Promise<void> {
+    this.requireMethod(request, ['GET']);
+    const resources = await this.requirePlayerRuntime().getActive();
+    const playerId = this.requirePlayerSession(request, resources.sessions);
+    this.enforceRate(`read-player:${playerId}`, 120, 60_000);
+    this.enforceProcessRate('read-process', 3_000, 60_000);
+    const queue = await resources.service.getQueueStatus(playerId);
+    sendJson(response, 200, { queue: publicQueueStatus(queue) }, { 'Cache-Control': 'no-store' });
+  }
+
+  private async handleJoinQueue(
+    request: http.IncomingMessage,
+    response: http.ServerResponse,
+  ): Promise<void> {
+    this.requireMethod(request, ['POST']);
+    this.requireSameOrigin(request);
+    requireJsonContentType(request);
+    const idempotencyKey = requireHeader(
+      request.headers['idempotency-key'], 'Idempotency-Key', PLAYER_IDEMPOTENCY_KEY_LIMIT,
+    );
+    const body = requireExactObject(
+      await readJson(request, QUEUE_BODY_LIMIT), ['preferredGame'], ['flexibleGame'],
+    );
+    const resources = await this.requirePlayerRuntime().getActive();
+    const playerId = this.requirePlayerSession(request, resources.sessions);
+    this.enforceRate(`mutation-player:${playerId}`, 30, 60_000);
+    this.enforceProcessRate('mutation-process', 600, 60_000);
+    const result = await resources.service.joinQueue({
+      playerId,
+      preferredGame: body.preferredGame as 'racer' | 'monsters' | 'fighter' | 'trivia',
+      flexibleGame: body.flexibleGame as boolean | undefined,
+      idempotencyKey: playerServiceKey(playerId, 'queue-join', idempotencyKey),
+    });
+    const queue = await resources.service.getQueueStatus(playerId);
+    sendJson(response, 200, {
+      queue: publicQueueStatus(queue),
+      availableBalance: result.availableBalance,
+    }, { 'Cache-Control': 'no-store' });
+  }
+
+  private async handleCurrentQueueAction(
+    request: http.IncomingMessage,
+    response: http.ServerResponse,
+    action: 'confirm' | 'snooze' | 'leave' | 'check-in',
+  ): Promise<void> {
+    this.requireMethod(request, ['POST']);
+    this.requireSameOrigin(request);
+    requireJsonContentType(request);
+    const idempotencyKey = requireHeader(
+      request.headers['idempotency-key'], 'Idempotency-Key', PLAYER_IDEMPOTENCY_KEY_LIMIT,
+    );
+    const body = requireExactObject(
+      await readJson(request, QUEUE_BODY_LIMIT),
+      action === 'check-in' ? ['game'] : [],
+      [],
+    );
+    const runtime = this.requirePlayerRuntime();
+    const resources = action === 'leave'
+      ? await runtime.getForCleanup()
+      : await runtime.getActive();
+    const playerId = this.requirePlayerSession(request, resources.sessions);
+    this.enforceRate(`mutation-player:${playerId}`, 30, 60_000);
+    this.enforceProcessRate('mutation-process', 600, 60_000);
+    const current = await resources.service.getQueueStatus(playerId);
+    if (!current) throw new ArcadeHttpError(409, 'QUEUE_ENTRY_REQUIRED', 'player has no active queue entry');
+    const common = {
+      playerId,
+      queueEntryId: current.queueEntryId,
+      idempotencyKey: playerServiceKey(playerId, `queue-${action}`, idempotencyKey),
+    };
+    const result = action === 'confirm'
+      ? await resources.service.confirmPresence(common)
+      : action === 'snooze'
+        ? await resources.service.snoozeQueueEntry(common)
+        : action === 'leave'
+          ? await resources.service.leaveQueue(common)
+          : await resources.service.checkInQueueEntry({
+            ...common,
+            game: body.game as 'racer' | 'monsters' | 'fighter' | 'trivia',
+          });
+    const queue = await resources.service.getQueueStatus(playerId);
+    sendJson(response, 200, {
+      status: result.entry.status,
+      queue: publicQueueStatus(queue),
+      availableBalance: result.availableBalance,
+      reservation: result.reservation
+        ? { amount: result.reservation.amount, status: result.reservation.status }
+        : null,
+    }, { 'Cache-Control': 'no-store' });
   }
 
   private openEventStream(request: http.IncomingMessage, response: http.ServerResponse): void {
@@ -216,6 +515,48 @@ export class ArcadeApi {
     response.once('close', stream.close);
   }
 
+  private requirePlayerRuntime(): ArcadePlayerRuntime {
+    if (!this.playerRuntime) {
+      throw new ArcadeHttpError(503, 'ARCADE_STATE_UNAVAILABLE', 'Arcade player state is unavailable');
+    }
+    return this.playerRuntime;
+  }
+
+  private requirePlayerSession(
+    request: http.IncomingMessage,
+    sessions: ArcadePlayerSessionService,
+  ): string {
+    const audience = this.configStore.getSnapshot().arcade.cabinetId;
+    const session = sessions.readCookie(request.headers.cookie, audience);
+    if (!session) {
+      throw new ArcadeHttpError(401, 'ARCADE_SESSION_REQUIRED', 'Arcade player session is required');
+    }
+    return session.player;
+  }
+
+  private enforceRate(key: string, limit: number, windowMs: number): void {
+    this.enforceRateWith(this.rateLimiter, key, limit, windowMs);
+  }
+
+  private enforceProcessRate(key: string, limit: number, windowMs: number): void {
+    this.enforceRateWith(this.processRateLimiter, key, limit, windowMs);
+  }
+
+  private enforceRateWith(
+    limiter: ArcadeRateLimiter,
+    key: string,
+    limit: number,
+    windowMs: number,
+  ): void {
+    const result = limiter.consume(key, limit, windowMs);
+    if (result.allowed) return;
+    const error = new ArcadeHttpError(429, 'RATE_LIMITED', 'Arcade request rate limit exceeded');
+    Object.defineProperty(error, 'retryAfter', {
+      value: String(result.retryAfterSeconds), enumerable: false,
+    });
+    throw error;
+  }
+
   private requireAdmin(request: http.IncomingMessage): ArcadeAdminPrincipal {
     let principal: ArcadeAdminPrincipal | null = null;
     try {
@@ -232,7 +573,7 @@ export class ArcadeApi {
 
   private requireSameOrigin(request: http.IncomingMessage): void {
     const origin = firstHeader(request.headers.origin);
-    if (origin && origin !== this.expectedOrigin) {
+    if (origin !== this.expectedOrigin) {
       throw new ArcadeHttpError(403, 'ORIGIN_FORBIDDEN', 'request origin is not allowed');
     }
   }
@@ -257,10 +598,12 @@ export class ArcadeApi {
     let message = 'Arcade request failed';
     let details: Record<string, unknown> | undefined;
     let allow: string | undefined;
+    let retryAfter: string | undefined;
 
     if (error instanceof ArcadeHttpError) {
       ({ status, code, message } = error);
       allow = (error as ArcadeHttpError & { allowed?: string }).allowed;
+      retryAfter = (error as ArcadeHttpError & { retryAfter?: string }).retryAfter;
     } else if (error instanceof ArcadeConfigValidationError) {
       status = 400;
       code = 'INVALID_ARCADE_CONFIG';
@@ -280,11 +623,30 @@ export class ArcadeApi {
       message = error.message;
     } else if (error instanceof ArcadeConfigStoreError) {
       message = error.message;
+    } else if (error instanceof ArcadePlayerRuntimeError) {
+      status = error.code === 'MODE_DISABLED' ? 409 : 503;
+      code = error.code === 'MODE_DISABLED' ? 'ARCADE_MODE_DISABLED' : 'ARCADE_STATE_UNAVAILABLE';
+      message = error.code === 'MODE_DISABLED' ? 'Arcade mode is off' : 'Arcade player state is unavailable';
+    } else if (error instanceof ArcadePlayerSessionError) {
+      status = 401;
+      code = 'ARCADE_SESSION_REQUIRED';
+      message = 'Arcade player session is invalid or expired';
+    } else if (error instanceof ArcadeServiceError) {
+      ({ status, code, message } = playerServiceError(error.code));
+    } else if (error instanceof ArcadeDomainError) {
+      ({ status, code, message } = playerDomainError(error.code));
+    } else if (error instanceof ArcadeQueueError) {
+      ({ status, code, message } = playerQueueError(error.code));
+    } else if (error instanceof ArcadeStateStoreError) {
+      status = 503;
+      code = 'ARCADE_STATE_UNAVAILABLE';
+      message = 'Arcade player state is unavailable';
     }
 
     sendJson(response, status, { error: { code, message, ...(details ? { details } : {}) } }, {
       'Cache-Control': 'no-store',
       ...(allow ? { Allow: allow } : {}),
+      ...(retryAfter ? { 'Retry-After': retryAfter } : {}),
     });
   }
 }
@@ -328,6 +690,80 @@ function requireJsonContentType(request: http.IncomingMessage): void {
   if (contentType !== 'application/json') {
     throw new ArcadeHttpError(415, 'JSON_REQUIRED', 'Content-Type must be application/json');
   }
+}
+
+function requireExactObject(
+  value: unknown,
+  required: readonly string[],
+  optional: readonly string[],
+): Record<string, unknown> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new ArcadeHttpError(400, 'INVALID_REQUEST', 'request body must be an object');
+  }
+  const object = value as Record<string, unknown>;
+  const allowed = new Set([...required, ...optional]);
+  const keys = Object.keys(object);
+  if (keys.some(key => !allowed.has(key))
+    || required.some(key => !Object.prototype.hasOwnProperty.call(object, key))) {
+    throw new ArcadeHttpError(400, 'INVALID_REQUEST', 'request body has unexpected or missing fields');
+  }
+  return object;
+}
+
+function playerServiceKey(playerId: string, route: string, externalKey: string): string {
+  const digest = createHash('sha256')
+    .update(JSON.stringify([playerId, route, externalKey]), 'utf8')
+    .digest('hex');
+  return `api:${digest}`;
+}
+
+function publicQueueStatus(status: ArcadeQueueStatus | null): Omit<ArcadeQueueStatus, 'queueEntryId'> | null {
+  if (!status) return null;
+  const { queueEntryId: _queueEntryId, ...safe } = status;
+  return safe;
+}
+
+function playerServiceError(serviceCode: string): { status: number; code: string; message: string } {
+  switch (serviceCode) {
+    case 'INVALID_INPUT':
+    case 'INVALID_REGISTRATION':
+    case 'INVALID_GAME':
+      return { status: 400, code: serviceCode, message: 'Arcade request is invalid' };
+    case 'TERMS_REQUIRED':
+      return { status: 422, code: serviceCode, message: 'terms acknowledgement is required' };
+    case 'IDEMPOTENCY_CONFLICT':
+      return { status: 409, code: serviceCode, message: 'idempotency key was reused for another request' };
+    case 'MODE_DISABLED':
+      return { status: 409, code: 'ARCADE_MODE_DISABLED', message: 'Arcade mode does not allow this operation' };
+    case 'UNSUPPORTED_CHARGE_POLICY':
+    case 'QUEUE_DISABLED':
+      return { status: 503, code: serviceCode, message: 'Arcade operation is unavailable' };
+    case 'PLAYER_NOT_FOUND':
+    case 'WALLET_NOT_FOUND':
+      return { status: 409, code: 'REGISTRATION_REQUIRED', message: 'player registration is required' };
+    case 'QUEUE_FULL':
+    case 'GAME_NOT_ELIGIBLE':
+      return { status: 409, code: serviceCode, message: 'Arcade queue operation cannot be completed' };
+    case 'QUEUE_ENTRY_NOT_FOUND':
+    case 'QUEUE_ENTRY_FORBIDDEN':
+      return { status: 409, code: 'QUEUE_ENTRY_REQUIRED', message: 'player has no active queue entry' };
+    default:
+      return { status: 500, code: 'ARCADE_INTERNAL_ERROR', message: 'Arcade request failed' };
+  }
+}
+
+function playerDomainError(domainCode: string): { status: number; code: string; message: string } {
+  if (domainCode === 'INSUFFICIENT_BALANCE' || domainCode === 'IDEMPOTENCY_CONFLICT') {
+    return { status: 409, code: domainCode, message: 'Arcade wallet operation cannot be completed' };
+  }
+  return { status: 400, code: 'INVALID_REQUEST', message: 'Arcade request is invalid' };
+}
+
+function playerQueueError(queueCode: string): { status: number; code: string; message: string } {
+  if (queueCode === 'INVALID_QUEUE_VALUE' || queueCode === 'INVALID_SELECTION_LIMIT') {
+    return { status: 400, code: 'INVALID_REQUEST', message: 'Arcade queue request is invalid' };
+  }
+  return { status: 409, code: queueCode, message: 'Arcade queue transition cannot be completed' };
 }
 
 async function readJson(request: http.IncomingMessage, maximumBytes: number): Promise<unknown> {
