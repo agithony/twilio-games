@@ -18,7 +18,7 @@ const editorIndexRedirect = () => ({
   configureServer(server: { middlewares: { use: (fn: (req: { url?: string }, res: { writeHead: (c: number, h: Record<string, string>) => void; end: () => void }, next: () => void) => void) => void } }) {
     server.middlewares.use((req, res, next) => {
       const url = (req.url ?? '').split('?')[0];
-      if (url === '/editor' || url === '/garage' || url === '/analytics') {
+      if (url === '/editor' || url === '/garage' || url === '/analytics' || url === '/arcade') {
         res.writeHead(301, { Location: url + '/' }); res.end(); return;
       }
       next();
@@ -60,6 +60,7 @@ export default defineConfig(({ mode }) => {
           editor: resolve(__dirname, 'editor/index.html'),          // unified Level Editor (/editor)
           garage: resolve(__dirname, 'garage/index.html'),          // model viewer + configurator (/garage)
           analytics: resolve(__dirname, 'analytics/index.html'),    // private activation analytics (/analytics)
+          arcade: resolve(__dirname, 'arcade/index.html'),          // Arcade wallet, queue, and operator console
         },
       },
     },

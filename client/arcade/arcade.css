@@ -1,0 +1,50 @@
+@font-face { font-family:'Twilio Sans Display'; src:url('/fonts/TwilioSansDisplay-Extrabold.otf') format('opentype'); font-weight:800; font-display:swap; }
+@font-face { font-family:'Twilio Sans Text'; src:url('/fonts/TwilioSansText-Regular.otf') format('opentype'); font-weight:400; font-display:swap; }
+@font-face { font-family:'Twilio Sans Text'; src:url('/fonts/TwilioSansText-Bold.otf') format('opentype'); font-weight:700; font-display:swap; }
+@font-face { font-family:'Twilio Sans Mono'; src:url('/fonts/TwilioSansMono-Regular.otf') format('opentype'); font-weight:400; font-display:swap; }
+
+:root,html[data-theme="dark"] {
+  --th-bg:#000D25; --th-sidebar:#080C18; --th-card:#232B45; --th-card-border:#38425E;
+  --th-raised:#38425E; --th-input:#191F36; --th-input-border:#4D5777;
+  --th-text:#FFFFFF; --th-text-label:#DDE0E6; --th-text-dim:#9AA0B4; --th-text-muted:#7E869C;
+  --th-shadow:rgba(0,0,0,.32); --red:#EF223A; --button-red:#DB132A; --red-dark:#B10F23; --blue:#2188EF; --accent-text:#FD7685;
+}
+html[data-theme="light"] {
+  --th-bg:#FFFFFF; --th-sidebar:#F3F4F7; --th-card:#FFFFFF; --th-card-border:#DDE0E6;
+  --th-raised:#F3F4F7; --th-input:#FFFFFF; --th-input-border:#BABECC;
+  --th-text:#000D25; --th-text-label:#232B45; --th-text-dim:#4D5777; --th-text-muted:#656E87;
+  --th-shadow:rgba(0,13,37,.1);
+  --accent-text:#B10F23;
+}
+*{box-sizing:border-box} [hidden]{display:none!important} html{background:var(--th-bg);transition:background-color .2s ease}
+body{margin:0;min-height:100vh;background:var(--th-bg);color:var(--th-text);font-family:'Twilio Sans Text',Arial,sans-serif;line-height:1.5;-webkit-font-smoothing:antialiased}
+button,input,select{font:inherit} button{cursor:pointer} h1,h2,h3,p{margin:0} h1,h2,h3{font-family:'Twilio Sans Display',sans-serif;font-weight:800;letter-spacing:.02em;line-height:1}
+code{font-family:'Twilio Sans Mono',monospace;color:var(--th-text-label)}
+.shell{width:min(1320px,calc(100% - 40px));margin:auto;padding:24px 0 56px}
+.topbar{display:flex;align-items:center;justify-content:space-between;gap:24px;padding-bottom:22px;border-bottom:1px solid var(--th-card-border)}
+.brand{display:flex;align-items:center;gap:12px;color:var(--th-text);text-decoration:none;font-weight:700;letter-spacing:.1em}.brand img{width:36px;height:36px}
+html[data-theme="light"] .sidebar-logo{filter:brightness(0) saturate(100%) invert(20%) sepia(90%) saturate(5000%) hue-rotate(338deg) brightness(95%)}
+.top-actions,.action-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.badge{font-family:'Twilio Sans Mono',monospace;font-size:.72rem;text-transform:uppercase;padding:7px 10px;border-radius:999px;border:1px solid var(--th-card-border)}
+.badge.active{color:#A5EBFF;background:#0B2A60;border-color:#1953B9}.badge.off,.badge.error{color:#FFA6B1;background:#430B12;border-color:#880B19}.badge.neutral{color:var(--th-text-dim);background:var(--th-raised)}
+.hero{display:grid;grid-template-columns:minmax(0,1fr) 280px;gap:32px;align-items:end;padding:48px 0 30px}.hero h1{font-size:clamp(2.8rem,6vw,6.2rem);max-width:900px;letter-spacing:-.025em}.hero h1 span{color:var(--red)}
+.eyebrow{font-family:'Twilio Sans Mono',monospace;color:var(--accent-text);text-transform:uppercase;letter-spacing:.08em;font-size:.72rem;margin-bottom:10px}.lede{color:var(--th-text-dim);font-size:1.05rem;max-width:720px;margin-top:18px}
+.balance-hero{background:var(--button-red);color:white;border-radius:24px;padding:28px;min-height:210px;display:flex;flex-direction:column;justify-content:space-between;box-shadow:0 22px 60px rgba(239,34,58,.22)}
+.balance-hero span,.balance-hero small{font-weight:700;text-transform:uppercase;letter-spacing:.08em;font-size:.72rem}.balance-hero strong{font-family:'Twilio Sans Display';font-size:6rem;line-height:.85}
+.notice{min-height:46px;background:var(--th-sidebar);border:1px solid var(--th-card-border);border-left:4px solid var(--blue);border-radius:10px;padding:11px 15px;color:var(--th-text-label);margin-bottom:14px}
+.notice.error{border-left-color:var(--red);color:var(--accent-text)}.notice.success{border-left-color:var(--red);color:var(--th-text-label)}
+.dashboard{display:grid;grid-template-columns:1fr 1fr;gap:14px}.column{display:flex;flex-direction:column;gap:14px}
+.panel{background:var(--th-card);border:1px solid var(--th-card-border);border-radius:18px;padding:24px;box-shadow:0 12px 32px -22px var(--th-shadow)}.panel.compact{padding:20px}.accent-panel{border-left:5px solid var(--red);background:linear-gradient(135deg,var(--th-card),var(--th-sidebar))}.panel p:not(.eyebrow){color:var(--th-text-dim);margin-top:12px}
+.panel-heading,.operations-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:18px}.panel h2{font-size:1.8rem}.panel h3{font-size:1.35rem}.step{font-family:'Twilio Sans Mono';color:var(--th-text-muted);font-size:.82rem}
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:13px;margin-top:22px}.wide{grid-column:1/-1}label{display:grid;gap:6px;color:var(--th-text-label);font-size:.76rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em}
+input,select{width:100%;color:var(--th-text);background:var(--th-input);border:1px solid var(--th-input-border);border-radius:9px;padding:11px 12px;outline:none}input:focus,select:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(33,136,239,.18)}
+.check{display:flex;grid-column:auto;align-items:center;gap:9px;text-transform:none;letter-spacing:0;font-weight:400}.check input{width:18px;height:18px;accent-color:var(--red)}
+.button{border:1px solid transparent;border-radius:9px;padding:10px 14px;font-weight:700;color:var(--th-text);background:var(--th-raised);text-decoration:none;display:inline-flex;align-items:center;justify-content:center;gap:7px}.button:hover{filter:brightness(1.08)}.button:disabled{opacity:.42;cursor:not-allowed}.button.primary{color:white;background:var(--button-red);border-color:var(--button-red)}.button.primary:hover{background:var(--red-dark)}.button.secondary{background:transparent;border-color:var(--th-input-border)}.button.quiet{background:var(--th-raised);border-color:var(--th-card-border)}.button.full{width:100%;margin-top:12px}
+.button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid var(--blue);outline-offset:3px}
+.wallet-panel{background:linear-gradient(145deg,var(--th-card),var(--th-sidebar))}.wallet-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:22px}.wallet-grid div{background:var(--th-sidebar);border:1px solid var(--th-card-border);border-radius:12px;padding:16px}.wallet-grid strong{display:block;font-family:'Twilio Sans Display';font-size:2.5rem}.wallet-grid span{color:var(--th-text-dim);font-size:.72rem;text-transform:uppercase;letter-spacing:.08em}
+.stack-list{display:grid;gap:10px;margin-top:18px}.list-item{border:1px solid var(--th-card-border);background:var(--th-sidebar);border-radius:12px;padding:15px;display:grid;grid-template-columns:1fr auto;gap:14px;align-items:center}.list-item h4{margin:0 0 3px;font-size:1rem}.list-item p{margin:0!important;font-size:.82rem}.list-item .meta{font-family:'Twilio Sans Mono';font-size:.7rem;color:var(--th-text-muted);margin-top:5px}.empty{color:var(--th-text-muted);padding:18px 0;text-align:center}
+.join-row,.mode-form{display:grid;grid-template-columns:minmax(160px,1fr) auto auto;align-items:end;gap:12px;margin-top:20px}.queue-status{margin-top:18px;border:1px solid var(--th-card-border);border-radius:12px;padding:18px;background:var(--th-sidebar)}.queue-status strong{font-family:'Twilio Sans Display';font-size:1.6rem}.queue-status dl{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:15px 0 0}.queue-status dt{color:var(--th-text-muted);font-size:.7rem;text-transform:uppercase}.queue-status dd{margin:2px 0 0}.action-row{margin-top:12px}
+.operations{margin-top:16px;border-top:1px solid var(--th-card-border);padding-top:28px}.operations-heading{align-items:center;margin-bottom:14px}.operations-heading h2{font-size:2rem}.admin-grid{display:grid;grid-template-columns:minmax(300px,.75fr) minmax(0,1.55fr);gap:14px}.operator-queue-panel{min-height:280px}
+.operator-actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}.operator-actions .button{font-size:.74rem;padding:7px 9px}
+.selection-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin-top:14px;padding:10px;background:var(--th-sidebar);border:1px solid var(--th-card-border);border-radius:10px}.selection-actions span{color:var(--th-text-dim);font-size:.75rem;margin-right:auto}.operator-select{display:flex;align-items:center;gap:9px}.operator-select input{width:18px;height:18px;accent-color:var(--red)}
+@media(max-width:900px){.shell{width:min(100% - 24px,720px);padding-top:14px}.hero{grid-template-columns:1fr}.balance-hero{min-height:160px}.balance-hero strong{font-size:4rem}.dashboard,.admin-grid{grid-template-columns:1fr}.topbar{align-items:flex-start}.top-actions{justify-content:flex-end}.join-row,.mode-form{grid-template-columns:1fr 1fr}.join-row .button,.mode-form .button{grid-column:1/-1}.operations-heading{align-items:flex-start;flex-wrap:wrap}}
+@media(max-width:560px){.shell{width:calc(100% - 18px)}.topbar{flex-direction:column}.top-actions{width:100%;justify-content:flex-start}.hero{padding-top:32px}.hero h1{font-size:2.65rem}.panel{padding:18px}.form-grid,.wallet-grid,.join-row,.mode-form{grid-template-columns:1fr}.wide{grid-column:auto}.wallet-grid{grid-template-columns:repeat(3,1fr)}.wallet-grid div{padding:11px}.wallet-grid strong{font-size:1.8rem}.queue-status dl{grid-template-columns:1fr 1fr}.list-item{grid-template-columns:1fr}.operator-actions{justify-content:flex-start}}

@@ -5,6 +5,7 @@ import { ArcadeEventHub } from './arcade-events';
 import { ArcadeTacGateway } from './arcade-tac-gateway';
 import { ArcadePlayerRuntime } from './arcade-player-runtime';
 import { GoogleAnalyticsAuth } from './google-analytics-auth';
+import { isLoopbackAddress, isLoopbackUrl } from './arcade-dev-auth';
 
 const port = Number(process.env.PORT ?? 8080);
 const publicBaseUrl = process.env.PUBLIC_BASE_URL ?? `http://localhost:${port}`;
@@ -23,17 +24,23 @@ if (validateSignatures && !authToken) {
 // When EDITOR_TOKEN is set, /api writes (manifest + maps) require it — gate the editor on a public
 // deploy. Unset (local dev) leaves writes open so the editor works with zero setup.
 const editorToken = process.env.EDITOR_TOKEN;
+const arcadeAdminEmails = new Set((process.env.ARCADE_ADMIN_EMAILS ?? '')
+  .split(',')
+  .map(email => email.trim().toLowerCase())
+  .filter(Boolean));
 const analyticsAuth = new GoogleAnalyticsAuth({
   clientId: process.env.GOOGLE_OAUTH_CLIENT_ID,
   clientSecret: process.env.GOOGLE_OAUTH_CLIENT_SECRET,
   redirectUri: `${publicBaseUrl.replace(/\/$/, '')}/auth/google/callback`,
   allowedEmail: process.env.ANALYTICS_ALLOWED_EMAIL,
+  allowedEmails: [...arcadeAdminEmails],
 });
-const arcadeAdminEmails = new Set((process.env.ARCADE_ADMIN_EMAILS ?? '')
-  .split(',')
-  .map(email => email.trim().toLowerCase())
-  .filter(Boolean));
-if (arcadeAdminEmails.size === 0) {
+const arcadeDevAdmin = process.env.ARCADE_DEV_ADMIN === 'true'
+  && process.env.NODE_ENV !== 'production'
+  && isLoopbackUrl(publicBaseUrl);
+if (arcadeDevAdmin) {
+  console.warn('[security] ARCADE_DEV_ADMIN is enabled for local development.');
+} else if (arcadeAdminEmails.size === 0) {
   console.warn('[security] ARCADE_ADMIN_EMAILS is unset; Arcade admin APIs are disabled.');
 }
 const arcadeEvents = new ArcadeEventHub(error => {
@@ -44,7 +51,9 @@ const arcadeConfigStore = new ArcadeConfigStore({
   deploymentMode: 'single-process',
   events: arcadeEvents,
 });
-const arcadeTacGateway = new ArcadeTacGateway({ configStore: arcadeConfigStore, events: arcadeEvents });
+const arcadeTacGateway = process.env.ARCADE_TAC_ENABLED === 'false'
+  ? undefined
+  : new ArcadeTacGateway({ configStore: arcadeConfigStore, events: arcadeEvents });
 const arcadePlayerRuntime = new ArcadePlayerRuntime({
   configStore: arcadeConfigStore,
   events: arcadeEvents,
@@ -56,9 +65,13 @@ const arcadeApi = new ArcadeApi({
   configStore: arcadeConfigStore,
   events: arcadeEvents,
   publicBaseUrl,
-  tacStatus: () => arcadeTacGateway.getStatus(),
+  tacStatus: () => arcadeTacGateway?.getStatus() ?? { started: false, mode: 'off', connected: false, lastError: null },
   playerRuntime: arcadePlayerRuntime,
   authorizeAdmin: request => {
+    if (arcadeDevAdmin && isLoopbackAddress(request.socket.remoteAddress)
+      && request.headers['x-arcade-dev-admin'] === 'true') {
+      return { email: 'local-arcade-admin@twilio.com' };
+    }
     const principal = analyticsAuth.currentUser(request);
     return principal && arcadeAdminEmails.has(principal.email) ? principal : null;
   },

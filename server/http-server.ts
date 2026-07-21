@@ -1055,13 +1055,14 @@ export class HttpServer {
       res.end(JSON.stringify({ status: degraded ? 'degraded' : 'ok', rooms: this.game.roomCount }));
       return;
     }
-    if (req.method === 'GET' && path === '/auth/google') { this.analyticsAuth.begin(res); return; }
+    if (req.method === 'GET' && path === '/auth/google') { this.analyticsAuth.begin(req, res); return; }
     if (req.method === 'GET' && path === '/auth/google/callback') { await this.analyticsAuth.complete(req, res); return; }
     if (req.method === 'POST' && path === '/auth/logout') { this.analyticsAuth.logout(req, res); return; }
     if (req.method === 'GET' && path === '/api/analytics/session') {
       const user = this.analyticsAuth.currentUser(req);
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-      res.end(JSON.stringify({ authenticated: Boolean(user), configured: this.analyticsAuth.configured, email: user?.email })); return;
+      res.end(JSON.stringify({ authenticated: Boolean(user), analyticsAuthorized: user?.analyticsAuthorized ?? false,
+        configured: this.analyticsAuth.configured, email: user?.email })); return;
     }
     if (this.arcadeApi
       && (path.startsWith('/api/arcade/') || path.startsWith('/api/admin/arcade/'))) {
@@ -1323,7 +1324,7 @@ export class HttpServer {
     }
     // ---- private activation analytics (daily anonymous aggregates, no transcripts or phone data) ----
     if ((path === '/api/analytics' || path === '/api/analytics.pdf') && req.method === 'GET') {
-      if (!this.analyticsAuth.currentUser(req)) {
+      if (!this.analyticsAuth.currentAnalyticsUser(req)) {
         res.writeHead(401, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' }).end('Google sign-in required'); return;
       }
       const url = new URL(req.url ?? '', 'http://localhost');
@@ -1488,6 +1489,7 @@ export class HttpServer {
     else if (rel === '/editor' || rel === '/editor/') file = 'editor/index.html';
     else if (rel === '/garage' || rel === '/garage/') file = 'garage/index.html';
     else if (rel === '/analytics' || rel === '/analytics/') file = 'analytics/index.html';
+    else if (rel === '/arcade' || rel === '/arcade/') file = 'arcade/index.html';
     else file = rel.replace(/^\/+/, '');
     const full = path.join(this.clientDir, file);
     try { await stat(full); } catch { res.writeHead(404).end('not found'); return; }

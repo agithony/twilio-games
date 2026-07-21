@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex,nofollow" />
+  <title>Twilio Arcade</title>
+  <link rel="icon" href="/brand/Twilio_Logo_Bug_White.svg" />
+  <script>
+    (function () {
+      var theme = localStorage.getItem('twilio-theme') || 'dark';
+      document.documentElement.setAttribute('data-theme', theme);
+    })();
+  </script>
+  <link rel="stylesheet" href="/arcade/arcade.css" />
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="Twilio Games home">
+        <img class="sidebar-logo" src="/brand/Twilio_Logo_Bug_White.svg" alt="" />
+        <span>TWILIO ARCADE</span>
+      </a>
+      <div class="top-actions">
+        <span id="mode-badge" class="badge neutral">Loading</span>
+        <button id="refresh" class="button quiet" type="button">Refresh</button>
+        <button id="theme-toggle" class="button quiet" type="button">Light mode</button>
+      </div>
+    </header>
+
+    <section class="hero">
+      <div>
+        <p class="eyebrow">Playable engagement loop</p>
+        <h1>Your next game starts with <span>one coin.</span></h1>
+        <p class="lede">Register, earn coins, join the cabinet queue, and follow the live operator flow from one screen.</p>
+      </div>
+      <article class="balance-hero" aria-live="polite">
+        <span>Available balance</span>
+        <strong id="hero-balance">--</strong>
+        <small>ARCADE COINS</small>
+      </article>
+    </section>
+
+    <p id="notice" class="notice" role="status">Loading Arcade configuration...</p>
+
+    <main class="dashboard">
+      <section class="column">
+        <article id="off-panel" class="panel accent-panel" hidden>
+          <p class="eyebrow">Arcade mode</p>
+          <h2>The coin experience is switched off.</h2>
+          <p>An authorized operator can enable coin-only or lead-capture mode below.</p>
+        </article>
+
+        <article id="registration-panel" class="panel" hidden>
+          <div class="panel-heading">
+            <div><p class="eyebrow">Player profile</p><h2>Register for the Arcade</h2></div>
+            <span class="step">01</span>
+          </div>
+          <form id="registration-form" class="form-grid">
+            <label>First name<input name="firstName" required maxlength="80" autocomplete="given-name" /></label>
+            <label>Last name<input name="lastName" required maxlength="80" autocomplete="family-name" /></label>
+            <label class="wide">Work email<input name="workEmail" required type="email" maxlength="254" autocomplete="email" /></label>
+            <label class="wide">Company<input name="companyName" required maxlength="120" autocomplete="organization" /></label>
+            <label>Phone number<input name="phoneNumber" required type="tel" placeholder="+14155550199" autocomplete="tel" /></label>
+            <label>Country code<input name="countryCode" required maxlength="2" placeholder="US" autocomplete="country" /></label>
+            <label class="check wide"><input name="termsAccepted" type="checkbox" required /> I acknowledge the event terms.</label>
+            <label class="check wide"><input name="marketingConsent" type="checkbox" /> Send me relevant Twilio follow-up.</label>
+            <button class="button primary wide" type="submit">Register and receive coin</button>
+          </form>
+        </article>
+
+        <article id="player-panel" class="panel" hidden>
+          <div class="panel-heading">
+            <div><p class="eyebrow">Player profile</p><h2 id="player-greeting">Ready to play</h2></div>
+            <span class="step">01</span>
+          </div>
+          <p>Your browser holds an encrypted, HttpOnly Arcade session. Personal lead fields never appear in this dashboard response.</p>
+        </article>
+
+        <article id="challenge-panel" class="panel" hidden>
+          <div class="panel-heading">
+            <div><p class="eyebrow">Earn</p><h2>One-click challenges</h2></div>
+            <span class="step">02</span>
+          </div>
+          <div id="challenges" class="stack-list"></div>
+        </article>
+      </section>
+
+      <section class="column">
+        <article id="wallet-panel" class="panel wallet-panel" hidden>
+          <div class="panel-heading">
+            <div><p class="eyebrow">Wallet</p><h2>Coin ledger</h2></div>
+            <span class="step">03</span>
+          </div>
+          <div class="wallet-grid">
+            <div><strong id="ledger-balance">--</strong><span>Total</span></div>
+            <div><strong id="reserved-balance">--</strong><span>Reserved</span></div>
+            <div><strong id="available-balance">--</strong><span>Available</span></div>
+          </div>
+        </article>
+
+        <article id="queue-panel" class="panel" hidden>
+          <div class="panel-heading">
+            <div><p class="eyebrow">Cabinet queue</p><h2>Get in line</h2></div>
+            <span class="step">04</span>
+          </div>
+          <form id="join-form" class="join-row">
+            <label>Preferred game<select name="preferredGame"><option value="racer">Voice Racer</option><option value="monsters">Voice Monsters</option><option value="fighter">Voice Fighter</option><option value="trivia">Voice Trivia</option></select></label>
+            <label class="check"><input name="flexibleGame" type="checkbox" /> Flexible game</label>
+            <button class="button primary" type="submit">Join queue</button>
+          </form>
+          <div id="queue-status" class="queue-status" hidden></div>
+          <div id="queue-actions" class="action-row" hidden>
+            <button id="queue-confirm" class="button secondary" type="button">I'm still here</button>
+            <button id="queue-check-in" class="button primary" type="button">Check in</button>
+            <button id="queue-snooze" class="button quiet" type="button">Snooze</button>
+            <button id="queue-leave" class="button quiet" type="button">Leave queue</button>
+          </div>
+        </article>
+      </section>
+    </main>
+
+    <section class="operations">
+      <div class="operations-heading">
+        <div><p class="eyebrow">Staff controls</p><h2>Operator console</h2></div>
+        <a id="admin-login" class="button secondary" href="/auth/google?returnTo=/arcade/">Sign in with Google</a>
+        <span id="admin-user" hidden></span>
+        <button id="admin-logout" class="button quiet" type="button" hidden>Switch account</button>
+      </div>
+
+      <div id="admin-locked" class="panel compact">
+        Sign in with an email listed in <code>ARCADE_ADMIN_EMAILS</code> to enable modes and move players through the queue.
+      </div>
+
+      <div id="admin-console" class="admin-grid" hidden>
+        <article class="panel compact">
+          <p class="eyebrow">Runtime settings</p>
+          <h3>Arcade mode</h3>
+          <form id="mode-form" class="mode-form">
+            <label>Mode<select id="admin-mode"><option value="off">Off</option><option value="coin_only">Coin only</option><option value="lead_capture">Lead capture</option></select></label>
+            <label>Starting coins<input id="admin-starting-coins" type="number" min="0" max="100" /></label>
+            <button class="button primary" type="submit">Save runtime settings</button>
+          </form>
+          <button id="seed-challenge" class="button quiet full" type="button">Add Voice docs challenge</button>
+        </article>
+
+        <article class="panel compact operator-queue-panel">
+          <div class="panel-heading"><div><p class="eyebrow">Live queue</p><h3>Players and matches</h3></div><button id="operator-refresh" class="button quiet" type="button">Refresh</button></div>
+          <div class="selection-actions">
+            <span id="selection-count">Select lobby or playing entries</span>
+            <button id="start-selected" class="button primary" type="button" disabled>Start selected</button>
+            <button id="complete-selected" class="button secondary" type="button" disabled>Complete selected</button>
+          </div>
+          <div id="operator-queue" class="stack-list"></div>
+        </article>
+      </div>
+    </section>
+  </div>
+  <script type="module" src="/arcade/arcade.ts"></script>
+</body>
+</html>

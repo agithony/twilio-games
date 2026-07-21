@@ -111,6 +111,7 @@ export interface ArcadeQueueStatus {
   readonly flexibleGame: boolean;
   readonly position: number | null;
   readonly joinedAt: string;
+  readonly approachingConfirmedAt: string | null;
   readonly calledAt: string | null;
   readonly checkInExpiresAt: string | null;
   readonly deferredUntil: string | null;
@@ -133,6 +134,8 @@ export interface ArcadeChallengeStatus {
 export interface ArcadeOperatorQueueStatus extends ArcadeQueueStatus {
   readonly playerId: string;
   readonly firstName: string | null;
+  readonly assignedGame: string | null;
+  readonly matchId: string | null;
 }
 
 export interface ClaimArcadeChallengeInput {
@@ -452,6 +455,7 @@ export class ArcadeService {
       flexibleGame: entry.flexibleGame,
       position: positionIndex < 0 ? null : positionIndex + 1,
       joinedAt: entry.joinedAt,
+      approachingConfirmedAt: entry.approachingConfirmedAt,
       calledAt: entry.calledAt,
       checkInExpiresAt: entry.checkInExpiresAt,
       deferredUntil: entry.deferredUntil,
@@ -476,15 +480,19 @@ export class ArcadeService {
       const wallet = own(state.wallets, entry.playerId);
       const reservation = wallet ? findReservation(wallet, entry.id) : null;
       const positionIndex = waiting.findIndex(candidate => candidate.id === entry.id);
+      const captured = own(state.queueEntryConfigs, entry.id);
       return Object.freeze({
         queueEntryId: entry.id,
         playerId: entry.playerId,
         firstName: own(state.players, entry.playerId)?.lead?.firstName ?? null,
+        assignedGame: captured?.assignedGame ?? null,
+        matchId: captured?.matchId ?? null,
         status: entry.status,
         preferredGame: entry.preferredGame,
         flexibleGame: entry.flexibleGame,
         position: positionIndex < 0 ? null : positionIndex + 1,
         joinedAt: entry.joinedAt,
+        approachingConfirmedAt: entry.approachingConfirmedAt,
         calledAt: entry.calledAt,
         checkInExpiresAt: entry.checkInExpiresAt,
         deferredUntil: entry.deferredUntil,
@@ -508,15 +516,19 @@ export class ArcadeService {
     const wallet = own(state.wallets, entry.playerId);
     const reservation = wallet ? findReservation(wallet, entry.id) : null;
     const positionIndex = waiting.findIndex(candidate => candidate.id === entry.id);
+    const captured = own(state.queueEntryConfigs, entry.id);
     return Object.freeze({
       queueEntryId: entry.id,
       playerId: entry.playerId,
       firstName: own(state.players, entry.playerId)?.lead?.firstName ?? null,
+      assignedGame: captured?.assignedGame ?? null,
+      matchId: captured?.matchId ?? null,
       status: entry.status,
       preferredGame: entry.preferredGame,
       flexibleGame: entry.flexibleGame,
       position: positionIndex < 0 ? null : positionIndex + 1,
       joinedAt: entry.joinedAt,
+      approachingConfirmedAt: entry.approachingConfirmedAt,
       calledAt: entry.calledAt,
       checkInExpiresAt: entry.checkInExpiresAt,
       deferredUntil: entry.deferredUntil,

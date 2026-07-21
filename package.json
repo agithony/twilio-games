@@ -12,6 +12,8 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p client/tsconfig.json",
     "dev:server": "tsx watch server/index.ts",
     "dev:client": "vite client",
+    "dev:arcade:server": "PORT=8081 PUBLIC_BASE_URL=http://localhost:5173 ARCADE_DEV_ADMIN=true ARCADE_TAC_ENABLED=false ARCADE_CONFIG_DIRECTORY=data/arcade-dev-config ARCADE_STATE_PATH=data/arcade-dev-state.json ARCADE_SIGNING_SECRET=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef tsx watch server/index.ts",
+    "dev:arcade:client": "GAME_SERVER_URL=http://localhost:8081 vite client",
     "make-fixtures": "tsx tools/make-fixtures.ts",
     "inspect-assets": "tsx tools/inspect-assets.ts",
     "optimize-assets": "tsx tools/optimize-assets.ts",

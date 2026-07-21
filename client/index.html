@@ -64,6 +64,7 @@
   .music-toggle:hover, #themeToggle:hover { background: var(--th-card-border); }
   .music-toggle:active, #themeToggle:active { transform: scale(0.98); }
   .music-toggle:focus, #themeToggle:focus { outline: none; }
+  .music-toggle:focus-visible, #themeToggle:focus-visible { outline: 3px solid #2188EF; outline-offset: 3px; }
   .music-toggle-icon { display: flex; align-items: center; justify-content: center; line-height: 0; }
   .music-toggle-icon svg { color: var(--th-text); text-decoration: none; }
    .music-toggle-label { text-decoration: none; }
@@ -130,6 +131,7 @@
       <span class="name" id="brandName">Twilio&nbsp;Games</span>
     </div>
     <div id="header-controls">
+      <a class="music-toggle" href="/arcade/">Arcade wallet</a>
       <button id="themeToggle" title="Toggle theme">Light theme</button>
     </div>
   </header>
