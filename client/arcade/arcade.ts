@@ -1,3 +1,5 @@
+import QRCode from 'qrcode';
+
 type ArcadeMode = 'off' | 'coin_only' | 'lead_capture';
 type QueueStatus = 'WAITING' | 'APPROACHING' | 'CALLED' | 'CHECKED_IN' | 'ACTIVE_LOBBY' | 'PLAYING' | 'COMPLETED' | 'DEFERRED' | 'NO_SHOW' | 'LEFT_QUEUE' | 'RELEASED';
 type Game = 'racer' | 'monsters' | 'fighter' | 'trivia';
@@ -23,6 +25,7 @@ const state: {
 } = { config:null,player:null,wallet:null,queue:null,adminConfig:null,adminEmail:null,operatorQueue:[] };
 
 const notice = el('notice'), modeBadge = el('mode-badge'), heroBalance = el('hero-balance');
+const operatorView = new URLSearchParams(location.search).get('operator') === '1';
 el('refresh').addEventListener('click', () => void refreshAll());
 el('theme-toggle').addEventListener('click', toggleTheme);
 el<HTMLFormElement>('registration-form').addEventListener('submit', event => void register(event));
@@ -38,6 +41,7 @@ el('admin-logout').addEventListener('click', () => void switchAccount());
 el('start-selected').addEventListener('click', () => void startSelectedMatches());
 el('complete-selected').addEventListener('click', () => void completeSelectedMatch());
 applyTheme();
+configureView();
 void refreshAll();
 
 async function refreshAll(): Promise<void> {
@@ -45,7 +49,9 @@ async function refreshAll(): Promise<void> {
   try {
     state.config = await api<PublicConfig>('/api/arcade/config/public');
     renderMode();
-    await checkAdmin();
+    await renderPlayerQr();
+    if(operatorView){await checkAdmin();show('operations',true);show('dashboard',false);if(state.adminConfig)await refreshOperator();setNotice(state.config.arcade.mode==='off'?'Arcade is off. Choose a mode below to begin accepting players.':'Operator console is ready.');return;}
+    show('operations',false);show('dashboard',true);
     if (state.config.arcade.mode === 'off') {
       state.player = null; state.wallet = null; state.queue = null;
       renderPlayer(); setNotice('Arcade is off. Use the operator settings below to enable it.');
@@ -53,13 +59,24 @@ async function refreshAll(): Promise<void> {
     }
     await ensureSession();
     await refreshPlayer();
-    if (state.adminConfig) await refreshOperator();
     setNotice('Arcade state is current.', 'success');
   } catch (error) { showError(error); }
 }
 
+function configureView():void{
+  const link=el<HTMLAnchorElement>('view-link');
+  if(operatorView){link.href='/arcade/';link.textContent='Player view';el('hero-title').innerHTML='Run the cabinet. <span>Players scan.</span>';el('hero-lede').textContent='Display the persistent QR and record queue, reservation, and match-ledger transitions. Game servers do not consume these match controls yet.';show('balance-hero',false);show('off-panel',false);}
+  else{link.href='/arcade/?operator=1';link.textContent='Operator view';}
+}
+
+async function renderPlayerQr():Promise<void>{
+  if(!state.config)return;const url=new URL('/arcade/',location.origin);url.searchParams.set('cabinet',state.config.arcade.cabinetId);const value=url.toString();el('player-url').textContent=value;
+  try{el<HTMLImageElement>('player-qr').src=await QRCode.toDataURL(value,{width:520,margin:1,color:{dark:'#000D25',light:'#FFFFFF'},errorCorrectionLevel:'M'});}catch{el<HTMLImageElement>('player-qr').removeAttribute('src');}
+}
+
 async function ensureSession(): Promise<void> {
-  await post('/api/arcade/session', {});
+  if(!state.config)return;const scannedCabinet=new URLSearchParams(location.search).get('cabinet');
+  await post('/api/arcade/session', { cabinetId: scannedCabinet??state.config.arcade.cabinetId });
 }
 
 async function refreshPlayer(): Promise<void> {
@@ -177,7 +194,7 @@ async function checkAdmin():Promise<void>{
   if(state.adminConfig){el<HTMLSelectElement>('admin-mode').value=state.adminConfig.arcade.mode;el<HTMLInputElement>('admin-starting-coins').value=String(state.adminConfig.coins.startingBalance);}
 }
 
-async function switchAccount():Promise<void>{await fetch('/auth/logout',{method:'POST',credentials:'include'});location.href='/auth/google?returnTo=/arcade/';}
+async function switchAccount():Promise<void>{await fetch('/auth/logout',{method:'POST',credentials:'include'});location.href='/auth/google?returnTo=/arcade/%3Foperator%3D1';}
 
 async function saveMode(event:Event):Promise<void>{
   event.preventDefault();if(!state.adminConfig)return;

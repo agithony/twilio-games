@@ -47,13 +47,13 @@ describe('Google analytics authorization', () => {
     const auth = googleAuth({ email: 'operator@twilio.com', email_verified: true });
     server = new HttpServer({ port: 0, publicBaseUrl: 'http://localhost', validateSignatures: false, analyticsAuth: auth });
     const port = await server.start(), base = `http://127.0.0.1:${port}`;
-    const begin = await fetch(`${base}/auth/google?returnTo=/arcade/`, { redirect: 'manual' });
+    const begin = await fetch(`${base}/auth/google?returnTo=/arcade/%3Foperator%3D1`, { redirect: 'manual' });
     const stateCookie = begin.headers.get('set-cookie')!.split(';')[0]!;
     const state = new URL(begin.headers.get('location')!).searchParams.get('state');
     const callback = await fetch(`${base}/auth/google/callback?code=valid&state=${state}`, {
       headers: { cookie: stateCookie }, redirect: 'manual',
     });
-    expect(callback.headers.get('location')).toBe('/arcade/');
+    expect(callback.headers.get('location')).toBe('/arcade/?operator=1');
   });
 
   it('does not grant Analytics access to an external Arcade-only operator', async () => {

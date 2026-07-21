@@ -45,9 +45,10 @@ describe('Twilio Arcade runtime configuration', () => {
       readyGraceSeconds: 20,
       hardStartDeadlineSeconds: 90,
     });
-    expect(DEFAULT_ARCADE_CONFIG.channels).toEqual({ voice: true, sms: true, whatsapp: true });
-    expect(DEFAULT_ARCADE_CONFIG.postGame.enabled).toBe(true);
-    expect(DEFAULT_ARCADE_CONFIG.intelligence.enabled).toBe(true);
+    expect(DEFAULT_ARCADE_CONFIG.channels).toEqual({ voice: true, sms: false, whatsapp: false });
+    expect(DEFAULT_ARCADE_CONFIG.postGame.enabled).toBe(false);
+    expect(DEFAULT_ARCADE_CONFIG.postGame.channels).toEqual([]);
+    expect(DEFAULT_ARCADE_CONFIG.intelligence.enabled).toBe(false);
   });
 
   it('contains exactly the six approved registration fields and no verification workflow', () => {

@@ -24,6 +24,7 @@
   "devDependencies": {
     "@gltf-transform/cli": "4.4.0",
     "@types/node": "22.20.1",
+    "@types/qrcode": "1.5.5",
     "@types/three": "0.164.1",
     "@types/ws": "^8.5.10",
     "puppeteer-core": "25.2.1",
@@ -36,6 +37,7 @@
     "@gltf-transform/core": "4.4.0",
     "@gltf-transform/extensions": "4.4.0",
     "camera-controls": "3.1.2",
+    "qrcode": "1.5.4",
     "three": "^0.164.0",
     "twilio": "6.0.2",
     "twilio-agent-connect": "2.0.0",

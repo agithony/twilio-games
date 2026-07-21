@@ -6,6 +6,8 @@ const script = readFileSync(new URL('../client/arcade/arcade.ts', import.meta.ur
 const css = readFileSync(new URL('../client/arcade/arcade.css', import.meta.url), 'utf8');
 const home = readFileSync(new URL('../client/index.html', import.meta.url), 'utf8');
 const vite = readFileSync(new URL('../client/vite.config.ts', import.meta.url), 'utf8');
+const racerMain = readFileSync(new URL('../client/main.ts', import.meta.url), 'utf8');
+const racerScreens = readFileSync(new URL('../client/screens.ts', import.meta.url), 'utf8');
 
 describe('Arcade browser UI', () => {
   it('exposes discoverable player, wallet, challenge, queue, and operator controls', () => {
@@ -39,5 +41,19 @@ describe('Arcade browser UI', () => {
     expect(script).toContain('selectedOperatorEntries');
     expect(script).toContain('entry.approachingConfirmedAt');
     expect(script).toContain("['localhost','127.0.0.1']");
+  });
+
+  it('separates player/operator views and renders the persistent cabinet QR', () => {
+    expect(script).toContain("get('operator') === '1'");
+    expect(script).toContain("new URL('/arcade/',location.origin)");
+    expect(html).toContain('id="player-qr"');
+    expect(html).toContain('SMS / WhatsApp</b> Not connected yet');
+    expect(racerMain).toContain("new URL('/arcade/', location.origin)");
+    expect(racerScreens).toContain('screen.lobby.coinQrCaption');
+  });
+
+  it('does not wire browser speech synthesis into the Voice Racer display', () => {
+    expect(racerMain).toContain('new Announcer({ sink: null');
+    expect(racerMain).not.toContain('browserSpeechSink');
   });
 });

@@ -862,10 +862,10 @@ const DEFAULT_CONFIG_INPUT = {
     removeAfterMisses: 2,
     snoozeSeconds: 300,
   },
-  channels: { voice: true, sms: true, whatsapp: true },
+  channels: { voice: true, sms: false, whatsapp: false },
   postGame: {
-    enabled: true,
-    channels: ['sms', 'whatsapp'],
+    enabled: false,
+    channels: [],
     includeScore: true,
     includeLeaderboard: true,
     includeCoinBalance: true,
@@ -875,7 +875,7 @@ const DEFAULT_CONFIG_INPUT = {
     includeIntelligenceTip: true,
   },
   intelligence: {
-    enabled: true,
+    enabled: false,
     analyzeConfusion: true,
     analyzeSentiment: true,
     analyzeRecognitionProblems: true,

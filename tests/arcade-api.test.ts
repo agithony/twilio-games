@@ -143,7 +143,7 @@ async function createPlayerSession(baseUrl: string, key: string): Promise<Respon
       'Idempotency-Key': sessionKey,
       Origin: 'http://localhost',
     },
-    body: '{}',
+    body: JSON.stringify({ cabinetId: 'ARCADE-01' }),
   });
 }
 
@@ -358,6 +358,14 @@ describe('Arcade API', () => {
 
   it('rejects missing origins, caller-controlled identity fields, and tampered sessions', async () => {
     const { baseUrl } = await harness({ playerMode: 'lead_capture' });
+    const staleQr = await fetch(`${baseUrl}/api/arcade/session`, {
+      method: 'POST',
+      headers: { Origin: 'http://localhost', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cabinetId: 'ARCADE-02' }),
+    });
+    expect(staleQr.status).toBe(409);
+    expect((await staleQr.json() as Record<string, any>).error.code).toBe('CABINET_CHANGED');
+    expect(staleQr.headers.get('set-cookie')).toBeNull();
     const session = await createPlayerSession(baseUrl, 'secure-session');
     const cookie = cookieFrom(session);
     const missingOrigin = await fetch(`${baseUrl}/api/arcade/register`, {
@@ -397,7 +405,7 @@ describe('Arcade API', () => {
         'Content-Type': 'application/json',
         'Idempotency-Key': Buffer.from('arcade-session:shared-external-key').toString('base64url'),
       },
-      body: '{}',
+      body: JSON.stringify({ cabinetId: 'ARCADE-01' }),
     });
     expect((await refreshed.json() as Record<string, any>).availableBalance).toBe(1);
     const state = (await playerRuntime.getActive()).store.snapshot();

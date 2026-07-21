@@ -8,7 +8,8 @@ import { Screens } from './screens';
 import type { GlobalEntry } from './screens';
 import { renderCarThumbnailsAsync, renderMapThumbnail, renderBoostThumbnail } from './thumbnails';
 import { AttractMode } from './attract';
-import { Announcer, browserSpeechSink } from './announcer';
+import { Announcer } from './announcer';
+import QRCode from 'qrcode';
 import { fetchMaps, loadMapWorld, applyTrackTransform, CANONICAL_TRACK } from './map-world';
 import { CurvedTrack } from './track-path';
 import { surfaceOptsFromPath } from './track-surface';
@@ -130,7 +131,7 @@ function paintGauge(snap: import('../shared/types').WorldSnapshot | null): void 
 lobbyEl.style.display = 'none';   // legacy overlay retired; the Screens overlay handles pre/post-race
 // SSB-style front-end (lobby → car grid → map select → results). Host actions go back to the server.
 const screens = new Screens(document.getElementById('app')!, {
-  onAdvance: () => { enableHost(); conn.advance(); },
+  onAdvance: () => { conn.advance(); },
   onBack: () => conn.back(),
 }, locale);
 
@@ -180,7 +181,8 @@ function commitTypedDigits(): void {
   else if (phase === 'map_select') { const m = flowMaps[n - 1]; if (m) conn.selectMap(m); }
 }
 
-// AI announcer: speaks commentary (host audio) and feeds the ticker HUD.
+// Visual commentary ticker only. Browser speechSynthesis sounded robotic on the shared display;
+// caller audio remains owned by Conversation Relay.
 const tickerEl = document.getElementById('ticker')!;
 function pushLine(text: string) {
   const div = document.createElement('div');
@@ -190,11 +192,7 @@ function pushLine(text: string) {
   while (tickerEl.children.length > 5) tickerEl.lastChild!.remove();
   setTimeout(() => div.remove(), 6000);
 }
-const announcer = new Announcer({ sink: browserSpeechSink(locale), onLine: pushLine, locale });
-// Start muted-safe; unlock audio on the first user gesture (Enter-to-start counts).
-announcer.setMuted(true);
-let hostOn = false;
-function enableHost() { if (!hostOn) { hostOn = true; announcer.setMuted(false); } }
+const announcer = new Announcer({ sink: null, onLine: pushLine, locale });
 
 // Bumped on every phase change so an in-flight async (e.g. the leaderboard fetch) can tell whether
 // the flow has moved on before it resolves — preventing a stale render from resurrecting a screen.
@@ -458,7 +456,7 @@ function boot() {
   addEventListener('keydown', (e) => {
     if (screens.isVisible) return;             // flow keys handled by screens.bindHostKeys
     if (e.key === 'r') conn.restart();
-    else if (e.key === 'Enter') { enableHost(); conn.ready(); }
+    else if (e.key === 'Enter') { conn.ready(); }
   });
   // The shared screen SPECTATES by default (occupies no roster slot, gets no car) — it's the display,
   // not a player. It can still drive the whole flow (ready/advance/back/restart/select_map key off the
@@ -484,6 +482,15 @@ function boot() {
   void fetch('/api/config').then(r => r.ok ? r.json() : null).then((cfg) => {
     if (cfg && typeof cfg.phoneNumber === 'string') screens.setPhoneNumber(cfg.phoneNumber);
   }).catch(() => { /* keep the placeholder */ });
+  void fetch('/api/arcade/config/public').then(r => r.ok ? r.json() : null).then(async cfg => {
+    if (!cfg || cfg.arcade?.mode === 'off' || typeof cfg.arcade?.cabinetId !== 'string') return;
+    const joinUrl = new URL('/arcade/', location.origin);
+    joinUrl.searchParams.set('cabinet', cfg.arcade.cabinetId);
+    const qr = await QRCode.toDataURL(joinUrl.toString(), {
+      width: 520, margin: 1, color: { dark: '#000D25', light: '#FFFFFF' }, errorCorrectionLevel: 'M',
+    });
+    screens.setArcadeQr(qr);
+  }).catch(() => { /* Arcade stays optional. */ });
 
   // Heavy asset work happens in the BACKGROUND (off the critical path). The lobby is already up;
   // the race only needs these once someone starts, and the car grid fills in progressively.

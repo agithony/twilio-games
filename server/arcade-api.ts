@@ -315,12 +315,15 @@ export class ArcadeApi {
     this.requireMethod(request, ['POST']);
     this.requireSameOrigin(request);
     requireJsonContentType(request);
-    requireExactObject(await readJson(request, SESSION_BODY_LIMIT), [], []);
+    const body = requireExactObject(await readJson(request, SESSION_BODY_LIMIT), ['cabinetId'], []);
     this.enforceProcessRate('session-process', 120, 60_000);
 
     const runtime = this.requirePlayerRuntime();
     const resources = await runtime.getActive();
     const config = this.configStore.getSnapshot();
+    if (body.cabinetId !== config.arcade.cabinetId) {
+      throw new ArcadeHttpError(409, 'CABINET_CHANGED', 'Arcade QR belongs to another cabinet');
+    }
     if (config.arcade.mode === 'off') {
       throw new ArcadeHttpError(409, 'ARCADE_MODE_DISABLED', 'Arcade mode is off');
     }

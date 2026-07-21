@@ -140,6 +140,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); c
 /* ───────── Lobby JOIN FLOW: scan QR → call number → enter room code (DTMF) ───────── */
 /* QR on top, the numbered steps stacked UNDERNEATH it (vertical column). */
 .join-flow { display: flex; flex-direction: column; align-items: center; gap: 22px; }
+.join-qrs { display: flex; align-items: flex-start; justify-content: center; gap: 18px; flex-wrap: wrap; }
 /* QR panel — white card so a dark-on-transparent QR stays scannable on the dark theme. */
 .join-qr { display: flex; flex-direction: column; align-items: center; gap: 10px; }
 .join-qr img {
@@ -147,6 +148,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); c
   box-shadow: 0 0 40px rgba(239,34,58,.25); border: 1px solid var(--glass-brd-2);
 }
 .join-qr-cap { font-family: var(--disp); font-weight: 700; font-size: 15px; color: var(--ink-dim); letter-spacing: .02em; }
+.coin-qr img { box-shadow: 0 0 40px rgba(33,136,239,.25); }
 /* Numbered steps. */
 .join-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 16px; text-align: left; }
 .join-steps li { display: flex; align-items: center; gap: 14px; font-family: var(--text); font-size: 20px; color: var(--ink); }
@@ -377,7 +379,6 @@ body.in-menu #hud, body.in-menu #hint, body.in-menu #ticker, body.in-menu #gauge
   #hud { top: 10px; left: 104px; }
   #hud .htitle { display: none; }
 }
-
 
 
 

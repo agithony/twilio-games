@@ -7,7 +7,7 @@ const SESSION_MS = 8 * 60 * 60 * 1000;
 const STATE_MS = 10 * 60 * 1000;
 
 interface Session { email: string; analyticsAuthorized: boolean; expiresAt: number; }
-interface OAuthState { expiresAt: number; returnTo: '/analytics' | '/arcade/'; }
+interface OAuthState { expiresAt: number; returnTo: '/analytics' | '/arcade/' | '/arcade/?operator=1'; }
 interface GoogleUser { email?: unknown; email_verified?: unknown; }
 
 export interface GoogleAnalyticsAuthOptions {
@@ -52,7 +52,9 @@ export class GoogleAnalyticsAuth {
     this.sweep();
     const state = randomBytes(24).toString('base64url');
     const requestedReturn = new URL(req.url ?? '', 'http://localhost').searchParams.get('returnTo');
-    const returnTo = requestedReturn === '/arcade/' ? '/arcade/' : '/analytics';
+    const returnTo = requestedReturn === '/arcade/' || requestedReturn === '/arcade/?operator=1'
+      ? requestedReturn
+      : '/analytics';
     this.states.set(state, { expiresAt: this.now() + STATE_MS, returnTo });
     const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
     url.search = new URLSearchParams({ client_id: this.clientId, redirect_uri: this.options.redirectUri,
@@ -131,7 +133,7 @@ export class GoogleAnalyticsAuth {
     res: http.ServerResponse,
     clearState: string,
     reason: string,
-    returnTo: '/analytics' | '/arcade/' = '/analytics',
+    returnTo: '/analytics' | '/arcade/' | '/arcade/?operator=1' = '/analytics',
   ): void {
     const separator = returnTo.includes('?') ? '&' : '?';
     res.writeHead(302, { Location: `${returnTo}${separator}auth=${encodeURIComponent(reason)}`, 'Set-Cookie': clearState, 'Cache-Control': 'no-store' }).end();

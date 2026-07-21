@@ -1394,7 +1394,7 @@ without an extra step.
 ### Phase 4: Cabinet Queue and Multiplayer Waves
 
 - [ ] Introduce Cabinet, Party, QueueEntry, PromotionWave, and Match stores
-- [ ] Replace visitor-facing room code with persistent cabinet QR
+- [x] Replace visitor-facing room code with persistent cabinet QR
 - [ ] Add game preference and party creation/join
 - [ ] Add FIFO scheduler and party splitting
 - [ ] Add approaching notifications and still-here confirmation

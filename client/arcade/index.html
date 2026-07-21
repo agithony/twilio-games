@@ -23,6 +23,7 @@
       </a>
       <div class="top-actions">
         <span id="mode-badge" class="badge neutral">Loading</span>
+        <a id="view-link" class="button secondary" href="/arcade/?operator=1">Operator view</a>
         <button id="refresh" class="button quiet" type="button">Refresh</button>
         <button id="theme-toggle" class="button quiet" type="button">Light mode</button>
       </div>
@@ -31,10 +32,10 @@
     <section class="hero">
       <div>
         <p class="eyebrow">Playable engagement loop</p>
-        <h1>Your next game starts with <span>one coin.</span></h1>
-        <p class="lede">Register, earn coins, join the cabinet queue, and follow the live operator flow from one screen.</p>
+        <h1 id="hero-title">Your next game starts with <span>one coin.</span></h1>
+        <p id="hero-lede" class="lede">Register, earn coins, and join this cabinet's queue. This build uses the web wallet; SMS and WhatsApp continuity are not connected yet.</p>
       </div>
-      <article class="balance-hero" aria-live="polite">
+      <article id="balance-hero" class="balance-hero" aria-live="polite">
         <span>Available balance</span>
         <strong id="hero-balance">--</strong>
         <small>ARCADE COINS</small>
@@ -43,7 +44,7 @@
 
     <p id="notice" class="notice" role="status">Loading Arcade configuration...</p>
 
-    <main class="dashboard">
+    <main id="dashboard" class="dashboard">
       <section class="column">
         <article id="off-panel" class="panel accent-panel" hidden>
           <p class="eyebrow">Arcade mode</p>
@@ -74,7 +75,7 @@
             <div><p class="eyebrow">Player profile</p><h2 id="player-greeting">Ready to play</h2></div>
             <span class="step">01</span>
           </div>
-          <p>Your browser holds an encrypted, HttpOnly Arcade session. Personal lead fields never appear in this dashboard response.</p>
+          <p>Your browser holds a signed, HttpOnly Arcade session with no lead PII. Personal lead fields never appear in this dashboard response.</p>
         </article>
 
         <article id="challenge-panel" class="panel" hidden>
@@ -120,10 +121,10 @@
       </section>
     </main>
 
-    <section class="operations">
+    <section id="operations" class="operations" hidden>
       <div class="operations-heading">
         <div><p class="eyebrow">Staff controls</p><h2>Operator console</h2></div>
-        <a id="admin-login" class="button secondary" href="/auth/google?returnTo=/arcade/">Sign in with Google</a>
+        <a id="admin-login" class="button secondary" href="/auth/google?returnTo=/arcade/%3Foperator%3D1">Sign in with Google</a>
         <span id="admin-user" hidden></span>
         <button id="admin-logout" class="button quiet" type="button" hidden>Switch account</button>
       </div>
@@ -144,12 +145,25 @@
           <button id="seed-challenge" class="button quiet full" type="button">Add Voice docs challenge</button>
         </article>
 
+        <article class="panel compact qr-operator-panel">
+          <p class="eyebrow">Persistent cabinet QR</p>
+          <h3>Players scan here</h3>
+          <img id="player-qr" class="player-qr" alt="QR code for the Arcade player wallet" />
+          <code id="player-url" class="player-url"></code>
+          <p>This opens the web wallet for this cabinet. No balance or personal data is encoded in the QR.</p>
+          <div class="channel-status">
+            <span><b>Web wallet</b> Connected</span>
+            <span><b>SMS / WhatsApp</b> Not connected yet</span>
+            <span><b>Voice gameplay</b> Racer call flow only; Arcade identity not linked</span>
+          </div>
+        </article>
+
         <article class="panel compact operator-queue-panel">
           <div class="panel-heading"><div><p class="eyebrow">Live queue</p><h3>Players and matches</h3></div><button id="operator-refresh" class="button quiet" type="button">Refresh</button></div>
           <div class="selection-actions">
             <span id="selection-count">Select lobby or playing entries</span>
-            <button id="start-selected" class="button primary" type="button" disabled>Start selected</button>
-            <button id="complete-selected" class="button secondary" type="button" disabled>Complete selected</button>
+            <button id="start-selected" class="button primary" type="button" disabled>Record match start</button>
+            <button id="complete-selected" class="button secondary" type="button" disabled>Record completion</button>
           </div>
           <div id="operator-queue" class="stack-list"></div>
         </article>

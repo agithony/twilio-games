@@ -148,6 +148,8 @@ The home page lists the three playable games. Selecting a game opens its shared 
 | Activation analytics | <http://localhost:5173/analytics> | Private date-filtered engagement dashboard and PDF reports |
 | Twilio Arcade | <http://localhost:5173/arcade/> | Coin wallet, registration, challenges, queue, and operator console |
 
+The Voice Racer shared lobby and the Arcade operator view display a persistent cabinet QR that opens the web wallet. Arcade SMS and WhatsApp continuity remain planned TAC work and are not represented as connected channels in the UI.
+
 The shared display starts as a spectator and does not consume a player slot. Press `P` to add or remove a local keyboard player. Use `Enter` to advance supported menu phases; Racer also uses left arrow to go back and right arrow to advance.
 
 Keyboard controls:
@@ -234,7 +236,7 @@ npm run typecheck
 npm run build
 ```
 
-The current Vitest suite contains 1,022 passing tests across 103 files. It covers game worlds and protocols, room and reconnect behavior, Conversation Relay routing, voice command parsing, TwiML, webhook signatures, HTTP APIs, persistence, analytics, scoped Google OAuth authorization, the Arcade browser experience, signed player sessions, wallet, queue, challenge, and audited operator match APIs, TAC lifecycle gating, asset governance, render helpers, audio management, and WebSocket integration.
+The current Vitest suite contains 1,024 passing tests across 103 files. It covers game worlds and protocols, room and reconnect behavior, Conversation Relay routing, voice command parsing, TwiML, webhook signatures, HTTP APIs, persistence, analytics, scoped Google OAuth authorization, the Arcade browser experience and cabinet QR, signed player sessions, wallet, queue, challenge, and audited operator match APIs, TAC lifecycle gating, asset governance, render helpers, audio management, and WebSocket integration.
 
 For a credential-free local Arcade walkthrough, run `npm run dev:arcade:server` and `npm run dev:arcade:client` in separate terminals, then open <http://localhost:5173/arcade/>. These scripts use isolated `data/arcade-dev-*` state, an explicit loopback-only development admin, and disabled TAC; production and non-loopback deployments remain authenticated and fail-closed.
 
