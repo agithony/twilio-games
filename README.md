@@ -238,7 +238,7 @@ npm run typecheck
 npm run build
 ```
 
-The current Vitest suite contains 1,026 passing tests across 104 files. It covers game worlds and protocols, room and reconnect behavior, Conversation Relay routing, voice command parsing, TwiML, webhook signatures, HTTP APIs, persistence, analytics, scoped Google OAuth authorization, the Arcade browser experience and cabinet QR, signed player sessions, wallet, queue, challenge, audited operator match APIs, and the canonical game-capacity registry, TAC lifecycle gating, asset governance, render helpers, audio management, and WebSocket integration.
+The current Vitest suite contains 1,044 passing tests across 105 files. It covers game worlds and protocols, room and reconnect behavior, Conversation Relay routing, voice command parsing, TwiML, webhook signatures, HTTP APIs, persistence, analytics, scoped Google OAuth authorization, the Arcade browser experience and cabinet QR, signed player sessions, wallet, queue, challenge, audited operator match APIs, the canonical game-capacity registry, and the deterministic station/round reducer, TAC lifecycle gating, asset governance, render helpers, audio management, and WebSocket integration.
 
 For a credential-free local Arcade walkthrough, run `npm run dev:arcade:server` and `npm run dev:arcade:client` in separate terminals, then open <http://localhost:5173/arcade/>. These scripts use isolated `data/arcade-dev-*` state, an explicit loopback-only development admin, and disabled TAC; production and non-loopback deployments remain authenticated and fail-closed.
 
