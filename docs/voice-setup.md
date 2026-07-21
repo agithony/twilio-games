@@ -121,7 +121,7 @@ Speech barge-in stops Relay TTS. Voice Racer and Voice Monsters also invalidate 
 
 ## Voice Racer
 
-Voice Racer supports up to eight players in room `4821`.
+Voice Racer supports up to four players in room `4821`.
 
 The voice flow is:
 

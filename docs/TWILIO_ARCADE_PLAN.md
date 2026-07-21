@@ -8,6 +8,11 @@ the planning session. Future sessions should read this document before designing
 TAC, registration, digital coins, earning challenges, queues, post-game messaging, or Conversation
 Intelligence.
 
+**One-display station flow:** `ARCADE_EXPO_STATION_PLAN.md` is the approved implementation source of
+truth for station terminology, ready-pool timing, phase-two game selection, persistent QR behavior,
+messaging onboarding, overflow, launch coordination, and game capacity. It supersedes conflicting
+queue-wave details in this broader plan.
+
 ## 1. Executive Summary
 
 Twilio Games will evolve into **Twilio Arcade**, a single-display event experience that demonstrates
@@ -530,7 +535,7 @@ The approved default is one coin per human participant:
 
 | Game | Human capacity | Minimum humans | AI fallback | Default total coin cost |
 |---|---:|---:|---|---:|
-| Voice Racer | 8 | 1 (prefer 2+) | Optional race with fewer humans | One per human |
+| Voice Racer | 4 | 1 (prefer 2+) | Optional race with fewer humans | One per human |
 | Voice Fighter | 2 | 1 | AI fighter | One per human |
 | Voice Monsters | 2 | 1 | AI monster | One per human |
 | Voice Trivia | Configurable | Configurable | None by default | One per human |
@@ -643,8 +648,8 @@ Each match creates a promotion wave containing primary slots and standby slots.
 Example for Racer:
 
 ```text
-Game capacity: 8
-Primary promotions: 8
+Game capacity: 4
+Primary promotions: 4
 Standby promotions: 2
 Total notified: 10
 ```

@@ -25,7 +25,9 @@ See [Localization](docs/localization.md) to add another language.
 The approved future product direction is documented in the canonical
 [Twilio Arcade and TAC plan](docs/TWILIO_ARCADE_PLAN.md). It covers runtime-configurable lead capture,
 digital coins, earning challenges, one-display multiplayer queues, post-game summaries, Conversation
-Memory, and Conversation Intelligence.
+Memory, and Conversation Intelligence. The approved one-screen conference implementation is captured
+separately in the [Expo Station plan](docs/ARCADE_EXPO_STATION_PLAN.md), including Racer's four-player
+capacity, ready-pool timing, phase-two game selection, persistent QR, and SMS/WhatsApp onboarding.
 
 ## Screenshots
 
