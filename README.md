@@ -12,7 +12,7 @@ The current games are:
 
 | Game | Format | Voice commands |
 |---|---|---|
-| Voice Racer | Real-time, three-lane 3D racing for up to eight players | `left`, `right`, `boost`, `brake`, `nitro` |
+| Voice Racer | Real-time, three-lane 3D racing for up to four players | `left`, `right`, `boost`, `brake`, `nitro` |
 | Voice Monsters | Turn-based creature battles with type matchups, moves, guard, items, and taunts | Names or numbers, `fight`, move names, `guard`, `item`, `taunt` |
 | Voice Fighter | Real-time side-view 3D fighting with character and arena selection | Names or numbers, `forward`, `back`, `jump`, `punch`, `kick`, `block` |
 
@@ -238,7 +238,7 @@ npm run typecheck
 npm run build
 ```
 
-The current Vitest suite contains 1,024 passing tests across 103 files. It covers game worlds and protocols, room and reconnect behavior, Conversation Relay routing, voice command parsing, TwiML, webhook signatures, HTTP APIs, persistence, analytics, scoped Google OAuth authorization, the Arcade browser experience and cabinet QR, signed player sessions, wallet, queue, challenge, and audited operator match APIs, TAC lifecycle gating, asset governance, render helpers, audio management, and WebSocket integration.
+The current Vitest suite contains 1,026 passing tests across 104 files. It covers game worlds and protocols, room and reconnect behavior, Conversation Relay routing, voice command parsing, TwiML, webhook signatures, HTTP APIs, persistence, analytics, scoped Google OAuth authorization, the Arcade browser experience and cabinet QR, signed player sessions, wallet, queue, challenge, audited operator match APIs, and the canonical game-capacity registry, TAC lifecycle gating, asset governance, render helpers, audio management, and WebSocket integration.
 
 For a credential-free local Arcade walkthrough, run `npm run dev:arcade:server` and `npm run dev:arcade:client` in separate terminals, then open <http://localhost:5173/arcade/>. These scripts use isolated `data/arcade-dev-*` state, an explicit loopback-only development admin, and disabled TAC; production and non-loopback deployments remain authenticated and fail-closed.
 

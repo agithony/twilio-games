@@ -233,7 +233,7 @@ Confirm the public host supports WebSocket upgrades at `/voice` and that the gen
 
 ### The caller hears the right game but cannot join
 
-Voice Racer may already have eight players. Voice Monsters may have two occupied slots. Voice Fighter may have two players or may already be past fighter selection. End stale calls or reset the shared display before retrying.
+Voice Racer may already have four players. Voice Monsters may have two occupied slots. Voice Fighter may have two players or may already be past fighter selection. End stale calls or reset the shared display before retrying.
 
 ### Speech works only after the caller finishes talking
 

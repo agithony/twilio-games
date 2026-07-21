@@ -1,5 +1,5 @@
 // Pure field-camera framing math (no three.js / DOM, so it's unit-testable). The race is shown on
-// ONE shared display for up to 8 players, so the spectator camera must frame the WHOLE field — not
+// ONE shared display for up to 4 players, so the spectator camera must frame the WHOLE field — not
 // chase the leader (which pushes the back of the pack off-screen). Given the cars' sim positions
 // (z = distance along track, x = lateral lane offset) and the level's base chase offsets, this
 // returns an eye + look target in SIM space; the renderer maps that onto the straight track or the
