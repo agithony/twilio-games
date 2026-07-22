@@ -367,9 +367,9 @@ jobs:
             for revision in "$@"; do
               stopped=false
               for attempt in $(seq 1 60); do
-                revision_json=$(az containerapp revision show \
-                  --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" \
-                  --revision "$revision" --output json 2>/dev/null || true)
+                revision_json=$(az containerapp revision list \
+                  --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" --all \
+                  --query "[?name=='${revision}'] | [0]" --output json 2>/dev/null || true)
                 [ -n "$revision_json" ] || revision_json='{}'
                 active=$(jq -r '.properties.active // ""' <<< "$revision_json")
                 replicas=$(jq -r '.properties.replicas // ""' <<< "$revision_json")
