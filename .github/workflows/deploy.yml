@@ -766,13 +766,12 @@ jobs:
             RUNNING=$(jq -r '.properties.runningState // ""' <<< "$REVISION_JSON")
             ACTIVE=$(jq -r '.properties.active | if . == null then "" else tostring end' <<< "$REVISION_JSON")
             REPLICAS=$(jq -r '.properties.replicas // 0' <<< "$REVISION_JSON")
-            ACTUAL_SUFFIX=$(jq -r '.properties.template.revisionSuffix // ""' <<< "$REVISION_JSON")
             VOLUME_SIGNATURE=$(jq -r 'first(.properties.template.volumes[]? | select(.name == "appdata") | [.name,.storageName,.storageType] | join(":")) // ""' <<< "$REVISION_JSON")
             VOLUME_MOUNT_SIGNATURE=$(jq -r 'first(.properties.template.containers[0].volumeMounts[]? | select(.volumeName == "appdata") | [.volumeName,.mountPath] | join(":")) // ""' <<< "$REVISION_JSON")
             PROBE_SIGNATURE=$(jq -r '[.properties.template.containers[0].probes[]? | [.type,.httpGet.path,(.httpGet.port|tostring),.httpGet.scheme,((.initialDelaySeconds // 0)|tostring),(.periodSeconds|tostring),(.failureThreshold|tostring),(.timeoutSeconds|tostring)] | join(":")] | sort | join(",")' <<< "$REVISION_JSON")
 
             if [ "$NEW_REVISION" != "$TEMP_REVISION" ] \
-                && [ "$ACTUAL_SUFFIX" = "$REVISION_SUFFIX" ] \
+                && [ "$NEW_REVISION" = "${APP_NAME}--${REVISION_SUFFIX}" ] \
                 && [ "$IMAGE" = "$CONTAINER_IMAGE" ] \
                 && [ "$PROVISIONING" = "Provisioned" ] \
                 && [ "$HEALTH" = "Healthy" ] \
@@ -791,7 +790,7 @@ jobs:
                 fail "Revision $NEW_REVISION entered terminal state provisioning=${PROVISIONING:-unknown}, running=${RUNNING:-unknown}."
                 ;;
             esac
-            echo "Waiting for expected revision (latest=${NEW_REVISION:-unknown}, latestReady=${LATEST_READY:-unknown}, image=${IMAGE:-unknown}, provisioning=${PROVISIONING:-unknown}, health=${HEALTH:-unknown}, replicas=$REPLICAS, attempt $attempt/60)..."
+            echo "Waiting for expected revision (latest=${NEW_REVISION:-unknown}, expected=${APP_NAME}--${REVISION_SUFFIX}, latestReady=${LATEST_READY:-unknown}, image=${IMAGE:-unknown}, provisioning=${PROVISIONING:-unknown}, health=${HEALTH:-unknown}, active=${ACTIVE:-unknown}, replicas=$REPLICAS, volume=${VOLUME_SIGNATURE:-unknown}, mount=${VOLUME_MOUNT_SIGNATURE:-unknown}, probes=${PROBE_SIGNATURE:-unknown}, attempt $attempt/60)..."
             sleep 5
           done
           [ "$REVISION_READY" = "true" ] \

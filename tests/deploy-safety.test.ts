@@ -23,6 +23,13 @@ describe('deployment rollback safety', () => {
     );
   });
 
+  it('identifies the candidate by its ACA revision name', () => {
+    expect(workflow).toContain(
+      '[ "$NEW_REVISION" = "${APP_NAME}--${REVISION_SUFFIX}" ]',
+    );
+    expect(workflow).not.toContain('ACTUAL_SUFFIX');
+  });
+
   it('arms first-create cleanup before creating a serving revision', () => {
     const createBranch = workflow.slice(
       workflow.indexOf('echo "Creating new container app (minimal, tagged)..."'),
