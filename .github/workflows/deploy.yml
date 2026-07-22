@@ -300,6 +300,31 @@ jobs:
           GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ACR_SERVER: ${{ steps.acr-creds.outputs.server }}
+          ACR_USERNAME: ${{ steps.acr-creds.outputs.username }}
+          ACR_PASSWORD: ${{ steps.acr-creds.outputs.password }}
+          CR_TTS_VOICE: ${{ vars.CR_TTS_VOICE }}
+          CR_TTS_VOICE_PT_BR: ${{ vars.CR_TTS_VOICE_PT_BR }}
+          DEFAULT_LOCALE: ${{ vars.DEFAULT_LOCALE }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
+          GAME_PHONE_NUMBER: ${{ vars.GAME_PHONE_NUMBER }}
+          TWILIO_SMS_NUMBER: ${{ vars.TWILIO_SMS_NUMBER }}
+          TWILIO_WHATSAPP_NUMBER: ${{ vars.TWILIO_WHATSAPP_NUMBER }}
+          TWILIO_MESSAGING_SERVICE_SID: ${{ vars.TWILIO_MESSAGING_SERVICE_SID }}
+          ARCADE_OUTBOUND_MESSAGING_ENABLED: ${{ vars.ARCADE_OUTBOUND_MESSAGING_ENABLED }}
+          TWILIO_WHATSAPP_CONTENT_SID_STATION_ADMITTED_EN_US: ${{ vars.TWILIO_WHATSAPP_CONTENT_SID_STATION_ADMITTED_EN_US }}
+          TWILIO_WHATSAPP_CONTENT_SID_STATION_ADMITTED_PT_BR: ${{ vars.TWILIO_WHATSAPP_CONTENT_SID_STATION_ADMITTED_PT_BR }}
+          TWILIO_WHATSAPP_CONTENT_SID_STATION_OVERFLOW_EN_US: ${{ vars.TWILIO_WHATSAPP_CONTENT_SID_STATION_OVERFLOW_EN_US }}
+          TWILIO_WHATSAPP_CONTENT_SID_STATION_OVERFLOW_PT_BR: ${{ vars.TWILIO_WHATSAPP_CONTENT_SID_STATION_OVERFLOW_PT_BR }}
+          TWILIO_WHATSAPP_CONTENT_SID_STATION_CALL_NOW_EN_US: ${{ vars.TWILIO_WHATSAPP_CONTENT_SID_STATION_CALL_NOW_EN_US }}
+          TWILIO_WHATSAPP_CONTENT_SID_STATION_CALL_NOW_PT_BR: ${{ vars.TWILIO_WHATSAPP_CONTENT_SID_STATION_CALL_NOW_PT_BR }}
+          TWILIO_WHATSAPP_CONTENT_SID_STATION_RESULTS_EN_US: ${{ vars.TWILIO_WHATSAPP_CONTENT_SID_STATION_RESULTS_EN_US }}
+          TWILIO_WHATSAPP_CONTENT_SID_STATION_RESULTS_PT_BR: ${{ vars.TWILIO_WHATSAPP_CONTENT_SID_STATION_RESULTS_PT_BR }}
+          TWILIO_WHATSAPP_CONTENT_SID_STATION_NEXT_GAME_EN_US: ${{ vars.TWILIO_WHATSAPP_CONTENT_SID_STATION_NEXT_GAME_EN_US }}
+          TWILIO_WHATSAPP_CONTENT_SID_STATION_NEXT_GAME_PT_BR: ${{ vars.TWILIO_WHATSAPP_CONTENT_SID_STATION_NEXT_GAME_PT_BR }}
+          ANALYTICS_ALLOWED_EMAIL: ${{ vars.ANALYTICS_ALLOWED_EMAIL }}
+          ARCADE_ADMIN_EMAILS: ${{ vars.ARCADE_ADMIN_EMAILS }}
+          TWILIO_CONVERSATION_CONFIGURATION_ID: ${{ vars.TWILIO_CONVERSATION_CONFIGURATION_ID }}
         run: |
           set -Eeuo pipefail
 
@@ -563,42 +588,13 @@ jobs:
             --query properties.configuration.ingress.fqdn -o tsv 2>/dev/null || true)
 
           export APP_NAME="$APP_NAME"
-          export CONTAINER_IMAGE="${{ steps.acr-creds.outputs.server }}/${IMAGE_TAG}"
+          export CONTAINER_IMAGE="${ACR_SERVER}/${IMAGE_TAG}"
           # A unique suffix forces a new revision for same-SHA workflow re-runs and identifies the
           # full-spec revision independently from the first-create temporary revision.
           export REVISION_SUFFIX="sha-${GITHUB_SHA:0:7}-r${GITHUB_RUN_ID}-a${GITHUB_RUN_ATTEMPT}"
           export BASE_URL="https://${FQDN}"
           # ACR registry config goes IN the YAML (update --yaml replaces the whole registries+secrets
           # block, so it must redeclare the registry + its password secret).
-          export ACR_SERVER="${{ steps.acr-creds.outputs.server }}"
-          export ACR_USERNAME="${{ steps.acr-creds.outputs.username }}"
-          export ACR_PASSWORD="${{ steps.acr-creds.outputs.password }}"
-          # ElevenLabs voiceId for Conversation Relay talk-back (optional repo var; empty → default voice).
-          export CR_TTS_VOICE="${{ vars.CR_TTS_VOICE }}"
-          export CR_TTS_VOICE_PT_BR="${{ vars.CR_TTS_VOICE_PT_BR }}"
-          export DEFAULT_LOCALE="${{ vars.DEFAULT_LOCALE }}"
-          # OpenAI model for the conversational AI host (optional repo var; empty → server default).
-          export OPENAI_MODEL="${{ vars.OPENAI_MODEL }}"
-          # One-time legacy voice fallback plus the independent SMS-capable sender.
-          export GAME_PHONE_NUMBER="${{ vars.GAME_PHONE_NUMBER }}"
-          export TWILIO_SMS_NUMBER="${{ vars.TWILIO_SMS_NUMBER }}"
-          export TWILIO_WHATSAPP_NUMBER="${{ vars.TWILIO_WHATSAPP_NUMBER }}"
-          export TWILIO_MESSAGING_SERVICE_SID="${{ vars.TWILIO_MESSAGING_SERVICE_SID }}"
-          export ARCADE_OUTBOUND_MESSAGING_ENABLED="${{ vars.ARCADE_OUTBOUND_MESSAGING_ENABLED }}"
-          export TWILIO_WHATSAPP_CONTENT_SID_STATION_ADMITTED_EN_US="${{ vars.TWILIO_WHATSAPP_CONTENT_SID_STATION_ADMITTED_EN_US }}"
-          export TWILIO_WHATSAPP_CONTENT_SID_STATION_ADMITTED_PT_BR="${{ vars.TWILIO_WHATSAPP_CONTENT_SID_STATION_ADMITTED_PT_BR }}"
-          export TWILIO_WHATSAPP_CONTENT_SID_STATION_OVERFLOW_EN_US="${{ vars.TWILIO_WHATSAPP_CONTENT_SID_STATION_OVERFLOW_EN_US }}"
-          export TWILIO_WHATSAPP_CONTENT_SID_STATION_OVERFLOW_PT_BR="${{ vars.TWILIO_WHATSAPP_CONTENT_SID_STATION_OVERFLOW_PT_BR }}"
-          export TWILIO_WHATSAPP_CONTENT_SID_STATION_CALL_NOW_EN_US="${{ vars.TWILIO_WHATSAPP_CONTENT_SID_STATION_CALL_NOW_EN_US }}"
-          export TWILIO_WHATSAPP_CONTENT_SID_STATION_CALL_NOW_PT_BR="${{ vars.TWILIO_WHATSAPP_CONTENT_SID_STATION_CALL_NOW_PT_BR }}"
-          export TWILIO_WHATSAPP_CONTENT_SID_STATION_RESULTS_EN_US="${{ vars.TWILIO_WHATSAPP_CONTENT_SID_STATION_RESULTS_EN_US }}"
-          export TWILIO_WHATSAPP_CONTENT_SID_STATION_RESULTS_PT_BR="${{ vars.TWILIO_WHATSAPP_CONTENT_SID_STATION_RESULTS_PT_BR }}"
-          export TWILIO_WHATSAPP_CONTENT_SID_STATION_NEXT_GAME_EN_US="${{ vars.TWILIO_WHATSAPP_CONTENT_SID_STATION_NEXT_GAME_EN_US }}"
-          export TWILIO_WHATSAPP_CONTENT_SID_STATION_NEXT_GAME_PT_BR="${{ vars.TWILIO_WHATSAPP_CONTENT_SID_STATION_NEXT_GAME_PT_BR }}"
-          # One optional non-Twilio Google account that may access activation analytics.
-          export ANALYTICS_ALLOWED_EMAIL="${{ vars.ANALYTICS_ALLOWED_EMAIL }}"
-          export ARCADE_ADMIN_EMAILS="${{ vars.ARCADE_ADMIN_EMAILS }}"
-          export TWILIO_CONVERSATION_CONFIGURATION_ID="${{ vars.TWILIO_CONVERSATION_CONFIGURATION_ID }}"
           # Restrict substitution to our known vars so no other ${...} in the template is touched.
           # shellcheck disable=SC2016 # envsubst needs these names literally, not expanded here.
           SUBST='${APP_NAME} ${CONTAINER_IMAGE} ${REVISION_SUFFIX} ${BASE_URL} ${ACR_SERVER} ${ACR_USERNAME} ${ACR_PASSWORD} ${CR_TTS_VOICE} ${CR_TTS_VOICE_PT_BR} ${DEFAULT_LOCALE} ${OPENAI_MODEL} ${GAME_PHONE_NUMBER} ${TWILIO_SMS_NUMBER} ${TWILIO_WHATSAPP_NUMBER} ${TWILIO_MESSAGING_SERVICE_SID} ${ARCADE_OUTBOUND_MESSAGING_ENABLED} ${TWILIO_WHATSAPP_CONTENT_SID_STATION_ADMITTED_EN_US} ${TWILIO_WHATSAPP_CONTENT_SID_STATION_ADMITTED_PT_BR} ${TWILIO_WHATSAPP_CONTENT_SID_STATION_OVERFLOW_EN_US} ${TWILIO_WHATSAPP_CONTENT_SID_STATION_OVERFLOW_PT_BR} ${TWILIO_WHATSAPP_CONTENT_SID_STATION_CALL_NOW_EN_US} ${TWILIO_WHATSAPP_CONTENT_SID_STATION_CALL_NOW_PT_BR} ${TWILIO_WHATSAPP_CONTENT_SID_STATION_RESULTS_EN_US} ${TWILIO_WHATSAPP_CONTENT_SID_STATION_RESULTS_PT_BR} ${TWILIO_WHATSAPP_CONTENT_SID_STATION_NEXT_GAME_EN_US} ${TWILIO_WHATSAPP_CONTENT_SID_STATION_NEXT_GAME_PT_BR} ${ANALYTICS_ALLOWED_EMAIL} ${ARCADE_ADMIN_EMAILS} ${TWILIO_CONVERSATION_CONFIGURATION_ID}'
@@ -610,9 +606,9 @@ jobs:
             aca_write_retry az containerapp registry set \
               --name "$APP_NAME" \
               --resource-group "$RESOURCE_GROUP" \
-              --server "${{ steps.acr-creds.outputs.server }}" \
-              --username "${{ steps.acr-creds.outputs.username }}" \
-              --password "${{ steps.acr-creds.outputs.password }}" \
+              --server "$ACR_SERVER" \
+              --username "$ACR_USERNAME" \
+              --password "$ACR_PASSWORD" \
               --output none
             # Let the registry write settle before the full-spec update hits the same entity.
             sleep 10
@@ -687,9 +683,9 @@ jobs:
               --image "$CONTAINER_IMAGE" \
               --target-port 8080 \
               --ingress external \
-              --registry-server "${{ steps.acr-creds.outputs.server }}" \
-              --registry-username "${{ steps.acr-creds.outputs.username }}" \
-              --registry-password "${{ steps.acr-creds.outputs.password }}" \
+              --registry-server "$ACR_SERVER" \
+              --registry-username "$ACR_USERNAME" \
+              --registry-password "$ACR_PASSWORD" \
               --min-replicas 0 --max-replicas 1 \
               --tags $RESOURCE_TAGS \
               --output none
