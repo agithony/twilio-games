@@ -82,6 +82,15 @@ describe('twimlConnectRelay', () => {
     expect(xml).toContain('<Parameter name="roomCode" value="ABCD"');
     expect(xml).toContain('<Parameter name="commandLocale" value="en-US"');
   });
+  it('binds station Relay setup to one match generation', () => {
+    const x = twimlConnectRelay({
+      wsUrl: 'wss://x.test/voice', sessionEndedUrl: 'https://x.test/e', roomCode: 'ROOM',
+      game: 'racer', readyEntryId: 'ready-1', matchId: 'match-1', launchGeneration: 3,
+    });
+    expect(x).toContain('<Parameter name="readyEntryId" value="ready-1"');
+    expect(x).toContain('<Parameter name="matchId" value="match-1"');
+    expect(x).toContain('<Parameter name="launchGeneration" value="3"');
+  });
   it('configures Brazilian Portuguese recognition and speech', () => {
     const x = twimlConnectRelay({
       wsUrl: 'wss://x.test/voice', sessionEndedUrl: 'https://x.test/e', roomCode: 'ABCD',

@@ -1,0 +1,402 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex,nofollow" />
+  <title>Twilio Games</title>
+  <link rel="icon" href="/brand/Twilio_Logo_Bug_White.svg" />
+  <script>
+    (function () {
+      var theme = 'dark';
+      try { theme = localStorage.getItem('twilio-theme') || theme; } catch (_) {}
+      document.documentElement.setAttribute('data-theme', theme);
+    })();
+  </script>
+  <link rel="stylesheet" href="/arcade/arcade.css" />
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="Twilio Games home">
+        <img class="sidebar-logo" src="/brand/Twilio_Logo_Bug_White.svg" alt="" />
+        <span>TWILIO GAMES</span>
+      </a>
+      <div class="top-actions">
+        <span id="mode-badge" class="badge neutral">Loading</span>
+        <a id="view-link" class="button secondary" href="/operator">Operator view</a>
+        <button id="refresh" class="button quiet" type="button">Refresh</button>
+        <button id="theme-toggle" class="button quiet icon-button" type="button" title="Light theme" aria-label="Light theme"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.66 6.34l1.41-1.41"></path></svg></button>
+      </div>
+    </header>
+
+    <section class="hero">
+      <div>
+        <p class="eyebrow">Twilio Games</p>
+        <h1 id="hero-title">Ready when <span>you are.</span></h1>
+        <p id="hero-lede" class="lede">Join the next game, then keep an eye on the big screen.</p>
+      </div>
+      <article id="balance-hero" class="balance-hero" aria-live="polite">
+        <span>Available coins</span>
+        <strong id="hero-balance">--</strong>
+        <small>READY TO PLAY</small>
+      </article>
+    </section>
+
+    <p id="notice" class="notice" role="status">Checking game status...</p>
+
+    <main id="dashboard" class="dashboard">
+      <section class="column">
+        <article id="off-panel" class="panel accent-panel" hidden>
+          <p class="eyebrow">Games paused</p>
+          <h2>Nothing is starting right now.</h2>
+          <p>Check back soon or ask the host when the next game begins.</p>
+        </article>
+
+        <article id="registration-panel" class="panel" hidden>
+          <div class="panel-heading">
+            <div><p class="eyebrow">First things first</p><h2>Tell us who's playing</h2></div>
+          </div>
+          <form id="registration-form" class="form-grid">
+            <label>First name<input name="firstName" required maxlength="80" autocomplete="given-name" /></label>
+            <label>Last name<input name="lastName" required maxlength="80" autocomplete="family-name" /></label>
+            <label class="wide">Work email<input name="workEmail" required type="email" maxlength="254" autocomplete="email" /></label>
+            <label class="wide">Company<input name="companyName" required maxlength="120" autocomplete="organization" /></label>
+            <label>Phone number<input name="phoneNumber" required type="tel" placeholder="+14155550199" autocomplete="tel" /></label>
+            <label>Country or region<select name="countryCode" required autocomplete="country"><option value="">Choose one</option><option value="US">United States</option><option value="BR">Brazil</option><option value="CA">Canada</option><option value="MX">Mexico</option><option value="GB">United Kingdom</option><option value="IE">Ireland</option><option value="DE">Germany</option><option value="FR">France</option><option value="ES">Spain</option><option value="IT">Italy</option><option value="NL">Netherlands</option><option value="SE">Sweden</option><option value="PL">Poland</option><option value="IN">India</option><option value="SG">Singapore</option><option value="JP">Japan</option><option value="KR">South Korea</option><option value="AU">Australia</option><option value="NZ">New Zealand</option><option value="ZA">South Africa</option><option value="AE">United Arab Emirates</option></select></label>
+            <label id="terms-field" class="check wide"><input id="termsAccepted" name="termsAccepted" type="checkbox" required /><span id="terms-label">I agree to the <a href="/join#terms-title" target="_blank" rel="noopener">participation terms</a>.</span></label>
+            <label id="marketing-field" class="check wide"><input name="marketingConsent" type="checkbox" /><span id="marketing-label">Email me occasional Twilio product and event updates.</span></label>
+            <button id="registration-submit" class="button primary wide" type="submit">Continue</button>
+          </form>
+        </article>
+
+        <article id="player-panel" class="panel" hidden>
+          <div class="panel-heading">
+            <div><p class="eyebrow">You're in</p><h2 id="player-greeting">Ready to play</h2></div>
+          </div>
+          <p>This phone is connected to your game pass. You're all set.</p>
+        </article>
+
+        <article id="challenge-panel" class="panel" hidden>
+          <div class="panel-heading">
+            <div><p class="eyebrow">Want another turn?</p><h2>Earn more coins</h2></div>
+          </div>
+          <div id="challenges" class="stack-list"></div>
+        </article>
+      </section>
+
+      <section class="column">
+        <article id="wallet-panel" class="panel wallet-panel" hidden>
+          <div class="panel-heading">
+            <div><p class="eyebrow">Your game pass</p><h2>Coins ready</h2></div>
+          </div>
+          <div class="wallet-grid">
+            <div class="balance-detail"><strong id="ledger-balance">--</strong><span>Total</span></div>
+            <div class="balance-detail"><strong id="reserved-balance">--</strong><span>In use</span></div>
+            <div class="balance-primary"><strong id="available-balance">--</strong><span>Available now</span></div>
+          </div>
+        </article>
+
+        <article id="queue-panel" class="panel" hidden>
+          <div class="panel-heading">
+            <div><p class="eyebrow">Next game</p><h2 id="ready-pool-title">Join the line</h2></div>
+          </div>
+          <form id="join-form" class="join-row">
+            <p id="join-help">Join when you're ready to play and stay close to the big screen.</p>
+            <button class="button primary" type="submit" aria-describedby="join-help">Join game</button>
+          </form>
+          <div id="queue-status" class="queue-status" aria-live="polite" hidden></div>
+          <a id="call-now" class="call-now" aria-live="assertive" hidden></a>
+          <div id="queue-actions" class="action-row" hidden>
+            <button id="queue-leave" class="button quiet" type="button">Leave line</button>
+          </div>
+        </article>
+      </section>
+    </main>
+
+    <section id="operations" class="operations" hidden>
+      <div class="operations-heading">
+        <div><p class="eyebrow">Event operations</p><h2>Game control</h2></div>
+        <a id="admin-login" class="button secondary" href="/auth/google?returnTo=/operator">Sign in with Google</a>
+        <span id="admin-user" hidden></span>
+        <button id="admin-logout" class="button quiet" type="button" hidden>Switch account</button>
+      </div>
+
+      <div id="admin-locked" class="panel compact">
+        Sign in with your approved staff account to manage the event.
+      </div>
+
+      <div id="admin-console" class="admin-grid" hidden>
+        <article id="station-panel" class="panel station-panel">
+          <div class="panel-heading station-heading">
+            <div>
+              <p class="eyebrow">Live event</p>
+              <h3 id="station-phase">Loading game status</h3>
+            </div>
+            <span id="station-connection" class="badge neutral">Connecting</span>
+          </div>
+
+          <dl class="station-summary">
+            <div><dt>Status</dt><dd id="station-phase-value">--</dd></div>
+            <div class="technical-only"><dt>Version</dt><dd id="station-revision">--</dd></div>
+            <div><dt>Next change</dt><dd id="station-deadline">None</dd></div>
+          </dl>
+
+          <div class="station-detail-grid">
+            <section aria-labelledby="station-round-heading">
+              <p class="eyebrow" id="station-round-heading">Join window</p>
+              <div id="station-round" class="station-detail"></div>
+            </section>
+            <section aria-labelledby="station-match-heading">
+              <p class="eyebrow" id="station-match-heading">Live game</p>
+              <div id="station-match" class="station-detail"></div>
+            </section>
+          </div>
+
+          <form id="station-controls" class="station-controls">
+            <label id="station-reason-field">Reason for this action
+              <input id="station-reason" required maxlength="200" autocomplete="off" placeholder="Add a short note for the activity log" />
+            </label>
+            <div id="recruiting-control" class="station-action" hidden>
+              <button id="close-recruiting" class="button primary" type="button">End joining</button>
+            </div>
+            <div id="selection-control" class="station-action game-action" hidden>
+              <label>Next game
+                <select id="station-game">
+                  <option value="racer">Voice Racer · up to 4</option>
+                  <option value="monsters">Voice Monsters · up to 2</option>
+                  <option value="fighter">Voice Fighter · up to 2</option>
+                </select>
+              </label>
+              <button id="select-station-game" class="button primary" type="button">Confirm game</button>
+            </div>
+            <div id="locked-control" class="station-action" hidden>
+              <button id="request-launch" class="button primary" type="button">Start game</button>
+            </div>
+            <div id="launch-failure-control" class="station-action" hidden>
+              <button id="fail-launch" class="button danger" type="button">Cancel start</button>
+            </div>
+            <div id="playing-control" class="station-action" hidden>
+              <button id="emergency-complete" class="button danger" type="button">End game now</button>
+            </div>
+            <div id="results-control" class="station-action" hidden>
+              <button id="advance-results" class="button primary" type="button">Close results and continue</button>
+            </div>
+            <div id="reset-control" class="station-action reset-danger-zone" hidden>
+              <button id="open-station-reset" class="button danger" type="button">Reset event flow</button>
+            </div>
+            <p id="station-control-help">Actions update automatically as the event moves forward.</p>
+          </form>
+
+          <dialog id="station-reset-dialog" class="reset-dialog" aria-labelledby="station-reset-title" aria-describedby="station-reset-warning">
+            <form id="station-reset-form">
+              <p class="eyebrow">Danger zone</p>
+              <h3 id="station-reset-title">Reset the event flow?</h3>
+              <p id="station-reset-warning" class="reset-warning">This ends the current game, removes everyone from the line, and returns any coins in use. This cannot be undone.</p>
+              <label>Reason for reset
+                <input id="station-reset-reason" required maxlength="200" autocomplete="off" placeholder="Describe the emergency" />
+              </label>
+              <label>Type <code>RESET EVENT</code> to confirm
+                <input id="station-reset-confirmation" required autocomplete="off" spellcheck="false" />
+              </label>
+              <div class="reset-dialog-actions">
+                <button id="cancel-station-reset" class="button quiet" type="button">Cancel</button>
+                <button id="confirm-station-reset" class="button danger" type="submit" disabled>Reset event</button>
+              </div>
+            </form>
+          </dialog>
+
+          <dialog id="operator-reason-dialog" class="reset-dialog reason-dialog" aria-labelledby="operator-reason-title" aria-describedby="operator-reason-description">
+            <form id="operator-reason-form">
+              <p class="eyebrow">Activity note</p>
+              <h3 id="operator-reason-title">Add a reason</h3>
+              <p id="operator-reason-description" class="reset-warning"></p>
+              <label id="operator-reason-amount-field" hidden>Coins to add<input id="operator-reason-amount" type="number" min="1" max="100" step="1" value="1" /></label>
+              <label>Short note<input id="operator-reason-input" required maxlength="200" autocomplete="off" /></label>
+              <div class="reset-dialog-actions">
+                <button id="cancel-operator-reason" class="button quiet" type="button">Cancel</button>
+                <button class="button primary" type="submit">Continue</button>
+              </div>
+            </form>
+          </dialog>
+
+          <dialog id="challenge-remove-dialog" class="reset-dialog" aria-labelledby="challenge-remove-title" aria-describedby="challenge-remove-description">
+            <form id="challenge-remove-form">
+              <p class="eyebrow">Player rewards</p>
+              <h3 id="challenge-remove-title">Remove this challenge?</h3>
+              <p id="challenge-remove-description" class="reset-warning"></p>
+              <div class="reset-dialog-actions">
+                <button id="cancel-challenge-remove" class="button quiet" type="button">Cancel</button>
+                <button class="button danger" type="submit">Remove challenge</button>
+              </div>
+            </form>
+          </dialog>
+
+          <section class="station-roster" aria-labelledby="station-ready-heading">
+            <div class="roster-heading">
+              <div><p class="eyebrow">Up next</p><h3 id="station-ready-heading">Players in line</h3></div>
+              <span id="station-ready-count" class="badge neutral">0 players</span>
+            </div>
+            <div id="station-ready" class="ready-list"></div>
+          </section>
+          <section class="station-roster" aria-labelledby="station-audit-heading">
+            <div class="roster-heading"><div><p class="eyebrow">Activity</p><h3 id="station-audit-heading">Recent changes</h3></div></div>
+            <div id="station-audit" class="ready-list"></div>
+          </section>
+        </article>
+
+        <article id="messaging-panel" class="panel messaging-panel">
+          <div class="panel-heading">
+            <div><p class="eyebrow">Player messaging</p><h3>Messages and delivery</h3></div>
+            <span id="messaging-effective" class="badge neutral">Loading</span>
+          </div>
+          <p>See which channels players can use and whether game updates are being delivered.</p>
+          <div class="messaging-capabilities">
+            <section>
+              <p class="eyebrow">Players can join with</p>
+              <dl>
+                <div><dt>Text message</dt><dd id="messaging-onboarding-sms">Checking</dd></div>
+                <div><dt>WhatsApp</dt><dd id="messaging-onboarding-whatsapp">Checking</dd></div>
+              </dl>
+            </section>
+            <section>
+              <p class="eyebrow">Game updates</p>
+              <dl>
+                <div><dt>Text message</dt><dd id="messaging-outbound-sms">Checking</dd></div>
+                <div><dt>WhatsApp</dt><dd id="messaging-outbound-whatsapp">Checking</dd></div>
+                <div><dt>Delivery service</dt><dd id="messaging-worker">Checking</dd></div>
+              </dl>
+            </section>
+          </div>
+          <section class="messaging-failures" aria-labelledby="messaging-failures-heading">
+            <div class="roster-heading"><div><p class="eyebrow">Needs attention</p><h3 id="messaging-failures-heading">Messages to retry</h3></div></div>
+            <div id="messaging-failure-list" class="stack-list"></div>
+          </section>
+          <details class="operator-details messaging-details">
+            <summary>Delivery details</summary>
+            <div id="messaging-counts" class="messaging-counts" aria-label="Message delivery counts"></div>
+            <p><b>Last error:</b> <span id="messaging-last-error">None</span></p>
+            <dl class="technical-metrics">
+              <div><dt>Player identities</dt><dd id="messaging-identities">0</dd></div>
+              <div><dt>Capacity remaining</dt><dd id="messaging-capacity">0</dd></div>
+              <div><dt>Sign-ups in progress</dt><dd id="messaging-drafts">0</dd></div>
+              <div><dt>Ready for cleanup</dt><dd id="messaging-cleanup">0</dd></div>
+            </dl>
+          </details>
+        </article>
+
+        <article class="panel settings-panel">
+          <div class="panel-heading settings-heading">
+            <div><p class="eyebrow">Event setup</p><h3>Settings</h3></div>
+            <p id="runtime-summary" class="settings-summary"></p>
+          </div>
+          <form id="mode-form" class="mode-form">
+            <div class="settings-layout">
+              <section class="settings-section settings-experience">
+                <div class="settings-section-heading"><span>01</span><div><h4>Event</h4><p>Choose how players enter and whether coins are used.</p></div></div>
+                <div class="settings-fields two-up">
+                  <label>Event status<select id="admin-mode"><option value="off">Paused</option><option value="coin_only">Open - join by message</option><option value="lead_capture">Open - registration available</option></select></label>
+                  <label>Entry cost<select id="admin-charge-policy"><option value="per_player">One coin per player</option><option value="free">No coins required</option></select></label>
+                  <label id="starting-coins-field">Coins after sign-up<input id="admin-starting-coins" type="number" min="1" max="100" step="1" required /><small>These coins are available immediately.</small></label>
+                </div>
+              </section>
+
+              <section class="settings-section settings-channels">
+                <div class="settings-section-heading"><span>02</span><div><h4>Ways to join and play</h4><p>Turn on the channels available at this event.</p></div></div>
+                <fieldset class="choice-grid">
+                  <legend class="sr-only">Available channels</legend>
+                  <label class="choice-card"><input id="admin-sms" type="checkbox" /><span><b>Text message</b><small>Players can join by SMS</small></span></label>
+                  <label class="choice-card"><input id="admin-whatsapp" type="checkbox" /><span><b>WhatsApp</b><small>Players can join in WhatsApp</small></span></label>
+                  <label class="choice-card"><input id="admin-voice" type="checkbox" /><span><b>Voice controls</b><small>Players call to control games</small></span></label>
+                </fieldset>
+                <div class="settings-fields two-up voice-number-fields">
+                  <label>English voice number<input id="admin-voice-en-us" type="tel" placeholder="+18555993809" /></label>
+                  <label>Portuguese voice number<input id="admin-voice-pt-br" type="tel" placeholder="+551155555555" /></label>
+                </div>
+              </section>
+
+              <section class="settings-section settings-games">
+                <div class="settings-section-heading"><span>03</span><div><h4>Games</h4><p>Choose the lineup and how the next game is picked.</p></div></div>
+                <fieldset class="choice-grid game-choice-grid">
+                  <legend class="sr-only">Game lineup</legend>
+                  <label class="choice-card"><input id="admin-game-racer" type="checkbox" /><span><b>Voice Racer</b><small>Up to 4 players</small></span></label>
+                  <label class="choice-card"><input id="admin-game-monsters" type="checkbox" /><span><b>Voice Monsters</b><small>Up to 2 players</small></span></label>
+                  <label class="choice-card"><input id="admin-game-fighter" type="checkbox" /><span><b>Voice Fighter</b><small>Up to 2 players</small></span></label>
+                </fieldset>
+                <div class="settings-fields three-up">
+                  <label>Choose next game<select id="admin-selection-policy"><option value="best_fit_rotation">Best match for the group</option><option value="round_robin">Rotate evenly</option><option value="fixed_priority">Use priority order</option></select></label>
+                  <div id="priority-order-field" class="priority-order-field" hidden><span class="field-label">Priority order</span><div class="priority-order"><label><span>1</span><select id="admin-game-priority-1" data-game-priority><option value="racer">Voice Racer</option><option value="monsters">Voice Monsters</option><option value="fighter">Voice Fighter</option></select></label><label><span>2</span><select id="admin-game-priority-2" data-game-priority><option value="racer">Voice Racer</option><option value="monsters">Voice Monsters</option><option value="fighter">Voice Fighter</option></select></label><label><span>3</span><select id="admin-game-priority-3" data-game-priority><option value="racer">Voice Racer</option><option value="monsters">Voice Monsters</option><option value="fighter">Voice Fighter</option></select></label></div><input id="admin-game-order" type="hidden" /></div>
+                  <label>Join QR during play<select id="admin-qr-rail"><option value="auto">Show automatically</option><option value="always">Always show</option><option value="hidden">Hide during games</option></select></label>
+                </div>
+              </section>
+
+              <details class="advanced-settings">
+                <summary>Timing</summary>
+                <p>Adjust only when the event schedule or room flow requires it.</p>
+                <fieldset class="timing-settings">
+                  <legend class="sr-only">Timing in seconds</legend>
+                  <label>Join window<input id="admin-timing-recruiting" type="number" min="15" max="600" /><small>Seconds</small></label>
+                  <label>Maximum wait<input id="admin-timing-hard" type="number" min="15" max="900" /><small>Seconds</small></label>
+                  <label>Game choice<input id="admin-timing-selection" type="number" min="5" max="180" /><small>Seconds</small></label>
+                  <label>Get ready countdown<input id="admin-timing-locked" type="number" min="3" max="60" /><small>Seconds</small></label>
+                  <label>Start timeout<input id="admin-timing-launch" type="number" min="10" max="180" /><small>Seconds</small></label>
+                  <label>Results screen<input id="admin-timing-results" type="number" min="3" max="120" /><small>Seconds</small></label>
+                  <label>Join window after game<input id="admin-timing-postgame" type="number" min="10" max="300" /><small>Seconds</small></label>
+                </fieldset>
+              </details>
+            </div>
+            <div class="settings-savebar">
+              <div class="settings-capability"><b>Result messages</b><span id="post-game-status">Loading</span></div>
+              <div class="settings-save-actions"><button id="discard-mode-changes" class="button quiet" type="button">Discard changes</button><button class="button primary" type="submit">Save changes</button></div>
+            </div>
+          </form>
+        </article>
+
+        <article id="admin-challenge-panel" class="panel compact challenge-admin-panel">
+          <div class="panel-heading">
+            <div><p class="eyebrow">Player rewards</p><h3>Coin challenges</h3></div>
+            <div class="challenge-heading-actions"><label class="availability-toggle"><input id="admin-challenges-enabled" type="checkbox" /><span>Available to players</span></label><button id="add-admin-challenge" class="button primary" type="button">Add challenge</button></div>
+          </div>
+          <p id="admin-challenge-status">Create optional activities that award players extra coins.</p>
+          <div id="admin-challenges" class="stack-list"></div>
+          <form id="admin-challenge-form" class="challenge-form" hidden>
+            <div class="challenge-form-heading">
+              <h3 id="admin-challenge-form-title">Add challenge</h3>
+              <p>Leave the schedule empty to keep this challenge available throughout the event.</p>
+            </div>
+            <label>Short ID<input id="admin-challenge-id" required maxlength="64" pattern="[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?" placeholder="product-tour" /></label>
+            <label>Title<input id="admin-challenge-title" required maxlength="200" placeholder="Explore product resources" /></label>
+            <label class="challenge-url-field">Link players will open<input id="admin-challenge-url" required type="url" maxlength="2048" placeholder="https://www.example.com/products" /></label>
+            <label>Reward coins<input id="admin-challenge-reward" required type="number" min="1" max="100" step="1" value="1" /></label>
+            <label>Uses per player<input id="admin-challenge-claims" required type="number" min="1" max="100" step="1" value="1" /></label>
+            <label>Sort order<input id="admin-challenge-order" required type="number" min="0" max="1000000" step="1" value="0" /></label>
+            <label>Starts (optional)<input id="admin-challenge-starts" type="datetime-local" step="1" /></label>
+            <label>Ends (optional)<input id="admin-challenge-ends" type="datetime-local" step="1" /></label>
+            <label class="check challenge-enabled"><input id="admin-challenge-enabled" type="checkbox" checked /> Enabled for claims</label>
+            <div class="challenge-form-actions">
+              <button id="cancel-admin-challenge" class="button quiet" type="button">Cancel</button>
+              <button class="button primary" type="submit">Save challenge</button>
+            </div>
+          </form>
+        </article>
+
+        <article class="panel compact qr-operator-panel">
+          <p class="eyebrow">Player entry</p>
+          <h3>Join code</h3>
+          <img id="player-qr" class="player-qr" alt="QR code for the Twilio Games player page" />
+          <code id="player-url" class="player-url"></code>
+          <p>This is the same code shown on the big screen. Scan it to test the player journey.</p>
+          <div class="channel-status">
+            <span><b>Player page</b> Ready</span>
+            <span><b>Text message</b> <i id="sms-status">Off</i></span>
+            <span><b>WhatsApp</b> <i id="whatsapp-status">Off</i></span>
+            <span><b>Voice controls</b> <i id="voice-number-status">Checking</i></span>
+          </div>
+        </article>
+
+      </div>
+    </section>
+  </div>
+  <script type="module" src="/arcade/arcade.ts"></script>
+</body>
+</html>

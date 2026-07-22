@@ -231,4 +231,13 @@ describe('BattleServer', () => {
 
     a.close(); b.close();
   });
+
+  it('hard-aborts a station room and reconnect state', async () => {
+    server = new BattleServer({ port: 0 });
+    await server.start();
+    expect(server.voiceJoin('ABORT', 'Caller')).not.toBeNull();
+    expect(server.abortRoom('ABORT')).toBe(true);
+    expect(server.findRoom('ABORT')).toBeUndefined();
+    expect(server.abortRoom('ABORT')).toBe(false);
+  });
 });

@@ -1,0 +1,59 @@
+@font-face { font-family: 'Twilio Sans Display'; src: url('/fonts/TwilioSansDisplay-Extrabold.otf') format('opentype'); font-weight: 800; font-display: swap; }
+@font-face { font-family: 'Twilio Sans Text'; src: url('/fonts/TwilioSansText-Regular.otf') format('opentype'); font-weight: 400; font-display: swap; }
+@font-face { font-family: 'Twilio Sans Text'; src: url('/fonts/TwilioSansText-Bold.otf') format('opentype'); font-weight: 700; font-display: swap; }
+@font-face { font-family: 'Twilio Sans Mono'; src: url('/fonts/TwilioSansMono-Regular.otf') format('opentype'); font-weight: 400; font-display: swap; }
+
+:root { --station-rail-width: 248px; }
+body.station-mode #app,
+body.station-mode #arena,
+body.station-mode .flow-overlay,
+body.station-mode #veil { right: var(--station-rail-width); }
+body.station-mode #app { position: fixed; inset: 0 var(--station-rail-width) 0 0; width: auto; }
+body.station-mode .hud { right: var(--station-rail-width); }
+body.station-mode .command-deck { right: calc(var(--station-rail-width) + 24px); }
+body.station-mode .flow-panel { width: min(1240px, calc(100vw - var(--station-rail-width) - 36px)); }
+body.station-mode #hint, body.station-mode #gauge { right: calc(var(--station-rail-width) + 16px); }
+body.station-mode #big { right: var(--station-rail-width); }
+body.station-mode #music-toggle-container .music-toggle { right: calc(var(--station-rail-width) + 16px); }
+
+.station-rail {
+  position: fixed; z-index: 500; inset: 0 0 0 auto; width: var(--station-rail-width);
+  display: flex; flex-direction: column; justify-content: space-between; gap: 18px;
+  padding: 22px 18px; color: #fff; background: #000D25;
+  border-left: 1px solid #38425E; box-shadow: -18px 0 40px rgba(0,0,0,.32);
+  font-family: 'Twilio Sans Text', system-ui, sans-serif;
+}
+.station-rail-brand { display: flex; align-items: center; gap: 10px; }
+.station-rail-brand img { width: 34px; height: 34px; }
+.station-rail-brand strong { font-family: 'Twilio Sans Display', system-ui, sans-serif; font-size: 20px; font-weight: 800; letter-spacing: .02em; }
+.station-rail-copy { margin-top: auto; }
+.station-rail-copy span { display: block; margin-bottom: 7px; color: #9AA0B4; font: 12px/1.4 'Twilio Sans Mono', monospace; text-transform: uppercase; }
+.station-rail-copy h2 { margin: 0; font: 800 29px/1 'Twilio Sans Display', system-ui, sans-serif; letter-spacing: .02em; }
+.station-rail-copy p { margin: 10px 0 0; color: #DDE0E6; font-size: 14px; line-height: 1.45; }
+.station-rail-qr { width: 100%; aspect-ratio: 1; padding: 10px; border-radius: 16px; background: #fff; }
+.station-rail-qr canvas { display: block; width: 100% !important; height: 100% !important; }
+.station-rail-count { padding: 12px 14px; border: 1px solid #38425E; border-radius: 12px; background: #232B45; }
+.station-rail-count strong { display: block; font: 800 30px/1 'Twilio Sans Display', system-ui, sans-serif; }
+.station-rail-count span { color: #BABECC; font-size: 12px; }
+.station-rail-status { min-height: 34px; color: #9AA0B4; font: 12px/1.4 'Twilio Sans Mono', monospace; }
+
+@media (max-width: 700px) {
+  :root { --station-rail-width: 0px; }
+  body.station-mode #app, body.station-mode #arena, body.station-mode .flow-overlay,
+  body.station-mode #veil, body.station-mode .hud { right: 0; bottom:150px; }
+  body.station-mode #app { height:calc(100vh - 150px); }
+  body.station-mode #stage { height:min(96vw,calc(100vh - 174px)); max-height:calc(100vh - 174px); }
+  body.station-mode .flow-panel { width:min(1240px,94vw); max-height:calc(100vh - 182px); }
+  body.station-mode #hint, body.station-mode #gauge { right:16px; }
+  body.station-mode #big { right:0; bottom:150px; }
+  body.station-mode .command-deck { right:24px; bottom:170px; }
+  body.station-mode #music-toggle-container .music-toggle { right:16px; bottom:166px; }
+  body.station-mode #ticker { bottom:166px; }
+  .station-rail { inset: auto 0 0; width: 100%; height: 150px; flex-direction: row; align-items: center; padding: 12px; border-left: 0; border-top: 1px solid #38425E; }
+  .station-rail-brand, .station-rail-status { display: none; }
+  .station-rail-copy { margin: 0; flex: 1; }
+  .station-rail-copy h2 { font-size: 20px; }
+  .station-rail-copy p { font-size: 12px; margin-top: 5px; }
+  .station-rail-qr { width: 120px; }
+  .station-rail-count { min-width: 86px; }
+}

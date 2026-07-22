@@ -26,6 +26,7 @@ export class FighterServer {
   private maps = FIGHTER_MAPS;
   private onRoomEvents: ((code: string, events: FighterEvent[]) => void) | null = null;
   private onRoomState: ((code: string) => void) | null = null;
+  private allowBrowserPlayer: (roomCode: string) => boolean = () => true;
 
   private readonly displayToken: string;
 
@@ -45,8 +46,28 @@ export class FighterServer {
   }
   getOrCreateRoom(code: string): FighterRoom { return this.room(canonicalRoomCode(code)); }
   findRoom(code: string): FighterRoom | undefined { return this.rooms.get(canonicalRoomCode(code)); }
+  abortRoom(code: string): boolean {
+    code = canonicalRoomCode(code);
+    if (!this.rooms.has(code)) return false;
+    for (const conn of this.conns) {
+      if (conn.roomCode !== code) continue;
+      conn.roomCode = undefined;
+      conn.playerId = undefined;
+      conn.sessionId = undefined;
+      conn.ws.close(4002, 'station recovery');
+    }
+    for (const [key, session] of this.sessions) {
+      if (session.roomCode !== code) continue;
+      if (session.timer) clearTimeout(session.timer);
+      this.sessions.delete(key);
+    }
+    this.hosts.delete(code);
+    this.rooms.delete(code);
+    return true;
+  }
   setOnRoomEvents(fn: (code: string, events: FighterEvent[]) => void): void { this.onRoomEvents = fn; }
   setOnRoomState(fn: (code: string) => void): void { this.onRoomState = fn; }
+  setBrowserPlayerAdmission(fn: (roomCode: string) => boolean): void { this.allowBrowserPlayer = fn; }
   setMaps(maps: typeof FIGHTER_MAPS): void {
     if (!maps.length) return;
     this.maps = maps; for (const room of this.rooms.values()) room.setMaps(maps);
@@ -81,6 +102,9 @@ export class FighterServer {
     if (msg.type === 'join') {
       if (msg.locale) conn.locale = msg.locale;
       const code = canonicalRoomCode(msg.roomCode);
+      if (!this.allowBrowserPlayer(code)) {
+        this.send(conn, { type: 'error', code: 'station_voice_only', message: 'station_voice_only' }); return;
+      }
       if (conn.playerId && conn.roomCode) { this.send(conn, { type: 'joined', playerId: conn.playerId, roomCode: conn.roomCode }); return; }
       if (conn.roomCode && conn.roomCode !== code) this.detachDisplay(conn);
       if (msg.sessionId && this.resume(code, msg.sessionId, conn)) {
@@ -109,8 +133,12 @@ export class FighterServer {
       if (conn.playerId) { this.send(conn, { type: 'error', code: 'already_joined', message: 'Leave before spectating.' }); return; }
       const code = canonicalRoomCode(msg.roomCode);
       if (conn.roomCode && conn.roomCode !== code) this.detachDisplay(conn);
-      conn.roomCode = code; conn.display = true; this.room(code);
-      if (!this.hosts.has(code) && (!this.displayToken || conn.hostAuthorized)) this.hosts.set(code, conn);
+      const stationDisplay = !this.allowBrowserPlayer(code);
+      if (stationDisplay && !conn.hostAuthorized) {
+        this.send(conn, { type: 'error', code: 'bad_display_auth', message: 'Invalid display token.' }); return;
+      }
+      conn.roomCode = code; conn.display = true; conn.hostAuthorized = !stationDisplay || conn.hostAuthorized === true; this.room(code);
+      if (!this.hosts.has(code) && conn.hostAuthorized) this.hosts.set(code, conn);
       this.pushHostIdentity(code); this.pushState(code); return;
     }
     const room = conn.roomCode ? this.rooms.get(conn.roomCode) : undefined;

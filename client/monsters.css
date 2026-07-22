@@ -185,3 +185,25 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); c
   .vm-lobby-grid { grid-template-columns: 1fr; }
   .controls-legend { width: min(100%, 384px); justify-self: center; }
 }
+@media (max-width: 520px) {
+  #overlay { justify-content: flex-start; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; padding: 68px 10px 20px; }
+  .vm-card, .vm-card.wide { width: 100%; max-width: none; max-height: none; overflow: visible; padding: 16px 12px; }
+  .vm-head { min-height: 0; margin-bottom: 10px; }
+  .vm-title { height: auto; min-height: 36px; white-space: normal; font-size: 27px; }
+  .vm-sub { min-height: 0; font-size: 13px; }
+  .vm-lobby-grid { min-height: 0; gap: 16px; }
+  .vm-lobby-main, .vm-join { gap: 12px; }
+  .vm-join-qr { gap: 6px; }
+  .vm-join-qr img { width: 158px; height: 158px; padding: 8px; border-radius: 12px; }
+  .vm-join-steps { width: 100%; gap: 8px; font-size: 14px; }
+  .vm-join-steps li { gap: 8px; }
+  .vm-chips { margin: 10px 0; }
+  .controls-legend { width: 100%; height: auto; padding: 16px; }
+  .cl-row { min-height: 0; grid-template-columns: minmax(108px,.8fr) 1fr; gap: 8px; padding: 8px 0; }
+  .cl-say, .cl-action { font-size: 13px; }
+  .vm-grid { flex: none; grid-template-columns: repeat(2,minmax(0,1fr)); grid-auto-rows: minmax(150px,auto); gap: 8px; margin: 10px auto; overflow: visible; }
+  .vm-mon { min-height: 150px; padding: 8px; }
+  .vm-mon .portrait { min-height: 82px; }
+  .vm-mon-name { flex-basis: 34px; font-size: 14px; }
+  .vm-btn { margin-top: 10px; }
+}

@@ -68,6 +68,7 @@ const GREETING_KEYS = [
 export class BattleVoiceSession {
   private code: string | null = null;
   private playerId: string | null = null;
+  get boundPlayerId(): string | null { return this.playerId; }
   private callSid: string | null = null;
   private menuLevel: 'root' | 'fight' = 'root';
   private lineSeq = 0;

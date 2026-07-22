@@ -1,161 +1,100 @@
-<!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<!doctype html>
+<html lang="en" data-theme="light">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Twilio Games</title>
-<link rel="icon" href="/brand/Twilio_Logo_Bug_White.svg" />
-<!-- Theme flash prevention: set data-theme before any rendering -->
-<script>
-  (function () {
-    var t = localStorage.getItem('twilio-theme') || 'dark';
-    document.documentElement.setAttribute('data-theme', t);
-  })();
-</script>
-<style>
-  /* ---- Twilio brand fonts (brand-compliant minimum set) ---- */
-  @font-face { font-family: 'Twilio Sans Display'; src: url('/fonts/TwilioSansDisplay-Regular.otf') format('opentype'); font-weight: 400; font-display: swap; }
-  @font-face { font-family: 'Twilio Sans Display'; src: url('/fonts/TwilioSansDisplay-Extrabold.otf') format('opentype'); font-weight: 800; font-display: swap; }
-  @font-face { font-family: 'Twilio Sans Text'; src: url('/fonts/TwilioSansText-Regular.otf') format('opentype'); font-weight: 400; font-display: swap; }
-  @font-face { font-family: 'Twilio Sans Text'; src: url('/fonts/TwilioSansText-Bold.otf') format('opentype'); font-weight: 700; font-display: swap; }
-  @font-face { font-family: 'Twilio Sans Mono'; src: url('/fonts/TwilioSansMono-Regular.otf') format('opentype'); font-weight: 400; font-display: swap; }
-
-  /* ---- theme tokens ---- */
-  :root { --twilio-red: #EF223A; }   /* signature accent — same in both themes */
-  :root, html[data-theme="dark"] {
-    --th-bg: #000D25; --th-card: #232B45; --th-card-border: #38425E;
-    --th-raised: #38425E; --th-input: #232B45; --th-input-border: #4D5777;
-    --th-text: #FFFFFF; --th-text-label: #DDE0E6; --th-text-dim: #7E869C; --th-text-muted: #656E87;
-  }
-  html[data-theme="light"] {
-    --th-bg: #FFFFFF; --th-card: #FFFFFF; --th-card-border: #DDE0E6;
-    --th-raised: #F3F4F7; --th-input: #FFFFFF; --th-input-border: #BABECC;
-    --th-text: #000D25; --th-text-label: #232B45; --th-text-dim: #4D5777; --th-text-muted: #656E87;
-  }
-
-  * { box-sizing: border-box; }
-  html { background: var(--th-bg); transition: background-color .2s ease; }
-  body {
-    margin: 0; min-height: 100vh; color: var(--th-text);
-    font-family: 'Twilio Sans Text', ui-sans-serif, system-ui, sans-serif;
-    line-height: 1.6; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
-    display: flex; flex-direction: column; align-items: center;
-  }
-  h1, h2, h3 { font-family: 'Twilio Sans Display', ui-sans-serif, system-ui, sans-serif;
-    font-weight: 800; letter-spacing: .02em; line-height: 1; margin: 0; }
-  .eyebrow { font-family: 'Twilio Sans Mono', ui-monospace, monospace; font-size: 12px;
-    letter-spacing: .04em; color: var(--th-text-dim); text-transform: uppercase; }
-
-  /* ---- top bar ---- */
-  header { width: 100%; max-width: 1080px; display: flex; align-items: center; justify-content: space-between;
-    padding: 22px 24px; }
-  .brand { display: flex; align-items: center; gap: 12px; }
-  .brand img { width: 34px; height: 34px; }
-  /* White bug is invisible on the light header — recolor it to Twilio red in light mode. */
-  html[data-theme="light"] .brand img {
-    filter: brightness(0) saturate(100%) invert(20%) sepia(90%) saturate(5000%) hue-rotate(338deg) brightness(95%);
-  }
-  .brand .name { width: 150px; font-family: 'Twilio Sans Display'; font-weight: 800; font-size: 20px; letter-spacing: .02em; }
-  header > div { display: flex; align-items: center; gap: 8px; }
-  .music-toggle, #themeToggle { background: var(--th-raised); color: var(--th-text); border: 1px solid var(--th-card-border);
-    border-radius: 8px; padding: 7px 12px; cursor: pointer; font: inherit; font-size: 13px; transition: background-color .15s ease;
-    display: flex; align-items: center; gap: 6px; font-weight: 600; letter-spacing: .03em; text-decoration: none;
-    outline: none; }
-  .music-toggle:hover, #themeToggle:hover { background: var(--th-card-border); }
-  .music-toggle:active, #themeToggle:active { transform: scale(0.98); }
-  .music-toggle:focus, #themeToggle:focus { outline: none; }
-  .music-toggle-icon { display: flex; align-items: center; justify-content: center; line-height: 0; }
-  .music-toggle-icon svg { color: var(--th-text); text-decoration: none; }
-   .music-toggle-label { text-decoration: none; }
-
-  /* ---- hero ---- */
-  .hero { width: 100%; max-width: 1080px; padding: 18px 24px 8px; }
-  .hero h1 { font-size: clamp(34px, 6vw, 60px); }
-  .hero h1 .accent { color: var(--twilio-red); }
-  .hero p { color: var(--th-text-dim); max-width: 620px; font-size: 17px; margin-top: 14px; }
-
-  main { width: 100%; max-width: 1080px; padding: 16px 24px 60px; }
-
-  /* ---- game cards ---- */
-  .section-title { margin: 26px 0 14px; font-size: 14px; color: var(--th-text-label); font-weight: 700; }
-  .games-wrapper { position: relative; border-radius: 20px; overflow: hidden; }
-  .games-wrapper .video-bg { position: absolute; inset: 0; z-index: 0; overflow: hidden; border-radius: 20px; }
-  .games-wrapper .video-bg video { width: 100%; height: 100%; object-fit: cover; opacity: 0;
-    transition: opacity .6s ease; position: absolute; inset: 0; }
-  .games-wrapper .video-bg video.active { opacity: 1; }
-  .games-wrapper .video-bg::after { content: ''; position: absolute; inset: 0;
-    background: linear-gradient(180deg, rgba(0,13,37,.45) 0%, rgba(0,13,37,.55) 100%);
-    pointer-events: none; }
-  html[data-theme="light"] .games-wrapper .video-bg::after {
-    background: linear-gradient(180deg, rgba(255,255,255,.5) 0%, rgba(255,255,255,.6) 100%); }
-  .games { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px;
-    position: relative; z-index: 1; padding: 20px; }
-  .game { min-height: 166px; background: var(--th-card); border: 1px solid var(--th-card-border); border-radius: 16px;
-    padding: 20px; transition: box-shadow .15s ease, transform .15s ease, border-color .15s ease;
-    position: relative; overflow: hidden; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
-  .game.active { cursor: pointer; }
-  .game.active:hover { box-shadow: 0 8px 28px -6px rgba(0,0,0,.45); transform: translateY(-2px); }
-  .game.active.selected { border-color: var(--twilio-red); box-shadow: 0 0 0 2px var(--twilio-red); transform: translateY(-2px); }
-  .game.soon { opacity: .55; }
-  .game .badge { position: absolute; top: 14px; right: 14px; font-family: 'Twilio Sans Mono', monospace;
-    font-size: 10px; letter-spacing: .06em; text-transform: uppercase; padding: 3px 8px; border-radius: 999px; }
-  .game.active .badge { background: rgba(239,34,58,.16); color: #FD7685; }
-  .game.soon .badge { background: var(--th-raised); color: var(--th-text-muted); }
-  .game h3 { min-height: 44px; max-width: calc(100% - 76px); font-size: 22px; margin-bottom: 6px; }
-  .game p { min-height: 68px; color: var(--th-text-dim); font-size: 14px; margin: 0; }
-
-  /* ---- play button ---- */
-  #playBtn { display: block; width: 100%; margin-top: 20px; padding: 14px 24px; font: inherit;
-    font-family: 'Twilio Sans Display', ui-sans-serif, system-ui, sans-serif;
-    font-weight: 800; font-size: 17px; letter-spacing: .02em; border: none; border-radius: 12px;
-    background: var(--twilio-red); color: #fff; cursor: pointer; transition: opacity .15s ease, transform .1s ease; }
-  #playBtn:hover { opacity: .9; }
-  #playBtn:active { transform: scale(0.98); }
-  #playBtn:disabled { opacity: .35; cursor: not-allowed; transform: none; }
-
-  footer { color: var(--th-text-muted); font-size: 12px; padding: 0 24px 30px; max-width: 1080px; width: 100%; }
-  @media (max-width: 640px) {
-    header { align-items: flex-start; flex-wrap: wrap; gap: 12px; }
-    .brand .name { width: auto; }
-    #header-controls { width: 100%; justify-content: flex-end; }
-    .games { grid-template-columns: 1fr; }
-    .game { min-height: 150px; }
-  }
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Twilio Games</title>
+  <link rel="icon" href="/brand/Twilio_Logo_Bug_White.svg">
+  <script>
+    (function () {
+      var theme = localStorage.getItem('twilio-home-theme') || 'light';
+      document.documentElement.setAttribute('data-theme', theme);
+    })();
+  </script>
+  <link rel="stylesheet" href="./home.css">
 </head>
 <body>
-  <header>
-    <div class="brand">
-      <img src="/brand/Twilio_Logo_Bug_White.svg" alt="Twilio" class="sidebar-logo" />
-      <span class="name" id="brandName">Twilio&nbsp;Games</span>
+  <header class="station-header">
+    <div class="brand-lockup">
+      <img src="/brand/Twilio_Logo_Bug_White.svg" alt="Twilio">
+      <div><strong>Twilio Games</strong><span id="brandTagline">One screen. Your phone. Your voice.</span></div>
     </div>
     <div id="header-controls">
-      <button id="themeToggle" title="Toggle theme">Light theme</button>
+      <span id="connectionState" class="sr-only" role="status" aria-live="polite">Connecting</span>
+      <a id="operatorLink" class="header-icon-button" href="/operator" title="Operator console" aria-label="Operator console">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3"></circle><path d="M3.5 19a5.5 5.5 0 0 1 11 0"></path><circle cx="18" cy="15" r="2.5"></circle><path d="M18 10.5v2M18 17.5v2M13.5 15h2M20.5 15h2M14.8 11.8l1.4 1.4M19.8 16.8l1.4 1.4M21.2 11.8l-1.4 1.4M16.2 16.8l-1.4 1.4"></path></svg>
+      </a>
+      <button id="themeToggle" class="header-icon-button" type="button" title="Dark theme" aria-label="Dark theme"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z"></path></svg></button>
     </div>
   </header>
 
-  <section class="hero">
-    <div class="eyebrow" id="heroEyebrow">Voice-controlled party games · powered by Twilio</div>
-    <h1 id="heroTitle">Play with your <span class="accent">voice.</span></h1>
-    <p id="heroDescription">Multiplayer party games controlled entirely by voice. <br>Players call in from any phone and shout commands to play.</p>
-  </section>
-
-  <main>
-    <div class="section-title" id="gamesHeading">Choose a game</div>
-    <div class="games-wrapper">
-      <div class="video-bg" id="videoBg">
-        <video src="/video/vr-demo.mp4" loop muted playsinline data-game="racer"></video>
-        <video src="/video/vm-demo.mp4" loop muted playsinline data-game="monsters"></video>
-        <video src="/video/vf-demo.mp4" loop muted playsinline data-game="fighter"></video>
+  <main id="stationRoot">
+    <section id="standaloneView" class="station-view standalone-view" hidden>
+      <div class="standalone-heading">
+        <span class="eyebrow" id="standaloneEyebrow">Voice-controlled party games · powered by Twilio</span>
+        <h1 id="standaloneTitle">Play with your <span>voice.</span></h1>
+        <p id="standaloneDescription">Choose a game on the shared screen. Players call from any phone and use their voices as controllers.</p>
       </div>
-      <div class="games" id="games"></div>
-    </div>
-    <button id="playBtn" disabled>Select a game to play</button>
-  </main>
+      <div id="standaloneGames" class="standalone-games"></div>
+    </section>
 
-  <footer id="homeFooter">
-    Built as a Twilio showcase — Voice, Conversation Relay, and more. Models CC-BY (see credits).
-  </footer>
+    <section id="recruitingView" class="station-view recruiting-view">
+      <div class="game-mosaic" aria-label="Twilio Games">
+        <article class="mosaic-tile mosaic-racer">
+          <video src="/video/vr-demo.mp4" loop muted playsinline></video>
+        </article>
+        <article class="mosaic-tile mosaic-monsters">
+          <video src="/video/vm-demo.mp4" loop muted playsinline></video>
+        </article>
+        <article class="mosaic-tile mosaic-fighter">
+          <video src="/video/vf-demo.mp4" loop muted playsinline></video>
+        </article>
+        <div class="mosaic-message">
+          <span class="eyebrow" id="phaseEyebrow">Now recruiting</span>
+          <h1 id="phaseTitle">Your voice is the controller.</h1>
+          <p id="phaseDescription">Scan, join, and reply <b>COIN</b> when you are ready at the screen.</p>
+        </div>
+      </div>
+
+      <aside class="join-panel">
+        <div class="join-heading"><span id="joinEyebrow" class="eyebrow">Join from your phone</span><strong id="joinTitle">Scan to play</strong></div>
+        <div class="ready-summary">
+          <strong id="readyCount">0</strong>
+          <span id="readyLabel">players ready</span>
+          <time id="phaseTimer">Waiting for first coin</time>
+        </div>
+        <div id="readyRoster" class="ready-roster" aria-live="polite"></div>
+        <div class="join-qr"><canvas id="joinQr" aria-label="Join Twilio Games QR code"></canvas></div>
+        <ol class="join-steps">
+          <li><span class="step-number">1</span><span id="joinStepOne">Choose SMS or WhatsApp</span></li>
+          <li><span class="step-number">2</span><span id="joinStepTwo">Complete the quick intro</span></li>
+          <li><span class="step-number">3</span><span id="joinStepThree">Reply <b>COIN</b> at the screen</span></li>
+        </ol>
+      </aside>
+    </section>
+
+    <section id="selectionView" class="station-view selection-view" hidden>
+      <div class="selection-heading">
+        <span id="selectionEyebrow" class="eyebrow">Phase two</span>
+        <h1 id="selectionTitle">Choose the next arena.</h1>
+        <p id="selectionDescription">Capacity changes who plays now and who keeps priority for the next game.</p>
+        <time id="selectionTimer">0:30</time>
+      </div>
+      <div id="gameCards" class="game-cards"></div>
+    </section>
+
+    <section id="countdownView" class="station-view countdown-view" hidden>
+      <img src="/brand/Twilio_Logo_Bug_White.svg" alt="">
+      <span id="countdownEyebrow" class="eyebrow">Players locked</span>
+      <h1 id="lockedGame">Voice Racer</h1>
+      <strong id="lockedCountdown">10</strong>
+      <p id="countdownDescription">Stay close. The game is loading on this screen.</p>
+    </section>
+    <aside id="persistentJoin" class="persistent-join" hidden>
+      <div><span id="persistentJoinLabel">Next round</span><strong id="persistentJoinTitle">Scan to join</strong></div>
+      <canvas id="persistentJoinQr" aria-label="Join the next Twilio Games round"></canvas>
+    </aside>
+  </main>
 
   <script type="module" src="./home.ts"></script>
 </body>

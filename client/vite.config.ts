@@ -13,13 +13,21 @@ import { resolve } from 'path';
 // (`/editor/` → editor/index.html) but lets bare `/editor` fall through to the root page. This
 // middleware redirects the bare paths to their slashed form so `/editor` and `/garage`
 // work as typed. (Production static hosts serve folder index.html for the bare path natively.)
-const editorIndexRedirect = () => ({
-  name: 'editor-index-redirect',
+const cleanIndexRoutes = () => ({
+  name: 'clean-index-routes',
   configureServer(server: { middlewares: { use: (fn: (req: { url?: string }, res: { writeHead: (c: number, h: Record<string, string>) => void; end: () => void }, next: () => void) => void) => void } }) {
     server.middlewares.use((req, res, next) => {
-      const url = (req.url ?? '').split('?')[0];
-      if (url === '/editor' || url === '/garage' || url === '/analytics') {
-        res.writeHead(301, { Location: url + '/' }); res.end(); return;
+      const requestUrl = req.url ?? '';
+      const url = requestUrl.split('?')[0];
+      if (url === '/operator' || url === '/operator/' || url === '/player' || url === '/player/') {
+        req.url = `/arcade/${requestUrl.slice(url.length)}`;
+        next(); return;
+      }
+      if (url === '/arcade' || url === '/arcade/' || url === '/arcade/index.html') {
+        res.writeHead(404, { 'Content-Type': 'text/plain' });res.end();return;
+      }
+      if (url === '/editor' || url === '/garage' || url === '/analytics' || url === '/join') {
+        res.writeHead(301, { Location: `${url}/${requestUrl.slice(url.length)}` }); res.end(); return;
       }
       next();
     });
@@ -30,10 +38,11 @@ export default defineConfig(({ mode }) => {
   const gameServer = loadEnv(mode, __dirname, '').GAME_SERVER_URL || 'http://localhost:8080';
   return {
     root: __dirname,
-    plugins: [editorIndexRedirect()],
+    plugins: [cleanIndexRoutes()],
     server: {
       proxy: {
         '/api': { target: gameServer, changeOrigin: true },
+        '/auth': { target: gameServer, changeOrigin: true },
         '/game': { target: gameServer, ws: true, bypass: bypassNonWebSocket },
         '/battle': { target: gameServer, ws: true, bypass: bypassNonWebSocket },
         '/fighter': { target: gameServer, ws: true, bypass: bypassNonWebSocket },
@@ -59,6 +68,8 @@ export default defineConfig(({ mode }) => {
           editor: resolve(__dirname, 'editor/index.html'),          // unified Level Editor (/editor)
           garage: resolve(__dirname, 'garage/index.html'),          // model viewer + configurator (/garage)
           analytics: resolve(__dirname, 'analytics/index.html'),    // private activation analytics (/analytics)
+          arcade: resolve(__dirname, 'arcade/index.html'),          // Twilio Games player and operator pages
+          join: resolve(__dirname, 'join/index.html'),              // localized SMS / WhatsApp chooser
         },
       },
     },

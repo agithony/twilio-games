@@ -4,11 +4,12 @@ import zlib from 'node:zlib';
 import { createReadStream } from 'node:fs';
 import { readFile, writeFile, readdir, rename, mkdir, stat } from 'node:fs/promises';
 import { WebSocketServer, WebSocket } from 'ws';
+import twilio from 'twilio';
 import { GameServer } from './game-server';
 import { BattleServer } from './battle-server';
 import { FighterServer } from './fighter-server';
 import { ConversationRelayAdapter } from './conversation-relay';
-import { twimlConnectRelay, twimlMessage, twimlEmpty } from './twiml';
+import { twimlConnectRelay, twimlMessage, twimlEmpty, twimlSayAndHangup } from './twiml';
 import { validateTwilioSignature } from './twilio-signature';
 import { ManifestStore } from './manifest-store';
 import { parseManifest } from '../shared/asset-manifest';
@@ -33,6 +34,8 @@ import { AnalyticsStore, validDate } from './analytics-store';
 import { AnalyticsObserver } from './analytics-observer';
 import { analyticsPdf } from './analytics-pdf';
 import { GoogleAnalyticsAuth } from './google-analytics-auth';
+import type { ArcadeApi } from './arcade-api';
+import type { ArcadeTacGateway } from './arcade-tac-gateway';
 import { DEFAULT_LOCALE, SUPPORTED_LOCALES, resolveLocale, type SupportedLocale } from '../shared/i18n/locales';
 import { RACER_MESSAGES } from '../shared/i18n/racer';
 import { MONSTERS_MESSAGES } from '../shared/i18n/monsters';
@@ -53,6 +56,7 @@ import {
 
 const BATTLE_VOICE_RECONNECT_GRACE_MS = 30_000;
 const FIGHTER_VOICE_RECONNECT_GRACE_MS = 30_000;
+const RACER_VOICE_RECONNECT_GRACE_MS = 30_000;
 
 export function isRacerAdvanceWord(spoken: string, locale: SupportedLocale = DEFAULT_LOCALE): boolean {
   const text = normalizeForMatching(spoken, locale);
@@ -71,6 +75,12 @@ interface FighterVoiceCallBinding {
   code: string; playerId: string; activeSession: FighterVoiceSession | null;
   leaveTimer: ReturnType<typeof setTimeout> | null;
 }
+interface RacerVoiceCallBinding {
+  code: string;
+  playerId: string;
+  activeAdapter: ConversationRelayAdapter | null;
+  leaveTimer: ReturnType<typeof setTimeout> | null;
+}
 
 export class HttpServer {
   private server: http.Server;
@@ -80,6 +90,7 @@ export class HttpServer {
   private voiceWss: WebSocketServer;
   private readonly port: number;
   private readonly authToken?: string;
+  private readonly authTokens: readonly string[];
   private readonly publicBaseUrl: string;
   private readonly validateSignatures: boolean;
   private manifestStore: ManifestStore;
@@ -95,11 +106,15 @@ export class HttpServer {
   private readonly analytics: AnalyticsStore;
   private readonly analyticsObserver: AnalyticsObserver;
   private readonly analyticsAuth: GoogleAnalyticsAuth;
+  private readonly arcadeApi?: ArcadeApi;
+  private readonly arcadeTacGateway?: ArcadeTacGateway;
   /** The Vite-built client directory served in production (one-process container). */
   private readonly clientDir: string;
   /** Phone number players CALL to join (from GAME_PHONE_NUMBER). '' = unset → the lobby shows a
    *  placeholder. Exposed to the client via GET /api/config so the lobby QR + copy show the real number. */
   private readonly gamePhoneNumber: string;
+  private readonly smsNumber: string;
+  private readonly whatsappNumber: string;
   /** ElevenLabs voiceId for Conversation Relay talk-back (greeting/countdown/result). From the
    *  CR_TTS_VOICE env; empty → Relay's default voice (talk-back text still sends, just in the default
    *  voice). A high-energy announcer voiceId is the intended default set in deploy config. */
@@ -119,7 +134,7 @@ export class HttpServer {
   /** Cached car display names (manifest order) for concierge confirmations; refreshed with config. */
   private carNamesCache: string[] = [];
   /** Per-phone reply lock so two rapid texts from one number serialize (read-modify-write safety). */
-  private smsLocks = new Map<string, Promise<void>>();
+  private smsLocks = new Map<string, Promise<unknown>>();
   private smsSweepTimer: ReturnType<typeof setInterval> | null = null;
   /** Voice talk-back registry: roomCode → the live ConversationRelay adapters (callers) in that room.
    *  The game loop's per-room events (onRoomEvents) are fanned to these so callers hear countdown/
@@ -131,6 +146,7 @@ export class HttpServer {
   /** Conversation Relay may reconnect the WS for the same phone call. Keep callSid → player binding
    *  briefly so a transport reconnect resumes the active battle instead of re-running onboarding. */
   private battleVoiceCallBindings = new Map<string, BattleVoiceCallBinding>();
+  private racerVoiceCallBindings = new Map<string, RacerVoiceCallBinding>();
   private fighterVoice = new Map<string, Set<FighterVoiceSession>>();
   private fighterVoiceCallBindings = new Map<string, FighterVoiceCallBinding>();
   private lastGameWsAt = 0;
@@ -140,6 +156,8 @@ export class HttpServer {
   private readonly fighterMapsPath: string;
   private readonly bundledFighterMapsPath: string;
   private readonly fighterPreviewDir: string;
+  private readonly activeStationEngines = new Set<string>();
+  private readonly voiceSockets = new Map<WebSocket, () => string | null>();
   /** The conversational AI host (OpenAI, or a null no-op when OPENAI_API_KEY is unset → scripted
    *  fallback). Turns a caller's natural-language menu utterances into spoken replies + game actions. */
   private llm: LlmClient;
@@ -147,6 +165,7 @@ export class HttpServer {
   constructor(opts: {
     port: number;
     authToken?: string;
+    additionalAuthTokens?: readonly string[];
     publicBaseUrl: string;
     broadcastHz?: number;
     validateSignatures?: boolean;
@@ -159,17 +178,26 @@ export class HttpServer {
     editorToken?: string;    // when set, /api writes require ?token= or x-editor-token; open if unset
     clientDir?: string;      // the Vite-built client to serve (prod single-process); default client/dist
     gamePhoneNumber?: string;// the number players CALL to join (shown + QR-encoded in the lobby)
+    smsNumber?: string;// SMS-capable sender/receiver, separate from locale-specific voice numbers
+    whatsappNumber?: string;// approved WhatsApp sender, with or without the whatsapp: prefix
     fighterMapsPath?: string;
     bundledFighterMapsPath?: string;
     fighterPreviewDir?: string;
+    fighterDisplayToken?: string;
     analyticsPath?: string;
     googleOAuthClientId?: string;
     googleOAuthClientSecret?: string;
     analyticsAllowedEmail?: string;
     analyticsAuth?: GoogleAnalyticsAuth;
+    arcadeApi?: ArcadeApi;
+    arcadeTacGateway?: ArcadeTacGateway;
   }) {
     this.port = opts.port;
     this.authToken = opts.authToken;
+    this.authTokens = Object.freeze([...new Set([
+      opts.authToken,
+      ...(opts.additionalAuthTokens ?? []),
+    ].map(value => value?.trim()).filter((value): value is string => Boolean(value))) ]);
     this.publicBaseUrl = opts.publicBaseUrl.replace(/\/$/, '');
     this.validateSignatures = opts.validateSignatures ?? true;
     this.manifestStore = new ManifestStore(opts.manifestPath ?? 'assets/manifest.json');
@@ -185,12 +213,16 @@ export class HttpServer {
       clientId: opts.googleOAuthClientId, clientSecret: opts.googleOAuthClientSecret,
       redirectUri: `${this.publicBaseUrl}/auth/google/callback`, allowedEmail: opts.analyticsAllowedEmail,
     });
+    this.arcadeApi = opts.arcadeApi;
+    this.arcadeTacGateway = opts.arcadeTacGateway;
     this.analytics = new AnalyticsStore(opts.analyticsPath ?? 'data/analytics.json', opts.googleOAuthClientSecret?.trim() || 'twilio-games-analytics');
     this.analyticsObserver = new AnalyticsObserver(this.analytics);
     if (process.env.NODE_ENV === 'production' && !this.editorToken) console.warn('[security] EDITOR_TOKEN is unset; editor writes remain open');
     if (process.env.NODE_ENV === 'production' && !this.analyticsAuth.configured) console.warn('[security] Google OAuth is unset; analytics access is disabled');
     this.clientDir = opts.clientDir ?? 'client/dist';
     this.gamePhoneNumber = (opts.gamePhoneNumber ?? '').trim();
+    this.smsNumber = (opts.smsNumber ?? '').trim();
+    this.whatsappNumber = (opts.whatsappNumber ?? '').trim().replace(/^whatsapp:/i, '');
     this.fighterMapsPath = opts.fighterMapsPath ?? 'data/fighter-maps.json';
     this.bundledFighterMapsPath = opts.bundledFighterMapsPath ?? 'assets/fighters/maps/maps.json';
     this.fighterPreviewDir = opts.fighterPreviewDir ?? 'data/fighter-previews';
@@ -199,7 +231,8 @@ export class HttpServer {
     this.defaultLocale = resolveLocale(process.env.DEFAULT_LOCALE, DEFAULT_LOCALE);
     // Conversational AI host: OpenAI when OPENAI_API_KEY is set (model via OPENAI_MODEL), else a
     // null client so the game degrades gracefully to the scripted phrase-bank lines.
-    const openaiKey = (process.env.OPENAI_API_KEY ?? '').trim();
+    const configuredOpenAiKey = (process.env.OPENAI_API_KEY ?? '').trim();
+    const openaiKey = configuredOpenAiKey === 'disabled' ? '' : configuredOpenAiKey;
     this.llm = openaiKey
       ? new OpenAiClient({ apiKey: openaiKey, model: (process.env.OPENAI_MODEL ?? '').trim() || undefined })
       : new NullLlmClient();
@@ -211,23 +244,44 @@ export class HttpServer {
         res.end('internal error');
       });
     });
-    this.game = new GameServer({ server: this.server, broadcastHz: opts.broadcastHz });
+    this.game = new GameServer({
+      server: this.server, broadcastHz: opts.broadcastHz, displayToken: opts.fighterDisplayToken,
+    });
     // Voice Monsters lives on its own /battle WebSocket (turn-based, event-driven — separate from the
     // racer's continuous-sim GameServer). Mounted on the same HTTP host so one number serves both.
-    this.battle = new BattleServer({ server: this.server });
-    this.fighter = new FighterServer({ server: this.server, displayToken: process.env.FIGHTER_DISPLAY_TOKEN });
+    this.battle = new BattleServer({ server: this.server, displayToken: opts.fighterDisplayToken });
+    this.fighter = new FighterServer({ server: this.server, displayToken: opts.fighterDisplayToken ?? process.env.FIGHTER_DISPLAY_TOKEN });
+    this.arcadeApi?.setStationAbortHandler?.((game, roomCode) => this.abortStationEngine(game, roomCode));
+    const allowBrowserPlayer = (roomCode: string) => !this.arcadeApi?.isStationEngineRoom(roomCode);
+    this.game.setBrowserPlayerAdmission(allowBrowserPlayer);
+    this.battle.setBrowserPlayerAdmission(allowBrowserPlayer);
+    this.fighter.setBrowserPlayerAdmission(allowBrowserPlayer);
     // Feed newly-created rooms the selectable cars (manifest) + maps (maps.json). Reads are async
     // and the provider is sync, so keep a cache refreshed at startup + on an interval; rooms read
     // the cache. Empty until the first refresh resolves (rooms then reconfigure on next create).
     this.game.setRoomConfigProvider(() => this.roomConfigCache);
-    this.game.setOnRaceStarted(room => this.analyticsObserver.raceStarted(room));
-    this.game.setOnRaceAbandoned(room => this.analyticsObserver.raceAbandoned(room));
+    this.game.setOnRaceStarted(room => {
+      this.analyticsObserver.raceStarted(room);
+      this.arcadeApi?.stationEngineStarted('racer', room.code);
+    });
+    this.game.setOnRaceAbandoned(room => {
+      this.analyticsObserver.raceAbandoned(room);
+      this.arcadeApi?.stationEngineAbandoned('racer', room.code);
+    });
     void this.refreshRoomConfig();
     this.roomConfigTimer = setInterval(() => void this.refreshRoomConfig(), 5000);
     // Persist each finished race onto the global leaderboard (serialized, atomic).
     this.game.setOnRaceFinished((room) => {
       this.persistRaceResults(room.selectedMap, room.results());
       this.analyticsObserver.raceFinished(room);
+      this.arcadeApi?.stationEngineCompleted('racer', room.code, room.results().map(result => ({
+        enginePlayerId: result.playerId,
+        rank: result.place,
+        completed: result.finished,
+        won: result.place === 1,
+        score: null,
+        durationSeconds: result.finishT,
+      })));
     });
     // Fan a room's game events out to any voice callers in it (greeting/countdown/go/finish talk-back).
     this.game.setOnRoomEvents((roomCode, events) => {
@@ -243,6 +297,9 @@ export class HttpServer {
     });
     this.battle.setOnRoomState((roomCode) => {
       const room = this.battle.findRoom(roomCode); if (room) this.analyticsObserver.battleState(room);
+      this.updateStationEngineLifecycle(
+        'monsters', roomCode, room?.phase, 'battle', ['results'], room?.participantResults() ?? [],
+      );
       const set = this.battleVoice.get(roomCode);
       if (!set) return;
       for (const s of set) s.onBattleStateChanged();
@@ -253,6 +310,17 @@ export class HttpServer {
     });
     this.fighter.setOnRoomState(roomCode => {
       const room = this.fighter.findRoom(roomCode); if (room) this.analyticsObserver.fighterState(room);
+      const state = room?.state();
+      const humanPlayers = state?.players.filter(player => !player.isAi) ?? [];
+      this.updateStationEngineLifecycle('fighter', roomCode, room?.phase, 'fight', ['victory', 'results'],
+        humanPlayers.map((player, index) => ({
+          enginePlayerId: player.playerId,
+          rank: state?.result ? (player.side === state.result.winner ? 1 : 2) : index + 1,
+          completed: Boolean(state?.result),
+          won: state?.result ? player.side === state.result.winner : null,
+          score: null,
+          durationSeconds: null,
+        })));
       const set = this.fighterVoice.get(roomCode); if (!set) return;
       for (const session of set) session.onStateChanged();
     });
@@ -277,6 +345,61 @@ export class HttpServer {
         socket.destroy();
       }
     });
+  }
+
+  private updateStationEngineLifecycle(
+    game: 'monsters' | 'fighter',
+    roomCode: string,
+    phase: string | undefined,
+    startedPhase: string,
+    completedPhases: readonly string[],
+    results: readonly import('../shared/arcade-station').StationEngineParticipantResult[] = [],
+  ): void {
+    const key = `${game}:${roomCode}`;
+    const started = this.activeStationEngines.has(key);
+    if (phase === startedPhase) {
+      if (started) return;
+      this.activeStationEngines.add(key);
+      this.arcadeApi?.stationEngineStarted(game, roomCode);
+      return;
+    }
+    if (!started) return;
+    this.activeStationEngines.delete(key);
+    if (phase && completedPhases.includes(phase)) {
+      this.arcadeApi?.stationEngineCompleted(game, roomCode, results);
+    } else {
+      this.arcadeApi?.stationEngineAbandoned(game, roomCode);
+    }
+  }
+
+  private abortStationEngine(game: 'racer' | 'monsters' | 'fighter', roomCode: string): void {
+    for (const [socket, boundRoom] of this.voiceSockets) {
+      if (boundRoom() === roomCode) socket.close(4002, 'station recovery');
+    }
+    if (game === 'racer') {
+      for (const adapter of [...(this.voiceAdapters.get(roomCode) ?? [])]) adapter.handleClose();
+      this.voiceAdapters.delete(roomCode);
+      this.game.abortRoom(roomCode);
+    } else if (game === 'monsters') {
+      for (const session of [...(this.battleVoice.get(roomCode) ?? [])]) session.handleReplaced();
+      this.battleVoice.delete(roomCode);
+      for (const [callSid, binding] of this.battleVoiceCallBindings) {
+        if (binding.code !== roomCode) continue;
+        if (binding.leaveTimer) clearTimeout(binding.leaveTimer);
+        this.battleVoiceCallBindings.delete(callSid);
+      }
+      this.battle.abortRoom(roomCode);
+    } else {
+      for (const session of [...(this.fighterVoice.get(roomCode) ?? [])]) session.handleReplaced();
+      this.fighterVoice.delete(roomCode);
+      for (const [callSid, binding] of this.fighterVoiceCallBindings) {
+        if (binding.code !== roomCode) continue;
+        if (binding.leaveTimer) clearTimeout(binding.leaveTimer);
+        this.fighterVoiceCallBindings.delete(callSid);
+      }
+      this.fighter.abortRoom(roomCode);
+    }
+    this.activeStationEngines.delete(`${game}:${roomCode}`);
   }
 
   /** Refresh the cached lobby choices: car count + names from the manifest, map keys from maps.json. */
@@ -354,13 +477,16 @@ export class HttpServer {
   }
 
   /** Run an SMS handler serialized per phone number (chained promises keyed by `from`). */
-  private async runSmsSerialized(from: string, fn: () => string): Promise<string> {
+  private async runSmsSerialized(from: string, fn: () => string | Promise<string>): Promise<string> {
     const prior = this.smsLocks.get(from) ?? Promise.resolve();
-    let result = '';
-    const run = prior.then(() => { result = fn(); });
-    this.smsLocks.set(from, run.catch(() => {}));
-    await run;
-    return result;
+    const run = prior.then(fn);
+    const tracked = run.catch(() => {});
+    this.smsLocks.set(from, tracked);
+    try {
+      return await run;
+    } finally {
+      if (this.smsLocks.get(from) === tracked) this.smsLocks.delete(from);
+    }
   }
 
   private onVoiceConnection(ws: WebSocket): void {
@@ -368,8 +494,10 @@ export class HttpServer {
     let relayLocale = this.defaultLocale;
     // Per-CALLER conversation history (this WS only), so the AI host has context across turns.
     const history: LlmTurn[] = [];
-    const adapter = new ConversationRelayAdapter({
+    let adapter: ConversationRelayAdapter;
+    adapter = new ConversationRelayAdapter({
       findOrCreateRoom: (code) => this.game.getOrCreateRoom(code),
+      resumePlayer: (callSid, code) => this.resumeRacerVoiceCall(callSid, code, adapter),
       // SPEAK to the caller: Conversation Relay TTS-synthesizes {type:'text'} tokens onto the call.
       // `last:true` marks a complete utterance so Relay flushes it promptly.
       say: (text) => sendRelayText(ws, text, relayLocale),
@@ -418,9 +546,15 @@ export class HttpServer {
     let route: 'racer' | 'battle' | 'fighter' | null = null;
     let battle: BattleVoiceSession | null = null;
     let fighter: FighterVoiceSession | null = null;
+    let relayCallSid = '';
+    let stationCallSid = '';
+    let stationReadyEntryId = '';
+    let socketClosed = false;
+    this.voiceSockets.set(ws, () => route === 'battle' ? battle?.boundRoom ?? null
+      : route === 'fighter' ? fighter?.boundRoomCode ?? null
+        : adapter.boundRoomCode);
     const say = (text: string) => sendRelayText(ws, text, relayLocale);
-    ws.on('message', (d) => {
-      const raw = d.toString();
+    const processFrame = (raw: string) => {
       if (route === null) {
         try {
           const parameters = JSON.parse(raw)?.customParameters;
@@ -446,10 +580,69 @@ export class HttpServer {
       } else {
         adapter.handleMessage(raw);
       }
+      try {
+        const setup = JSON.parse(raw);
+        if (setup?.type === 'setup') {
+          relayCallSid = String(setup.callSid ?? '');
+          const readyEntryId = String(setup.customParameters?.readyEntryId ?? '');
+          const bound = route === 'battle' ? battle?.boundPlayerId
+            : route === 'fighter' ? fighter?.boundPlayerId : adapter.boundPlayerId;
+          if (bound && readyEntryId) {
+              this.arcadeApi?.stationVoiceParticipantConnected(String(setup.callSid ?? ''), readyEntryId, bound);
+          }
+          if (route === 'racer' && bound && adapter.boundRoomCode) {
+            this.rememberRacerVoiceCall(relayCallSid, adapter.boundRoomCode, bound, adapter);
+          }
+        }
+      } catch { /* individual handlers already validate malformed setup frames */ }
+    };
+    let frameQueue = Promise.resolve();
+    ws.on('message', d => {
+      const raw = d.toString();
+      frameQueue = frameQueue.then(async () => {
+        let setup: Record<string, any> | null = null;
+        try {
+          const parsed = JSON.parse(raw) as unknown;
+          setup = parsed && typeof parsed === 'object' && (parsed as Record<string, unknown>).type === 'setup'
+            ? parsed as Record<string, any>
+            : null;
+        } catch { /* The existing frame parser handles malformed input. */ }
+        const readyEntryId = String(setup?.customParameters?.readyEntryId ?? '');
+        if (readyEntryId) {
+          const valid = await this.arcadeApi?.validateStationVoiceSetup({
+            callSid: String(setup?.callSid ?? ''),
+            readyEntryId,
+            matchId: String(setup?.customParameters?.matchId ?? ''),
+            launchGeneration: Number(setup?.customParameters?.launchGeneration),
+            game: String(setup?.customParameters?.game ?? ''),
+            roomCode: String(setup?.customParameters?.roomCode ?? ''),
+          }) ?? false;
+          if (!valid) {
+            ws.close(1008, 'stale station assignment');
+            return;
+          }
+          if (socketClosed) return;
+          stationCallSid = String(setup?.callSid ?? '');
+          stationReadyEntryId = readyEntryId;
+        }
+        processFrame(raw);
+      }).catch(() => ws.close(1011, 'voice setup failed'));
     });
     ws.on('close', () => {
+      socketClosed = true;
+      this.voiceSockets.delete(ws);
       console.log('[CR] voice WebSocket closed');
-      if (battle) battle.handleClose(); else if (fighter) fighter.handleClose(); else adapter.handleClose();
+      if (stationCallSid && stationReadyEntryId) {
+        this.arcadeApi?.stationVoiceParticipantDisconnected(stationCallSid, stationReadyEntryId);
+      }
+      if (battle) battle.handleClose();
+      else if (fighter) fighter.handleClose();
+      else if (adapter.boundRoomCode && adapter.boundPlayerId && relayCallSid) {
+        this.scheduleRacerVoiceLeave(
+          adapter.boundRoomCode, adapter.boundPlayerId, relayCallSid, adapter,
+        );
+        adapter.handleClose(true);
+      } else adapter.handleClose();
     });
   }
 
@@ -565,6 +758,76 @@ export class HttpServer {
 
   private registerFighterVoiceSession(code: string, session: FighterVoiceSession): void {
     let set = this.fighterVoice.get(code); if (!set) { set = new Set(); this.fighterVoice.set(code, set); } set.add(session);
+  }
+
+  private rememberRacerVoiceCall(
+    callSid: string,
+    code: string,
+    playerId: string,
+    adapter: ConversationRelayAdapter,
+  ): void {
+    const sid = callSid.trim();
+    if (!sid) return;
+    const prior = this.racerVoiceCallBindings.get(sid);
+    if (prior?.leaveTimer) clearTimeout(prior.leaveTimer);
+    if (prior?.activeAdapter && prior.activeAdapter !== adapter) prior.activeAdapter.handleClose(true);
+    if (prior && (prior.code !== code || prior.playerId !== playerId)) {
+      this.game.voiceLeave(prior.code, prior.playerId);
+    }
+    this.racerVoiceCallBindings.set(sid, {
+      code, playerId, activeAdapter: adapter, leaveTimer: null,
+    });
+  }
+
+  private resumeRacerVoiceCall(
+    callSid: string,
+    code: string,
+    adapter: ConversationRelayAdapter,
+  ): { playerId: string; lane: number } | null {
+    const sid = callSid.trim();
+    if (!sid) return null;
+    const binding = this.racerVoiceCallBindings.get(sid);
+    const playerExists = this.game.findRoom(code)?.lobbyPlayers()
+      .some(player => player.playerId === binding?.playerId) === true;
+    if (!binding || binding.code !== code || !playerExists) return null;
+    if (binding.leaveTimer) clearTimeout(binding.leaveTimer);
+    if (binding.activeAdapter && binding.activeAdapter !== adapter) binding.activeAdapter.handleClose(true);
+    binding.activeAdapter = adapter;
+    binding.leaveTimer = null;
+    return { playerId: binding.playerId, lane: 0 };
+  }
+
+  private scheduleRacerVoiceLeave(
+    code: string,
+    playerId: string,
+    callSid: string,
+    adapter: ConversationRelayAdapter,
+  ): void {
+    const sid = callSid.trim();
+    if (!sid) { this.game.voiceLeave(code, playerId); return; }
+    const binding = this.racerVoiceCallBindings.get(sid);
+    if (binding?.activeAdapter && binding.activeAdapter !== adapter) return;
+    if (binding?.leaveTimer) clearTimeout(binding.leaveTimer);
+    const leaveTimer = setTimeout(() => {
+      const current = this.racerVoiceCallBindings.get(sid);
+      if (!current || current.code !== code || current.playerId !== playerId) return;
+      this.racerVoiceCallBindings.delete(sid);
+      this.game.voiceLeave(code, playerId);
+    }, RACER_VOICE_RECONNECT_GRACE_MS);
+    leaveTimer.unref?.();
+    this.racerVoiceCallBindings.set(sid, {
+      code, playerId, activeAdapter: null, leaveTimer,
+    });
+  }
+
+  private endRacerVoiceCall(callSid: string): void {
+    const sid = callSid.trim();
+    const binding = this.racerVoiceCallBindings.get(sid);
+    if (!binding) return;
+    if (binding.leaveTimer) clearTimeout(binding.leaveTimer);
+    if (binding.activeAdapter) binding.activeAdapter.handleClose(true);
+    this.racerVoiceCallBindings.delete(sid);
+    this.game.voiceLeave(binding.code, binding.playerId);
   }
   private unregisterFighterVoiceSession(session: FighterVoiceSession): void {
     for (const [code, set] of this.fighterVoice) if (set.delete(session) && set.size === 0) this.fighterVoice.delete(code);
@@ -1035,38 +1298,114 @@ export class HttpServer {
     return null;
   }
 
+  private validatePrimaryTwilioForm(
+    signature: string | undefined,
+    url: string,
+    params: Record<string, string>,
+  ): boolean {
+    return Boolean(this.authToken) && validateTwilioSignature({
+      authToken: this.authToken!, signature, url, params,
+    });
+  }
+
+  private validateTwilioVoiceForm(
+    signature: string | undefined,
+    url: string,
+    params: Record<string, string>,
+  ): boolean {
+    return this.authTokens.some(authToken => validateTwilioSignature({
+      authToken, signature, url, params,
+    }));
+  }
+
+  private validatePrimaryTwilioBody(signature: string | undefined, url: string, rawBody: string): boolean {
+    if (!signature || !this.authToken) return false;
+    if (url.includes('bodySHA256=')) {
+      return twilio.validateRequestWithBody(this.authToken, signature, url, rawBody);
+    }
+    let payload: Record<string, unknown>;
+    try { payload = JSON.parse(rawBody || '{}') as Record<string, unknown>; }
+    catch { return false; }
+    return twilio.validateRequest(this.authToken, signature, url, payload);
+  }
+
   private async onRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     const path = (req.url ?? '').split('?')[0] ?? '';
-    // Unauthenticated liveness probe for the ACA deploy smoke + container health checks.
-    if (req.method === 'GET' && path === '/healthz') {
-      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-      res.end(JSON.stringify({ status: 'ok', rooms: this.game.roomCount }));
+    // Process liveness stays independent from repairable Twilio/configuration dependencies.
+    if (req.method === 'GET' && path === '/livez') {
+      res.writeHead(200, {
+        'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*',
+      });
+      res.end('{"status":"alive"}');
       return;
     }
-    if (req.method === 'GET' && path === '/auth/google') { this.analyticsAuth.begin(res); return; }
+    // Dependency-aware health is used by rollout smoke and operational monitoring.
+    if (req.method === 'GET' && path === '/healthz') {
+      const arcadeHealth = this.arcadeApi?.getHealthStatus();
+      const degraded = arcadeHealth?.degraded ?? false;
+      res.writeHead(degraded ? 503 : 200, {
+        'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*',
+      });
+      res.end(JSON.stringify({ status: degraded ? 'degraded' : 'ok', rooms: this.game.roomCount }));
+      return;
+    }
+    if (req.method === 'GET' && path === '/auth/google') { this.analyticsAuth.begin(req, res); return; }
     if (req.method === 'GET' && path === '/auth/google/callback') { await this.analyticsAuth.complete(req, res); return; }
     if (req.method === 'POST' && path === '/auth/logout') { this.analyticsAuth.logout(req, res); return; }
     if (req.method === 'GET' && path === '/api/analytics/session') {
       const user = this.analyticsAuth.currentUser(req);
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-      res.end(JSON.stringify({ authenticated: Boolean(user), configured: this.analyticsAuth.configured, email: user?.email })); return;
+      res.end(JSON.stringify({ authenticated: Boolean(user), analyticsAuthorized: user?.analyticsAuthorized ?? false,
+        configured: this.analyticsAuth.configured, email: user?.email })); return;
+    }
+    if (this.arcadeApi
+      && (path.startsWith('/api/arcade/') || path.startsWith('/api/admin/arcade/'))) {
+      await this.arcadeApi.handle(req, res, path);
+      return;
+    }
+    if (req.method === 'POST' && path === '/twilio/messaging/status') {
+      const body = await readBody(req);
+      const params = Object.fromEntries(new URLSearchParams(body));
+      if (this.validateSignatures) {
+        if (!this.authToken) {
+          res.writeHead(500).end('signature validation enabled but TWILIO_AUTH_TOKEN not configured');
+          return;
+        }
+        const signature = req.headers['x-twilio-signature'];
+        const exactUrl = `${this.publicBaseUrl}${req.url ?? path}`;
+        const valid = this.validatePrimaryTwilioForm(
+          Array.isArray(signature) ? signature[0] : signature, exactUrl, params,
+        );
+        if (!valid) {
+          res.writeHead(403).end('invalid signature');
+          return;
+        }
+      }
+      const callbackUrl = new URL(req.url ?? path, 'http://localhost');
+      await this.arcadeApi?.processMessagingStatusCallback({
+        notificationId: callbackUrl.searchParams.get('n') ?? '',
+        attemptId: callbackUrl.searchParams.get('a') ?? '',
+        providerMessageId: params['MessageSid'] ?? '',
+        providerStatus: params['MessageStatus'] ?? '',
+        errorCode: params['ErrorCode'] || null,
+        errorMessage: params['ChannelStatusMessage'] || null,
+      });
+      res.writeHead(204).end();
+      return;
     }
     if (req.method === 'POST' && (path === '/voice/incoming' || path === '/voice/join')) {
       const body = await readBody(req);
       const params = Object.fromEntries(new URLSearchParams(body));
       const fullUrl = `${this.publicBaseUrl}${path}`;
       if (this.validateSignatures) {
-        if (!this.authToken) {
+        if (!this.authTokens.length) {
           res.writeHead(500).end('signature validation enabled but TWILIO_AUTH_TOKEN not configured');
           return;
         }
         const sig = req.headers['x-twilio-signature'];
-        const ok = validateTwilioSignature({
-          authToken: this.authToken,
-          signature: Array.isArray(sig) ? sig[0] : sig,
-          url: fullUrl,
-          params,
-        });
+        const ok = this.validateTwilioVoiceForm(
+          Array.isArray(sig) ? sig[0] : sig, fullUrl, params,
+        );
         if (!ok) {
           res.writeHead(403).end('invalid signature');
           return;
@@ -1076,12 +1415,39 @@ export class HttpServer {
       // keypad step (fewest taps: scan QR → call → you're racing). One display / one game at a time.
       // /voice/join is kept as an alias in case a legacy DTMF-gathered call still hits it (uses the
       // dialed Digits if present, else the default room).
-      const roomCode = path === '/voice/join'
+      const fallbackRoomCode = path === '/voice/join'
         ? ((params['Digits'] ?? '').trim() || DEFAULT_ROOM)
         : DEFAULT_ROOM;
-      // MULTI-GAME: one number. Auto-route to whichever game's screen most recently opened.
-      const voiceGame = this.recentVoiceGame();
-      const voiceLocale = this.recentVoiceLocale(voiceGame, roomCode);
+      const stationRoute = await this.arcadeApi?.stationVoiceRoute(
+        params['From'] ?? '', params['CallSid'] ?? '',
+      );
+      const dialedLocale = this.arcadeApi?.voiceLocaleForNumber(params['To'] ?? '') ?? null;
+      if (!stationRoute && this.arcadeApi?.requiresStationVoiceAssignment()) {
+        const xml = twimlSayAndHangup(
+          dialedLocale === 'pt-BR'
+            ? 'Voce nao esta em uma partida ativa do Twilio Games. Responda STATUS na mensagem do jogo para receber ajuda.'
+            : 'You are not assigned to an active Twilio Games match. Reply STATUS to the game message for help.',
+          dialedLocale ?? this.defaultLocale,
+        );
+        res.writeHead(200, { 'Content-Type': 'text/xml' }).end(xml);
+        return;
+      }
+      if (stationRoute && !stationRoute.admitted) {
+        const xml = twimlSayAndHangup(
+          dialedLocale === 'pt-BR'
+            ? 'Este telefone nao esta na partida ativa. Responda STATUS na mensagem do jogo para receber ajuda.'
+            : 'This phone is not assigned to the active match. Reply STATUS to the Twilio Games message for help.',
+          dialedLocale ?? this.defaultLocale,
+        );
+        res.writeHead(200, { 'Content-Type': 'text/xml' }).end(xml);
+        return;
+      }
+      const roomCode = stationRoute?.roomCode ?? fallbackRoomCode;
+      // Station assignment is authoritative; connection recency remains only for non-Arcade play.
+      const voiceGame = stationRoute
+        ? stationRoute.game === 'monsters' ? 'battle' : stationRoute.game
+        : this.recentVoiceGame();
+      const voiceLocale = dialedLocale ?? this.recentVoiceLocale(voiceGame, roomCode);
       const xml = twimlConnectRelay({
         wsUrl: `${this.publicBaseUrl.replace(/^http/, 'ws')}/voice`,
         sessionEndedUrl: `${this.publicBaseUrl}/voice/session-ended`,
@@ -1092,6 +1458,9 @@ export class HttpServer {
           ? (process.env.CR_TTS_VOICE_PT_BR ?? '').trim()
           : this.crVoice,
         game: voiceGame === 'battle' ? 'monsters' : voiceGame,
+        readyEntryId: stationRoute?.readyEntryId ?? undefined,
+        matchId: stationRoute?.matchId,
+        launchGeneration: stationRoute?.launchGeneration,
         locale: voiceLocale,
         relayToken: this.voiceRelayToken || undefined,
         hints: this.voiceHints(voiceGame, voiceLocale),
@@ -1107,25 +1476,57 @@ export class HttpServer {
       const body = await readBody(req);
       const params = Object.fromEntries(new URLSearchParams(body));
       if (this.validateSignatures) {
-        if (!this.authToken) {
+        if (!this.authTokens.length) {
           res.writeHead(500).end('signature validation enabled but TWILIO_AUTH_TOKEN not configured');
           return;
         }
         const sig = req.headers['x-twilio-signature'];
-        const ok = validateTwilioSignature({
-          authToken: this.authToken,
-          signature: Array.isArray(sig) ? sig[0] : sig,
-          url: `${this.publicBaseUrl}${path}`,
-          params,
-        });
+        const ok = this.validateTwilioVoiceForm(
+          Array.isArray(sig) ? sig[0] : sig, `${this.publicBaseUrl}${path}`, params,
+        );
         if (!ok) {
           res.writeHead(403).end('invalid signature');
           return;
         }
       }
       const callSid = (params['CallSid'] ?? params['callSid'] ?? '').trim();
-      this.endBattleVoiceCall(callSid); this.endFighterVoiceCall(callSid);
+      this.arcadeApi?.stationVoiceCallEnded(callSid);
+      this.endRacerVoiceCall(callSid); this.endBattleVoiceCall(callSid); this.endFighterVoiceCall(callSid);
       res.writeHead(204).end();
+      return;
+    }
+    if (req.method === 'POST' && path === '/tac/webhook') {
+      const rawBody = await readBody(req);
+      if (this.validateSignatures) {
+        if (!this.authToken) {
+          res.writeHead(500).end('signature validation enabled but TWILIO_AUTH_TOKEN not configured');
+          return;
+        }
+        const header = req.headers['x-twilio-signature'];
+        const signature = Array.isArray(header) ? header[0] : header;
+        const exactUrl = `${this.publicBaseUrl}${req.url ?? path}`;
+        const valid = this.validatePrimaryTwilioBody(signature, exactUrl, rawBody);
+        if (!valid) {
+          res.writeHead(403).end('invalid signature');
+          return;
+        }
+      }
+      let payload: unknown;
+      try { payload = JSON.parse(rawBody); }
+      catch { res.writeHead(400).end('invalid JSON'); return; }
+      const idempotencyHeader = req.headers['i-twilio-idempotency-token'];
+      const idempotencyToken = Array.isArray(idempotencyHeader)
+        ? idempotencyHeader[0]
+        : idempotencyHeader;
+      try {
+        if (!this.arcadeTacGateway) throw new Error('TAC gateway is disabled');
+        await this.arcadeTacGateway.processWebhook(payload, idempotencyToken);
+      } catch (error) {
+        console.error('[TAC] Conversation webhook failed:', error instanceof Error ? error.message : String(error));
+        res.writeHead(503).end('TAC messaging unavailable');
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' }).end('{"status":"ok"}');
       return;
     }
     // ---- SMS concierge: onboarding + car/map selection by text ----
@@ -1133,15 +1534,22 @@ export class HttpServer {
       const body = await readBody(req);
       const params = Object.fromEntries(new URLSearchParams(body));
       if (this.validateSignatures) {
-        if (!this.authToken) { res.writeHead(500).end('signature validation enabled but TWILIO_AUTH_TOKEN not configured'); return; }
+        if (!this.authToken) { res.writeHead(500).end('signature validation enabled but TWILIO_AUTH_TOKEN is not configured'); return; }
         const sig = req.headers['x-twilio-signature'];
-        const ok = validateTwilioSignature({ authToken: this.authToken,
-          signature: Array.isArray(sig) ? sig[0] : sig, url: `${this.publicBaseUrl}/sms`, params });
+        const ok = this.validatePrimaryTwilioForm(
+          Array.isArray(sig) ? sig[0] : sig, `${this.publicBaseUrl}/sms`, params,
+        );
         if (!ok) { res.writeHead(403).end('invalid signature'); return; }
       }
       const from = (params['From'] ?? '').trim();
       const smsBody = params['Body'] ?? '';
       const messageSid = params['MessageSid'] ?? '';
+      if (this.arcadeTacGateway?.ownsMessaging()) {
+        // Conversation Orchestrator captures this provider message and invokes /tac/webhook. TAC owns
+        // the response so the same inbound interaction can never receive both TwiML and TAC replies.
+        res.writeHead(200, { 'Content-Type': 'text/xml' }).end(twimlEmpty());
+        return;
+      }
       // Media (MMS) isn't supported — reply politely without invoking the state machine.
       if ((parseInt(params['NumMedia'] ?? '0', 10) || 0) > 0) {
         res.writeHead(200, { 'Content-Type': 'text/xml' }).end(
@@ -1150,18 +1558,33 @@ export class HttpServer {
       }
       if (!from) { res.writeHead(200, { 'Content-Type': 'text/xml' }).end(twimlEmpty()); return; }
       // Serialize per-phone so two rapid texts can't race on the same session/room mutation.
-      const reply = await this.runSmsSerialized(from, () => this.concierge.handle({ from, body: smsBody, messageSid }));
+      const reply = await this.runSmsSerialized(from, async () => (
+        await this.arcadeApi?.processMessagingWebhook({ from, body: smsBody, providerMessageId: messageSid })
+        ?? this.concierge.handle({ from, body: smsBody, messageSid })
+      ));
       res.writeHead(200, { 'Content-Type': 'text/xml' }).end(twimlMessage(reply));
       return;
     }
     // ---- client bootstrap config (public, unauthenticated): the phone number to call to join, so
     //      the lobby can show it + encode the QR. Empty string when unset (lobby shows a placeholder).
     if (path === '/api/config' && req.method === 'GET') {
+      const voiceNumbers = this.arcadeApi?.getVoiceNumbers() ?? {
+        'en-US': this.gamePhoneNumber || null,
+        'pt-BR': this.gamePhoneNumber || null,
+      };
+      const phoneNumber = voiceNumbers[this.defaultLocale]
+        ?? voiceNumbers['en-US']
+        ?? voiceNumbers['pt-BR']
+        ?? this.gamePhoneNumber;
       res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
       res.end(JSON.stringify({
-        phoneNumber: this.gamePhoneNumber,
+        phoneNumber,
+        voiceNumbers,
+        smsNumber: this.smsNumber,
+        whatsappNumber: this.whatsappNumber,
         defaultLocale: this.defaultLocale,
         supportedLocales: SUPPORTED_LOCALES,
+        publicBaseUrl: this.publicBaseUrl,
       }));
       return;
     }
@@ -1306,7 +1729,7 @@ export class HttpServer {
     }
     // ---- private activation analytics (daily anonymous aggregates, no transcripts or phone data) ----
     if ((path === '/api/analytics' || path === '/api/analytics.pdf') && req.method === 'GET') {
-      if (!this.analyticsAuth.currentUser(req)) {
+      if (!this.analyticsAuth.currentAnalyticsUser(req)) {
         res.writeHead(401, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' }).end('Google sign-in required'); return;
       }
       const url = new URL(req.url ?? '', 'http://localhost');
@@ -1465,15 +1888,21 @@ export class HttpServer {
     let rel: string;
     try { rel = decodeURIComponent(urlPath); } catch { res.writeHead(400).end('bad request'); return; }
     if (rel.includes('..')) { res.writeHead(403).end('forbidden'); return; }
+    if (rel === '/arcade' || rel === '/arcade/' || rel === '/arcade/index.html') { res.writeHead(404).end('not found'); return; }
     // Map bare paths to files: '/' and '/editor' → index.html; '/garage' → garage/index.html.
     let file: string;
     if (rel === '/' || rel === '') file = 'index.html';
     else if (rel === '/editor' || rel === '/editor/') file = 'editor/index.html';
     else if (rel === '/garage' || rel === '/garage/') file = 'garage/index.html';
     else if (rel === '/analytics' || rel === '/analytics/') file = 'analytics/index.html';
+    else if (rel === '/player' || rel === '/player/') file = 'arcade/index.html';
+    else if (rel === '/operator' || rel === '/operator/') file = 'arcade/index.html';
+    else if (rel === '/join' || rel === '/join/') file = 'join/index.html';
     else file = rel.replace(/^\/+/, '');
     const full = path.join(this.clientDir, file);
-    try { await stat(full); } catch { res.writeHead(404).end('not found'); return; }
+    try {
+      if (!(await stat(full)).isFile()) { res.writeHead(404).end('not found'); return; }
+    } catch { res.writeHead(404).end('not found'); return; }
     // HTML must NOT cache (so a redeploy is seen immediately); hashed /assets/* JS is handled by
     // serveAsset's immutable cache. Other static files (brand/fonts) get a short cache.
     const isHtml = file.endsWith('.html');
@@ -1483,17 +1912,21 @@ export class HttpServer {
 
   async start(): Promise<number> {
     await this.analytics.load();
+    await this.arcadeApi?.start();
+    await this.arcadeTacGateway?.start();
     await this.seedMapsFile();
     await this.refreshFighterMaps();
     // Re-read the (possibly just-seeded) maps into the lobby cache so map choices are correct on the
     // very first connection — the constructor's initial refresh may have run before the seed wrote.
     await this.refreshRoomConfig();
-    return new Promise((resolve) => {
+    const listeningPort = await new Promise<number>((resolve) => {
       this.server.listen(this.port, () => {
         const addr = this.server.address();
         resolve(typeof addr === 'object' && addr ? addr.port : this.port);
       });
     });
+    await this.arcadeApi?.activateMessagingDelivery();
+    return listeningPort;
   }
 
   /** Copy the image-bundled default levels into the LIVE (persistent) maps file ONCE, on first boot
@@ -1516,19 +1949,29 @@ export class HttpServer {
   }
 
   stop(): Promise<void> {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       if (this.roomConfigTimer) { clearInterval(this.roomConfigTimer); this.roomConfigTimer = null; }
       if (this.smsSweepTimer) { clearInterval(this.smsSweepTimer); this.smsSweepTimer = null; }
+      for (const binding of this.racerVoiceCallBindings.values()) {
+        if (binding.leaveTimer) clearTimeout(binding.leaveTimer);
+        binding.activeAdapter?.handleClose(true);
+      }
+      this.racerVoiceCallBindings.clear();
       for (const binding of this.battleVoiceCallBindings.values()) {
         if (binding.leaveTimer) clearTimeout(binding.leaveTimer);
       }
       this.battleVoiceCallBindings.clear();
       for (const binding of this.fighterVoiceCallBindings.values()) if (binding.leaveTimer) clearTimeout(binding.leaveTimer);
       this.fighterVoiceCallBindings.clear(); this.fighterVoice.clear();
+      this.activeStationEngines.clear();
       this.game.stopLoopOnly();
       this.battle.stopLoopOnly();
       this.fighter.stopLoopOnly();
-      this.server.close(() => { void this.analytics.flush().then(resolve); });
+      const arcadeStop = this.arcadeApi?.stop() ?? Promise.resolve();
+      const arcadeTacStop = this.arcadeTacGateway?.stop() ?? Promise.resolve();
+      this.server.close(() => {
+        void Promise.all([this.analytics.flush(), arcadeStop, arcadeTacStop]).then(() => resolve(), reject);
+      });
     });
   }
 }

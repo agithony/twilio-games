@@ -129,6 +129,26 @@ describe('ConversationRelayAdapter', () => {
     expect(removed).toBe('p1');
   });
 
+  it('preserves and resumes the same Racer player across a Relay transport reconnect', () => {
+    let removed: string | null = null;
+    let added = 0;
+    const room = { addPlayer: () => { added++; return { playerId:'new-player', lane:1 }; },
+      applyIntent: () => {}, removePlayer: (id:string) => { removed = id; } };
+    const first = new ConversationRelayAdapter({ findOrCreateRoom: () => room,
+      resumePlayer: () => ({ playerId:'p1', lane:0 }) });
+    first.handleMessage(JSON.stringify({ type:'setup', callSid:'CA1', customParameters:{ roomCode:'4821' } }));
+    expect(first.boundPlayerId).toBe('p1');
+    first.handleClose(true);
+    expect(removed).toBeNull();
+    expect(added).toBe(0);
+
+    const resumed = new ConversationRelayAdapter({ findOrCreateRoom: () => room,
+      resumePlayer: () => ({ playerId:'p1', lane:0 }) });
+    resumed.handleMessage(JSON.stringify({ type:'setup', callSid:'CA1', customParameters:{ roomCode:'4821' } }));
+    expect(resumed.boundPlayerId).toBe('p1');
+    expect(added).toBe(0);
+  });
+
   it('does nothing if the room is full (addPlayer returns error)', () => {
     const room = { addPlayer: () => ({ error:'room_full' as const }),
       applyIntent: () => { throw new Error('should not apply'); }, removePlayer: () => {} };

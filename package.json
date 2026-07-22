@@ -2,12 +2,18 @@
   "name": "voice-racer",
   "version": "0.1.0",
   "type": "module",
+  "engines": {
+    "node": ">=22.13.0",
+    "npm": ">=9.0.0"
+  },
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit && tsc --noEmit -p client/tsconfig.json",
     "dev:server": "tsx watch server/index.ts",
     "dev:client": "vite client",
+    "dev:arcade:server": "PORT=8081 PUBLIC_BASE_URL=http://localhost:5173 ARCADE_DEV_ADMIN=true ARCADE_TAC_ENABLED=false ARCADE_CONFIG_DIRECTORY=data/arcade-dev-config ARCADE_STATE_PATH=data/arcade-dev-state.json ARCADE_SIGNING_SECRET=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef ARCADE_DISPLAY_TOKEN=dev-arcade-display-token GAME_PHONE_NUMBER=${GAME_PHONE_NUMBER:-+18555993809} TWILIO_SMS_NUMBER=${TWILIO_SMS_NUMBER:-+18555993809} tsx watch server/index.ts",
+    "dev:arcade:client": "GAME_SERVER_URL=http://localhost:8081 vite client",
     "make-fixtures": "tsx tools/make-fixtures.ts",
     "inspect-assets": "tsx tools/inspect-assets.ts",
     "optimize-assets": "tsx tools/optimize-assets.ts",
@@ -16,8 +22,9 @@
     "build": "tsc --noEmit && tsc --noEmit -p client/tsconfig.json && vite build client"
   },
   "devDependencies": {
-    "@gltf-transform/cli": "4.4.0",
-    "@types/node": "^20.12.0",
+    "@gltf-transform/cli": "4.4.1",
+    "@types/node": "22.20.1",
+    "@types/qrcode": "1.5.5",
     "@types/three": "0.164.1",
     "@types/ws": "^8.5.10",
     "puppeteer-core": "25.2.1",
@@ -27,11 +34,16 @@
     "vitest": "4.1.9"
   },
   "dependencies": {
-    "@gltf-transform/core": "4.4.0",
-    "@gltf-transform/extensions": "4.4.0",
+    "@gltf-transform/core": "4.4.1",
+    "@gltf-transform/extensions": "4.4.1",
     "camera-controls": "3.1.2",
+    "qrcode": "1.5.4",
     "three": "^0.164.0",
     "twilio": "6.0.2",
+    "twilio-agent-connect": "2.0.0",
     "ws": "^8.17.0"
+  },
+  "overrides": {
+    "sharp": "0.35.3"
   }
 }

@@ -1,6 +1,6 @@
 # Voice Setup
 
-This guide configures one Twilio number for Voice Racer, Voice Monsters, and Voice Fighter. For the project overview and general development setup, see the [README](../README.md).
+This guide configures the locale-specific Twilio numbers used by Voice Racer, Voice Monsters, and Voice Fighter. For the project overview and general development setup, see the [README](../README.md).
 
 ## How Calls Are Routed
 
@@ -12,9 +12,9 @@ Configure the Twilio number's incoming voice webhook as:
 | URL | `https://<public-host>/voice/incoming` |
 | Method | `POST` |
 
-`POST /voice/incoming` connects the call directly to Conversation Relay. It does not gather a room code. The call, shared display, and browser players use the single default room `4821`.
+`POST /voice/incoming` connects an admitted call directly to Conversation Relay. It does not gather a room code.
 
-One number serves all three games. Before returning TwiML, the server selects the game whose shared-display WebSocket was opened most recently among the displays that are still connected:
+In station mode, the server resolves the caller to one persisted admitted player and places the match game, engine room, ready-entry ID, and launch generation into signed Relay setup parameters. Recent-display routing below is used only for standalone play when the station is off:
 
 | Display | Local URL | WebSocket |
 |---|---|---|
@@ -22,7 +22,7 @@ One number serves all three games. Before returning TwiML, the server selects th
 | Voice Monsters | `http://localhost:5173/monsters.html?display=1&room=4821` | `/battle` |
 | Voice Fighter | `http://localhost:5173/fighter.html?display=1&room=4821` | `/fighter` |
 
-Open the intended display before placing the call. Close unused game displays to make routing unambiguous. If no display is connected, the call routes to Voice Racer.
+For standalone testing, open the intended display before placing the call and close unused game displays. If no display is connected, the standalone fallback routes to Voice Racer.
 
 The selected game is passed to `/voice` as a Conversation Relay custom parameter and remains fixed for that call. `POST /voice/join` is a legacy alias: it uses a posted `Digits` value when present and otherwise uses `4821`. Do not configure new numbers to use `/voice/join`.
 
@@ -30,13 +30,14 @@ When Conversation Relay ends a session, Twilio calls `POST /voice/session-ended`
 
 ## Requirements
 
-- Node.js 20 or later
-- A Twilio account and a voice-capable Twilio number
-- The account Auth Token for webhook signature validation
+- Node.js 22.13 or later
+- A primary Twilio account with the English Voice/SMS/WhatsApp number
+- A second Twilio account with the Portuguese Voice number
+- Both account Auth Tokens for webhook signature validation
 - A public HTTPS URL that forwards to the server on port `8080`
 - A public WebSocket path on the same host; the server derives `wss://<public-host>/voice` from `PUBLIC_BASE_URL`
 
-The application does not read the Twilio Account SID. It also does not read `TWILIO_PHONE_NUMBER`; use `GAME_PHONE_NUMBER` to show the callable number and QR code in the UI.
+The direct Conversation Relay gameplay path does not use the Twilio Account SID itself. The production station also enables TAC/Memory and therefore requires the REST credentials documented in [Infrastructure Setup](INFRA_SETUP.md). Station mode uses the operator-configured `en-US` and `pt-BR` voice numbers; `GAME_PHONE_NUMBER` is only a legacy fallback. `TWILIO_SMS_NUMBER` is the required independent TAC/SMS sender.
 
 ## Run Locally With a Public Tunnel
 
@@ -79,17 +80,19 @@ For a deployed environment, configure the same `POST /voice/incoming` webhook ag
 | Variable | Required | Behavior |
 |---|---|---|
 | `PUBLIC_BASE_URL` | Yes for live calls | Public origin used to build webhook validation URLs, `wss://.../voice`, and `/voice/session-ended`. Defaults to local HTTP and is not usable by Twilio. A trailing slash is removed. |
-| `TWILIO_AUTH_TOKEN` | Yes for a public Twilio webhook | Validates Twilio signatures. When present, validation is enabled by default. It is also the default Conversation Relay setup token. |
+| `TWILIO_AUTH_TOKEN` | Yes for a public Twilio webhook | Validates Twilio signatures. When present, validation is enabled by default. |
+| `TWILIO_PT_AUTH_TOKEN` | Required for the current production topology | Validates Voice and session-ended callbacks from the separate Portuguese Voice account. |
 | `TWILIO_VALIDATE_SIGNATURES` | No | Set to `false` only for controlled local testing. Any other supplied value enables validation. If validation is enabled without `TWILIO_AUTH_TOKEN`, webhooks return `500`. |
-| `GAME_PHONE_NUMBER` | Recommended | Number displayed and QR-encoded by the lobby. Use E.164 format, for example `+15551234567`. It does not affect call handling. |
+| `GAME_PHONE_NUMBER` | Optional | Legacy lobby fallback until locale-specific voice numbers are saved in Arcade runtime settings. |
+| `TWILIO_SMS_NUMBER` | Required by production deployment | SMS-capable sender/receiver registered with TAC and used by the join chooser and outbound notices. |
 | `PORT` | No | HTTP and WebSocket port. Defaults to `8080`. |
 | `CR_TTS_VOICE` | No | ElevenLabs voice ID for Conversation Relay talk-back. If unset, Relay uses its default voice. |
 | `CR_TTS_VOICE_PT_BR` | No | Optional Brazilian Portuguese ElevenLabs voice ID. Empty uses Relay's `pt-BR` default. |
 | `DEFAULT_LOCALE` | No | Call locale used when no localized display is connected. Defaults to `en-US`. |
-| `VOICE_RELAY_TOKEN` | Recommended for public deployments | Authenticates the Conversation Relay `setup` frame. Defaults to `TWILIO_AUTH_TOKEN`. The generated TwiML passes it to Twilio automatically. |
+| `VOICE_RELAY_TOKEN` | Required by production deployment | Independent token of at least 32 characters that authenticates the Conversation Relay `setup` frame. The generated TwiML passes it to Twilio automatically; do not reuse `TWILIO_AUTH_TOKEN`. |
 | `OPENAI_API_KEY` | No | Enables conversational menu help for Voice Racer and Voice Monsters. Deterministic selection and gameplay still work without it. |
 | `OPENAI_MODEL` | No | Overrides the OpenAI model when `OPENAI_API_KEY` is set. |
-| `FIGHTER_DISPLAY_TOKEN` | No | Requires the Voice Fighter display to provide `?displayToken=<token>` or `?hostToken=<token>` for host controls. |
+| `FIGHTER_DISPLAY_TOKEN` | No | Requires the Voice Fighter display to provide `#displayToken=<token>` for host controls. |
 | `NODE_ENV` | No | Production mode enables production-only warnings and serving behavior. It does not control Twilio signature validation. |
 
 `EDITOR_TOKEN`, map paths, arena paths, and persistence paths affect editing and deployment but are not required to place a voice call.
@@ -121,7 +124,7 @@ Speech barge-in stops Relay TTS. Voice Racer and Voice Monsters also invalidate 
 
 ## Voice Racer
 
-Voice Racer supports up to eight players in room `4821`.
+Voice Racer supports up to four players in room `4821`.
 
 The voice flow is:
 
@@ -217,7 +220,7 @@ The integration tests open fake Conversation Relay WebSockets and verify room bi
 
 ### The call reaches the wrong game
 
-Open the intended shared display before dialing. Close stale display tabs. Routing uses the most recently opened WebSocket among displays that remain connected, not the most recently focused browser tab. With no connected display, routing defaults to Voice Racer.
+For standalone testing, open the intended shared display before dialing and close stale display tabs. For station testing, join through `/join`, reach `ADMITTED`, request launch, and call the locale-specific number; persisted admission overrides display recency.
 
 ### The webhook returns `403 invalid signature`
 
@@ -233,7 +236,7 @@ Confirm the public host supports WebSocket upgrades at `/voice` and that the gen
 
 ### The caller hears the right game but cannot join
 
-Voice Racer may already have eight players. Voice Monsters may have two occupied slots. Voice Fighter may have two players or may already be past fighter selection. End stale calls or reset the shared display before retrying.
+Voice Racer may already have four players. Voice Monsters may have two occupied slots. Voice Fighter may have two players or may already be past fighter selection. End stale calls or reset the shared display before retrying.
 
 ### Speech works only after the caller finishes talking
 
@@ -249,6 +252,6 @@ Voice Racer and Voice Monsters keep deterministic name, number, advance, and gam
 
 ### The displayed phone number is missing
 
-Set `GAME_PHONE_NUMBER` and restart the server. `TWILIO_PHONE_NUMBER` is not read. The value is exposed through `/api/config` for display and QR rendering only.
+For standalone local testing, set `GAME_PHONE_NUMBER` and restart the server. For Twilio Games station events, save both locale voice numbers in the operator console instead; those values are exposed through `/api/config` and take precedence without a restart.
 
 Return to the [README](../README.md) for architecture, general scripts, and the rest of the project documentation.

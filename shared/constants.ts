@@ -1,6 +1,6 @@
 export const LANES = 3;
 export const LAP_TARGET = 3;
-export const MAX_PLAYERS = 8;
+export const MAX_PLAYERS = 4;
 // The single shared game room. Callers bind here directly on connect (no room-code entry — fewest
 // taps), and the shared display + web players default to it too, so everyone lands in the SAME game.
 // One display / one game at a time; multi-room was removed in favor of instant join.

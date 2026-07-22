@@ -1,5 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { HttpServer } from '../server/http-server';
+import type { ArcadeTacGateway } from '../server/arcade-tac-gateway';
+import twilio from 'twilio';
 
 let srv: HttpServer;
 afterEach(async () => { await srv?.stop(); });
@@ -37,5 +39,70 @@ describe('SMS concierge API', () => {
     srv = makeServer(); const port = await srv.start();
     const r = await sms(port, '+15551114444', '', { NumMedia: '1' });
     expect(r.xml.toLowerCase()).toMatch(/not supported/);
+  });
+
+  it('lets TAC own active messaging and accepts Conversation Orchestrator events', async () => {
+    const events: Array<{ payload: unknown; token?: string }> = [];
+    const gateway = {
+      start: async () => undefined,
+      stop: async () => undefined,
+      ownsMessaging: () => true,
+      processWebhook: async (payload: unknown, token?: string) => {
+        events.push({ payload, ...(token ? { token } : {}) });
+      },
+    } as unknown as ArcadeTacGateway;
+    srv = new HttpServer({
+      port: 0, publicBaseUrl: 'http://localhost', validateSignatures: false,
+      arcadeTacGateway: gateway,
+    });
+    const port = await srv.start();
+    const inbound = await sms(port, '+15551115555', 'JOIN ARCADE-01');
+    expect(inbound.xml).toBe('<?xml version="1.0" encoding="UTF-8"?>\n<Response></Response>');
+    const mms = await sms(port, '+15551115555', '', { NumMedia: '1' });
+    expect(mms.xml).toBe('<?xml version="1.0" encoding="UTF-8"?>\n<Response></Response>');
+
+    const payload = { eventType: 'COMMUNICATION_CREATED', data: { id: 'comm-1' } };
+    const response = await fetch(`http://127.0.0.1:${port}/tac/webhook`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'I-Twilio-Idempotency-Token': 'token-1' },
+      body: JSON.stringify(payload),
+    });
+    expect(response.status).toBe(200);
+    expect(events).toEqual([{ payload, token: 'token-1' }]);
+  });
+
+  it('rejects Orchestrator callbacks when the TAC gateway is disabled', async () => {
+    srv = makeServer();const port = await srv.start();
+    const response = await fetch(`http://127.0.0.1:${port}/tac/webhook`, {
+      method: 'POST',headers:{'Content-Type':'application/json'},body:'{}',
+    });
+    expect(response.status).toBe(503);
+  });
+
+  it('restricts the secondary Portuguese token to Voice webhooks', async () => {
+    const primaryToken='primary-token',portugueseToken='portuguese-token';
+    srv=new HttpServer({
+      port:0,publicBaseUrl:'http://localhost',authToken:primaryToken,
+      additionalAuthTokens:[portugueseToken],validateSignatures:true,
+    });
+    const port=await srv.start();
+    const smsParams={From:'+551155555555',Body:'4821',MessageSid:'SM-secondary'};
+    const smsUrl='http://localhost/sms';
+    const smsSignature=twilio.getExpectedTwilioSignature(portugueseToken,smsUrl,smsParams);
+    const smsResponse=await fetch(`http://127.0.0.1:${port}/sms`,{
+      method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','X-Twilio-Signature':smsSignature},
+      body:new URLSearchParams(smsParams).toString(),
+    });
+    expect(smsResponse.status).toBe(403);
+
+    const voiceParams={From:'+5511999999999',To:'+551155555555',CallSid:'CA-secondary'};
+    const voiceUrl='http://localhost/voice/incoming';
+    const voiceSignature=twilio.getExpectedTwilioSignature(portugueseToken,voiceUrl,voiceParams);
+    const voiceResponse=await fetch(`http://127.0.0.1:${port}/voice/incoming`,{
+      method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','X-Twilio-Signature':voiceSignature},
+      body:new URLSearchParams(voiceParams).toString(),
+    });
+    expect(voiceResponse.status).toBe(200);
+    expect(await voiceResponse.text()).toContain('<ConversationRelay');
   });
 });

@@ -8,7 +8,7 @@ import { isSupportedLocale, type SupportedLocale } from './i18n/locales';
 /** Client → server. */
 export type BattleClientMessage =
   | { type: 'join'; roomCode: string; name: string; sessionId?: string; locale?: SupportedLocale } // become/resume a player
-  | { type: 'spectate'; roomCode: string; locale?: SupportedLocale }                  // the shared display (no slot)
+  | { type: 'spectate'; roomCode: string; locale?: SupportedLocale; displayToken?: string } // the shared display (no slot)
   | { type: 'select_monster'; monsterId: string }           // during monster_select
   | { type: 'open_fight' }                                  // battle: active side opens its 4 moves
   | { type: 'back_menu' }                                   // battle: active side backs out to root menu
@@ -57,7 +57,9 @@ export function parseBattleClientMessage(raw: string): ParseResult {
         ...(isSupportedLocale(m.locale) ? { locale: m.locale } : {}) };
     case 'spectate':
       if (typeof m.roomCode !== 'string') return err('bad_spectate', 'roomCode required');
-      return { type: 'spectate', roomCode: m.roomCode, ...(isSupportedLocale(m.locale) ? { locale: m.locale } : {}) };
+      return { type: 'spectate', roomCode: m.roomCode,
+        ...(isSupportedLocale(m.locale) ? { locale: m.locale } : {}),
+        ...(typeof m.displayToken === 'string' ? { displayToken: m.displayToken } : {}) };
     case 'select_monster':
       if (typeof m.monsterId !== 'string') return err('bad_select', 'monsterId required');
       return { type: 'select_monster', monsterId: m.monsterId };

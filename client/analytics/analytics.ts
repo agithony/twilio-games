@@ -15,12 +15,13 @@ async function checkSession(): Promise<void> {
   if (reason) history.replaceState(null, '', '/analytics');
   try {
     const response = await fetch('/api/analytics/session');
-    const session = await response.json() as { authenticated: boolean; configured: boolean; email?: string };
-    if (session.authenticated) {
+    const session = await response.json() as { authenticated: boolean; analyticsAuthorized: boolean; configured: boolean; email?: string };
+    if (session.authenticated && session.analyticsAuthorized) {
       auth.hidden = true; dashboard.hidden = false; download.disabled = false;
       el('user').textContent = session.email ?? ''; await refresh(); return;
     }
-    if (!session.configured) authMessage.textContent = 'Google OAuth is not configured for this deployment.';
+    if (session.authenticated && !session.analyticsAuthorized) authMessage.textContent = 'This account is authorized for Twilio Games station operations, not private activation analytics.';
+    else if (!session.configured) authMessage.textContent = 'Google OAuth is not configured for this deployment.';
     else if (reason === 'email_not_allowed') authMessage.textContent = 'That verified Google account is not authorized. Use a @twilio.com account.';
     else if (reason) authMessage.textContent = 'Google sign-in could not be completed. Please try again.';
   } catch { authMessage.textContent = 'The authentication service is unavailable.'; }

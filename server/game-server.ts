@@ -29,7 +29,8 @@ export function parseClientMessage(raw: string): ParseResult {
     case 'spectate':
       if (typeof obj.roomCode !== 'string') return err('bad_spectate', 'roomCode required');
       return { type: 'spectate', roomCode: obj.roomCode,
-        ...(isSupportedLocale(obj.locale) ? { locale: obj.locale } : {}) };
+        ...(isSupportedLocale(obj.locale) ? { locale: obj.locale } : {}),
+        ...(typeof obj.displayToken === 'string' ? { displayToken: obj.displayToken } : {}) };
     case 'leave':   return { type: 'leave' };
     case 'select_car':
       if (!Number.isInteger(obj.carIndex)) return err('bad_select_car', 'carIndex (int) required');
@@ -44,7 +45,7 @@ export function parseClientMessage(raw: string): ParseResult {
 }
 function err(code: string, message: string): ParseResult { return { type: 'error', code, message }; }
 
-interface Conn { ws: WebSocket; roomCode?: string; playerId?: string; locale?: SupportedLocale; }
+interface Conn { ws: WebSocket; roomCode?: string; playerId?: string; locale?: SupportedLocale; stationDisplay?: boolean; hostAuthorized?: boolean; }
 
 export class GameServer {
   private wss: WebSocketServer | null = null;
@@ -69,9 +70,12 @@ export class GameServer {
   /** Rooms whose finished race we've already reported (cleared when they leave results). */
   private reported = new WeakSet<Room>();
   private started = new WeakSet<Room>();
+  private allowBrowserPlayer: (roomCode: string) => boolean = () => true;
+  private readonly displayToken: string;
 
-  constructor(opts: { port?: number; server?: HttpServer; broadcastHz?: number }) {
+  constructor(opts: { port?: number; server?: HttpServer; broadcastHz?: number; displayToken?: string }) {
     this.port = opts.port;
+    this.displayToken = opts.displayToken?.trim() ?? '';
     this.broadcastEvery = 1 / (opts.broadcastHz ?? 20);
     if (opts.server) this.attach(opts.server);
   }
@@ -87,6 +91,7 @@ export class GameServer {
   }
   setOnRaceStarted(fn: (room: Room) => void): void { this.onRaceStarted = fn; }
   setOnRaceAbandoned(fn: (room: Room) => void): void { this.onRaceAbandoned = fn; }
+  setBrowserPlayerAdmission(fn: (roomCode: string) => boolean): void { this.allowBrowserPlayer = fn; }
 
   /** Register a hook fired with a room's game events each broadcast — for the voice talk-back layer. */
   setOnRoomEvents(fn: (roomCode: string, events: GameEvent[]) => void): void {
@@ -153,9 +158,15 @@ export class GameServer {
   private onMessage(conn: Conn, raw: string): void {
     const msg = parseClientMessage(raw);
     if (msg.type === 'error') return this.send(conn, msg as ServerMessage);
+    if (conn.stationDisplay && !conn.hostAuthorized && msg.type !== 'spectate' && msg.type !== 'leave') {
+      return this.send(conn, { type: 'error', code: 'bad_display_auth', message: 'bad_display_auth' });
+    }
     switch (msg.type) {
       case 'join': {
         if (msg.locale) conn.locale = msg.locale;
+        if (!this.allowBrowserPlayer(msg.roomCode)) {
+          return this.send(conn, { type: 'error', code: 'station_voice_only', message: 'station_voice_only' });
+        }
         const room = this.room(msg.roomCode);
         const res = room.addPlayer(msg.name, msg.color);
         if ('error' in res) return this.send(conn, { type: 'error', code: res.error, message: res.error });
@@ -239,6 +250,12 @@ export class GameServer {
       }
       case 'spectate': {
         if (msg.locale) conn.locale = msg.locale;
+        const stationDisplay = !this.allowBrowserPlayer(msg.roomCode);
+        if (stationDisplay && (!this.displayToken || msg.displayToken !== this.displayToken)) {
+          return this.send(conn, { type: 'error', code: 'bad_display_auth', message: 'bad_display_auth' });
+        }
+        conn.stationDisplay = stationDisplay;
+        conn.hostAuthorized = !stationDisplay || msg.displayToken === this.displayToken;
         this.room(msg.roomCode);
         conn.roomCode = msg.roomCode;   // no playerId: receives broadcasts, occupies no slot
         this.pushLobby(msg.roomCode);   // send the display the current select/lobby state immediately
@@ -260,6 +277,22 @@ export class GameServer {
 
   getOrCreateRoom(code: string): Room { return this.room(code); }
   findRoom(code: string): Room | undefined { return this.rooms.find(code); }
+
+  abortRoom(code: string): boolean {
+    const room = this.rooms.find(code);
+    if (!room) return false;
+    for (const conn of this.conns) {
+      if (conn.roomCode !== code) continue;
+      conn.roomCode = undefined;
+      conn.playerId = undefined;
+      conn.ws.close(4002, 'station recovery');
+    }
+    this.roomAccum.delete(room);
+    this.started.delete(room);
+    this.reported.delete(room);
+    this.rooms.remove(code);
+    return true;
+  }
 
   // ── Voice-host actions: the conversational AI drives the game for a caller. These mirror the WS
   //    handlers (select_car/select_map/advance) EXACTLY — same room mutation, same broadcasts + host

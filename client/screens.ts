@@ -42,6 +42,8 @@ export class Screens {
   /** The phone number players CALL to join (from /api/config); '' until it loads → lobby shows a
    *  "set GAME_PHONE_NUMBER" placeholder so a misconfigured deploy is obvious on screen. */
   private phoneNumber = '';
+  private phoneQr = '/brand/join-qr.png?v=2';
+  private arcadeQr = '';
   private visible = false;
   private phase: 'lobby' | 'car_select' | 'map_select' | 'results' | null = null;
   private lastMapArgs: { maps: string[]; selectedMap: string | null; players: LobbyPlayer[]; votes: MapVotes } | null = null;
@@ -63,9 +65,19 @@ export class Screens {
 
   /** Supply the join phone number (from /api/config); re-render the lobby if it's up so the QR-flow
    *  copy shows the real number instead of the placeholder. */
-  setPhoneNumber(num: string): void {
-    if (num === this.phoneNumber) return;
+  setPhoneNumber(num: string, qr = ''): void {
+    if (num === this.phoneNumber && qr === this.phoneQr) return;
     this.phoneNumber = num;
+    this.phoneQr = qr;
+    if (this.visible && this.phase === 'lobby' && this.lastLobby) {
+      this.lastKey = '';
+      this.renderLobby(this.lastLobby.roomCode, this.lastLobby.players);
+    }
+  }
+
+  setArcadeQr(url: string): void {
+    if (!url || url === this.arcadeQr) return;
+    this.arcadeQr = url;
     if (this.visible && this.phase === 'lobby' && this.lastLobby) {
       this.lastKey = '';
       this.renderLobby(this.lastLobby.roomCode, this.lastLobby.players);
@@ -147,7 +159,7 @@ export class Screens {
     this.show(); this.phase = 'lobby';
     this.lastLobby = { roomCode, players };
     void roomCode;   // no longer shown — calls bind straight to the single game (instant join)
-    if (this.unchanged(`lobby:${this.selfPlaying ? 'P' : 'p'}:${this.phoneNumber}:${this.boostThumb ? 'orb' : 'noorb'}:${this.rosterKey(players)}`)) return;
+    if (this.unchanged(`lobby:${this.selfPlaying ? 'P' : 'p'}:${this.phoneNumber}:${this.phoneQr ? 'phoneqr' : 'nophoneqr'}:${this.arcadeQr ? 'coin' : 'nocoin'}:${this.boostThumb ? 'orb' : 'noorb'}:${this.rosterKey(players)}`)) return;
     const n = players.length;
     const sub = n === 0 ? this.text('screen.lobby.emptySubtitle')
       : this.text(n === 1 ? 'screen.lobby.oneRacer' : 'screen.lobby.manyRacers', { count: n });
@@ -164,9 +176,12 @@ export class Screens {
       <div class="scr-center lobby-grid">
         <div class="lobby-main">
           <div class="join-flow">
-            <div class="join-qr">
-              <img src="/brand/join-qr.png?v=2" alt="${this.text('screen.lobby.qrAlt')}" onerror="this.style.display='none'">
-              <div class="join-qr-cap">${this.text('screen.lobby.qrCaption')}</div>
+            <div class="join-qrs">
+              <div class="join-qr">
+                ${this.phoneQr ? `<img src="${this.phoneQr}" alt="${this.text('screen.lobby.qrAlt')}">` : ''}
+                <div class="join-qr-cap">${this.text('screen.lobby.qrCaption')}</div>
+              </div>
+              ${this.arcadeQr ? `<div class="join-qr coin-qr"><img src="${this.arcadeQr}" alt="${this.text('screen.lobby.coinQrAlt')}"><div class="join-qr-cap">${this.text('screen.lobby.coinQrCaption')}</div></div>` : ''}
             </div>
             <ol class="join-steps">
               <li><span class="step-n">1</span> <span class="step-t">${this.text('screen.lobby.scanStep')}</span></li>

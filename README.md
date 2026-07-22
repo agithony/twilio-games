@@ -4,7 +4,7 @@
   <img src="docs/assets/twilio-games-icon.png" alt="Twilio Games: Play together. Talk to play." width="460">
 </p>
 
-Twilio Games is a shared-screen platform for three voice-controlled multiplayer games. Players call one Twilio number, and Twilio Conversation Relay sends speech and DTMF events to the Node.js server. The server routes each call to the active game, applies commands to authoritative game state, and sends state and commentary back to the browser and caller.
+Twilio Games is a shared-screen platform for three voice-controlled multiplayer games. Players join by browser, SMS, or WhatsApp, then call the locale-specific Twilio number when admitted. Conversation Relay sends speech and DTMF events to the Node.js server, which applies commands to authoritative game state and returns updates to the display and caller.
 
 ![CI](https://img.shields.io/github/actions/workflow/status/agithony/twilio-games/ci.yml) ![Top language](https://img.shields.io/github/languages/top/agithony/twilio-games) ![Last commit](https://img.shields.io/github/last-commit/agithony/twilio-games) ![Twilio](https://img.shields.io/badge/Twilio-EF223A?logo=twilio&logoColor=white)
 
@@ -12,15 +12,22 @@ The current games are:
 
 | Game | Format | Voice commands |
 |---|---|---|
-| Voice Racer | Real-time, three-lane 3D racing for up to eight players | `left`, `right`, `boost`, `brake`, `nitro` |
+| Voice Racer | Real-time, three-lane 3D racing for up to four players | `left`, `right`, `boost`, `brake`, `nitro` |
 | Voice Monsters | Turn-based creature battles with type matchups, moves, guard, items, and taunts | Names or numbers, `fight`, move names, `guard`, `item`, `taunt` |
 | Voice Fighter | Real-time side-view 3D fighting with character and arena selection | Names or numbers, `forward`, `back`, `jump`, `punch`, `kick`, `block` |
 
-All three games support a spectator display, phone callers, keyboard testing, music, sound effects, spoken guidance, and reconnectable WebSocket sessions. Voice Racer also includes an SMS concierge for joining and selecting cars or maps.
+All three games support a spectator display, phone callers, keyboard testing, music, sound effects, spoken guidance, and reconnectable WebSocket sessions. Station onboarding and game notices use TAC, Conversation Orchestrator, Conversation Memory, SMS, and WhatsApp when configured.
 
 The home and playable games support US English and Brazilian Portuguese. The language picker updates
 the shared display, deterministic commands, Conversation Relay recognition, and spoken responses.
 See [Localization](docs/localization.md) to add another language.
+
+The implemented product direction and remaining external provisioning work are documented in the canonical
+[Twilio Games station and TAC plan](docs/TWILIO_ARCADE_PLAN.md). It covers runtime-configurable lead capture,
+digital coins, earning challenges, one-display multiplayer queues, post-game summaries, Conversation
+Memory, and Conversation Intelligence. The approved one-screen conference implementation is captured
+separately in the [Expo Station plan](docs/ARCADE_EXPO_STATION_PLAN.md), including Racer's four-player
+capacity, ready-pool timing, phase-two game selection, persistent QR, and SMS/WhatsApp onboarding.
 
 ## Screenshots
 
@@ -56,13 +63,16 @@ See [Localization](docs/localization.md) to add another language.
 ```mermaid
 %%{init: {"theme":"base","themeVariables":{"primaryColor":"#F22F46","primaryTextColor":"#FFFFFF","primaryBorderColor":"#B80F2A","lineColor":"#8891AA","secondaryColor":"#232B45","tertiaryColor":"#000D25","background":"#FFFFFF"}}}%%
 flowchart LR
-  Phone[Player phone] -->|Call or SMS| Twilio[Twilio Voice and Messaging]
+  Phone[Player phone] -->|Call, SMS, or WhatsApp| Twilio[Twilio Voice and Messaging]
+  Twilio --> Orchestrator[Conversation Orchestrator and Memory]
+  Orchestrator -->|Signed POST /tac/webhook| TAC[TAC messaging gateway]
   Twilio -->|Conversation Relay WebSocket| VoiceRoute[Shared voice router]
   Twilio -->|Signed webhooks| HTTP[Node.js HTTP server]
   VoiceRoute --> Racer[Voice Racer host]
   VoiceRoute --> Monsters[Voice Monsters host]
   VoiceRoute --> Fighter[Voice Fighter host]
   Display[Shared browser display] <-->|Game WebSockets| HTTP
+  TAC --> HTTP
   HTTP --> Racer
   HTTP --> Monsters
   HTTP --> Fighter
@@ -79,7 +89,7 @@ flowchart LR
 - `assets/` contains runtime 3D assets, manifests, map catalogs, previews, and attribution records.
 - `tools/` contains asset inspection, optimization, fixture, and browser smoke-test utilities.
 
-One `/voice` WebSocket serves all games. The incoming-call webhook selects the game whose live game WebSocket was opened most recently, writes that game into the Conversation Relay setup parameters, and defaults to Voice Racer when no game client is connected. Run one shared game display at a time when accepting calls.
+One `/voice` WebSocket serves all games. In station mode, persisted admission selects the exact game, room, launch generation, and player identity. Outside station mode, the incoming-call webhook falls back to the most recently connected game display and defaults to Voice Racer.
 
 ## Game Flow
 
@@ -90,7 +100,7 @@ flowchart TD
   Display --> Call[Player calls the configured Twilio number]
   Call --> Incoming[POST /voice/incoming]
   Incoming --> Relay[Conversation Relay connects to /voice]
-  Relay --> Route{Most recently active game connection}
+  Relay --> Route{Persisted station assignment or standalone display fallback}
   Route -->|Racer| RaceFlow[Name, car, map, countdown, race, results]
   Route -->|Monsters| MonsterFlow[Name, monster, turns, results, rematch]
   Route -->|Fighter| FighterFlow[Name, fighter, arena, fight, results]
@@ -106,7 +116,7 @@ Incoming calls join the default room `4821` immediately. The current `/voice/inc
 
 Requirements:
 
-- Node.js 20 or later
+- Node.js 22.13 or later
 - npm
 - Git LFS, because Fighter source FBX files and map GLBs are LFS-managed
 
@@ -141,8 +151,13 @@ The home page lists the three playable games. Selecting a game opens its shared 
 | Editors | <http://localhost:5173/editor> | Choose the Racer level, Monsters arena, or Fighter map editor |
 | Garage | <http://localhost:5173/garage> | Inspect and configure Racer models and manifest entries |
 | Activation analytics | <http://localhost:5173/analytics> | Private date-filtered engagement dashboard and PDF reports |
+| Visitor join | <http://localhost:5173/join> | Choose SMS, WhatsApp, or browser registration |
+| Browser player page | <http://localhost:5173/player> | Registration, wallet, challenges, and ready-pool controls |
+| Operator console | <http://localhost:5173/operator> | Staff-only station configuration, monitoring, and recovery |
 
-The shared display starts as a spectator and does not consume a player slot. Press `P` to add or remove a local keyboard player. Use `Enter` to advance supported menu phases; Racer also uses left arrow to go back and right arrow to advance.
+The shared screen and operator preview display a visitor QR that opens `/join`. SMS and WhatsApp are live deterministic channels when configured; browser registration remains available in lead-capture mode.
+
+Standalone shared displays start as spectators and do not consume a player slot; `P` adds or removes a local keyboard tester. Station-managed displays disable local players so admitted phone callers remain authoritative. Use `Enter` to advance supported menu phases; Racer also uses left arrow to go back and right arrow to advance.
 
 Keyboard controls:
 
@@ -154,7 +169,7 @@ Keyboard controls:
 
 To test a browser player instead of a spectator, omit `display=1` and add a name where supported, for example <http://localhost:5173/play.html?room=4821&name=Ada> or <http://localhost:5173/monsters.html?room=4821&name=Ada>. Voice Fighter joins a local player from its shared display with `P`.
 
-For a live call, expose port `8080` through a public HTTPS endpoint, set `PUBLIC_BASE_URL`, and configure the Twilio number's incoming Voice webhook as `POST https://YOUR_HOST/voice/incoming`. Configure incoming Messaging as `POST https://YOUR_HOST/sms` to use the Voice Racer SMS concierge. See [Voice setup](docs/voice-setup.md) and [Infrastructure setup](docs/INFRA_SETUP.md) for account and webhook details.
+For a live call, expose port `8080` through a public HTTPS endpoint, set `PUBLIC_BASE_URL`, and configure both Twilio Voice numbers with `POST https://YOUR_HOST/voice/incoming`. Configure Conversation Orchestrator capture rules and its signed status callback at `POST https://YOUR_HOST/tac/webhook`; `/sms` remains the direct fallback only when TAC is disconnected or station mode is off. See [Voice setup](docs/voice-setup.md) and [Infrastructure setup](docs/INFRA_SETUP.md).
 
 ## Editors and Assets
 
@@ -186,7 +201,7 @@ The application runs locally without Twilio or OpenAI credentials. Configure the
 | `TWILIO_AUTH_TOKEN` | Validates Twilio Voice and Messaging webhook signatures; validation turns on when set | Unset |
 | `TWILIO_VALIDATE_SIGNATURES` | Explicitly enable or disable webhook signature validation | Enabled when `TWILIO_AUTH_TOKEN` is set |
 | `GAME_PHONE_NUMBER` | Number displayed and QR-encoded on game lobbies | Placeholder when unset |
-| `VOICE_RELAY_TOKEN` | Validates Conversation Relay setup frames | Falls back to `TWILIO_AUTH_TOKEN` |
+| `VOICE_RELAY_TOKEN` | Dedicated bearer token for Conversation Relay setup frames | Required and separate from `TWILIO_AUTH_TOKEN` in production |
 | `CR_TTS_VOICE` | ElevenLabs voice ID used by Conversation Relay talk-back | Relay default voice |
 | `CR_TTS_VOICE_PT_BR` | Optional Brazilian Portuguese ElevenLabs voice ID | Relay's `pt-BR` default voice |
 | `DEFAULT_LOCALE` | Call locale when no localized game display is connected | `en-US` |
@@ -197,6 +212,16 @@ The application runs locally without Twilio or OpenAI credentials. Configure the
 | `GOOGLE_OAUTH_CLIENT_SECRET` | Google OAuth web client secret | Analytics access disabled when unset |
 | `ANALYTICS_ALLOWED_EMAIL` | One exact verified Google email allowed in addition to `@twilio.com` accounts | No exception account |
 | `ANALYTICS_PATH` | Persistent daily analytics rollup file | `data/analytics.json` |
+| `ARCADE_ADMIN_EMAILS` | Comma-separated Google-authenticated emails allowed to update Arcade runtime configuration | Admin APIs disabled when unset |
+| `ARCADE_CONFIG_DIRECTORY` | Persistent Arcade configuration and audit directory | `data/` |
+| `ARCADE_SIGNING_SECRET` | Exactly 64 hexadecimal characters used to derive player-session and challenge-token keys when station mode is enabled | Not read while station mode is `off` |
+| `ARCADE_STATE_PATH` | Persistent player, wallet, and queue state | `data/arcade-state.json` |
+| `ARCADE_DEV_ADMIN` | Explicit local-only admin bypass used by `dev:arcade:server`; ignored in production | `false` |
+| `ARCADE_TAC_ENABLED` | Enables the active-event TAC lifecycle gateway; the local Arcade script disables it for credential-free testing | Enabled in production |
+| `TWILIO_ACCOUNT_SID`, `TWILIO_API_KEY`, `TWILIO_API_SECRET` | TAC, Conversation Memory, and outbound Messaging credentials from the primary SMS/WhatsApp account | Required by the production workflow |
+| `TWILIO_PT_AUTH_TOKEN` | Validates Voice webhooks from the separate account that owns the Portuguese number | Required for the current two-account deployment |
+| `TWILIO_PHONE_NUMBER`, `TWILIO_SMS_NUMBER` | SMS sender registered with TAC and used for direct fallback/outbound delivery | Required in production |
+| `TWILIO_CONVERSATION_CONFIGURATION_ID` | Conversation Orchestrator configuration linked to the event Memory store | Required; `conv_configuration_<26 lowercase letters or digits>` |
 | `FIGHTER_DISPLAY_TOKEN` | Requires host authentication for the Fighter display | Unset |
 | `GAME_SERVER_URL` | Vite development proxy target | `http://localhost:8080` |
 | `MAPS_PATH`, `ARENA_PATH`, `FIGHTER_MAPS_PATH` | Live writable game configuration paths | Files under `data/` |
@@ -221,7 +246,9 @@ npm run typecheck
 npm run build
 ```
 
-The current Vitest suite contains 718 passing tests across 86 files. It covers game worlds and protocols, room and reconnect behavior, Conversation Relay routing, voice command parsing, TwiML, webhook signatures, HTTP APIs, persistence, analytics, Google OAuth authorization, asset governance, render helpers, audio management, and WebSocket integration.
+The current Vitest suite contains 1,139 passing tests across 113 files. It covers game worlds and protocols, room and reconnect behavior, Conversation Relay routing, voice command parsing, TwiML, webhook signatures, HTTP APIs, persistence, analytics, scoped Google OAuth authorization, the Twilio Games player experience and station QR, signed player sessions, wallet, queue, challenge, audited operator match APIs, the canonical game-capacity registry, and the deterministic station/round reducer, TAC lifecycle gating, asset governance, render helpers, audio management, and WebSocket integration.
+
+For a credential-free local Twilio Games station walkthrough, run `npm run dev:arcade:server` and `npm run dev:arcade:client` in separate terminals, then open <http://localhost:5173/player> or <http://localhost:5173/operator>. These scripts use isolated `data/arcade-dev-*` state, an explicit loopback-only development operator, and disabled TAC; production and non-loopback deployments remain authenticated and fail-closed.
 
 Additional Chromium-based render checks are available when a compatible browser is installed:
 
@@ -230,7 +257,7 @@ npm run smoke
 npm run smoke:editor
 ```
 
-GitHub Actions runs Node.js 20, restores Git LFS assets, installs with `npm ci`, typechecks, runs the test suite, builds the Vite client, and reports high-severity dependency audit results without making that audit step blocking.
+GitHub Actions runs Node.js 22.13, restores Git LFS assets, installs with `npm ci`, typechecks, runs the test suite, builds the Vite client, and reports high-severity dependency audit results without making that audit step blocking.
 
 ## Deployment
 
