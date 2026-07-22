@@ -501,11 +501,38 @@ export function chooseStationGame(
     : 0;
   const enabledOrder = stationConfig.automaticSelection.order.filter(game => stationConfig.games[game].enabled);
   if (!enabledOrder.length) throw new Error('Twilio Games station has no enabled games');
+  const round = roundId ? aggregate.rounds[roundId] : undefined;
+  const liveReadyIds = new Set(Object.values(aggregate.readyEntries)
+    .filter(entry => entry.roundId === roundId && entry.status === 'READY')
+    .map(entry => entry.id));
+  const votes = new Map(enabledOrder.map(game => [game, 0]));
+  for (const [readyEntryId, game] of Object.entries(round?.gameChoicesByReadyEntryId ?? {})) {
+    if (liveReadyIds.has(readyEntryId) && votes.has(game)) votes.set(game, votes.get(game)! + 1);
+  }
+  const highestVoteCount = Math.max(0, ...votes.values());
+  const eligible = highestVoteCount > 0
+    ? enabledOrder.filter(game => votes.get(game) === highestVoteCount)
+    : enabledOrder;
+  return chooseByAutomaticPolicy(aggregate, stationConfig, eligible, readyCount);
+}
+
+function chooseByAutomaticPolicy(
+  aggregate: ArcadeStationAggregate,
+  stationConfig: StationSettings,
+  eligibleGames: readonly PlayableArcadeGame[],
+  readyCount: number,
+): PlayableArcadeGame {
+  const allEnabledOrder = stationConfig.automaticSelection.order.filter(game => stationConfig.games[game].enabled);
+  const enabledOrder = allEnabledOrder.filter(game => eligibleGames.includes(game));
+  if (!enabledOrder.length) throw new Error('Twilio Games station has no eligible enabled games');
   if (stationConfig.automaticSelection.policy === 'fixed_priority') return enabledOrder[0]!;
   if (stationConfig.automaticSelection.policy === 'round_robin') {
     const latest = Object.values(aggregate.matches).at(-1);
-    const previousIndex = latest ? enabledOrder.indexOf(latest.game) : -1;
-    return enabledOrder[(previousIndex + 1) % enabledOrder.length]!;
+    const previousIndex = latest ? allEnabledOrder.indexOf(latest.game) : -1;
+    for (let offset = 1; offset <= allEnabledOrder.length; offset += 1) {
+      const game = allEnabledOrder[(previousIndex + offset) % allEnabledOrder.length]!;
+      if (eligibleGames.includes(game)) return game;
+    }
   }
   const usage = new Map<PlayableArcadeGame, number>();
   const order = new Map(enabledOrder.map((game, index) => [game, index]));
@@ -513,7 +540,7 @@ export function chooseStationGame(
   for (const match of Object.values(aggregate.matches)) {
     usage.set(match.game, (usage.get(match.game) ?? 0) + 1);
   }
-  return PLAYABLE_ARCADE_GAMES.filter(game => stationConfig.games[game.id].enabled).sort((left, right) => {
+  return PLAYABLE_ARCADE_GAMES.filter(game => enabledOrder.includes(game.id)).sort((left, right) => {
     const leftAdmitted = Math.min(readyCount, left.humanCapacity);
     const rightAdmitted = Math.min(readyCount, right.humanCapacity);
     return rightAdmitted - leftAdmitted

@@ -5,6 +5,7 @@ const arcade = readFileSync(new URL('../client/arcade/arcade.ts', import.meta.ur
 const arcadeHtml = readFileSync(new URL('../client/arcade/index.html', import.meta.url), 'utf8');
 const arcadeCss = readFileSync(new URL('../client/arcade/arcade.css', import.meta.url), 'utf8');
 const join = readFileSync(new URL('../client/join/join.ts', import.meta.url), 'utf8');
+const joinGuidance = readFileSync(new URL('../client/join/guidance.ts', import.meta.url), 'utf8');
 const stationClient = readFileSync(new URL('../client/station-client.ts', import.meta.url), 'utf8');
 
 describe('Arcade client completeness', () => {
@@ -18,7 +19,7 @@ describe('Arcade client completeness', () => {
     expect(arcade).toContain("currentConfig.arcade.mode==='coin_only'&&redirectNoLeadPlayer()");
     expect(arcade).toContain('effectivePublicVisitorBaseUrl(state.deployment?.publicBaseUrl)');
     expect(arcade).toContain('location.replace(`${target.pathname}${target.search}`)');
-    expect(join).toMatch(/if \(arcade\.arcade\.mode === 'lead_capture'\) \{[\s\S]*?'Continue in browser'/);
+    expect(join).toMatch(/if \(mode === 'lead_capture'\) \{[\s\S]*?'Continue in browser'/);
   });
 
   it('keeps lead-capture player state live over station/config SSE with polling fallback', () => {
@@ -64,10 +65,43 @@ describe('Arcade client completeness', () => {
     expect(arcade).toContain("return number?'Ready':'Add a phone number'");
   });
 
-  it('explains the mandatory no-lead acknowledgement before readiness', () => {
-    expect(join).toContain('You must reply YES to acknowledge the terms before replying');
-    expect(join).toContain('Você deve responder SIM para aceitar os termos antes de responder');
-    expect(join).toContain("freePlay ? 'READY' : 'COIN'");
-    expect(join).toContain("freePlay ? 'PRONTO' : 'MOEDA'");
+  it('uses the short localized join command and explains the guided replies', () => {
+    expect(join).toContain('buildJoinGuidance');
+    expect(joinGuidance).toContain("portuguese ? 'ENTRAR' : 'JOIN'");
+    expect(joinGuidance).not.toContain('JOIN ${station}');
+    expect(joinGuidance).toContain('including YES for terms');
+    expect(joinGuidance).toContain('incluindo SIM para os termos');
+    expect(joinGuidance).toContain('Just tap Send');
+    expect(joinGuidance).toContain('Basta tocar em Enviar');
+    expect(join).toContain('messageCommandPanel');
+    expect(join).toContain('hidden = !guidance.messaging');
+    expect(join).toContain('const smsNumber = availableNumber(bootstrap.smsNumber)');
+    expect(join).toContain('const whatsappNumber = availableNumber(bootstrap.whatsappNumber)');
+    expect(join).toContain('const sms = arcade.channels.sms && Boolean(smsNumber)');
+    expect(join).toContain('const whatsapp = arcade.channels.whatsapp && Boolean(whatsappNumber)');
+  });
+
+  it('lets a current ready browser player cast and change a localized game vote', () => {
+    expect(arcadeHtml).toContain('id="game-choice-panel"');
+    expect(arcade).toContain("station?.phase==='GAME_SELECTION'&&station.ready?.status==='READY'");
+    expect(arcade).toContain("post<GameChoiceResponse>('/api/arcade/station/game-choice',{game})");
+    expect(arcade).toContain('ready:{...state.station.ready,gameChoice:result.gameChoice}');
+    const choiceRequest = /async function chooseGame\(game:PlayableGame\)[\s\S]*?\n}/.exec(arcade)?.[0] ?? '';
+    expect(choiceRequest.indexOf('gameChoice:result.gameChoice')).toBeLessThan(choiceRequest.indexOf('await refreshPlayer()'));
+    expect(choiceRequest).toContain('Keep the saved choice');
+    expect(arcade).toContain('gameChoice:PlayableGame|null');
+    expect(arcade).toContain('Você pode mudar seu voto');
+    expect(arcadeCss).toContain('.player-game-choices button.selected');
+  });
+
+  it('never offers disabled games and preserves global game numbers', () => {
+    expect(arcade).toContain('station:{games:Record<PlayableGame,{enabled:boolean}>}');
+    expect(arcade).toContain('const enabled=state.config?.station.games[game]?.enabled===true');
+    expect(arcade).toContain('button.hidden=!enabled');
+    expect(arcade).toContain('button.disabled=gameChoiceSaving||!enabled');
+    expect(arcade).toContain("state.config?.station.games[game]?.enabled!==true)return");
+    expect(arcadeHtml).toMatch(/data-game-choice="racer"><span>1<\/span>/);
+    expect(arcadeHtml).toMatch(/data-game-choice="monsters"><span>2<\/span>/);
+    expect(arcadeHtml).toMatch(/data-game-choice="fighter"><span>3<\/span>/);
   });
 });

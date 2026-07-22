@@ -249,16 +249,16 @@ For an event readiness check, also load `/play.html`, `/monsters.html`, `/fighte
 Keep runtime mode `off` during provisioning. After item 1 passes, open the event from `/operator` and continue:
 
 1. Confirm `/livez` and `/healthz` return `200`.
-2. In the primary account, send `JOIN ARCADE-01 LANG en-US` by SMS and confirm exactly one reply, one Conversation, and one Memory profile.
+2. In the primary account, send `JOIN` by SMS and confirm exactly one reply, one Conversation, and one Memory profile. Send `ENTRAR` to verify Portuguese inference; legacy `LANG` commands remain supported.
 3. Send the WhatsApp join message and confirm it resolves to the same profile for the same phone identity.
 4. Register through `/player` and confirm the player can join immediately without an OTP.
-5. Run a paid two-player game and confirm one coin is redeemed from each admitted player when gameplay starts. Confirm an overflow player's coin remains reserved, not redeemed.
+5. Run a paid two-player game. During game selection, vote by SMS with `1` or `RACER`, change the vote by sending another enabled game, and confirm the browser player can vote from `/player`. Confirm the shared display shows looping previews and live totals. When gameplay starts, confirm one coin is redeemed from each admitted player and an overflow player's coin remains reserved.
 6. Switch the event to free play and confirm no wallet grants, reservations, or redemptions are created.
 7. Call the English number and confirm the request is accepted with the primary account signature and uses English recognition/TTS.
 8. Call the Portuguese number and confirm the request is accepted with `TWILIO_PT_AUTH_TOKEN` and uses `pt-BR` recognition/TTS.
 9. Complete Racer, Monsters, and Fighter once and confirm the operator sees authoritative results.
 10. If proactive messaging is enabled, confirm SMS delivery callbacks and one approved out-of-session WhatsApp template.
-11. Restart the Container App and confirm persisted station recovery, wallet balances, and Memory-linked messaging still work.
+11. Open the booth display with `#displayToken=<ARCADE_DISPLAY_TOKEN>`. Verify an absent or rejected token shows the visible setup form instead of a stuck countdown, then restart the Container App and confirm persisted event recovery, wallet balances, and Memory-linked messaging still work.
 
 ## Persistent storage operations
 

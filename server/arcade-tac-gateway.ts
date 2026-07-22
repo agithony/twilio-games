@@ -22,6 +22,21 @@ export interface ArcadeTacMessage {
 
 export type ArcadeTacMessageHandler = (input: ArcadeTacMessage) => Promise<string | null>;
 
+export function recalledMemoryLocale(
+  memory: ArcadeTacMessage['memory'],
+): 'en-US' | 'pt-BR' | null {
+  if (!memory) return null;
+  for (const communication of [...memory.communications].reverse()) {
+    const text = communication.content?.text ?? '';
+    const explicit = /\bLANG\s+(pt(?:-BR)?|en(?:-US)?)\b/i.exec(text)?.[1]?.toLowerCase();
+    if (explicit?.startsWith('pt')) return 'pt-BR';
+    if (explicit?.startsWith('en')) return 'en-US';
+    if (/^\s*ENTRAR(?:\s|$)/i.test(text)) return 'pt-BR';
+    if (/^\s*JOIN(?:\s|$)/i.test(text)) return 'en-US';
+  }
+  return null;
+}
+
 export type ArcadeTacClientFactory = () => Promise<ArcadeTacClient>;
 
 export type ArcadeTacGatewayStatus = Readonly<{

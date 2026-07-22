@@ -1,5 +1,7 @@
-import { describe, expect, it } from 'vitest';
-import { effectivePublicVisitorBaseUrl, stationJoinUrl, stationLaunchUrl, voiceNumberForLocale } from '../client/station-client';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { displayTokenWasRejected, effectivePublicVisitorBaseUrl, fetchPublicStation, readDisplayToken, rejectDisplayToken, stationJoinUrl, stationLaunchUrl, storeDisplayToken, voiceNumberForLocale } from '../client/station-client';
+
+afterEach(() => vi.unstubAllGlobals());
 
 describe('station voice number selection', () => {
   it('uses the requested locale without borrowing the other locale number', () => {
@@ -34,5 +36,48 @@ describe('public visitor URLs', () => {
       launch: { game: 'fighter', route: '/fighter.html', roomCode: 'ROOM', matchId: 'MATCH', generation: 3 },
     }, 'ARCADE-01', 'en-US', 'https://public.example/path');
     expect(new URL(target!).searchParams.get('joinBaseUrl')).toBe('https://public.example');
+  });
+});
+
+describe('display token session storage', () => {
+  it('stores and reads a display token in same-tab session storage', () => {
+    const values = new Map<string,string>();
+    vi.stubGlobal('sessionStorage', {
+      setItem: (key:string,value:string) => values.set(key,value),
+      getItem: (key:string) => values.get(key) ?? null,
+      removeItem: (key:string) => values.delete(key),
+    });
+    expect(storeDisplayToken('display-secret')).toBe(true);
+    expect(readDisplayToken()).toBe('display-secret');
+  });
+
+  it('fails safely when session storage is unavailable', () => {
+    vi.stubGlobal('sessionStorage', {
+      setItem: () => { throw new Error('blocked'); },
+      getItem: () => { throw new Error('blocked'); },
+      removeItem: () => { throw new Error('blocked'); },
+    });
+    expect(storeDisplayToken('display-secret')).toBe(false);
+    expect(readDisplayToken()).toBeNull();
+  });
+
+  it('quarantines a rejected token so a reload cannot restore or retry it', () => {
+    const values = new Map<string,string>();
+    vi.stubGlobal('sessionStorage', {
+      setItem: (key:string,value:string) => values.set(key,value),
+      getItem: (key:string) => values.get(key) ?? null,
+      removeItem: (key:string) => values.delete(key),
+    });
+    expect(storeDisplayToken('bad-display-token')).toBe(true);
+    expect(rejectDisplayToken('bad-display-token')).toBe(true);
+    expect(readDisplayToken()).toBeNull();
+    expect(displayTokenWasRejected()).toBe(true);
+    expect(storeDisplayToken('replacement-token')).toBe(true);
+    expect(displayTokenWasRejected()).toBe(false);
+  });
+
+  it('exposes station response status as a typed fetch error', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 401 })));
+    await expect(fetchPublicStation('bad-display-token')).rejects.toMatchObject({ status: 401 });
   });
 });

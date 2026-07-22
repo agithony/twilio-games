@@ -6,7 +6,12 @@ import type { MemoryClient } from 'twilio-agent-connect';
 import { DEFAULT_ARCADE_CONFIG, type ArcadeConfigSettings } from '../shared/arcade-config';
 import { ArcadeConfigStore } from '../server/arcade-config-store';
 import { ArcadeEventHub } from '../server/arcade-events';
-import { ArcadeTacGateway, type ArcadeTacClient } from '../server/arcade-tac-gateway';
+import {
+  ArcadeTacGateway,
+  recalledMemoryLocale,
+  type ArcadeTacClient,
+  type ArcadeTacMessage,
+} from '../server/arcade-tac-gateway';
 
 let directory: string | undefined;
 
@@ -42,6 +47,18 @@ async function waitFor(predicate: () => boolean): Promise<void> {
 }
 
 describe('ArcadeTacGateway', () => {
+  it('uses the newest locale-bearing Conversation Memory command', () => {
+    const memory = (texts: readonly string[]) => ({
+      communications: texts.map(text => ({ content: { text } })),
+    }) as unknown as ArcadeTacMessage['memory'];
+
+    expect(recalledMemoryLocale(memory(['JOIN ARCADE-01 LANG pt-BR', 'JOIN']))).toBe('en-US');
+    expect(recalledMemoryLocale(memory(['JOIN', 'ENTRAR']))).toBe('pt-BR');
+    expect(recalledMemoryLocale(memory(['ENTRAR', 'JOIN ARCADE-01 LANG pt-BR']))).toBe('pt-BR');
+    expect(recalledMemoryLocale(memory(['ENTRAR', 'ENTRAR ARCADE-01 LANG en-US']))).toBe('en-US');
+    expect(recalledMemoryLocale(memory(['JOIN', 'no locale here']))).toBe('en-US');
+  });
+
   it('does not initialize TAC or require credentials while Arcade mode is off', async () => {
     const { store, events } = await dependencies();
     let factoryCalls = 0;

@@ -30,6 +30,7 @@ export interface RecruitingRound {
   readonly lockedEndsAt: StationTimestamp | null;
   readonly lockedAt: StationTimestamp | null;
   readonly selectedGame: PlayableArcadeGame | null;
+  readonly gameChoicesByReadyEntryId: Readonly<Record<string, PlayableArcadeGame>>;
   readonly startedAt: StationTimestamp | null;
   readonly resultsAt: StationTimestamp | null;
   readonly closedAt: StationTimestamp | null;
@@ -247,6 +248,54 @@ export function closeStationRecruiting(
   });
 }
 
+export function recordStationGameChoice(
+  state: ArcadeStationAggregate,
+  input: {
+    readyEntryId: string;
+    roundId: string;
+    game: ArcadeGame;
+    at: StationTimestamp;
+    expectedRevision: number;
+  },
+): ArcadeStationAggregate {
+  assertStationInvariants(state);
+  requireRevision(state, input.expectedRevision);
+  requireChronology(state.station, input.at);
+  const readyEntryId = identifier(input.readyEntryId, 'ready entry ID');
+  const roundId = identifier(input.roundId, 'round ID');
+  if (!isPlayableArcadeGame(input.game)) {
+    throw new ArcadeStationError('GAME_NOT_PLAYABLE', 'game is not station-playable');
+  }
+  if (state.station.phase !== 'GAME_SELECTION' || state.station.activeRoundId !== roundId) {
+    throw new ArcadeStationError('SELECTION_NOT_ACTIVE', 'game selection is not active for this round');
+  }
+  const round = state.rounds[roundId];
+  const entry = state.readyEntries[readyEntryId];
+  if (!round || round.phase !== 'GAME_SELECTION') {
+    throw new ArcadeStationError('SELECTION_NOT_ACTIVE', 'game selection is not active for this round');
+  }
+  if (!round.selectionEndsAt
+    || timestamp(input.at, 'game choice timestamp') >= timestamp(round.selectionEndsAt, 'selection deadline')) {
+    throw new ArcadeStationError('SELECTION_CLOSED', 'game selection deadline has passed');
+  }
+  if (!entry || entry.roundId !== roundId || entry.status !== 'READY') {
+    throw new ArcadeStationError('READY_ENTRY_NOT_READY', 'ready entry cannot choose a game');
+  }
+  const rounds = cloneRecord(state.rounds);
+  rounds[roundId] = Object.freeze({
+    ...round,
+    gameChoicesByReadyEntryId: Object.freeze({
+      ...round.gameChoicesByReadyEntryId,
+      [readyEntryId]: input.game,
+    }),
+  });
+  return checked({
+    ...state,
+    station: reviseStation(state.station, input.at, {}),
+    rounds,
+  });
+}
+
 export function selectStationGame(
   state: ArcadeStationAggregate,
   input: {
@@ -287,6 +336,7 @@ export function selectStationGame(
     ...round,
     phase: 'LOCKED',
     selectedGame: input.game,
+    gameChoicesByReadyEntryId: Object.freeze({}),
     lockedAt: input.at,
     lockedEndsAt: new Date(atMs + timing.lockedSeconds * 1000).toISOString(),
   });
@@ -479,7 +529,12 @@ export function advanceStationResults(
   const hasNextPlayers = (existingNext ? readyForRound(state, existingNext.id).length : 0)
     + overflowEntries.length > 0;
   const rounds = cloneRecord(state.rounds);
-  rounds[currentRound.id] = Object.freeze({ ...currentRound, phase: 'CLOSED', closedAt: input.at });
+  rounds[currentRound.id] = Object.freeze({
+    ...currentRound,
+    phase: 'CLOSED',
+    gameChoicesByReadyEntryId: Object.freeze({}),
+    closedAt: input.at,
+  });
   const readyEntries = cloneRecord(state.readyEntries);
   let activeRoundId: string | null = null;
   let phase: StationPhase = 'ATTRACT';
@@ -559,12 +614,26 @@ export function leaveStationReadyEntry(
     });
   }
   const rounds = cloneRecord(state.rounds);
+  const entryRound = rounds[entry.roundId]!;
+  if (Object.prototype.hasOwnProperty.call(entryRound.gameChoicesByReadyEntryId, readyEntryId)) {
+    const choices = { ...entryRound.gameChoicesByReadyEntryId };
+    delete choices[readyEntryId];
+    rounds[entry.roundId] = Object.freeze({
+      ...entryRound,
+      gameChoicesByReadyEntryId: Object.freeze(choices),
+    });
+  }
   let station = state.station;
   const remaining = Object.values(readyEntries).some(candidate => candidate.roundId === entry.roundId
     && ['READY', 'OVERFLOW'].includes(candidate.status));
   if (!remaining && station.activeRoundId === entry.roundId
     && (station.phase === 'RECRUITING' || station.phase === 'GAME_SELECTION')) {
-    rounds[entry.roundId] = Object.freeze({ ...rounds[entry.roundId]!, phase: 'CLOSED', closedAt: input.at });
+    rounds[entry.roundId] = Object.freeze({
+      ...rounds[entry.roundId]!,
+      phase: 'CLOSED',
+      gameChoicesByReadyEntryId: Object.freeze({}),
+      closedAt: input.at,
+    });
     const nextRound = station.nextRoundId ? rounds[station.nextRoundId] : undefined;
     const nextHasPlayers = nextRound && Object.values(readyEntries).some(candidate => (
       candidate.roundId === nextRound.id && candidate.status === 'READY'
@@ -580,11 +649,21 @@ export function leaveStationReadyEntry(
         phase: 'RECRUITING', activeRoundId: nextRound.id, nextRoundId: null,
       });
     } else {
-      if (nextRound) rounds[nextRound.id] = Object.freeze({ ...nextRound, phase: 'CLOSED', closedAt: input.at });
+      if (nextRound) rounds[nextRound.id] = Object.freeze({
+        ...nextRound,
+        phase: 'CLOSED',
+        gameChoicesByReadyEntryId: Object.freeze({}),
+        closedAt: input.at,
+      });
       station = reviseStation(station, input.at, { phase: 'ATTRACT', activeRoundId: null, nextRoundId: null });
     }
   } else if (!remaining && station.nextRoundId === entry.roundId) {
-    rounds[entry.roundId] = Object.freeze({ ...rounds[entry.roundId]!, phase: 'CLOSED', closedAt: input.at });
+    rounds[entry.roundId] = Object.freeze({
+      ...rounds[entry.roundId]!,
+      phase: 'CLOSED',
+      gameChoicesByReadyEntryId: Object.freeze({}),
+      closedAt: input.at,
+    });
     station = reviseStation(station, input.at, { nextRoundId: null });
   } else {
     station = reviseStation(station, input.at, {});
@@ -709,6 +788,7 @@ export function failStationLaunch(
         lockedAt: null,
         lockedEndsAt: null,
         selectedGame: null,
+        gameChoicesByReadyEntryId: Object.freeze({}),
       }),
     },
     readyEntries,
@@ -736,7 +816,12 @@ export function resetArcadeStation(
     if (!roundId) continue;
     const round = rounds[roundId]!;
     if (round.phase !== 'CLOSED') {
-      rounds[roundId] = Object.freeze({ ...round, phase: 'CLOSED', closedAt: input.at });
+      rounds[roundId] = Object.freeze({
+        ...round,
+        phase: 'CLOSED',
+        gameChoicesByReadyEntryId: Object.freeze({}),
+        closedAt: input.at,
+      });
     }
   }
 
@@ -818,6 +903,20 @@ export function assertStationInvariants(value: ArcadeStationAggregate): void {
     if (key !== round.id) throw new ArcadeStationError('INVALID_STATION', 'round key does not match ID');
     if (!ROUND_PHASES.has(round.phase)) throw new ArcadeStationError('INVALID_STATION', 'unknown round phase');
     if (round.stationId !== station.id) throw new ArcadeStationError('INVALID_STATION', 'round belongs to another station');
+    if (!round.gameChoicesByReadyEntryId || typeof round.gameChoicesByReadyEntryId !== 'object'
+      || Array.isArray(round.gameChoicesByReadyEntryId)) {
+      throw new ArcadeStationError('INVALID_STATION', 'round game choices must be a record');
+    }
+    for (const [readyEntryId, game] of Object.entries(round.gameChoicesByReadyEntryId)) {
+      identifier(readyEntryId, 'choice ready entry ID');
+      const entry = value.readyEntries[readyEntryId];
+      if (!isPlayableArcadeGame(game) || !entry || entry.roundId !== round.id || entry.status !== 'READY') {
+        throw new ArcadeStationError('INVALID_STATION', 'round game choice is stale or invalid');
+      }
+    }
+    if (round.phase !== 'GAME_SELECTION' && Object.keys(round.gameChoicesByReadyEntryId).length > 0) {
+      throw new ArcadeStationError('INVALID_STATION', 'game choices exist outside selection');
+    }
     const first = timestamp(round.firstCoinAt, 'round firstCoinAt');
     const dates = [round.recruitingEndsAt, round.hardEndsAt, round.selectionStartedAt,
       round.selectionEndsAt, round.lockedAt, round.lockedEndsAt, round.startedAt,
@@ -1060,6 +1159,7 @@ function createRound(
     lockedEndsAt: null,
     lockedAt: null,
     selectedGame: null,
+    gameChoicesByReadyEntryId: Object.freeze({}),
     startedAt: null,
     resultsAt: null,
     closedAt: null,
@@ -1089,7 +1189,10 @@ function checked(value: ArcadeStationAggregate): ArcadeStationAggregate {
 }
 
 function freezeAggregate(value: ArcadeStationAggregate): ArcadeStationAggregate {
-  const rounds = Object.fromEntries(Object.entries(value.rounds).map(([key, round]) => [key, Object.freeze({ ...round })]));
+  const rounds = Object.fromEntries(Object.entries(value.rounds).map(([key, round]) => [key, Object.freeze({
+    ...round,
+    gameChoicesByReadyEntryId: Object.freeze({ ...round.gameChoicesByReadyEntryId }),
+  })]));
   const readyEntries = Object.fromEntries(Object.entries(value.readyEntries).map(([key, entry]) => [key, Object.freeze({ ...entry })]));
   const matches = Object.fromEntries(Object.entries(value.matches).map(([key, match]) => [key, Object.freeze({
     ...match,

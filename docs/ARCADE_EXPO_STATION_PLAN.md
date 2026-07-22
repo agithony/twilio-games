@@ -24,7 +24,7 @@ messaging, game-selection, or display behavior.
 | Coin insertion | Player replies `COIN`; server reserves one coin for the station ready pool |
 | Coin cost | One coin per human per game; AI never consumes coins |
 | Grouping | FIFO individual ready pool for v1; no explicit party codes |
-| Game selection | Ready pool locks first, then staff selects from the existing game cards |
+| Game selection | Ready players vote by game name/number or browser; staff may override |
 | Manual control | Staff can advance early whenever at least one player is ready |
 | Automatic control | Timers provide unattended fallback and hard throughput bounds |
 | Overflow | Players beyond selected-game capacity keep reservation and FIFO priority for next game |
@@ -50,7 +50,7 @@ The booth behaves like one physical arcade machine:
 4. Receive one wallet coin.
 5. Reply `COIN` when ready to play.
 6. Watch the display animate the inserted coin and add the player to the ready pool.
-7. Staff selects a game after the pool locks.
+7. Vote for a game by replying with its name/number or choosing it on the player page.
 8. Admitted players play; overflow stays first for the next game.
 
 The confirmation message is not the coin. The wallet ledger is authoritative.
@@ -66,9 +66,9 @@ IDLE (internal phase: ATTRACT) / RECRUITING
           |
           v
 GAME_SELECTION
-  render the existing game-card visual
-  show how many ready players each game can admit
-  staff selects; 30-second fallback selects best-fit rotation game
+  render numbered game cards with looping previews and live vote totals
+  ready players vote by message or on the browser player page
+  staff may override; ties or no votes use the configured 30-second fallback
           |
           v
 LOCKED
@@ -103,7 +103,7 @@ immediately apply overdue transitions exactly once.
 | Idle recruiting | None | No coins inserted | QR remains available indefinitely |
 | Recruiting window | 90 seconds | First valid `COIN` while no game is active | Staff may advance early |
 | Hard recruiting deadline | 120 seconds | First valid `COIN` | Cannot be extended indefinitely |
-| Game selection fallback | 30 seconds | Recruiting closes | Auto-select best-fit playable game |
+| Game selection window | 30 seconds | Recruiting closes | Highest vote wins; ties/no votes use configured fallback |
 | Locked countdown | 10 seconds | Participants assigned | Launch preparation |
 | Post-game join window | 45 seconds | Results with next-pool players | Staff may skip early |
 
@@ -192,11 +192,14 @@ No PII, balance, player ID, round ID, or bearer credential appears in the QR.
 Opening `/join` directly resolves the current cabinet automatically. A station query is used only to
 detect genuinely stale printed or cached QR links.
 
-Channel links prefill a deterministic command:
+Channel links prefill one short localized command. The player only needs to tap **Send**:
 
 ```text
-JOIN ARCADE-01 LANG en-US
+JOIN
 ```
+
+Portuguese links prefill `ENTRAR`. Legacy commands containing a station ID or `LANG` remain accepted,
+but are not shown to new players.
 
 Messaging flow:
 
@@ -227,7 +230,7 @@ After insertion:
 Coin inserted.
 You are ready for the next game.
 Position: 3
-Stay near the screen.
+When game selection appears, reply with the game name or number.
 ```
 
 Deterministic commands are parsed before TAC/LLM fallback:
@@ -237,6 +240,7 @@ Deterministic commands are parsed before TAC/LLM fallback:
 - `STATUS`
 - `LEAVE`
 - `HELP`
+- `1` / `RACER`, `2` / `MONSTERS`, or `3` / `FIGHTER` during game selection
 - localized equivalents
 
 Inbound provider message IDs are durably idempotent. SMS and WhatsApp addresses normalize into a
@@ -244,7 +248,7 @@ channel-address model linked to the authoritative player and Memory profile.
 
 ## 8. Language
 
-The selected display language is appended to the QR and initial message. It controls:
+The selected display language chooses the short initial command (`JOIN` or `ENTRAR`). It controls:
 
 - Attract/recruiting instructions
 - Mobile channel chooser
@@ -268,7 +272,7 @@ Station
 
 RecruitingRound
   id, stationId, phase, firstCoinAt, recruitingEndsAt, hardEndsAt,
-  selectionEndsAt, selectedGame, startedAt, closedAt, configVersion
+  selectionEndsAt, selectedGame, gameChoicesByReadyEntryId, startedAt, closedAt, configVersion
 
 ReadyEntry
   id, roundId, stationId, playerId, originalReadyAt, readyAt,

@@ -8,11 +8,15 @@ import { injectMagicHat } from './magic-hat';
 import { OPERATOR_ICON, updateThemeToggleIcon } from './icon-controls';
 import {
   captureDisplayToken,
+  displayTokenWasRejected,
   effectivePublicVisitorBaseUrl,
   fetchPublicArcadeConfig,
   fetchPublicStation,
+  rejectDisplayToken,
   stationJoinUrl,
   stationLaunchUrl,
+  StationRequestError,
+  storeDisplayToken,
   subscribeToStation,
   type PublicStation,
 } from './station-client';
@@ -25,9 +29,9 @@ const copy = locale === 'pt-BR' ? {
   phaseDescription: 'Escaneie, entre e responda MOEDA quando estiver pronto na tela.',
   joinEyebrow: 'Entre pelo seu telefone', joinTitle: 'Escaneie para jogar',
   joinStepOne: 'Escolha SMS ou WhatsApp', joinStepTwo: 'Conclua a apresentação rápida',
-  joinStepThree: 'Responda MOEDA na tela', selectionEyebrow: 'Seleção automática',
-  selectionTitle: 'A próxima arena é escolhida automaticamente.',
-  selectionDescription: 'A estação considera a capacidade e a rotação para escolher o próximo jogo.',
+  joinStepThree: 'Responda MOEDA na tela', selectionEyebrow: 'Escolha dos jogadores',
+  selectionTitle: 'Escolham o próximo jogo.',
+  selectionDescription: 'Jogadores prontos: enviem por mensagem o número mostrado ou o nome do jogo. No navegador, escolham na página do jogador. Se o tempo acabar ou houver empate, a estação decide automaticamente.',
   countdownEyebrow: 'Jogadores confirmados', countdownDescription: 'Fique por perto. O jogo está carregando nesta tela.',
   freePlay: 'Jogo livre', chooseGame: 'Escolha um jogo.',
   standaloneEyebrow: 'Jogos de festa controlados por voz · com tecnologia Twilio',
@@ -36,7 +40,10 @@ const copy = locale === 'pt-BR' ? {
   nextGame: 'Próximo jogo', gameComplete: 'Partida concluída',
   playersNext: 'jogadores já estão prontos para a próxima partida',
   displaySetup: 'Configuração da tela necessária', missingDisplayToken: 'Token da tela ausente',
-  invalidDisplayToken: 'Falha na autorização da tela',
+  invalidDisplayToken: 'Token da tela inválido', connectDisplay: 'Conectar esta tela', displayTokenLabel: 'Token da tela',
+  missingDisplayExplanation: 'Esta tela precisa do token de exibição antes de iniciar o jogo. Digite o token fornecido pelo operador.',
+  invalidDisplayExplanation: 'O token salvo foi rejeitado. Digite um token de exibição válido para reconectar esta tela.',
+  configureDisplay: 'Configurar tela', retryDisplay: 'Tentar novamente',
   lightTheme: 'Tema claro', darkTheme: 'Tema escuro', operator: 'Console do operador', playerMax: 'máx. {count} jogadores',
   playNow: '{count} jogam agora', keepPriority: '{count} mantêm prioridade',
   racerBlurb: 'Uma corrida por uma pista neon controlada por voz.',
@@ -44,6 +51,7 @@ const copy = locale === 'pt-BR' ? {
   fighterBlurb: 'Transforme cada golpe gritado em um confronto na arena.',
   freeDescription: 'Escaneie, entre e responda PRONTO quando estiver pronto na tela.',
   freeStep: 'Responda PRONTO na tela',
+  vote: 'voto', votes: 'votos', leader: 'Na liderança', tiedLeader: 'Líder empatado', textCommand: 'Envie',
 } : {
   pageTitle: 'Twilio Games', tagline: 'One screen. Your phone. Your voice.',
   connecting: 'Connecting', recruiting: 'Now recruiting', waiting: 'Waiting for first coin',
@@ -52,9 +60,9 @@ const copy = locale === 'pt-BR' ? {
   phaseDescription: 'Scan, join, and reply COIN when you are ready at the screen.',
   joinEyebrow: 'Join from your phone', joinTitle: 'Scan to play',
   joinStepOne: 'Choose SMS or WhatsApp', joinStepTwo: 'Complete the quick intro',
-  joinStepThree: 'Reply COIN at the screen', selectionEyebrow: 'Automatic selection',
-  selectionTitle: 'The next arena is selected automatically.',
-  selectionDescription: 'The station uses capacity and rotation to choose the next game.',
+  joinStepThree: 'Reply COIN at the screen', selectionEyebrow: 'Player choice',
+  selectionTitle: 'Choose the next game.',
+  selectionDescription: 'Ready players: text the number shown or game name. In a browser, choose on your player page. If time runs out or votes tie, the station chooses automatically.',
   countdownEyebrow: 'Players locked', countdownDescription: 'Stay close. The game is loading on this screen.',
   freePlay: 'Free play', chooseGame: 'Choose a game.',
   standaloneEyebrow: 'Voice-controlled party games · powered by Twilio',
@@ -63,7 +71,10 @@ const copy = locale === 'pt-BR' ? {
   nextGame: 'Next game', gameComplete: 'Game complete',
   playersNext: 'players are already ready for the next game',
   displaySetup: 'Display setup required', missingDisplayToken: 'Missing display token',
-  invalidDisplayToken: 'Display authorization failed',
+  invalidDisplayToken: 'Invalid display token', connectDisplay: 'Connect this display', displayTokenLabel: 'Display token',
+  missingDisplayExplanation: 'This display needs its display token before it can launch the game. Enter the token provided by the operator.',
+  invalidDisplayExplanation: 'The saved display token was rejected. Enter a valid display token to reconnect this screen.',
+  configureDisplay: 'Configure display', retryDisplay: 'Retry display',
   lightTheme: 'Light theme', darkTheme: 'Dark theme', operator: 'Operator console', playerMax: '{count} player max',
   playNow: '{count} play now', keepPriority: '{count} keep priority',
   racerBlurb: 'A voice-powered sprint through a neon circuit.',
@@ -71,6 +82,7 @@ const copy = locale === 'pt-BR' ? {
   fighterBlurb: 'Turn every shouted move into an arena showdown.',
   freeDescription: 'Scan, join, and reply READY when you are at the screen.',
   freeStep: 'Reply READY at the screen',
+  vote: 'vote', votes: 'votes', leader: 'Leading', tiedLeader: 'Tied lead', textCommand: 'Text',
 };
 
 const format = (template: string, values: Readonly<Record<string, string | number>>): string => (
@@ -93,13 +105,18 @@ const lockedGame = document.getElementById('lockedGame')!;
 const gameCards = document.getElementById('gameCards')!;
 const phaseEyebrow = document.getElementById('phaseEyebrow')!;
 const standaloneGames = document.getElementById('standaloneGames')!;
+const selectionVideos = {
+  racer: '/video/vr-demo.mp4', monsters: '/video/vm-demo.mp4', fighter: '/video/vf-demo.mp4',
+} as const;
+const gameCommands = { racer: 1, monsters: 2, fighter: 3 } as const;
 
 let stationId = new URLSearchParams(location.search).get('station') ?? 'ARCADE-01';
 let current: PublicStation | null = null;
 let refreshing = false;
 let refreshPending = false;
 let launched = '';
-const displayToken = captureDisplayToken();
+let displayToken = captureDisplayToken();
+let displayTokenRejected = !displayToken && displayTokenWasRejected();
 let standaloneMode = false;
 let joinBaseUrl = location.origin;
 let qrRailMode: 'auto' | 'always' | 'hidden' = 'auto';
@@ -109,20 +126,47 @@ let freePlay = false;
 let enabledGames = new Set(['racer','monsters','fighter']);
 let smsAvailable = false;
 let whatsappAvailable = false;
+let selectionLineup = '';
 
 function renderGameCards(station: PublicStation): void {
-  gameCards.replaceChildren(...station.games.filter(impact => enabledGames.has(impact.id)).map((impact, index) => {
-    const definition = PLAYABLE_ARCADE_GAMES.find(game => game.id === impact.id)!;
-    const card = document.createElement('article');
-    card.className = 'game-card';
-    card.dataset.game = impact.id;
-    card.innerHTML = `<span>0${index + 1} · ${format(copy.playerMax, { count: definition.humanCapacity })}</span>
-      <h2>${gameTitle(locale, impact.id)}</h2>
-      <p>${impact.id === 'racer' ? copy.racerBlurb
-        : impact.id === 'monsters' ? copy.monstersBlurb : copy.fighterBlurb}</p>
-      <div class="capacity"><b>${format(copy.playNow, { count: impact.playNow })}</b><b>${format(copy.keepPriority, { count: impact.overflow })}</b></div>`;
-    return card;
-  }));
+  const available = station.games.filter(impact => enabledGames.has(impact.id));
+  const lineup = available.map(impact => impact.id).join(',');
+  if (lineup !== selectionLineup) {
+    selectionLineup = lineup;
+    gameCards.replaceChildren(...available.map(impact => buildGameCard(impact)));
+  }
+  const highestChoices = Math.max(0, ...available.map(impact => impact.choices));
+  const leaders = highestChoices > 0 ? available.filter(impact => impact.choices === highestChoices) : [];
+  for (const impact of available) {
+    const card = gameCards.querySelector<HTMLElement>(`[data-game="${impact.id}"]`)!;
+    const leading = leaders.includes(impact);
+    card.classList.toggle('game-card-leading', leading);
+    card.setAttribute('aria-label', `${gameCommands[impact.id]}, ${gameTitle(locale, impact.id)}, ${impact.choices} ${impact.choices === 1 ? copy.vote : copy.votes}`);
+    card.querySelector<HTMLElement>('[data-role="vote-count"]')!.textContent = `${impact.choices} ${impact.choices === 1 ? copy.vote : copy.votes}`;
+    const leader = card.querySelector<HTMLElement>('[data-role="leader"]')!;
+    leader.hidden = !leading;
+    leader.textContent = leaders.length > 1 ? copy.tiedLeader : copy.leader;
+    card.querySelector<HTMLElement>('[data-role="play-now"]')!.textContent = format(copy.playNow, { count: impact.playNow });
+    card.querySelector<HTMLElement>('[data-role="overflow"]')!.textContent = format(copy.keepPriority, { count: impact.overflow });
+  }
+}
+
+function buildGameCard(impact: PublicStation['games'][number]): HTMLElement {
+  const definition = PLAYABLE_ARCADE_GAMES.find(game => game.id === impact.id)!;
+  const title = gameTitle(locale, impact.id);
+  const card = document.createElement('article');
+  card.className = 'game-card';
+  card.dataset.game = impact.id;
+  card.innerHTML = `<div class="game-card-media"><span class="game-media-fallback" role="img" aria-label="${gameCommands[impact.id]}, ${title}"><strong>${gameCommands[impact.id]}</strong><b>${title}</b></span><video src="${selectionVideos[impact.id]}" preload="metadata" loop muted playsinline autoplay aria-hidden="true"></video>
+      <span class="game-command"><small>${copy.textCommand}</small><strong>${gameCommands[impact.id]}</strong></span></div>
+    <div class="game-card-body"><div class="game-card-meta"><span data-role="vote-count"></span><b data-role="leader" hidden></b></div>
+      <h2>${title}</h2>
+      <span class="game-capacity">${format(copy.playerMax, { count: definition.humanCapacity })}</span>
+      <div class="capacity"><b data-role="play-now"></b><b data-role="overflow"></b></div></div>`;
+  const video = card.querySelector<HTMLVideoElement>('video')!;
+  video.addEventListener('error', () => card.classList.add('game-card-video-unavailable'), { once: true });
+  void video.play().catch(() => card.classList.add('game-card-video-unavailable'));
+  return card;
 }
 
 function renderStandaloneLauncher(): void {
@@ -146,6 +190,7 @@ function show(view: keyof typeof views): void {
 
 function render(station: PublicStation): void {
   current = station;
+  clearDisplaySetup();
   connection.textContent = copy.live;
   connection.classList.add('live');
   readyCount.textContent = String(station.currentReadyCount);
@@ -171,6 +216,8 @@ function render(station: PublicStation): void {
     renderGameCards(station);
   } else if (station.phase === 'LOCKED') {
     show('countdown');
+    document.getElementById('countdownEyebrow')!.textContent = copy.countdownEyebrow;
+    document.getElementById('countdownDescription')!.textContent = copy.countdownDescription;
     lockedGame.textContent = station.activeGame ? gameTitle(locale, station.activeGame) : copy.nextGame;
   } else if (station.phase === 'RESULTS') {
     show('countdown');
@@ -178,9 +225,8 @@ function render(station: PublicStation): void {
     lockedCountdown.textContent = String(station.nextReadyCount);
     document.getElementById('countdownDescription')!.textContent = copy.playersNext;
   } else if (station.phase === 'LAUNCHING' || station.phase === 'PLAYING') {
-    if (!displayToken || !station.launch) {
-      show('countdown'); lockedGame.textContent = copy.displaySetup;
-      lockedCountdown.textContent = '!'; connection.textContent = copy.missingDisplayToken;
+    if (!displayToken || displayTokenRejected || !station.launch) {
+      showDisplaySetup(displayTokenRejected ? 'invalid' : 'missing');
       return;
     }
     const target = stationLaunchUrl(station, stationId, locale, joinBaseUrl);
@@ -192,18 +238,41 @@ function render(station: PublicStation): void {
 }
 
 function updateTimers(): void {
-  if (!current?.deadline) {
-    phaseTimer.textContent = copy.waiting;
-    selectionTimer.textContent = '0:30';
-    lockedCountdown.textContent = current?.phase === 'RESULTS' ? String(current.nextReadyCount) : '10';
-    return;
+  if (!current) return;
+  const seconds = current.deadline ? Math.ceil(Math.max(0, Date.parse(current.deadline) - Date.now()) / 1000) : null;
+  const formatted = seconds === null ? '--:--' : `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+  if (current.phase === 'RECRUITING' || current.phase === 'ATTRACT') {
+    phaseTimer.textContent = seconds === null ? copy.waiting : copy.timer.replace('{time}', formatted);
+  } else if (current.phase === 'GAME_SELECTION') {
+    selectionTimer.textContent = formatted;
+  } else if (current.phase === 'LOCKED') {
+    lockedCountdown.textContent = seconds === null ? '--' : String(seconds);
+  } else if (current.phase === 'RESULTS') {
+    lockedCountdown.textContent = String(current.nextReadyCount);
   }
-  const remaining = Math.max(0, Date.parse(current.deadline) - Date.now());
-  const seconds = Math.ceil(remaining / 1000);
-  const formatted = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
-  phaseTimer.textContent = copy.timer.replace('{time}', formatted);
-  selectionTimer.textContent = formatted;
-  lockedCountdown.textContent = String(seconds);
+}
+
+function clearDisplaySetup(): void {
+  views.countdown.classList.remove('display-setup-view');
+  document.getElementById('displaySetupPanel')!.hidden = true;
+  lockedCountdown.hidden = false;
+  document.getElementById('countdownDescription')!.hidden = false;
+}
+
+function showDisplaySetup(reason: 'missing' | 'invalid'): void {
+  show('countdown');
+  views.countdown.classList.add('display-setup-view');
+  lockedCountdown.hidden = true;
+  document.getElementById('countdownDescription')!.hidden = true;
+  const panel = document.getElementById('displaySetupPanel')!;
+  panel.hidden = false;
+  document.getElementById('displaySetupEyebrow')!.textContent = copy.displaySetup;
+  document.getElementById('displaySetupTitle')!.textContent = copy.connectDisplay;
+  document.getElementById('displaySetupExplanation')!.textContent = reason === 'missing'
+    ? copy.missingDisplayExplanation : copy.invalidDisplayExplanation;
+  document.getElementById('displayTokenLabel')!.textContent = copy.displayTokenLabel;
+  document.getElementById('displaySetupSubmit')!.textContent = reason === 'missing' ? copy.configureDisplay : copy.retryDisplay;
+  connection.textContent = reason === 'missing' ? copy.missingDisplayToken : copy.invalidDisplayToken;
 }
 
 async function refresh(): Promise<void> {
@@ -215,17 +284,54 @@ async function refresh(): Promise<void> {
       renderStandaloneLauncher();
       return;
     }
-    render((await fetchPublicStation(displayToken)).station);
-  } catch {
+    const result = await fetchPublicStation(displayToken);
+    if (displayToken) displayTokenRejected = false;
+    render(result.station);
+  } catch (cause) {
     connection.textContent = copy.reconnecting;
     connection.classList.remove('live');
-    if (displayToken) {
-      show('countdown');lockedGame.textContent=copy.displaySetup;lockedCountdown.textContent='!';
-      connection.textContent=copy.invalidDisplayToken;
+    if (displayToken && cause instanceof StationRequestError && [401, 403].includes(cause.status)) {
+      rejectDisplayToken(displayToken);
+      displayToken = null;
+      displayTokenRejected = true;
+      try {
+        render((await fetchPublicStation()).station);
+      } catch {
+        connection.textContent = copy.reconnecting;
+      }
     }
   } finally {
     refreshing = false;
     if (refreshPending) { refreshPending = false; void refresh(); }
+  }
+}
+
+async function configureDisplay(event: SubmitEvent): Promise<void> {
+  event.preventDefault();
+  const input = document.getElementById('displayTokenInput') as HTMLInputElement;
+  const button = document.getElementById('displaySetupSubmit') as HTMLButtonElement;
+  const candidate = input.value.trim();
+  if (!candidate) { showDisplaySetup('missing'); input.focus(); return; }
+  button.disabled = true;
+  try {
+    const result = await fetchPublicStation(candidate);
+    if (!storeDisplayToken(candidate)) throw new Error('display token storage unavailable');
+    displayToken = candidate;
+    displayTokenRejected = false;
+    input.value = '';
+    render(result.station);
+  } catch (cause) {
+    if (cause instanceof StationRequestError && [401, 403].includes(cause.status)) {
+      rejectDisplayToken(candidate);
+      displayToken = null;
+      displayTokenRejected = true;
+      showDisplaySetup('invalid');
+      input.select();
+    } else {
+      connection.textContent = copy.reconnecting;
+    }
+  } finally {
+    button.disabled = false;
   }
 }
 
@@ -349,6 +455,7 @@ async function initialize(): Promise<void> {
   injectMusicToggle('header-controls');
   injectLanguagePicker('header-controls');
   injectMagicHat();
+  document.getElementById('displaySetupPanel')!.addEventListener('submit', event => void configureDisplay(event as SubmitEvent));
   document.addEventListener('click', () => getMusicManager().switchContext('lobby'), { once: true });
   document.querySelectorAll<HTMLVideoElement>('video').forEach(video => void video.play().catch(() => undefined));
   await refreshConfiguration();

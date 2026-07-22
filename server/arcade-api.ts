@@ -265,6 +265,8 @@ export class ArcadeApi {
       throw new ArcadeHttpError(400, 'INVALID_PROVIDER_MESSAGE', 'messaging provider identity is invalid');
     }
     const language = /\bLANG\s+(pt(?:-BR)?|en(?:-US)?)\b/i.exec(input.body)?.[1]
+      ?? (/^\s*ENTRAR(?:\s|$)/i.test(input.body) ? 'pt-BR' : null)
+      ?? (/^\s*JOIN(?:\s|$)/i.test(input.body) ? 'en-US' : null)
       ?? input.recalledLocale ?? 'en-US';
     const key = `provider:${createHash('sha256')
       .update(input.providerMessageId)
@@ -554,6 +556,11 @@ export class ArcadeApi {
 
       if (pathname === '/api/arcade/station/coin') {
         await this.handleStationCoin(request, response);
+        return;
+      }
+
+      if (pathname === '/api/arcade/station/game-choice') {
+        await this.handleStationGameChoice(request, response);
         return;
       }
 
@@ -1142,6 +1149,8 @@ export class ArcadeApi {
     const projection = projectPublicStation(
       state,
       stationAggregateFromState(state, config.arcade.cabinetId),
+      false,
+      enabledStationGames(config),
     );
     sendJson(response, 200, projection, {
       'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store', ETag: stationEtag(projection.revision),
@@ -1166,6 +1175,7 @@ export class ArcadeApi {
     const projection = projectDisplayStation(
       state,
       stationAggregateFromState(state, config.arcade.cabinetId),
+      enabledStationGames(config),
     );
     sendJson(response, 200, projection, {
       'Cache-Control': 'no-store', ETag: stationEtag(projection.revision),
@@ -1187,12 +1197,12 @@ export class ArcadeApi {
     if (!state.wallets[playerId]) {
       throw new ArcadeHttpError(409, 'REGISTRATION_REQUIRED', 'player registration is required');
     }
-    const aggregate = playerStationAggregate(state, playerId, this.configStore.getSnapshot().arcade.cabinetId);
-    const projection = projectPlayerStation(state, aggregate, playerId);
+    const config = this.configStore.getSnapshot();
+    const aggregate = playerStationAggregate(state, playerId, config.arcade.cabinetId);
+    const projection = projectPlayerStation(state, aggregate, playerId, enabledStationGames(config));
     const playerLocale = state.players[playerId]?.preferredLocale?.toLowerCase().startsWith('pt')
       ? 'pt-BR'
       : 'en-US';
-    const config = this.configStore.getSnapshot();
     const browserLead = Boolean(state.players[playerId]?.lead)
       && !Object.values(state.channelAddresses).some(address => address.playerId === playerId);
     const callNumber = browserLead && projection.phase === 'LAUNCHING'
@@ -1220,7 +1230,8 @@ export class ArcadeApi {
     const playerId = this.requirePlayerSession(request, resources.sessions);
     this.enforceRate(`station-coin:${playerId}`, 10, 60_000);
     this.enforceProcessRate('station-coin-process', 240, 60_000);
-    const stationId = this.configStore.getSnapshot().arcade.cabinetId;
+    const config = this.configStore.getSnapshot();
+    const stationId = config.arcade.cabinetId;
     const identityState = await resources.store.read();
     const messagingLinked = Object.values(identityState.channelAddresses)
       .some(address => address.playerId === playerId);
@@ -1239,7 +1250,7 @@ export class ArcadeApi {
     });
     const state = await resources.store.read();
     const projection = projectPlayerStation(
-      state, stationAggregateFromState(state, stationId), playerId,
+      state, stationAggregateFromState(state, stationId), playerId, enabledStationGames(config),
     );
     sendJson(response, 200, projection, {
       'Cache-Control': 'no-store', ETag: stationEtag(projection.revision),
@@ -1274,12 +1285,41 @@ export class ArcadeApi {
       idempotencyKey: playerServiceKey(playerId, 'station-leave', idempotencyKey),
     });
     const updated = await resources.store.read();
+    const config = this.configStore.getSnapshot();
     const projection = projectPlayerStation(
-      updated, stationAggregateFromState(updated, entry.stationId), playerId,
+      updated, stationAggregateFromState(updated, entry.stationId), playerId, enabledStationGames(config),
     );
     sendJson(response, 200, projection, {
       'Cache-Control': 'no-store', ETag: stationEtag(projection.revision),
     });
+  }
+
+  private async handleStationGameChoice(
+    request: http.IncomingMessage,
+    response: http.ServerResponse,
+  ): Promise<void> {
+    this.requireMethod(request, ['POST']);
+    this.requireSameOrigin(request);
+    requireJsonContentType(request);
+    const body = requireExactObject(await readJson(request, STATION_BODY_LIMIT), ['game'], []);
+    if (!isPlayableArcadeGame(body.game)) {
+      throw new ArcadeHttpError(400, 'INVALID_GAME', 'game is not station-playable');
+    }
+    const idempotencyKey = requireHeader(
+      request.headers['idempotency-key'], 'Idempotency-Key', PLAYER_IDEMPOTENCY_KEY_LIMIT,
+    );
+    const resources = await this.getActivePlayerResources();
+    const playerId = this.requirePlayerSession(request, resources.sessions);
+    this.enforceRate(`station-game-choice:${playerId}`, 30, 60_000);
+    this.enforceProcessRate('station-game-choice-process', 600, 60_000);
+    const stationId = this.configStore.getSnapshot().arcade.cabinetId;
+    const result = await resources.service.recordStationGameChoice({
+      stationId,
+      playerId,
+      game: body.game,
+      idempotencyKey: playerServiceKey(playerId, 'station-game-choice', idempotencyKey),
+    });
+    sendJson(response, 200, result, { 'Cache-Control': 'no-store' });
   }
 
   private async handleStationDisplayReady(
@@ -1990,6 +2030,13 @@ function playerStationAggregate(state: ArcadeState, playerId: string, defaultSta
   return stationAggregateFromState(state, entry?.stationId ?? defaultStationId);
 }
 
+function enabledStationGames(
+  config: ArcadeConfigSnapshot,
+): ReadonlySet<'racer' | 'monsters' | 'fighter'> {
+  return new Set((['racer', 'monsters', 'fighter'] as const)
+    .filter(game => config.station.games[game].enabled));
+}
+
 function requireHeader(value: string | string[] | undefined, name: string, maximum: number): string {
   const header = firstHeader(value)?.trim() ?? '';
   if (!header || header.length > maximum || /[\u0000-\u001f\u007f]/.test(header)) {
@@ -2105,8 +2152,11 @@ function playerServiceError(serviceCode: string): { status: number; code: string
     case 'READY_POOL_FULL':
     case 'READY_ENTRY_NOT_FOUND':
     case 'READY_ENTRY_FORBIDDEN':
+    case 'READY_ENTRY_NOT_READY':
     case 'RESERVATION_NOT_ACTIVE':
     case 'STALE_STATION_LAUNCH':
+    case 'SELECTION_NOT_ACTIVE':
+    case 'GAME_DISABLED':
       return { status: 409, code: serviceCode, message: 'Twilio Games match operation cannot be completed' };
     case 'STATION_NOT_FOUND':
       return { status: 404, code: serviceCode, message: 'Twilio Games station was not found' };

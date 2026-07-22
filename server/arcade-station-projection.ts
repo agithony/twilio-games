@@ -1,7 +1,11 @@
-import { PLAYABLE_ARCADE_GAMES } from '../shared/arcade-games';
+import { PLAYABLE_ARCADE_GAMES, type PlayableArcadeGame } from '../shared/arcade-games';
 import type { ArcadeStationAggregate, StationReadyEntry } from '../shared/arcade-station';
 import { availableBalance } from '../shared/arcade-domain';
 import type { ArcadeState } from './arcade-state-store';
+
+const ALL_PLAYABLE_GAMES: ReadonlySet<PlayableArcadeGame> = new Set(
+  PLAYABLE_ARCADE_GAMES.map(game => game.id),
+);
 
 export type PublicStationProjection = Readonly<{
   phase: ArcadeStationAggregate['station']['phase'];
@@ -16,6 +20,7 @@ export type PublicStationProjection = Readonly<{
     capacity: number;
     playNow: number;
     overflow: number;
+    choices: number;
   }>[];
   launch: Readonly<{
     game: 'racer' | 'monsters' | 'fighter';
@@ -34,13 +39,14 @@ export type PlayerStationProjection = Readonly<{
     status: StationReadyEntry['status'];
     position: number | null;
     reservation: Readonly<{ amount: number; status: string }> | null;
+    gameChoice: 'racer' | 'monsters' | 'fighter' | null;
   }> | null;
   availableBalance: number;
 }>;
 
 export type OperatorStationProjection = Readonly<{
   station: ArcadeStationAggregate['station'];
-  round: ArcadeStationAggregate['rounds'][string] | null;
+  round: Omit<ArcadeStationAggregate['rounds'][string], 'gameChoicesByReadyEntryId'> | null;
   match: ArcadeStationAggregate['matches'][string] | null;
   readyEntries: readonly Readonly<{
     id: string;
@@ -69,6 +75,7 @@ export function emptyPublicStation(): PublicStationProjection {
       capacity: game.humanCapacity,
       playNow: 0,
       overflow: 0,
+      choices: 0,
     })),
     launch: null,
   };
@@ -94,6 +101,7 @@ export function projectPublicStation(
   state: ArcadeState,
   aggregate: ArcadeStationAggregate | null,
   includeLaunch = false,
+  enabledGames: ReadonlySet<PlayableArcadeGame> = ALL_PLAYABLE_GAMES,
 ): PublicStationProjection {
   if (!aggregate) return emptyPublicStation();
   const current = readyForRound(aggregate, aggregate.station.activeRoundId);
@@ -107,6 +115,10 @@ export function projectPublicStation(
   const launchDefinition = match
     ? PLAYABLE_ARCADE_GAMES.find(game => game.id === match.game)
     : undefined;
+  const activeRound = aggregate.station.activeRoundId
+    ? aggregate.rounds[aggregate.station.activeRoundId]
+    : undefined;
+  const liveReadyIds = new Set(current.filter(entry => entry.status === 'READY').map(entry => entry.id));
   return {
     phase: aggregate.station.phase,
     revision: aggregate.station.revision,
@@ -124,6 +136,10 @@ export function projectPublicStation(
       capacity: game.humanCapacity,
       playNow: Math.min(current.length, game.humanCapacity),
       overflow: Math.max(0, current.length - game.humanCapacity),
+      choices: Object.entries(activeRound?.gameChoicesByReadyEntryId ?? {})
+        .filter(([readyEntryId, choice]) => liveReadyIds.has(readyEntryId)
+          && enabledGames.has(choice) && choice === game.id)
+        .length,
     })),
     launch: includeLaunch && match && launchDefinition && ['LAUNCHING', 'PLAYING', 'RESULTS'].includes(aggregate.station.phase)
       ? {
@@ -140,14 +156,16 @@ export function projectPublicStation(
 export function projectDisplayStation(
   state: ArcadeState,
   aggregate: ArcadeStationAggregate | null,
+  enabledGames: ReadonlySet<PlayableArcadeGame> = ALL_PLAYABLE_GAMES,
 ): PublicStationProjection {
-  return projectPublicStation(state, aggregate, true);
+  return projectPublicStation(state, aggregate, true, enabledGames);
 }
 
 export function projectPlayerStation(
   state: ArcadeState,
   aggregate: ArcadeStationAggregate | null,
   playerId: string,
+  enabledGames: ReadonlySet<PlayableArcadeGame> = ALL_PLAYABLE_GAMES,
 ): PlayerStationProjection {
   const wallet = state.wallets[playerId];
   if (!wallet) throw new Error('player wallet is missing');
@@ -165,6 +183,9 @@ export function projectPlayerStation(
     : null;
   const peers = entry ? readyForRound(aggregate, entry.roundId) : [];
   const position = entry ? peers.findIndex(candidate => candidate.id === entry.id) : -1;
+  const persistedChoice = entry?.status === 'READY'
+    ? aggregate.rounds[entry.roundId]?.gameChoicesByReadyEntryId[entry.id] ?? null
+    : null;
   return {
     phase: aggregate.station.phase,
     revision: aggregate.station.revision,
@@ -173,6 +194,7 @@ export function projectPlayerStation(
       status: entry.status,
       position: position >= 0 ? position + 1 : null,
       reservation: reservation ? { amount: reservation.amount, status: reservation.status } : null,
+      gameChoice: persistedChoice && enabledGames.has(persistedChoice) ? persistedChoice : null,
     } : null,
     availableBalance: availableBalance(wallet),
   };
@@ -183,9 +205,11 @@ export function projectOperatorStation(
   aggregate: ArcadeStationAggregate,
   connectedReadyEntryIds: ReadonlySet<string> = new Set(),
 ): OperatorStationProjection {
+  const activeRound = aggregate.station.activeRoundId ? aggregate.rounds[aggregate.station.activeRoundId] : undefined;
+  const round = activeRound ? withoutGameChoiceIdentities(activeRound) : null;
   return {
     station: aggregate.station,
-    round: aggregate.station.activeRoundId ? aggregate.rounds[aggregate.station.activeRoundId] ?? null : null,
+    round,
     match: aggregate.station.activeMatchId ? aggregate.matches[aggregate.station.activeMatchId] ?? null : null,
     readyEntries: Object.values(aggregate.readyEntries).sort(compareReady).map((entry, index) => ({
       id: entry.id,
@@ -204,6 +228,13 @@ export function projectOperatorStation(
       .slice(-20)
       .reverse(),
   };
+}
+
+function withoutGameChoiceIdentities(
+  round: ArcadeStationAggregate['rounds'][string],
+): Omit<ArcadeStationAggregate['rounds'][string], 'gameChoicesByReadyEntryId'> {
+  const { gameChoicesByReadyEntryId: _choices, ...safe } = round;
+  return safe;
 }
 
 function readyForRound(aggregate: ArcadeStationAggregate, roundId: string | null): StationReadyEntry[] {

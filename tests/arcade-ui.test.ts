@@ -11,6 +11,7 @@ const vite = readFileSync(new URL('../client/vite.config.ts', import.meta.url), 
 const racerMain = readFileSync(new URL('../client/main.ts', import.meta.url), 'utf8');
 const racerScreens = readFileSync(new URL('../client/screens.ts', import.meta.url), 'utf8');
 const homeScript = readFileSync(new URL('../client/home.ts', import.meta.url), 'utf8');
+const homeCss = readFileSync(new URL('../client/home.css', import.meta.url), 'utf8');
 const stationClient = readFileSync(new URL('../client/station-client.ts', import.meta.url), 'utf8');
 const stationDisplay = readFileSync(new URL('../client/station-display.ts', import.meta.url), 'utf8');
 const monsters = readFileSync(new URL('../client/battle/monsters.ts', import.meta.url), 'utf8');
@@ -55,6 +56,29 @@ describe('Arcade browser UI', () => {
     expect(homeScript).not.toContain('Joining unavailable');
     const standaloneRenderer=/function renderStandaloneLauncher\(\)[\s\S]*?\n}\n/.exec(homeScript)?.[0]??'';
     expect(standaloneRenderer).not.toMatch(/playNow|keepPriority|currentReadyCount/);
+  });
+
+  it('renders selection as a stable video-backed vote display with automatic fallback copy', () => {
+    expect(stationClient).toContain('choices: number');
+    expect(homeScript).toContain("{ racer: 1, monsters: 2, fighter: 3 }");
+    expect(homeScript).toContain('impact.choices');
+    expect(homeScript).toContain('Ready players: text the number shown or game name.');
+    expect(homeScript).not.toContain('Ready players: text 1, 2, 3');
+    expect(homeScript).toContain('If time runs out or votes tie, the station chooses automatically.');
+    expect(homeScript).toContain('No navegador, escolham na página do jogador.');
+    for (const video of ['vr-demo.mp4','vm-demo.mp4','vf-demo.mp4']) expect(homeScript).toContain(video);
+    expect(homeScript).toContain("document.createElement('article')");
+    expect(homeScript).not.toContain("card.addEventListener('click'");
+    expect(homeScript).toContain('if (lineup !== selectionLineup)');
+    expect(homeScript).toContain('buildGameCard(impact)');
+    expect(homeScript).toContain('gameCards.querySelector<HTMLElement>');
+    const cardUpdater = /function renderGameCards\(station: PublicStation\)[\s\S]*?\n}/.exec(homeScript)?.[0] ?? '';
+    expect(cardUpdater.match(/replaceChildren/g)).toHaveLength(1);
+    expect(homeScript).toContain('preload="metadata"');
+    expect(homeScript).toContain('game-media-fallback');
+    expect(homeScript).toContain("addEventListener('error'");
+    expect(homeCss).toContain('.game-command strong');
+    expect(homeCss).toMatch(/@media \(max-width:600px\)[\s\S]*?\.game-card \{/);
   });
 
   it('offers every phase-sensitive station transition with playable games only', () => {
@@ -230,7 +254,7 @@ describe('Arcade browser UI', () => {
   });
 
   it('keeps kiosk authorization out of navigation URLs and disables local station players', () => {
-    expect(stationClient).toContain("sessionStorage.setItem(DISPLAY_TOKEN_STORAGE_KEY");
+    expect(stationClient).toContain('storeDisplayToken(supplied)');
     expect(stationClient).toContain("fragment.delete('displayToken')");
     expect(stationClient).not.toContain("url.searchParams.get('displayToken')");
     expect(stationClient).not.toContain("url.searchParams.set('displayToken'");
@@ -248,6 +272,47 @@ describe('Arcade browser UI', () => {
     expect(racerScreens).toContain('/brand/join-qr.png?v=2');
     expect(monsters).toContain("phoneQr = '/brand/join-qr.png?v=2'");
     expect(fighter).toContain("phoneQr = '/brand/join-qr.png?v=2'");
+  });
+
+  it('recovers missing and rejected display tokens without reusing a launch countdown', () => {
+    for (const id of ['displaySetupPanel','displayTokenInput','displaySetupSubmit']) expect(home).toContain(`id="${id}"`);
+    expect(home).toMatch(/id="displayTokenInput"[^>]*type="password"/);
+    expect(homeScript).toContain("showDisplaySetup(displayTokenRejected ? 'invalid' : 'missing')");
+    expect(homeScript).toContain('fetchPublicStation(candidate)');
+    expect(homeScript).toContain('storeDisplayToken(candidate)');
+    expect(homeScript).toContain('rejectDisplayToken(displayToken)');
+    expect(homeScript).toContain('rejectDisplayToken(candidate)');
+    expect(homeScript).toContain('displayToken = null');
+    expect(homeScript).toContain('!displayToken && displayTokenWasRejected()');
+    expect(homeScript).toContain("current.phase === 'LOCKED'");
+    expect(homeScript).not.toContain("lockedCountdown.textContent = current?.phase === 'RESULTS' ? String(current.nextReadyCount) : '10'");
+    expect(homeCss).toContain('.display-setup-panel');
+  });
+
+  it('returns a launched display home after GET or readiness authorization is rejected', () => {
+    expect(stationDisplay).toContain('rejectDisplayToken(displayToken)');
+    expect(stationDisplay).toContain('cause instanceof StationRequestError && [401, 403].includes(cause.status)');
+    expect(stationDisplay).toContain('if (authorizationRejected) return');
+    expect(stationDisplay).toContain('authorizationRejected = true');
+    expect(stationDisplay).toContain('unsubscribe()');
+    expect(stationDisplay).toContain('clearInterval(polling)');
+    expect(stationDisplay).toContain('location.replace(homeUrl.toString())');
+    const readiness = /async function acknowledge\([\s\S]*?\n}/.exec(stationDisplay)?.[0] ?? '';
+    expect(readiness).toContain('throw new StationRequestError(response.status)');
+  });
+
+  it('makes lead capture mode and collected fields explicit while keeping entry cost separate', () => {
+    expect(html).toContain('Paused - lead capture off');
+    expect(html).toContain('Open - lead capture off');
+    expect(html).toContain('Open - lead capture on');
+    expect(html).toContain('id="lead-capture-summary"');
+    expect(html).toContain('>Entry cost<');
+    expect(script).toContain('Browser entry collects first and last name, work email, company, phone number, country or region');
+    expect(script).toContain('terms acknowledgement when required, and optional marketing consent');
+    expect(script).toContain('messaging uses the sender phone and asks for first and last name, work email, company, and country or region');
+    expect(script).toContain('It asks for terms only when required and never asks for marketing consent');
+    expect(script).toContain('termsAcknowledgementRequired');
+    expect(script).toContain('Players enter through enabled SMS or WhatsApp');
   });
 
   it('localizes Portuguese browser registration and protects newer operator state', () => {

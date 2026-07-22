@@ -11,6 +11,7 @@ export interface PublicStation {
   games: readonly {
     id: 'racer' | 'monsters' | 'fighter';
     capacity: number;
+    choices: number;
     playNow: number;
     overflow: number;
   }[];
@@ -83,28 +84,65 @@ export function watchVoiceNumber(
 }
 
 const DISPLAY_TOKEN_STORAGE_KEY = 'twilio-games-display-token';
+const DISPLAY_TOKEN_REJECTED_KEY = 'twilio-games-display-token-rejected';
+
+export function storeDisplayToken(token: string): boolean {
+  try {
+    sessionStorage.setItem(DISPLAY_TOKEN_STORAGE_KEY, token);
+    sessionStorage.removeItem(DISPLAY_TOKEN_REJECTED_KEY);
+    return sessionStorage.getItem(DISPLAY_TOKEN_STORAGE_KEY) === token;
+  } catch {
+    return false;
+  }
+}
+
+export function rejectDisplayToken(token: string | null): boolean {
+  try {
+    sessionStorage.setItem(DISPLAY_TOKEN_REJECTED_KEY, '1');
+    if (!token || sessionStorage.getItem(DISPLAY_TOKEN_STORAGE_KEY) === token) {
+      sessionStorage.removeItem(DISPLAY_TOKEN_STORAGE_KEY);
+    }
+    return sessionStorage.getItem(DISPLAY_TOKEN_REJECTED_KEY) === '1'
+      && (!token || sessionStorage.getItem(DISPLAY_TOKEN_STORAGE_KEY) !== token);
+  } catch {
+    return false;
+  }
+}
+
+export function displayTokenWasRejected(): boolean {
+  try {
+    return sessionStorage.getItem(DISPLAY_TOKEN_REJECTED_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+export function readDisplayToken(): string | null {
+  try {
+    if (sessionStorage.getItem(DISPLAY_TOKEN_REJECTED_KEY) === '1') return null;
+    return sessionStorage.getItem(DISPLAY_TOKEN_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
 
 export function captureDisplayToken(): string | null {
   const url = new URL(location.href);
   const fragment = new URLSearchParams(url.hash.replace(/^#/, ''));
   const supplied = fragment.get('displayToken');
   if (supplied) {
-    let token: string | null = null;
-    try {
-      sessionStorage.setItem(DISPLAY_TOKEN_STORAGE_KEY, supplied);
-      token = sessionStorage.getItem(DISPLAY_TOKEN_STORAGE_KEY) === supplied ? supplied : null;
-    } catch {
-      token = null;
-    }
+    const token = storeDisplayToken(supplied) ? supplied : null;
     fragment.delete('displayToken');
     url.hash = fragment.toString();
     history.replaceState(history.state, '', `${url.pathname}${url.search}${url.hash}`);
     return token;
   }
-  try {
-    return sessionStorage.getItem(DISPLAY_TOKEN_STORAGE_KEY);
-  } catch {
-    return null;
+  return readDisplayToken();
+}
+
+export class StationRequestError extends Error {
+  constructor(readonly status: number) {
+    super(`station request failed (${status})`);
   }
 }
 
@@ -116,7 +154,7 @@ export async function fetchPublicStation(displayToken?: string | null): Promise<
       ...(displayToken ? { headers: { 'X-Arcade-Display-Token': displayToken } } : {}),
     },
   );
-  if (!response.ok) throw new Error(`station request failed (${response.status})`);
+  if (!response.ok) throw new StationRequestError(response.status);
   return { station: await response.json() as PublicStation, etag: response.headers.get('etag') ?? '' };
 }
 

@@ -32,7 +32,7 @@ import {
   type StationReadyEntry,
 } from '../shared/arcade-station';
 
-export const ARCADE_STATE_SCHEMA_VERSION = 6 as const;
+export const ARCADE_STATE_SCHEMA_VERSION = 7 as const;
 export const ARCADE_STATE_MAX_FILE_BYTES = 64 * 1024 * 1024;
 export const ARCADE_STATE_MAX_PLAYERS = 100_000;
 export const ARCADE_STATE_MAX_QUEUE_ENTRIES = 100_000;
@@ -293,6 +293,14 @@ const SERVICE_OPERATIONS = new Set([
   'START_STATION_MATCH', 'COMPLETE_STATION_MATCH', 'ADVANCE_STATION_RESULTS',
   'FAIL_STATION_LAUNCH', 'RECOVER_STATION_RESTART', 'RESET_STATION',
   'PROCESS_STATION_MESSAGE', 'GRANT_STATION_COINS', 'DROP_STATION_ADMITTED_ENTRY',
+  'RECORD_STATION_GAME_CHOICE',
+]);
+const STATION_MUTATION_RESULT_OPERATIONS = new Set([
+  'INSERT_STATION_COIN', 'LEAVE_STATION_READY_ENTRY', 'DROP_STATION_ADMITTED_ENTRY',
+  'CLOSE_STATION_RECRUITING', 'SELECT_STATION_GAME', 'REQUEST_STATION_LAUNCH',
+  'MARK_STATION_DISPLAY_READY', 'START_STATION_MATCH', 'COMPLETE_STATION_MATCH',
+  'ADVANCE_STATION_RESULTS', 'FAIL_STATION_LAUNCH', 'RECOVER_STATION_RESTART',
+  'RESET_STATION', 'RECORD_STATION_GAME_CHOICE',
 ]);
 
 const nodeFileSystem: ArcadeStateFileSystem = {
@@ -663,7 +671,7 @@ function assertStationRoundShape(value: RecruitingRound, key: string): void {
   requireExactRecord(value, [
     'id', 'stationId', 'phase', 'firstCoinAt', 'recruitingEndsAt', 'hardEndsAt',
     'selectionEndsAt', 'selectionStartedAt', 'lockedEndsAt', 'lockedAt', 'selectedGame',
-    'startedAt', 'resultsAt', 'closedAt', 'configVersion',
+    'gameChoicesByReadyEntryId', 'startedAt', 'resultsAt', 'closedAt', 'configVersion',
   ], `stationRounds.${key}`);
   requireSafeKey(key, `stationRounds.${key}`);
   if (value.id !== key) throw new ArcadeStateStoreError('INVALID_STATE', `station round key ${key} does not match ID`);
@@ -675,6 +683,20 @@ function assertStationRoundShape(value: RecruitingRound, key: string): void {
     requireTimestamp(value[field], `stationRounds.${key}.${field}`, true);
   }
   requireNullableString(value.selectedGame, `stationRounds.${key}.selectedGame`);
+  const choices = requireRecord(
+    value.gameChoicesByReadyEntryId,
+    `stationRounds.${key}.gameChoicesByReadyEntryId`,
+  );
+  requireCollectionSize(choices, 64, `stationRounds.${key}.gameChoicesByReadyEntryId`);
+  for (const [readyEntryId, game] of Object.entries(choices)) {
+    requireSafeKey(readyEntryId, `stationRounds.${key}.gameChoicesByReadyEntryId key`);
+    if (!['racer', 'monsters', 'fighter'].includes(String(game))) {
+      throw new ArcadeStateStoreError(
+        'INVALID_STATE',
+        `stationRounds.${key}.gameChoicesByReadyEntryId.${readyEntryId} is invalid`,
+      );
+    }
+  }
   requireInteger(value.configVersion, `stationRounds.${key}.configVersion`, 1);
 }
 
@@ -1479,34 +1501,77 @@ function migrateArcadeState(state: unknown): unknown {
       stationControlEvents: [],
     };
   }
-  if (!isRecord(current) || current.schemaVersion !== 5) return current;
-  const schemaFive = requireExactRecord(current, [
+  if (isRecord(current) && current.schemaVersion === 5) {
+    const schemaFive = requireExactRecord(current, [
+      'schemaVersion', 'players', 'wallets', 'queueEntries', 'queueEntryConfigs',
+      'queueEvents', 'idempotencyRecords', 'stations', 'stationRounds', 'stationReadyEntries',
+      'stationMatches', 'channelAddresses', 'messagingDrafts', 'inboundMessages',
+      'stationReadyChannels', 'outboundNotifications', 'messagingAuditEvents', 'stationControlEvents',
+    ], '$');
+    const stationMatches = Object.fromEntries(Object.entries(requireRecord(schemaFive.stationMatches, 'stationMatches'))
+      .map(([id, match]) => {
+        const value = match as Record<string, unknown>;
+        const participantIds = Array.isArray(value.participantReadyEntryIds)
+          ? value.participantReadyEntryIds.filter((participantId): participantId is string => typeof participantId === 'string')
+          : [];
+        const bindings = ['PLAYING', 'COMPLETED'].includes(String(value.phase))
+          ? Object.fromEntries(participantIds.map(readyEntryId => [
+            readyEntryId,
+            `legacy:${createHash('sha256').update(readyEntryId).digest('hex').slice(0, 32)}`,
+          ]))
+          : {};
+        return [id, {
+          ...value,
+          enginePlayerIdsByReadyEntryId: bindings,
+          result: value.phase === 'COMPLETED'
+            ? { source: 'LEGACY_UNAVAILABLE', participants: [] }
+            : null,
+        }];
+      }));
+    current = { ...schemaFive, schemaVersion: 6, stationMatches };
+  }
+  if (!isRecord(current) || current.schemaVersion !== 6) return current;
+  const schemaSix = requireExactRecord(current, [
     'schemaVersion', 'players', 'wallets', 'queueEntries', 'queueEntryConfigs',
     'queueEvents', 'idempotencyRecords', 'stations', 'stationRounds', 'stationReadyEntries',
     'stationMatches', 'channelAddresses', 'messagingDrafts', 'inboundMessages',
     'stationReadyChannels', 'outboundNotifications', 'messagingAuditEvents', 'stationControlEvents',
   ], '$');
-  const stationMatches = Object.fromEntries(Object.entries(requireRecord(schemaFive.stationMatches, 'stationMatches'))
-    .map(([id, match]) => {
-      const value = match as Record<string, unknown>;
-      const participantIds = Array.isArray(value.participantReadyEntryIds)
-        ? value.participantReadyEntryIds.filter((participantId): participantId is string => typeof participantId === 'string')
-        : [];
-      const bindings = ['PLAYING', 'COMPLETED'].includes(String(value.phase))
-        ? Object.fromEntries(participantIds.map(readyEntryId => [
-          readyEntryId,
-          `legacy:${createHash('sha256').update(readyEntryId).digest('hex').slice(0, 32)}`,
-        ]))
-        : {};
-      return [id, {
-        ...value,
-        enginePlayerIdsByReadyEntryId: bindings,
-        result: value.phase === 'COMPLETED'
-          ? { source: 'LEGACY_UNAVAILABLE', participants: [] }
-          : null,
+  const stationRounds = Object.fromEntries(
+    Object.entries(requireRecord(schemaSix.stationRounds, 'stationRounds')).map(([id, round]) => [
+      id,
+      {
+        ...requireRecord(round, `stationRounds.${id}`),
+        gameChoicesByReadyEntryId: {},
+      },
+    ]),
+  );
+  const idempotencyRecords = Object.fromEntries(
+    Object.entries(requireRecord(schemaSix.idempotencyRecords, 'idempotencyRecords')).map(([key, item]) => {
+      const record = requireRecord(item, `idempotencyRecords.${key}`);
+      const result = isRecord(record.result) ? record.result : null;
+      if (!STATION_MUTATION_RESULT_OPERATIONS.has(String(record.operation))
+        || !result || !isRecord(result.round)) {
+        return [key, record];
+      }
+      return [key, {
+        ...record,
+        result: {
+          ...result,
+          round: {
+            ...result.round,
+            gameChoicesByReadyEntryId: {},
+          },
+        },
       }];
-    }));
-  return { ...schemaFive, schemaVersion: ARCADE_STATE_SCHEMA_VERSION, stationMatches };
+    }),
+  );
+  return {
+    ...schemaSix,
+    schemaVersion: ARCADE_STATE_SCHEMA_VERSION,
+    stationRounds,
+    idempotencyRecords,
+  };
 }
 
 function cloneJson<T>(value: T): T {

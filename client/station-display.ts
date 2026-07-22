@@ -5,6 +5,8 @@ import {
   fetchPublicStation,
   fetchPublicArcadeConfig,
   idempotencyKey,
+  rejectDisplayToken,
+  StationRequestError,
   stationJoinUrl,
   subscribeToStation,
   type PublicStation,
@@ -72,8 +74,13 @@ export function createStationDisplay(): StationDisplay {
   let latest: { station: PublicStation; etag: string } | null = null;
   let refreshing = false;
   let refreshPending = false;
+  let authorizationRejected = false;
+  let unsubscribe: () => void = () => undefined;
+  let polling: ReturnType<typeof setInterval> | null = null;
+  let configPolling: ReturnType<typeof setInterval> | null = null;
 
   const refresh = async () => {
+    if (authorizationRejected) return;
     if (refreshing) { refreshPending = true; return; }
     refreshing = true;
     try {
@@ -93,20 +100,33 @@ export function createStationDisplay(): StationDisplay {
       } else if (!sameLaunch || !['LAUNCHING', 'PLAYING', 'RESULTS'].includes(latest.station.phase)) {
         location.replace(homeUrl.toString());
       }
-    } catch {
+    } catch (cause) {
+      if (cause instanceof StationRequestError && [401, 403].includes(cause.status)) {
+        authorizationRejected = true;
+        rejectDisplayToken(displayToken);
+        unsubscribe();
+        if (polling !== null) clearInterval(polling);
+        if (configPolling !== null) clearInterval(configPolling);
+        location.replace(homeUrl.toString());
+        return;
+      }
       rail.status.textContent = locale === 'pt-BR' ? 'Reconectando' : 'Reconnecting to station';
     } finally {
       refreshing = false;
-      if (refreshPending) { refreshPending = false; void refresh(); }
+      if (refreshPending && !authorizationRejected) { refreshPending = false; void refresh(); }
     }
   };
-  const unsubscribe = subscribeToStation(() => {
+  unsubscribe = subscribeToStation(() => {
     void refresh();
     void refreshRailConfig();
   });
-  const polling = setInterval(() => void refresh(), 5_000);
-  const configPolling = setInterval(() => void refreshRailConfig(), 30_000);
-  addEventListener('pagehide', () => { unsubscribe(); clearInterval(polling); clearInterval(configPolling); }, { once: true });
+  polling = setInterval(() => void refresh(), 5_000);
+  configPolling = setInterval(() => void refreshRailConfig(), 30_000);
+  addEventListener('pagehide', () => {
+    unsubscribe();
+    if (polling !== null) clearInterval(polling);
+    if (configPolling !== null) clearInterval(configPolling);
+  }, { once: true });
   void refresh();
 
   return {
@@ -143,7 +163,7 @@ async function acknowledge(
     body: JSON.stringify({ matchId, launchGeneration }),
   });
   if (!response.ok) {
-    throw new Error(`display readiness failed (${response.status})`);
+    throw new StationRequestError(response.status);
   }
 }
 

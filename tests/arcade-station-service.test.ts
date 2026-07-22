@@ -42,6 +42,7 @@ interface Harness {
   service: ArcadeService;
   advance: (milliseconds?: number) => void;
   setConfig: (config: ArcadeConfigSnapshot) => void;
+  publishedRevisions: number[];
 }
 
 async function harness(initialConfig = stationConfig()): Promise<Harness> {
@@ -51,6 +52,7 @@ async function harness(initialConfig = stationConfig()): Promise<Harness> {
   let now = T0;
   let sequence = 0;
   let config = initialConfig;
+  const publishedRevisions: number[] = [];
   const service = new ArcadeService({
     store,
     config: () => config,
@@ -62,12 +64,14 @@ async function harness(initialConfig = stationConfig()): Promise<Harness> {
       : authorization === OPERATOR_AUTHORIZATION
         ? { kind: 'operator', subject: 'operator@twilio.com' }
         : null,
+    stationUpdated: revision => publishedRevisions.push(revision),
   });
   return {
     store,
     service,
     advance: (milliseconds = 1_000) => { now += milliseconds; },
     setConfig: value => { config = value; },
+    publishedRevisions,
   };
 }
 
@@ -122,6 +126,49 @@ describe('ArcadeService station journey', () => {
     expect(left.readyEntry.status).toBe('LEFT');
     expect(left.reservation!.status).toBe('RELEASED');
     expect(await h.service.getWalletStatus('p1')).toMatchObject({ reservedBalance: 0, availableBalance: 2 });
+  });
+
+  it('records enabled game choices by trusted player identity and replays idempotently', async () => {
+    const h = await harness();
+    await identify(h, 'p1', 'p2');
+    const inserted = await coin(h, 'p1');
+    await expect(h.service.recordStationGameChoice({
+      stationId: 'expo', playerId: 'p1', game: 'racer', idempotencyKey: 'choice:early',
+    })).rejects.toMatchObject({ code: 'SELECTION_NOT_ACTIVE' });
+    h.advance();
+    await h.service.closeStationRecruiting({
+      ...CONTROL, stationId: 'expo', expectedRevision: inserted.station.revision,
+      idempotencyKey: 'choice:close',
+    });
+    const command = {
+      stationId: 'expo', playerId: 'p1', game: 'racer' as const, idempotencyKey: 'choice:p1',
+    };
+    const chosen = await h.service.recordStationGameChoice(command);
+    const replay = await h.service.recordStationGameChoice(command);
+    expect(replay).toEqual(chosen);
+    expect(chosen).toEqual({ gameChoice: 'racer' });
+    expect(h.store.snapshot().stationRounds[inserted.readyEntry.roundId]?.gameChoicesByReadyEntryId)
+      .toEqual({ [inserted.readyEntry.id]: 'racer' });
+    expect(h.publishedRevisions.at(-1)).toBe(h.store.snapshot().stations.expo?.revision);
+    await expect(h.service.recordStationGameChoice({
+      stationId: 'expo', playerId: 'p2', game: 'racer', idempotencyKey: 'choice:not-ready',
+    })).rejects.toMatchObject({ code: 'READY_ENTRY_NOT_READY' });
+
+    const disabled = JSON.parse(JSON.stringify(stationConfig())) as Record<string, any>;
+    disabled.station.games.fighter.enabled = false;
+    h.setConfig(parseArcadeConfig(disabled));
+    await expect(h.service.recordStationGameChoice({
+      stationId: 'expo', playerId: 'p1', game: 'fighter', idempotencyKey: 'choice:disabled',
+    })).rejects.toMatchObject({ code: 'GAME_DISABLED' });
+
+    h.advance(30_000);
+    await expect(h.service.recordStationGameChoice({
+      stationId: 'expo', playerId: 'p1', game: 'racer', idempotencyKey: 'choice:deadline',
+    })).rejects.toMatchObject({ code: 'SELECTION_CLOSED' });
+    h.advance(1);
+    await expect(h.service.recordStationGameChoice({
+      stationId: 'expo', playerId: 'p1', game: 'racer', idempotencyKey: 'choice:late',
+    })).rejects.toMatchObject({ code: 'SELECTION_CLOSED' });
   });
 
   it('atomically resets recruiting, removes channel bindings, audits once, and replays idempotently', async () => {

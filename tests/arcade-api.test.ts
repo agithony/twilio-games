@@ -576,6 +576,108 @@ describe('Arcade API', () => {
     ]);
   });
 
+  it('accepts session-authenticated game choices and returns private choice projections', async () => {
+    const { baseUrl, store, playerRuntime } = await harness({ playerMode: 'lead_capture' });
+    const cookie = cookieFrom(await createPlayerSession(baseUrl, 'game-choice-player'));
+    expect((await fetch(`${baseUrl}/api/arcade/register`, {
+      method: 'POST',
+      headers: {
+        Cookie: cookie, Origin: 'http://localhost', 'Content-Type': 'application/json',
+        'Idempotency-Key': 'game-choice-register',
+      },
+      body: JSON.stringify(REGISTRATION),
+    })).status).toBe(200);
+    expect((await fetch(`${baseUrl}/api/arcade/station/coin`, {
+      method: 'POST',
+      headers: {
+        Cookie: cookie, Origin: 'http://localhost', 'Content-Type': 'application/json',
+        'Idempotency-Key': 'game-choice-coin',
+      },
+      body: '{}',
+    })).status).toBe(200);
+    const resources = await playerRuntime.getActive();
+    const recruiting = await resources.service.getStation('ARCADE-01');
+    await resources.service.closeStationRecruiting({
+      stationId: 'ARCADE-01', expectedRevision: recruiting!.station.revision,
+      idempotencyKey: 'game-choice-close', authorization: resources.operatorAuthorization('test@twilio.com'),
+    });
+    const choose = (body: unknown, key: string, headers: Record<string, string> = {}) => fetch(
+      `${baseUrl}/api/arcade/station/game-choice`,
+      {
+        method: 'POST',
+        headers: {
+          Cookie: cookie, Origin: 'http://localhost', 'Content-Type': 'application/json',
+          'Idempotency-Key': key, ...headers,
+        },
+        body: JSON.stringify(body),
+      },
+    );
+    expect((await fetch(`${baseUrl}/api/arcade/station/game-choice`, {
+      method: 'POST',
+      headers: {
+        Origin: 'http://localhost', 'Content-Type': 'application/json',
+        'Idempotency-Key': 'game-choice-no-session',
+      },
+      body: JSON.stringify({ game: 'fighter' }),
+    })).status).toBe(401);
+    expect((await fetch(`${baseUrl}/api/arcade/station/game-choice`, {
+      method: 'POST',
+      headers: {
+        Cookie: cookie, 'Content-Type': 'application/json',
+        'Idempotency-Key': 'game-choice-no-origin',
+      },
+      body: JSON.stringify({ game: 'fighter' }),
+    })).status).toBe(403);
+    expect((await choose({ game: 'fighter', playerId: 'attacker' }, 'game-choice-extra')).status).toBe(400);
+    const selected = await choose({ game: 'fighter' }, 'game-choice-fighter');
+    expect(selected.status).toBe(200);
+    const selectedResult = await selected.json();
+    expect(selectedResult).toEqual({ gameChoice: 'fighter' });
+    const replay = await choose({ game: 'fighter' }, 'game-choice-fighter');
+    expect(await replay.json()).toEqual(selectedResult);
+
+    const publicProjection = await (await fetch(`${baseUrl}/api/arcade/station/public`)).json() as Record<string, any>;
+    expect(publicProjection.games).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'fighter', choices: 1 }),
+      expect.objectContaining({ id: 'racer', choices: 0 }),
+    ]));
+    expect(JSON.stringify(publicProjection)).not.toContain('gameChoicesByReadyEntryId');
+    expect(JSON.stringify(publicProjection)).not.toContain('station-ready-entry');
+    const operatorProjection = await (await fetch(`${baseUrl}/api/admin/arcade/station`, {
+      headers: ADMIN_HEADER,
+    })).json();
+    expect(JSON.stringify(operatorProjection)).not.toContain('gameChoicesByReadyEntryId');
+    expect(JSON.stringify(operatorProjection)).not.toContain('gameChoice');
+
+    const changed = await choose({ game: 'monsters' }, 'game-choice-monsters');
+    expect(await changed.json()).toEqual({ gameChoice: 'monsters' });
+    expect(await (await choose({ game: 'fighter' }, 'game-choice-fighter')).json())
+      .toEqual({ gameChoice: 'fighter' });
+    const currentPlayer = await (await fetch(`${baseUrl}/api/arcade/station/me`, {
+      headers: { Cookie: cookie },
+    })).json();
+    expect(currentPlayer).toMatchObject({ ready: { gameChoice: 'monsters' } });
+    const conflict = await choose({ game: 'racer' }, 'game-choice-fighter');
+    expect(conflict.status).toBe(409);
+    expect(await conflict.json()).toMatchObject({ error: { code: 'IDEMPOTENCY_CONFLICT' } });
+
+    const disabled = settings('lead_capture') as Record<string, any>;
+    disabled.station.games.monsters.enabled = false;
+    await store.update({
+      expectedVersion: 2,
+      idempotencyKey: 'disable-chosen-game',
+      updatedBy: 'test@twilio.com',
+      settings: disabled as ArcadeConfigSettings,
+    });
+    expect(await (await fetch(`${baseUrl}/api/arcade/station/me`, {
+      headers: { Cookie: cookie },
+    })).json()).toMatchObject({ ready: { gameChoice: null } });
+    const filteredPublic = await (await fetch(`${baseUrl}/api/arcade/station/public`)).json() as Record<string, any>;
+    expect(filteredPublic.games).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'monsters', choices: 0 }),
+    ]));
+  });
+
   it('protects emergency reset with operator auth, same-origin, idempotency, and a current station ETag', async () => {
     const { baseUrl, playerRuntime, api } = await harness({ playerMode: 'coin_only' });
     const resources = await playerRuntime.getActive();
@@ -729,6 +831,14 @@ describe('Arcade API', () => {
         },
       },
     });
+    expect(await api.processMessagingWebhook({
+      from: '+5511999999999', body: 'ENTRAR', providerMessageId: 'SM-API-ENTRAR',
+      recalledLocale: 'en-US',
+    })).toContain('Responda SIM');
+    expect(await api.processMessagingWebhook({
+      from: '+14155550222', body: 'ENTRAR ARCADE-01 LANG en-US', providerMessageId: 'SM-API-LANG',
+      recalledLocale: 'pt-BR',
+    })).toContain('Reply YES');
     const remembered = await api.processMessagingWebhook({
       from: '+14155550200', body: 'JOIN ARCADE-01 LANG pt-BR', providerMessageId: 'comm-memory-replay',
       conversationProfileId: 'mem_profile_replay', conversationId: 'conv_replay',

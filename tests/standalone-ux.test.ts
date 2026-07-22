@@ -4,11 +4,12 @@ import { readFileSync } from 'node:fs';
 const readClient = (path: string) => readFileSync(new URL(`../client/${path}`, import.meta.url), 'utf8');
 
 describe('standalone and station display UX', () => {
-  it('labels station game selection as automatic without simulated card focus', () => {
+  it('presents station game selection as a player vote with automatic fallback', () => {
     const home = readClient('home.ts');
     const css = readClient('home.css');
-    expect(home).toContain("selectionEyebrow: 'Automatic selection'");
-    expect(home).toContain("selectionTitle: 'The next arena is selected automatically.'");
+    expect(home).toContain("selectionEyebrow: 'Player choice'");
+    expect(home).toContain("selectionTitle: 'Choose the next game.'");
+    expect(home).toContain('If time runs out or votes tie, the station chooses automatically.');
     expect(home).not.toContain("classList.toggle('focused'");
     expect(css).not.toContain('.game-card.focused');
   });
@@ -16,7 +17,9 @@ describe('standalone and station display UX', () => {
   it('does not use captured station auth for a standalone Fighter display', () => {
     const home = readClient('home.ts');
     const fighter = readClient('fighter/fighter.ts');
-    expect(home).toMatch(/if \(standaloneMode\) \{[\s\S]*?return;[\s\S]*?\}\s*render\(\(await fetchPublicStation/);
+    const refresh = /async function refresh\(\)[\s\S]*?\n}/.exec(home)?.[0] ?? '';
+    expect(refresh.indexOf('if (standaloneMode)')).toBeLessThan(refresh.indexOf('fetchPublicStation(displayToken)'));
+    expect(refresh).toMatch(/if \(standaloneMode\) \{[\s\S]*?return;/);
     expect(fighter).toContain('stationDisplay.active ? stationDisplay.displayToken');
   });
 

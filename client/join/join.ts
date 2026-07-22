@@ -1,6 +1,7 @@
 import { fetchPublicArcadeConfig } from '../station-client';
 import { locale } from '../i18n';
 import { updateThemeToggleIcon } from '../icon-controls';
+import { buildJoinGuidance } from './guidance';
 
 interface BootstrapConfig {
   smsNumber?: string;
@@ -21,6 +22,9 @@ function localizePage(): void {
   document.getElementById('join-page-eyebrow')!.textContent = 'Configuração do telefone';
   document.getElementById('join-page-title')!.textContent = 'Escolha como entrar.';
   document.getElementById('intro')!.textContent = 'Escolha como entrar. As opções disponíveis aparecerão abaixo.';
+  document.getElementById('message-command-label')!.textContent = 'Mensagem para enviar';
+  document.getElementById('joinCommand')!.textContent = 'ENTRAR';
+  document.getElementById('message-command-help')!.textContent = 'Os botões de mensagem abrem ENTRAR preenchido. Basta tocar em Enviar. Cada resposta seguinte diz exatamente o que responder.';
   document.getElementById('join-privacy')!.textContent = 'Suas informações são usadas apenas para criar e operar seu perfil de jogo. Nunca envie dados de pagamento ou senhas.';
   document.getElementById('terms-title')!.textContent = 'Termos de participação';
   document.getElementById('terms-copy')!.textContent = 'Ao continuar, você concorda em participar desta experiência e permite que o Twilio Games use as informações fornecidas para operar sua sessão. O acompanhamento de marketing exige consentimento separado.';
@@ -34,6 +38,11 @@ function channelLink(label: string, detail: string, href: string, primary = fals
   return link;
 }
 
+function availableNumber(value: string | undefined): string {
+  const number = value?.trim().replace(/^whatsapp:/i, '') ?? '';
+  return /^\+[1-9][0-9]{7,14}$/.test(number) ? number : '';
+}
+
 async function initialize(): Promise<void> {
   localizePage();
   wireTheme();
@@ -44,7 +53,8 @@ async function initialize(): Promise<void> {
     ]);
     const bootstrap = await bootstrapResponse.json() as BootstrapConfig;
     const station = requestedStation ?? arcade.arcade.cabinetId;
-    if (arcade.arcade.mode === 'off') {
+    const mode = arcade.arcade.mode;
+    if (mode === 'off') {
       throw new Error(portuguese
         ? 'O Twilio Games não está aceitando jogadores agora. Pergunte à equipe quando a próxima sessão começa.'
         : 'Twilio Games is not accepting players right now. Ask booth staff when the next session starts.');
@@ -55,53 +65,56 @@ async function initialize(): Promise<void> {
         : 'This station link is no longer active. Scan the QR on the game screen again.');
     }
     const freePlay = arcade.coins.chargePolicy === 'free';
-    document.getElementById('intro')!.textContent = arcade.arcade.mode === 'coin_only'
-      ? arcade.registration.termsAcknowledgementRequired
-        ? portuguese
-          ? `Escolha SMS ou WhatsApp e envie o comando preenchido. Você deve responder SIM para aceitar os termos antes de responder ${freePlay ? 'PRONTO' : 'MOEDA'} na tela.`
-          : `Choose SMS or WhatsApp and send the prefilled command. You must reply YES to acknowledge the terms before replying ${freePlay ? 'READY' : 'COIN'} at the screen.`
-        : portuguese
-          ? `Escolha SMS ou WhatsApp, envie o comando preenchido e responda ${freePlay ? 'PRONTO' : 'MOEDA'} quando estiver na tela.`
-          : `Choose SMS or WhatsApp, send the prefilled command, then reply ${freePlay ? 'READY' : 'COIN'} at the screen.`
-      : freePlay
-        ? portuguese
-          ? 'Escolha uma mensagem ou o navegador. Por mensagem, responda PRONTO quando estiver na tela; no navegador, entre diretamente na fila.'
-          : 'Choose messaging or browser registration. By message, reply READY at the screen; in the browser, join the ready pool directly.'
-        : portuguese
-          ? 'Escolha SMS, WhatsApp ou cadastro pelo navegador para criar seu perfil de jogo.'
-          : 'Choose SMS, WhatsApp, or browser registration to create your game profile.';
-    const command = `JOIN ${station} LANG ${locale}`;
+    const smsNumber = availableNumber(bootstrap.smsNumber);
+    const whatsappNumber = availableNumber(bootstrap.whatsappNumber);
+    const sms = arcade.channels.sms && Boolean(smsNumber);
+    const whatsapp = arcade.channels.whatsapp && Boolean(whatsappNumber);
+    if (mode === 'coin_only' && !sms && !whatsapp) {
+      throw new Error(portuguese
+        ? 'Nenhuma forma de entrada está disponível. Peça ajuda à equipe.'
+        : 'No way to join is available. Ask the booth operator for help.');
+    }
+    const guidance = buildJoinGuidance({
+      portuguese, mode, sms, whatsapp,
+      termsRequired: arcade.registration.termsAcknowledgementRequired,
+      freePlay,
+    });
+    const command = guidance.command;
+    document.getElementById('intro')!.textContent = guidance.intro;
+    document.getElementById('joinCommand')!.textContent = command;
+    document.getElementById('message-command-help')!.textContent = guidance.commandHelp;
+    document.getElementById('messageCommandPanel')!.hidden = !guidance.messaging;
     stationBadge.textContent = portuguese ? 'Twilio Games · Português' : 'Twilio Games · English';
     const browserRegistrationUrl = `/player?cabinet=${encodeURIComponent(station)}&locale=${encodeURIComponent(locale)}`;
     const available: HTMLElement[] = [];
-    if (arcade.channels.sms && bootstrap.smsNumber) {
+    if (sms) {
       available.push(channelLink(
         portuguese ? 'Entrar com SMS' : 'Join with SMS',
-        portuguese ? 'Abre suas mensagens com o comando pronto' : 'Opens your text messages with the command ready',
-        `sms:${bootstrap.smsNumber}?body=${encodeURIComponent(command)}`, available.length === 0,
+        guidance.channelDetail,
+        `sms:${smsNumber}?body=${encodeURIComponent(command)}`, available.length === 0,
       ));
     }
-    if (arcade.channels.whatsapp && bootstrap.whatsappNumber) {
-      const digits = bootstrap.whatsappNumber.replace(/\D/g, '');
+    if (whatsapp) {
+      const digits = whatsappNumber.replace(/\D/g, '');
       available.push(channelLink(
         portuguese ? 'Entrar com WhatsApp' : 'Join with WhatsApp',
-        portuguese ? 'Abre uma conversa com o assistente do jogo' : 'Opens a chat with the game assistant',
+        guidance.channelDetail,
         `https://wa.me/${digits}?text=${encodeURIComponent(command)}`,
         available.length === 0,
       ));
     }
-    if (arcade.arcade.mode === 'lead_capture') {
+    if (mode === 'lead_capture') {
       available.push(channelLink(
         portuguese ? 'Continuar no navegador' : 'Continue in browser',
-        portuguese ? 'Cadastre-se e entre na fila sem abrir um aplicativo de mensagens' : 'Register and join without opening a messaging app',
+        guidance.browserDetail,
         browserRegistrationUrl,
         available.length === 0,
       ));
     }
     if (!available.length) {
       throw new Error(portuguese
-        ? 'Nenhum canal de mensagens está configurado. Peça à equipe para ativar o SMS ou WhatsApp.'
-        : 'No messaging channel is configured. Ask the booth operator to enable SMS or WhatsApp before joining.');
+        ? 'Nenhuma forma de entrada está disponível. Peça ajuda à equipe.'
+        : 'No way to join is available. Ask the booth operator for help.');
     }
     actions.replaceChildren(...available);
   } catch (cause) {

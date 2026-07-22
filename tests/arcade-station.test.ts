@@ -11,6 +11,7 @@ import {
   leaveStationReadyEntry,
   markStationDisplayReady,
   markStationMatchStarted,
+  recordStationGameChoice,
   requestStationLaunch,
   resetArcadeStation,
   selectStationGame,
@@ -146,6 +147,70 @@ describe('Arcade station reducer', () => {
     ]);
     expect(state.matches['match-1']?.overflowReadyEntryIds).toEqual(['ready-5']);
     expect(state.readyEntries['ready-5']).toMatchObject({ status: 'OVERFLOW', overflowOrdinal: 1 });
+  });
+
+  it('records and changes only current READY choices during game selection', () => {
+    let state = createArcadeStation('ARCADE-01', T0);
+    state = insert(state, 'player-1', 1);
+    state = insert(state, 'player-2', 2);
+    expect(() => recordStationGameChoice(state, {
+      readyEntryId: 'ready-1', roundId: 'round-1', game: 'racer', at: at(3),
+      expectedRevision: state.station.revision,
+    })).toThrow(/selection is not active/);
+    state = closeStationRecruiting(state, { at: at(90), expectedRevision: state.station.revision });
+    const selectionRevision = state.station.revision;
+    state = recordStationGameChoice(state, {
+      readyEntryId: 'ready-1', roundId: 'round-1', game: 'racer', at: at(91),
+      expectedRevision: selectionRevision,
+    });
+    state = recordStationGameChoice(state, {
+      readyEntryId: 'ready-1', roundId: 'round-1', game: 'fighter', at: at(92),
+      expectedRevision: state.station.revision,
+    });
+    expect(state.rounds['round-1']?.gameChoicesByReadyEntryId).toEqual({ 'ready-1': 'fighter' });
+    expect(Object.isFrozen(state.rounds['round-1']?.gameChoicesByReadyEntryId)).toBe(true);
+    expect(() => recordStationGameChoice(state, {
+      readyEntryId: 'ready-2', roundId: 'stale-round', game: 'racer', at: at(93),
+      expectedRevision: state.station.revision,
+    })).toThrow(/not active for this round/);
+    expect(() => recordStationGameChoice(state, {
+      readyEntryId: 'ready-2', roundId: 'round-1', game: 'trivia', at: at(93),
+      expectedRevision: state.station.revision,
+    })).toThrow(/not station-playable/);
+    expect(() => recordStationGameChoice(state, {
+      readyEntryId: 'ready-2', roundId: 'round-1', game: 'racer', at: at(93),
+      expectedRevision: selectionRevision,
+    })).toThrow(/revision changed/);
+
+    state = leaveStationReadyEntry(state, {
+      readyEntryId: 'ready-1', at: at(94), expectedRevision: state.station.revision,
+    });
+    expect(state.rounds['round-1']?.gameChoicesByReadyEntryId).toEqual({});
+    state = recordStationGameChoice(state, {
+      readyEntryId: 'ready-2', roundId: 'round-1', game: 'racer', at: at(95),
+      expectedRevision: state.station.revision,
+    });
+    state = selectStationGame(state, {
+      game: 'racer', matchId: 'choice-match', engineRoomCode: 'CHOICE', at: at(96),
+      expectedRevision: state.station.revision,
+    });
+    expect(state.rounds['round-1']?.gameChoicesByReadyEntryId).toEqual({});
+    expect(state.matches['choice-match']?.participantReadyEntryIds).toEqual(['ready-2']);
+  });
+
+  it('rejects game choices at and after the persisted selection deadline', () => {
+    let state = createArcadeStation('ARCADE-01', T0);
+    state = insert(state, 'player-1', 1);
+    state = closeStationRecruiting(state, { at: at(90), expectedRevision: state.station.revision });
+    expect(state.rounds['round-1']?.selectionEndsAt).toBe(at(120));
+
+    for (const seconds of [120, 121]) {
+      expect(() => recordStationGameChoice(state, {
+        readyEntryId: 'ready-1', roundId: 'round-1', game: 'racer', at: at(seconds),
+        expectedRevision: state.station.revision,
+      })).toThrow(expect.objectContaining({ code: 'SELECTION_CLOSED' }));
+    }
+    expect(state.rounds['round-1']?.gameChoicesByReadyEntryId).toEqual({});
   });
 
   it.each([['monsters', 2], ['fighter', 2]] as const)('enforces %s capacity %d', (game, capacity) => {

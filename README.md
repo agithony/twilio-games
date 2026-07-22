@@ -155,7 +155,7 @@ The home page lists the three playable games. Selecting a game opens its shared 
 | Browser player page | <http://localhost:5173/player> | Registration, wallet, challenges, and ready-pool controls |
 | Operator console | <http://localhost:5173/operator> | Staff-only station configuration, monitoring, and recovery |
 
-The shared screen and operator preview display a visitor QR that opens `/join`. SMS and WhatsApp are live deterministic channels when configured; browser registration remains available in lead-capture mode.
+The shared screen and operator preview display a visitor QR that opens `/join`. Messaging buttons open a prefilled `JOIN` command (`ENTRAR` in Portuguese), and every reply states the next required answer. During game selection, ready players vote by game name/number or from `/player`; ties and missing votes use the configured automatic fallback. Browser registration remains available in lead-capture mode.
 
 Standalone shared displays start as spectators and do not consume a player slot; `P` adds or removes a local keyboard tester. Station-managed displays disable local players so admitted phone callers remain authoritative. Use `Enter` to advance supported menu phases; Racer also uses left arrow to go back and right arrow to advance.
 

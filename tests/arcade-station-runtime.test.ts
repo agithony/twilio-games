@@ -6,7 +6,7 @@ import { DEFAULT_ARCADE_CONFIG, parseArcadeConfig } from '../shared/arcade-confi
 import { ArcadeEventHub, createArcadeStationUpdatedEvent } from '../server/arcade-events';
 import { ArcadeService } from '../server/arcade-service';
 import { ArcadeStateStore } from '../server/arcade-state-store';
-import { ArcadeStationRuntime } from '../server/arcade-station-runtime';
+import { ArcadeStationRuntime, chooseStationGame } from '../server/arcade-station-runtime';
 
 const directories: string[] = [];
 const T0 = Date.parse('2026-07-20T10:00:00.000Z');
@@ -469,6 +469,84 @@ describe('ArcadeStationRuntime', () => {
     h.setTime(T0 + 52_000);h.fire();await runtime.flush();
     expect(await h.service.getStation('expo')).toMatchObject({
       station: { phase: 'LOCKED', activeGame: 'fighter' },
+    });
+    await runtime.stop();
+  });
+
+  it('resolves vote leaders and applies automatic policy only across tied enabled games', async () => {
+    const h = await harness();
+    for (const playerId of ['p1', 'p2', 'p3']) {
+      await h.service.identifyCoinOnly({ playerId, idempotencyKey: `vote-identify:${playerId}` });
+      await h.service.insertStationCoin({ stationId: 'expo', playerId, idempotencyKey: `vote-coin:${playerId}` });
+    }
+    const recruiting = await h.service.getStation('expo');
+    const selecting = await h.service.closeStationRecruiting({
+      stationId: 'expo', expectedRevision: recruiting!.station.revision,
+      idempotencyKey: 'vote-close', authorization: AUTHORIZATION,
+    });
+    expect(chooseStationGame((await h.service.getStation('expo'))!)).toBe('racer');
+    await h.service.recordStationGameChoice({
+      stationId: 'expo', playerId: 'p1', game: 'racer', idempotencyKey: 'vote-p1',
+    });
+    await h.service.recordStationGameChoice({
+      stationId: 'expo', playerId: 'p2', game: 'racer', idempotencyKey: 'vote-p2-racer',
+    });
+    const fixed = JSON.parse(JSON.stringify(DEFAULT_ARCADE_CONFIG)) as Record<string, any>;
+    fixed.station.automaticSelection.policy = 'fixed_priority';
+    fixed.station.automaticSelection.order = ['fighter', 'monsters', 'racer'];
+    const fixedConfig = parseArcadeConfig(fixed);
+    expect(chooseStationGame((await h.service.getStation('expo'))!, fixedConfig.station)).toBe('racer');
+
+    await h.service.recordStationGameChoice({
+      stationId: 'expo', playerId: 'p2', game: 'fighter', idempotencyKey: 'vote-p2-fighter',
+    });
+    expect(chooseStationGame((await h.service.getStation('expo'))!, fixedConfig.station)).toBe('fighter');
+
+    const tied = (await h.service.getStation('expo'))!;
+    const withPreviousMonsters = {
+      ...tied,
+      matches: {
+        ...tied.matches,
+        historical: { game: 'monsters' },
+      },
+    } as unknown as typeof tied;
+    fixed.station.automaticSelection.order = ['racer', 'monsters', 'fighter'];
+    fixed.station.automaticSelection.policy = 'round_robin';
+    const roundRobin = parseArcadeConfig(fixed);
+    expect(chooseStationGame(withPreviousMonsters, roundRobin.station)).toBe('fighter');
+
+    fixed.station.automaticSelection.policy = 'best_fit_rotation';
+    const bestFit = parseArcadeConfig(fixed);
+    expect(chooseStationGame(tied, bestFit.station)).toBe('racer');
+
+    fixed.station.games.fighter.enabled = false;
+    const disabled = parseArcadeConfig(fixed);
+    expect(chooseStationGame((await h.service.getStation('expo'))!, disabled.station)).toBe('racer');
+    expect(selecting.station.phase).toBe('GAME_SELECTION');
+  });
+
+  it('rejects a late vote racing an overdue selection timer before resolving the game', async () => {
+    const h = await harness();
+    await h.service.identifyCoinOnly({ playerId: 'p1', idempotencyKey: 'race-identify:p1' });
+    const coin = await h.service.insertStationCoin({
+      stationId: 'expo', playerId: 'p1', idempotencyKey: 'race-coin:p1',
+    });
+    await h.service.closeStationRecruiting({
+      stationId: 'expo', expectedRevision: coin.station.revision,
+      idempotencyKey: 'race-close', authorization: AUTHORIZATION,
+    });
+    const runtime = h.makeRuntime();
+    await runtime.start();
+    expect(h.scheduled()?.delayMs).toBe(30_000);
+    h.setTime(T0 + 30_001);
+    const lateVote = h.service.recordStationGameChoice({
+      stationId: 'expo', playerId: 'p1', game: 'fighter', idempotencyKey: 'race-late-vote',
+    });
+    h.fire();
+    await expect(lateVote).rejects.toMatchObject({ code: 'SELECTION_CLOSED' });
+    await runtime.flush();
+    expect(await h.service.getStation('expo')).toMatchObject({
+      station: { phase: 'LOCKED', activeGame: 'racer' },
     });
     await runtime.stop();
   });

@@ -87,8 +87,18 @@
       <img src="/brand/Twilio_Logo_Bug_White.svg" alt="">
       <span id="countdownEyebrow" class="eyebrow">Players locked</span>
       <h1 id="lockedGame">Voice Racer</h1>
-      <strong id="lockedCountdown">10</strong>
+      <strong id="lockedCountdown">--</strong>
       <p id="countdownDescription">Stay close. The game is loading on this screen.</p>
+      <form id="displaySetupPanel" class="display-setup-panel" hidden>
+        <div>
+          <span id="displaySetupEyebrow" class="eyebrow">Display setup required</span>
+          <h2 id="displaySetupTitle">Connect this display</h2>
+          <p id="displaySetupExplanation">This display needs its display token before it can launch the game.</p>
+        </div>
+        <label for="displayTokenInput" id="displayTokenLabel">Display token</label>
+        <input id="displayTokenInput" name="displayToken" type="password" autocomplete="off" required>
+        <button id="displaySetupSubmit" type="submit">Configure display</button>
+      </form>
     </section>
     <aside id="persistentJoin" class="persistent-join" hidden>
       <div><span id="persistentJoinLabel">Next round</span><strong id="persistentJoinTitle">Scan to join</strong></div>

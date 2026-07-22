@@ -2,7 +2,7 @@ import { HttpServer } from './http-server';
 import { ArcadeApi } from './arcade-api';
 import { ArcadeConfigStore } from './arcade-config-store';
 import { ArcadeEventHub } from './arcade-events';
-import { ArcadeTacGateway, type ArcadeTacMessage } from './arcade-tac-gateway';
+import { ArcadeTacGateway, recalledMemoryLocale } from './arcade-tac-gateway';
 import { ArcadePlayerRuntime } from './arcade-player-runtime';
 import { GoogleAnalyticsAuth } from './google-analytics-auth';
 import { isLoopbackAddress, isLoopbackUrl } from './arcade-dev-auth';
@@ -159,17 +159,6 @@ function whatsappContentSidEnvironmentName(
   locale: 'en-US' | 'pt-BR',
 ): string {
   return `TWILIO_WHATSAPP_CONTENT_SID_${kind}_${locale === 'pt-BR' ? 'PT_BR' : 'EN_US'}`;
-}
-
-function recalledMemoryLocale(memory: ArcadeTacMessage['memory']): 'en-US' | 'pt-BR' | null {
-  if (!memory) return null;
-  for (const communication of [...memory.communications].reverse()) {
-    const text = communication.content?.text ?? '';
-    const locale = /\bLANG\s+(pt(?:-BR)?|en(?:-US)?)\b/i.exec(text)?.[1]?.toLowerCase();
-    if (locale?.startsWith('pt')) return 'pt-BR';
-    if (locale?.startsWith('en')) return 'en-US';
-  }
-  return null;
 }
 
 function configuredMessagingSender(value: string | undefined): string | null {

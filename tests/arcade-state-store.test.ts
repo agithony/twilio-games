@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, open, readFile, rename, rm, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { DEFAULT_ARCADE_CONFIG, parseArcadeConfig } from '../shared/arcade-config';
 import { createWallet, grantRegistrationCoins, reserveCoins } from '../shared/arcade-domain';
 import { joinQueue } from '../shared/arcade-queue';
 import {
@@ -20,6 +22,7 @@ import {
   type ArcadePlayerRecord,
   type ArcadeStateFileSystem,
 } from '../server/arcade-state-store';
+import { ArcadeService } from '../server/arcade-service';
 
 const directories: string[] = [];
 const T0 = '2026-07-20T10:00:00.000Z';
@@ -122,7 +125,7 @@ describe('ArcadeStateStore', () => {
     await expect(store.transaction(addPlayer('p1'))).rejects.toMatchObject({ code: 'STORE_NOT_INITIALIZED' });
   });
 
-  it('persists schema-v6 state and restores it after restart', async () => {
+  it('persists schema-v7 state and restores it after restart', async () => {
     const file = await stateFile();
     const first = await ArcadeStateStore.open(file);
     await first.transaction(addPlayer('trusted:p1'));
@@ -142,7 +145,7 @@ describe('ArcadeStateStore', () => {
     expect(restarted.snapshot().wallets['trusted:p1']?.wallet.cachedBalance).toBe(0);
   });
 
-  it('migrates schema-v1 state losslessly and writes schema v6 on the next transaction', async () => {
+  it('migrates schema-v1 state losslessly and writes schema v7 on the next transaction', async () => {
     const file = await stateFile();
     const first = await ArcadeStateStore.open(file);
     await first.transaction(addPlayer('p1'));
@@ -168,11 +171,11 @@ describe('ArcadeStateStore', () => {
 
     await migrated.transaction(() => undefined);
     const upgraded = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
-    expect(upgraded.schemaVersion).toBe(6);
+    expect(upgraded.schemaVersion).toBe(7);
     expect(upgraded.stations).toEqual({});
   });
 
-  it('migrates schema-v3 messaging state to an empty v6 outbox and audit', async () => {
+  it('migrates schema-v3 messaging state to an empty v7 outbox and audit', async () => {
     const file = await stateFile();
     const first = await ArcadeStateStore.open(file);
     await first.transaction(addPlayer('p1'));
@@ -186,7 +189,7 @@ describe('ArcadeStateStore', () => {
 
     const migrated = await ArcadeStateStore.open(file);
     expect(migrated.snapshot()).toMatchObject({
-      schemaVersion: 6,
+      schemaVersion: 7,
       stationReadyChannels: {},
       outboundNotifications: {},
       messagingAuditEvents: {},
@@ -205,14 +208,14 @@ describe('ArcadeStateStore', () => {
 
     const migrated = await ArcadeStateStore.open(file);
     expect(migrated.snapshot()).toMatchObject({
-      schemaVersion: 6,
+      schemaVersion: 7,
       players: { p1: player('p1') },
       outboundNotifications: {},
       messagingAuditEvents: {},
     });
   });
 
-  it.each(['PLAYING', 'COMPLETED'] as const)('migrates a schema-v5 %s match into valid v6 state', async phase => {
+  it.each(['PLAYING', 'COMPLETED'] as const)('migrates a schema-v5 %s match into valid v7 state', async phase => {
     const file = await stateFile();
     const first = await ArcadeStateStore.open(file);
     await first.transaction(state => {
@@ -259,6 +262,104 @@ describe('ArcadeStateStore', () => {
       phase, result: phase === 'COMPLETED' ? { source: 'LEGACY_UNAVAILABLE', participants: [] } : null,
     });
     expect(match?.enginePlayerIdsByReadyEntryId['ready-1']).toMatch(/^legacy:[a-f0-9]{32}$/);
+  });
+
+  it('migrates every schema-v6 round with an empty game choice map', async () => {
+    const file = await stateFile();
+    const first = await ArcadeStateStore.open(file);
+    await first.transaction(addReadyPlayer);
+    const legacy = JSON.parse(await readFile(file, 'utf8')) as Record<string, any>;
+    legacy.stationRounds['round-closed'] = {
+      ...legacy.stationRounds['round-1'],
+      id: 'round-closed',
+      phase: 'CLOSED',
+      closedAt: T0,
+    };
+    legacy.schemaVersion = 6;
+    for (const round of Object.values(legacy.stationRounds) as Array<Record<string, unknown>>) {
+      delete round.gameChoicesByReadyEntryId;
+    }
+    await writeFile(file, JSON.stringify(legacy));
+
+    const migrated = await ArcadeStateStore.open(file);
+    expect(migrated.snapshot()).toMatchObject({
+      schemaVersion: 7,
+      stationRounds: {
+        'round-1': { gameChoicesByReadyEntryId: {} },
+        'round-closed': { gameChoicesByReadyEntryId: {} },
+      },
+    });
+  });
+
+  it('migrates embedded schema-v6 station results and replays them without touching unrelated results', async () => {
+    const file = await stateFile();
+    const first = await ArcadeStateStore.open(file);
+    await first.transaction(addReadyPlayer);
+    const legacy = JSON.parse(await readFile(file, 'utf8')) as Record<string, any>;
+    const selected = closeStationRecruiting({
+      station: legacy.stations.expo,
+      rounds: legacy.stationRounds,
+      readyEntries: legacy.stationReadyEntries,
+      matches: legacy.stationMatches,
+    }, { at: T0, expectedRevision: 2 });
+    const selectedJson = JSON.parse(JSON.stringify(selected)) as typeof selected;
+    legacy.stations.expo = selectedJson.station;
+    legacy.stationRounds = selectedJson.rounds;
+    const authorization = { trusted: true };
+    const payload = {
+      authorizedBy: { kind: 'system', subject: 'migration:test' },
+      expectedRevision: 2,
+      occurredAt: null,
+      reason: null,
+      stationId: 'expo',
+    };
+    legacy.idempotencyRecords['schema6-close-replay'] = {
+      key: 'schema6-close-replay',
+      operation: 'CLOSE_STATION_RECRUITING',
+      playerId: null,
+      fingerprint: createHash('sha256').update(JSON.stringify(payload)).digest('hex'),
+      result: { station: selectedJson.station, round: selectedJson.rounds['round-1'], match: null },
+      configVersion: 1,
+      createdAt: T0,
+    };
+    legacy.idempotencyRecords['schema6-unrelated'] = {
+      key: 'schema6-unrelated',
+      operation: 'REGISTER_PLAYER',
+      playerId: 'p1',
+      fingerprint: 'a'.repeat(64),
+      result: { round: { sentinel: 'untouched' } },
+      configVersion: 1,
+      createdAt: T0,
+    };
+    legacy.schemaVersion = 6;
+    delete legacy.stationRounds['round-1'].gameChoicesByReadyEntryId;
+    delete legacy.idempotencyRecords['schema6-close-replay'].result.round.gameChoicesByReadyEntryId;
+    await writeFile(file, JSON.stringify(legacy));
+
+    const migrated = await ArcadeStateStore.open(file);
+    const snapshot = migrated.snapshot();
+    expect((snapshot.idempotencyRecords['schema6-close-replay']?.result as Record<string, any>).round)
+      .toMatchObject({ gameChoicesByReadyEntryId: {} });
+    expect(snapshot.idempotencyRecords['schema6-unrelated']?.result)
+      .toEqual({ round: { sentinel: 'untouched' } });
+
+    const configInput = JSON.parse(JSON.stringify(DEFAULT_ARCADE_CONFIG)) as Record<string, any>;
+    configInput.arcade.mode = 'coin_only';
+    const service = new ArcadeService({
+      store: migrated,
+      config: parseArcadeConfig(configInput),
+      clock: () => T0,
+      idGenerator: kind => `unused-${kind}`,
+      challengeTokenSecret: '0123456789abcdef0123456789abcdef',
+      operatorAuthorizer: value => value === authorization
+        ? { kind: 'system', subject: 'migration:test' }
+        : null,
+    });
+    const replay = await service.closeStationRecruiting({
+      stationId: 'expo', expectedRevision: 2,
+      idempotencyKey: 'schema6-close-replay', authorization,
+    });
+    expect(replay.round?.gameChoicesByReadyEntryId).toEqual({});
   });
 
   it('restores a station recruiting round and its reserved coin after restart', async () => {
@@ -395,6 +496,17 @@ describe('ArcadeStateStore', () => {
     await store.transaction(addReadyPlayer);
     const malformed = JSON.parse(await readFile(file, 'utf8')) as Record<string, any>;
     malformed.stationReadyEntries['ready-1'].reservationId = 'missing';
+    await writeFile(file, JSON.stringify(malformed));
+
+    await expect(ArcadeStateStore.open(file)).rejects.toMatchObject({ code: 'INVALID_STATE' });
+  });
+
+  it('requires the exact schema-v7 round choice map', async () => {
+    const file = await stateFile();
+    const store = await ArcadeStateStore.open(file);
+    await store.transaction(addReadyPlayer);
+    const malformed = JSON.parse(await readFile(file, 'utf8')) as Record<string, any>;
+    delete malformed.stationRounds['round-1'].gameChoicesByReadyEntryId;
     await writeFile(file, JSON.stringify(malformed));
 
     await expect(ArcadeStateStore.open(file)).rejects.toMatchObject({ code: 'INVALID_STATE' });

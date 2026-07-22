@@ -176,7 +176,7 @@ describe('Arcade messaging commands', () => {
     const joined = await message(h.service, 'SM101', 'JOIN ARCADE-01 LANG en-US');
     expect(joined.reply).toContain('first name');
     expect(h.store.snapshot().wallets[joined.playerId!]?.wallet.cachedBalance).toBe(0);
-    expect((await message(h.service, 'SM102', 'COIN')).reply).toContain('Finish the quick intro');
+    expect((await message(h.service, 'SM102', 'COIN')).reply).toBe(joined.reply);
 
     expect((await message(h.service, 'SM103', 'Ada')).reply).toContain('last name');
     expect((await message(h.service, 'SM104', 'Lovelace')).reply).toContain('work email');
@@ -228,7 +228,8 @@ describe('Arcade messaging commands', () => {
     expect(h.store.snapshot().wallets[joined.playerId!]?.transactions).toEqual([]);
     expect(h.store.snapshot().wallets[joined.playerId!]?.reservations).toEqual([]);
     expect(Object.values(h.store.snapshot().stationReadyEntries)[0]?.reservationId).toBeNull();
-    expect((await message(h.service, 'SM304', 'STATUS')).reply).toBe('Station status: READY.');
+    expect((await message(h.service, 'SM304', 'STATUS')).reply)
+      .toBe('Station status: READY. Watch for game selection, then reply with the game name or number.');
   });
 
   it('requires a fresh JOIN after the cabinet changes', async () => {
@@ -237,7 +238,7 @@ describe('Arcade messaging commands', () => {
     await message(h.service, 'SM402', 'YES');
     h.setCabinet('ARCADE-02');
     expect((await message(h.service, 'SM403', 'STATUS', '+14155550199', 'sms', 'ARCADE-02')).reply)
-      .toBe('Reply JOIN ARCADE-02 to start.');
+      .toBe('Reply JOIN to start');
     expect((await message(
       h.service, 'SM404', 'JOIN ARCADE-02 LANG en-US', '+14155550199', 'sms', 'ARCADE-02',
     )).reply).toContain('Reply COIN');
@@ -259,7 +260,7 @@ describe('Arcade messaging commands', () => {
     expect((await message(leadToCoin.service, 'SM-MODE-103', 'JOIN ARCADE-01 LANG en-US')).reply)
       .toContain('Reply YES');
     expect((await message(leadToCoin.service, 'SM-MODE-104', 'READY')).reply)
-      .toContain('Finish the quick intro');
+      .toBe('Reply YES to accept the participation terms shown on the join page.');
     await message(leadToCoin.service, 'SM-MODE-105', 'YES');
     expect((await message(leadToCoin.service, 'SM-MODE-106', 'READY')).reply)
       .toContain('ready in position 1');
@@ -276,6 +277,116 @@ describe('Arcade messaging commands', () => {
     await message(h.service, 'SM505', 'Analytical Engines');
     expect((await message(h.service, 'SM506', 'US')).reply).toContain('Registration complete');
     expect(h.store.snapshot().players[joined.playerId!]?.termsAcceptedAt).toBeNull();
+  });
+
+  it('keeps registration commands and invalid answers on the exact current prompt', async () => {
+    const h = await harness('lead_capture');
+    const joined = await message(h.service, 'SM-PROMPT-001', 'JOIN');
+    expect(joined.reply).toBe('What is your first name? Reply with your first name only.');
+    for (const [index, command] of ['HELP', 'STATUS', 'COIN', 'READY', 'LEAVE'].entries()) {
+      expect((await message(h.service, `SM-PROMPT-${index + 2}`, command)).reply).toBe(joined.reply);
+    }
+    expect((await message(h.service, 'SM-PROMPT-010', 'Racer')).reply).toContain('last name');
+    expect((await message(h.service, 'SM-PROMPT-011', 'Fighter')).reply).toContain('work email');
+    const emailPrompt = (await message(h.service, 'SM-PROMPT-012', 'not-an-email')).reply;
+    expect(emailPrompt).toBe('What is your work email? Reply in the format name@company.com.');
+    expect((await message(h.service, 'SM-PROMPT-013', 'HELP')).reply).toBe(emailPrompt);
+    await message(h.service, 'SM-PROMPT-014', 'voice@example.com');
+    expect((await message(h.service, 'SM-PROMPT-015', 'Monsters')).reply).toContain('country code');
+    await message(h.service, 'SM-PROMPT-016', 'US');
+    await message(h.service, 'SM-PROMPT-017', 'YES');
+    expect(h.store.snapshot().players[joined.playerId!]?.lead).toMatchObject({
+      firstName: 'Racer', lastName: 'Fighter', companyName: 'Monsters',
+    });
+
+    const numeric = await message(h.service, 'SM-PROMPT-020', 'JOIN', '+14155550220');
+    expect((await message(h.service, 'SM-PROMPT-021', '1', '+14155550220')).reply)
+      .toContain('last name');
+    expect(h.store.snapshot().messagingDrafts[numeric.playerId!]?.firstName).toBe('1');
+  });
+
+  it('infers locale from JOIN verbs while explicit LANG takes precedence', async () => {
+    const h = await harness('coin_only');
+    const portuguese = await h.service.processInboundStationMessage({
+      channel: 'sms', normalizedAddress: '+5511999999999', providerAddress: '+5511999999999',
+      providerMessageId: 'SM-LOCALE-PT', body: 'ENTRAR', stationId: 'ARCADE-01',
+      preferredLocale: 'en-US', idempotencyKey: providerKey('SM-LOCALE-PT', '+5511999999999'),
+    });
+    expect(portuguese.locale).toBe('pt-BR');
+    expect(portuguese.reply).toContain('Responda SIM');
+    const explicitEnglish = await h.service.processInboundStationMessage({
+      channel: 'sms', normalizedAddress: '+14155550222', providerAddress: '+14155550222',
+      providerMessageId: 'SM-LOCALE-EN', body: 'ENTRAR ARCADE-01 LANG en-US', stationId: 'ARCADE-01',
+      preferredLocale: 'pt-BR', idempotencyKey: providerKey('SM-LOCALE-EN', '+14155550222'),
+    });
+    expect(explicitEnglish.locale).toBe('en-US');
+    expect(explicitEnglish.reply).toContain('Reply YES');
+  });
+
+  it('records numbered and named game choices only during live selection', async () => {
+    const h = await harness('coin_only');
+    const joined = await message(h.service, 'SM-CHOICE-001', 'JOIN');
+    await message(h.service, 'SM-CHOICE-002', 'YES');
+    expect((await message(h.service, 'SM-CHOICE-003', 'RACER')).reply)
+      .toContain('Game selection opens after recruiting');
+    await message(h.service, 'SM-CHOICE-004', 'COIN');
+    const recruiting = await h.service.getStation('ARCADE-01');
+    await h.service.closeStationRecruiting({
+      stationId: 'ARCADE-01', expectedRevision: recruiting!.station.revision,
+      idempotencyKey: 'message-choice-close', authorization: h.operatorAuthorization,
+    });
+    const first = await message(h.service, 'SM-CHOICE-005', '1');
+    expect(first.reply).toContain('Choice saved: Voice Racer');
+    expect(first.reply).toContain('1 = Voice Racer, 2 = Voice Monsters, 3 = Voice Fighter');
+    const changed = await message(h.service, 'SM-CHOICE-006', 'VOICE MONSTERS');
+    expect(changed.reply).toContain('Choice saved: Voice Monsters');
+    expect((await message(h.service, 'SM-CHOICE-007', '4')).reply)
+      .toContain('Reply with one of: 1 = Voice Racer, 2 = Voice Monsters, 3 = Voice Fighter');
+    const state = h.store.snapshot();
+    const entry = Object.values(state.stationReadyEntries).find(candidate => candidate.playerId === joined.playerId)!;
+    expect(state.stationRounds[entry.roundId]?.gameChoicesByReadyEntryId).toEqual({ [entry.id]: 'monsters' });
+  });
+
+  it('durably replies that selection closed for choices at and after the deadline', async () => {
+    const h = await harness('coin_only');
+    const englishFrom = '+14155550199';
+    const portugueseFrom = '+5511999999999';
+    await message(h.service, 'SM-CLOSED-EN-JOIN', 'JOIN', englishFrom);
+    await message(h.service, 'SM-CLOSED-EN-TERMS', 'YES', englishFrom);
+    await message(h.service, 'SM-CLOSED-EN-COIN', 'COIN', englishFrom);
+    await message(h.service, 'SM-CLOSED-PT-JOIN', 'ENTRAR', portugueseFrom);
+    await message(h.service, 'SM-CLOSED-PT-TERMS', 'SIM', portugueseFrom);
+    await message(h.service, 'SM-CLOSED-PT-COIN', 'MOEDA', portugueseFrom);
+    const recruiting = await h.service.getStation('ARCADE-01');
+    const selecting = await h.service.closeStationRecruiting({
+      stationId: 'ARCADE-01', expectedRevision: recruiting!.station.revision,
+      idempotencyKey: 'message-closed-close', authorization: h.operatorAuthorization,
+    });
+    const deadline = Date.parse(selecting.round!.selectionEndsAt!);
+
+    h.setNow(deadline);
+    const exact = await message(h.service, 'SM-CLOSED-EXACT', 'RACER', englishFrom);
+    expect(exact.reply).toBe(
+      'Game selection is closed. Watch the screen for the chosen game and your next instruction.',
+    );
+    h.setNow(deadline + 1);
+    const late = await message(h.service, 'SM-CLOSED-LATE', '2', portugueseFrom);
+    expect(late.reply).toBe(
+      'A escolha do jogo ja terminou. Acompanhe a tela para ver o jogo escolhido e a proxima instrucao.',
+    );
+    expect(h.store.snapshot().stations['ARCADE-01']?.revision).toBe(selecting.station.revision);
+    expect(h.store.snapshot().inboundMessages[providerKey('SM-CLOSED-EXACT', englishFrom)]?.reply)
+      .toBe(exact.reply);
+    expect(h.store.snapshot().inboundMessages[providerKey('SM-CLOSED-LATE', portugueseFrom)]?.reply)
+      .toBe(late.reply);
+
+    const locked = await h.service.selectStationGame({
+      stationId: 'ARCADE-01', expectedRevision: selecting.station.revision,
+      idempotencyKey: 'message-closed-select', authorization: h.operatorAuthorization,
+      game: 'fighter', engineRoomCode: 'CLOSED-CHOICE',
+    });
+    expect(locked.station.phase).toBe('LOCKED');
+    expect(await message(h.service, 'SM-CLOSED-EXACT', 'RACER', englishFrom)).toEqual(exact);
   });
 
   it('rejects browser phone replacement while a verified messaging address is linked', async () => {

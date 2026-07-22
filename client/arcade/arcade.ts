@@ -8,13 +8,14 @@ type PlayableGame = 'racer' | 'monsters' | 'fighter';
 type ChargePolicy = 'per_player' | 'per_match' | 'host_sponsors' | 'free';
 type StationPhase = 'ATTRACT' | 'RECRUITING' | 'GAME_SELECTION' | 'LOCKED' | 'LAUNCHING' | 'PLAYING' | 'RESULTS';
 
-interface PublicConfig { version:number;arcade:{mode:ArcadeMode;cabinetId:string};registration:{termsAcknowledgementRequired:boolean};coins:{startingBalance:number;chargePolicy:ChargePolicy};channels:{voice:boolean;sms:boolean;whatsapp:boolean;voiceNumbers:Record<'en-US'|'pt-BR',string|null>};earning:{enabled:boolean}; }
+interface PublicConfig { version:number;arcade:{mode:ArcadeMode;cabinetId:string};registration:{termsAcknowledgementRequired:boolean};coins:{startingBalance:number;chargePolicy:ChargePolicy};channels:{voice:boolean;sms:boolean;whatsapp:boolean;voiceNumbers:Record<'en-US'|'pt-BR',string|null>};station:{games:Record<PlayableGame,{enabled:boolean}>};earning:{enabled:boolean}; }
 interface DeploymentConfig { publicBaseUrl?:string;phoneNumber?:string;voiceNumbers?:Partial<Record<'en-US'|'pt-BR',string|null>>;smsNumber?:string;whatsappNumber?:string; }
 interface PlayerStatus { registered:boolean; firstName:string|null; preferredLocale:string|null; }
 interface WalletStatus { ledgerBalance:number; reservedBalance:number; availableBalance:number; updatedAt:string; }
-interface StationView { phase:string;revision:number;deadline:string|null;ready:{status:string;position:number|null;reservation:{amount:number;status:string}|null}|null;availableBalance:number;callNumber:string|null; }
+interface StationView { phase:string;revision:number;deadline:string|null;ready:{status:string;position:number|null;reservation:{amount:number;status:string}|null;gameChoice:PlayableGame|null}|null;availableBalance:number;callNumber:string|null; }
 interface Challenge { id:string;title:string;rewardCoins:number;displayOrder:number;claimCount:number;maxClaimsPerPlayer:number;available:boolean;startsAt:string|null;endsAt:string|null; }
 interface AdminChallenge { id:string;title:string;url:string;rewardCoins:number;enabled:boolean;maxClaimsPerPlayer:number;displayOrder:number;startsAt:string|null;endsAt:string|null; }
+interface GameChoiceResponse { gameChoice:PlayableGame; }
 interface AdminConfig extends Record<string,unknown> { version:number;updatedAt:string;updatedBy:string;schemaVersion:number;arcade:{mode:ArcadeMode;cabinetId:string};station:{timings:{recruitingSeconds:number;hardDeadlineSeconds:number;selectionSeconds:number;lockedSeconds:number;launchTimeoutSeconds:number;resultsSeconds:number;postGameRecruitingSeconds:number};games:Record<PlayableGame,{enabled:boolean}>;automaticSelection:{policy:'best_fit_rotation'|'round_robin'|'fixed_priority';order:PlayableGame[]};qrRail:'auto'|'always'|'hidden'};coins:{startingBalance:number;chargePolicy:ChargePolicy};channels:{voice:boolean;sms:boolean;whatsapp:boolean;voiceNumbers:Record<'en-US'|'pt-BR',string|null>};earning:{enabled:boolean;challenges:AdminChallenge[]};postGame:{enabled:boolean;channels:Array<'sms'|'whatsapp'>;includeCoinBalance:boolean}; }
 interface OperatorStationView {
   station:{phase:StationPhase;revision:number;updatedAt:string;activeRoundId:string|null;nextRoundId:string|null;activeGame:PlayableGame|null;activeMatchId:string|null};
@@ -54,11 +55,13 @@ let playerRefreshTimer:number|null=null;
 let playerRefreshGeneration=0;
 let editingChallengeId:string|null=null;
 let modeFormDirty=false;
+let gameChoiceSaving=false;
 el('refresh').addEventListener('click', () => void refreshAll());
 el('theme-toggle').addEventListener('click', toggleTheme);
 el<HTMLFormElement>('registration-form').addEventListener('submit', event => void register(event));
 el<HTMLFormElement>('join-form').addEventListener('submit', event => void joinQueue(event));
 el('queue-leave').addEventListener('click', () => void leaveCurrentAdmission());
+for(const button of document.querySelectorAll<HTMLButtonElement>('[data-game-choice]'))button.addEventListener('click',()=>void chooseGame(button.dataset.gameChoice as PlayableGame));
 el<HTMLFormElement>('mode-form').addEventListener('submit', event => void saveMode(event));
 el<HTMLFormElement>('mode-form').addEventListener('input',()=>{modeFormDirty=true;});
 el('discard-mode-changes').addEventListener('click',()=>void discardModeChanges());
@@ -125,7 +128,7 @@ async function refreshPublicConfig():Promise<void>{
   const config=await api<PublicConfig>('/api/arcade/config/public');
   if(state.config&&config.version<state.config.version)return;
   const changed=!state.config||config.version!==state.config.version;
-  state.config=config;renderMode();
+  state.config=config;renderMode();if(!operatorView)renderGameChoice();
   if(changed)await renderPlayerQr();
 }
 
@@ -345,6 +348,7 @@ async function leaveCurrentAdmission():Promise<void>{
 function renderQueue():void{
   const form=el<HTMLFormElement>('join-form'),box=el('queue-status'),actions=el('queue-actions');
   const station=state.station,callNow=el<HTMLAnchorElement>('call-now');
+  renderGameChoice();
   const callNumber=station?.ready?.status==='ADMITTED'?station.callNumber?.trim():'';
   callNow.hidden=!callNumber;
   if(callNumber){callNow.href=`tel:${callNumber}`;callNow.textContent=playerText(`Call now · ${callNumber}`,`Ligue agora · ${callNumber}`);}
@@ -356,6 +360,49 @@ function renderQueue():void{
     toggleButton('queue-leave',canLeave);return;
   }
   form.hidden=false;box.hidden=true;actions.hidden=true;box.replaceChildren();
+}
+
+function renderGameChoice():void{
+  const station=state.station,panel=el('game-choice-panel');
+  const visible=station?.phase==='GAME_SELECTION'&&station.ready?.status==='READY';
+  panel.hidden=!visible;
+  if(!visible)return;
+  const savedChoice=station.ready?.gameChoice??null;
+  const choice=savedChoice&&state.config?.station.games[savedChoice]?.enabled?savedChoice:null;
+  panel.querySelector<HTMLElement>('.eyebrow')!.textContent=playerText('Choose the next game','Escolha o próximo jogo');
+  el('game-choice-title').textContent=playerText('Cast your vote','Dê seu voto');
+  el('game-choice-help').textContent=playerText(
+    'Choose a game below. You can change your vote until time runs out.',
+    'Escolha um jogo abaixo. Você pode mudar seu voto até o tempo acabar.',
+  );
+  el('current-game-choice').textContent=choice
+    ? playerText(`Your choice: ${gameName(choice)}. You can still change it.`,`Sua escolha: ${gameName(choice)}. Você ainda pode mudar.`)
+    : playerText('No choice yet. Pick one below.','Nenhuma escolha ainda. Escolha abaixo.');
+  for(const button of panel.querySelectorAll<HTMLButtonElement>('[data-game-choice]')){
+    const game=button.dataset.gameChoice as PlayableGame;
+    const enabled=state.config?.station.games[game]?.enabled===true;
+    const selected=game===choice;
+    button.hidden=!enabled;
+    button.classList.toggle('selected',selected);
+    button.setAttribute('aria-pressed',String(selected));
+    button.disabled=gameChoiceSaving||!enabled;
+  }
+}
+
+async function chooseGame(game:PlayableGame):Promise<void>{
+  if(gameChoiceSaving||state.station?.phase!=='GAME_SELECTION'||state.station.ready?.status!=='READY'
+    ||state.config?.station.games[game]?.enabled!==true)return;
+  gameChoiceSaving=true;renderGameChoice();
+  try{
+    const result=await post<GameChoiceResponse>('/api/arcade/station/game-choice',{game});
+    if(state.station?.ready){
+      state.station={...state.station,ready:{...state.station.ready,gameChoice:result.gameChoice}};
+    }
+    renderPlayer();
+    setNotice(playerText(`Your vote is now ${gameName(game)}. You can change it until time runs out.`,`Seu voto agora é ${gameName(game)}. Você pode mudar até o tempo acabar.`),'success');
+    try{await refreshPlayer();}catch{/* Keep the saved choice; live updates will retry the projection refresh. */}
+  }catch(error){showError(error);}
+  finally{gameChoiceSaving=false;renderGameChoice();}
 }
 
 async function refreshPlayerConfiguration():Promise<void>{
@@ -641,6 +688,11 @@ function renderRuntimeSummary():void{
   const entryReady=modeSelect.value==='lead_capture'||remoteReady;
   const status=modeSelect.value==='off'?'Paused':voice&&voiceReady&&gamesReady&&entryReady?'Ready to open':'Needs setup';
   el('runtime-summary').textContent=status;
+  el('lead-capture-summary').textContent=modeSelect.value==='lead_capture'
+    ? 'Lead capture on. Browser entry collects first and last name, work email, company, phone number, country or region, terms acknowledgement when required, and optional marketing consent. When enabled, messaging uses the sender phone and asks for first and last name, work email, company, and country or region. It asks for terms only when required and never asks for marketing consent.'
+    : modeSelect.value==='coin_only'
+      ? 'Lead capture off. Players enter through enabled SMS or WhatsApp. No registration details are collected; their messaging address and game activity are used to run the session.'
+      : 'Lead capture off. The event is paused, players cannot enter, and no new player information is collected.';
   el('sms-status').textContent=capabilityStatus(sms,smsNumber);
   el('whatsapp-status').textContent=capabilityStatus(whatsapp,whatsappNumber);
   el('voice-number-status').textContent=voice

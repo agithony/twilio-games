@@ -107,6 +107,17 @@
           </form>
           <div id="queue-status" class="queue-status" aria-live="polite" hidden></div>
           <a id="call-now" class="call-now" aria-live="assertive" hidden></a>
+          <section id="game-choice-panel" class="game-choice-panel" aria-labelledby="game-choice-title" hidden>
+            <p class="eyebrow">Choose the next game</p>
+            <h3 id="game-choice-title">Cast your vote</h3>
+            <p id="game-choice-help">Choose a game below. You can change your vote until time runs out.</p>
+            <div class="player-game-choices">
+              <button type="button" data-game-choice="racer"><span>1</span><b>Voice Racer</b></button>
+              <button type="button" data-game-choice="monsters"><span>2</span><b>Voice Monsters</b></button>
+              <button type="button" data-game-choice="fighter"><span>3</span><b>Voice Fighter</b></button>
+            </div>
+            <p id="current-game-choice" class="current-game-choice" aria-live="polite">No choice yet.</p>
+          </section>
           <div id="queue-actions" class="action-row" hidden>
             <button id="queue-leave" class="button quiet" type="button">Leave line</button>
           </div>
@@ -295,9 +306,10 @@
               <section class="settings-section settings-experience">
                 <div class="settings-section-heading"><span>01</span><div><h4>Event</h4><p>Choose how players enter and whether coins are used.</p></div></div>
                 <div class="settings-fields two-up">
-                  <label>Event status<select id="admin-mode"><option value="off">Paused</option><option value="coin_only">Open - join by message</option><option value="lead_capture">Open - registration available</option></select></label>
+                  <label>Event status<select id="admin-mode"><option value="off">Paused - lead capture off</option><option value="coin_only">Open - lead capture off</option><option value="lead_capture">Open - lead capture on</option></select></label>
                   <label>Entry cost<select id="admin-charge-policy"><option value="per_player">One coin per player</option><option value="free">No coins required</option></select></label>
                   <label id="starting-coins-field">Coins after sign-up<input id="admin-starting-coins" type="number" min="1" max="100" step="1" required /><small>These coins are available immediately.</small></label>
+                  <p id="lead-capture-summary" class="lead-capture-summary" aria-live="polite"></p>
                 </div>
               </section>
 
