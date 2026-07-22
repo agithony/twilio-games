@@ -27,20 +27,28 @@ env:
   RESOURCE_TAGS: created_by=github-actions managed_by=twilio-games-ci
 
 jobs:
-  ci:
-    # The gate: the whole deploy hinges on Validate (typecheck + tests + build) going green.
-    # No `secrets: inherit` — ci.yml only needs the auto-provided GITHUB_TOKEN.
-    uses: ./.github/workflows/ci.yml
-
   build-and-deploy:
-    needs: ci
-    if: needs.ci.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
         with:
           lfs: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22.13.0
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate application
+        run: |
+          npm run typecheck
+          npm test
+          npm run build
 
       - name: Validate production credentials
         env:
