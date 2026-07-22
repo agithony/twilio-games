@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   ARCADE_CONFIG_UPDATED_EVENT,
+  ARCADE_STATION_UPDATED_EVENT,
   ArcadeEventHub,
   createArcadeConfigUpdatedEvent,
+  createArcadeStationUpdatedEvent,
 } from '../server/arcade-events';
 
 describe('ArcadeEventHub', () => {
@@ -25,6 +27,20 @@ describe('ArcadeEventHub', () => {
     unsubscribe();
     hub.publish(createArcadeConfigUpdatedEvent(4));
     expect(subscriber).toHaveBeenCalledOnce();
+  });
+
+  it('publishes only the station revision and strips attached aggregate data', () => {
+    const hub = new ArcadeEventHub();
+    const subscriber = vi.fn();
+    hub.subscribe(subscriber);
+    hub.publish({
+      type: ARCADE_STATION_UPDATED_EVENT,
+      revision: 9,
+      players: [{ phone: '+14155550100' }],
+    } as never);
+
+    expect(subscriber).toHaveBeenCalledWith(createArcadeStationUpdatedEvent(9));
+    expect(subscriber.mock.calls[0]![0]).toEqual({ type: 'arcade_station_updated', revision: 9 });
   });
 
   it('isolates synchronous and asynchronous subscriber failures', async () => {

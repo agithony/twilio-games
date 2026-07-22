@@ -48,6 +48,8 @@ export interface FighterVoiceDeps {
 export class FighterVoiceSession {
   private code: string | null = null;
   private playerId: string | null = null;
+  get boundPlayerId(): string | null { return this.playerId; }
+  get boundRoomCode(): string | null { return this.code; }
   private callSid: string | null = null;
   private lastPhase: FighterPhase | null = null;
   private lastCountdown = -1;

@@ -24,6 +24,8 @@ import { commonText, locale } from './i18n';
 import { RACER_MESSAGES, type RacerMessageKey } from '../shared/i18n/racer';
 import { createTranslator } from '../shared/i18n/translate';
 import { carName as localizedCarName } from '../shared/i18n/content';
+import { createStationDisplay } from './station-display';
+import { stationJoinUrl, watchVoiceNumber } from './station-client';
 
 const text = createTranslator(locale, RACER_MESSAGES);
 
@@ -50,6 +52,7 @@ function localizeStaticPage(): void {
 }
 
 localizeStaticPage();
+const stationDisplay = createStationDisplay();
 // Game WebSocket URL. Production is same-origin; local Vite proxies /game to GAME_SERVER_URL.
 // An explicit ?ws= override still wins for edge setups.
 const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -205,6 +208,10 @@ let flowEpoch = 0;
 const veilEl = document.getElementById('veil')!;
 let veilLifted = false;
 let assetsReady = false;    // manifest (car GLBs) + backdrop map applied (set by loadAssetsInBackground)
+let stationEngineStateReady = false;
+function maybeMarkStationReady(): void {
+  if (assetsReady && stationEngineStateReady) stationDisplay.markEngineReady();
+}
 let wantAttract = false;    // a menu screen wants the demo running (gated until assetsReady)
 let attractFrames = 0;
 function liftVeil() { if (veilLifted) return; veilLifted = true; veilEl.classList.add('hide'); }
@@ -249,6 +256,7 @@ conn.onItems((items, map) => {
   void applyLevel(map ?? urlMap).then(() => renderer.buildItems(items));
 });
 conn.onSnapshot((s) => {
+  stationEngineStateReady = true; maybeMarkStationReady();
   raceLive = true; flowPhase = 'other'; flowEpoch++; stopAttract();   // real race takes over the canvas
   if (s.phase === 'racing' && !started) {
     getMusicManager().switchContext('racer');
@@ -261,6 +269,7 @@ conn.onSnapshot((s) => {
   screens.hide(); if (s.phase !== 'countdown') big.textContent = '';
 });
 conn.onLobby((m) => {
+  stationEngineStateReady = true; maybeMarkStationReady();
   if (raceLive) return;                       // race already running; ignore stale lobby
   flowPhase = 'lobby'; flowEpoch++; big.textContent = '';
   getMusicManager().switchContext('lobby');
@@ -272,6 +281,7 @@ conn.onLobby((m) => {
   screens.renderLobby(m.roomCode, m.players); startAttract();
 });
 conn.onSelectState((m) => {
+  stationEngineStateReady = true; maybeMarkStationReady();
   raceLive = false; flowEpoch++; big.textContent = '';
   if (m.phase === 'car_select') { flowPhase = 'car_select'; screens.renderCarSelect(m.players); }
   else if (m.phase === 'map_select') { flowPhase = 'map_select'; flowMaps = m.maps; screens.renderMapSelect(m.maps, m.selectedMap, m.players, { counts: m.mapVotes ?? {}, tie: m.mapTie ?? false }); }
@@ -284,6 +294,7 @@ conn.onSelectState((m) => {
 // screen renders the same (board-included) view every broadcast → the dedup guard holds → no flicker.
 let lastBoard: { map: string | null; entries: GlobalEntry[] } | null = null;
 conn.onResults((m) => {
+  stationEngineStateReady = true; maybeMarkStationReady();
   raceLive = false; flowPhase = 'other'; const epoch = ++flowEpoch; big.textContent = '';
   getMusicManager().switchContext('leaderboard');
   startAttract();
@@ -390,6 +401,7 @@ async function loadAssetsInBackground(): Promise<void> {
   // Models + map are loaded → NOW the attract demo can show real cars on the real track. If a menu
   // already asked for it (wantAttract), kick it off; otherwise startAttract() will once a screen needs it.
   assetsReady = true;
+  maybeMarkStationReady();
   if (wantAttract) reallyStartAttract();
 
   // Portraits: render after the attract reveal has SETTLED (its first ~1.5s of frames are the
@@ -462,13 +474,13 @@ function boot() {
   // not a player. It can still drive the whole flow (ready/advance/back/restart/select_map key off the
   // connection's room, not a playerId), so the game starts with ZERO players and fills up as people
   // call in. A device player join()s with their own name + gets a car.
-  if (isDisplay) conn.spectate(roomCode);
+  if (isDisplay) conn.spectate(roomCode, stationDisplay.displayToken ?? undefined);
   else conn.join(roomCode, name);
 
   // SHARED-SCREEN "I'm playing" TOGGLE (P): the screen defaults to spectator, but the operator can
   // opt IN to also play on this keyboard (joins as a real player + car), and opt back OUT (drops the
   // slot, stays the display). Keeps the screen unambiguous — it's a spectator unless you say otherwise.
-  if (isDisplay) {
+  if (isDisplay && !stationDisplay.active) {
     addEventListener('keydown', (e) => {
       if (e.key !== 'p' && e.key !== 'P') return;
       if (displayIsPlaying) { conn.leave(); renderer.setMyId(''); renderer.setSpectator(true); displayIsPlaying = false; }
@@ -479,18 +491,27 @@ function boot() {
 
   // Fetch the join phone number (server config) so the lobby QR + copy show the real number. Fire-
   // and-forget: the lobby renders immediately with a placeholder and re-renders when this lands.
-  void fetch('/api/config').then(r => r.ok ? r.json() : null).then((cfg) => {
-    if (cfg && typeof cfg.phoneNumber === 'string') screens.setPhoneNumber(cfg.phoneNumber);
-  }).catch(() => { /* keep the placeholder */ });
+  let phoneQrGeneration = 0;
+  const stopVoiceNumberUpdates = watchVoiceNumber(locale, async number => {
+    const generation = ++phoneQrGeneration;
+    if (!number) { screens.setPhoneNumber('', '/brand/join-qr.png?v=2'); return; }
+    try {
+      const qr = await QRCode.toDataURL(`tel:${number}`, {
+        width: 520, margin: 1, color: { dark: '#000D25', light: '#FFFFFF' }, errorCorrectionLevel: 'M',
+      });
+      if (generation === phoneQrGeneration) screens.setPhoneNumber(number, qr);
+    } catch {
+      if (generation === phoneQrGeneration) screens.setPhoneNumber(number, '/brand/join-qr.png?v=2');
+    }
+  });
+  addEventListener('pagehide', stopVoiceNumberUpdates, { once: true });
   void fetch('/api/arcade/config/public').then(r => r.ok ? r.json() : null).then(async cfg => {
     if (!cfg || cfg.arcade?.mode === 'off' || typeof cfg.arcade?.cabinetId !== 'string') return;
-    const joinUrl = new URL('/arcade/', location.origin);
-    joinUrl.searchParams.set('cabinet', cfg.arcade.cabinetId);
-    const qr = await QRCode.toDataURL(joinUrl.toString(), {
+    const qr = await QRCode.toDataURL(stationJoinUrl(cfg.arcade.cabinetId, locale), {
       width: 520, margin: 1, color: { dark: '#000D25', light: '#FFFFFF' }, errorCorrectionLevel: 'M',
     });
     screens.setArcadeQr(qr);
-  }).catch(() => { /* Arcade stays optional. */ });
+  }).catch(() => { /* Station mode stays optional. */ });
 
   // Heavy asset work happens in the BACKGROUND (off the critical path). The lobby is already up;
   // the race only needs these once someone starts, and the car grid fills in progressively.

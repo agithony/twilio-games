@@ -1,6 +1,6 @@
 // The container runs ONE process: the Node server must serve the Vite-built client (HTML pages,
 // /brand, /fonts, hashed JS under /assets/) AND the repo-root GLB models (also under /assets/),
-// plus an unauthenticated /healthz for the deploy smoke. In dev Vite does this; these tests pin the
+// plus unauthenticated /livez and /healthz endpoints. In dev Vite does this; these tests pin the
 // production single-process behavior.
 import { describe, it, expect, afterEach, beforeEach } from 'vitest';
 import { HttpServer, contentType } from '../server/http-server';
@@ -18,12 +18,14 @@ beforeEach(async () => {
   await mkdir(join(clientDir, 'garage'), { recursive: true });
   await mkdir(join(clientDir, 'analytics'), { recursive: true });
   await mkdir(join(clientDir, 'arcade'), { recursive: true });
+  await mkdir(join(clientDir, 'join'), { recursive: true });
   await writeFile(join(clientDir, 'index.html'), '<!doctype html><title>home</title>');
   await writeFile(join(clientDir, 'play.html'), '<!doctype html><title>play</title>');
   await writeFile(join(clientDir, 'editor', 'index.html'), '<!doctype html><title>editor</title>');
   await writeFile(join(clientDir, 'garage', 'index.html'), '<!doctype html><title>garage</title>');
   await writeFile(join(clientDir, 'analytics', 'index.html'), '<!doctype html><title>analytics</title>');
   await writeFile(join(clientDir, 'arcade', 'index.html'), '<!doctype html><title>arcade</title>');
+  await writeFile(join(clientDir, 'join', 'index.html'), '<!doctype html><title>join</title>');
   await writeFile(join(clientDir, 'assets', 'play-ABC123.js'), 'console.log("bundle")');
   await writeFile(join(clientDir, 'brand', 'logo.svg'), '<svg/>');
 });
@@ -39,6 +41,13 @@ const get = async (port: number, p: string) => {
 };
 
 describe('healthz', () => {
+  it('GET /livez reports process liveness without dependency checks', async () => {
+    srv = makeServer(); const port = await srv.start();
+    const r = await get(port, '/livez');
+    expect(r.status).toBe(200);
+    expect(JSON.parse(r.body)).toEqual({ status: 'alive' });
+  });
+
   it('GET /healthz returns 200 JSON without auth', async () => {
     srv = makeServer(); const port = await srv.start();
     const r = await get(port, '/healthz');
@@ -62,12 +71,16 @@ describe('static client serving', () => {
     expect((await get(port, '/play.html')).body).toContain('play');
   });
 
-  it('serves folder-index pages at /editor, /garage, /analytics, and /arcade', async () => {
+  it('serves clean routes including the dedicated operator console', async () => {
     srv = makeServer(); const port = await srv.start();
     expect((await get(port, '/editor')).body).toContain('editor');
     expect((await get(port, '/garage')).body).toContain('garage');
     expect((await get(port, '/analytics')).body).toContain('analytics');
-    expect((await get(port, '/arcade')).body).toContain('arcade');
+    expect((await get(port, '/arcade')).status).toBe(404);
+    expect((await get(port, '/arcade/index.html')).status).toBe(404);
+    expect((await get(port, '/player')).body).toContain('arcade');
+    expect((await get(port, '/operator')).body).toContain('arcade');
+    expect((await get(port, '/join?station=ARCADE-01')).body).toContain('join');
   });
 
   it('serves the built JS bundle under /assets/ (with a JS content-type)', async () => {

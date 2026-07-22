@@ -1,10 +1,10 @@
-# Twilio Arcade: TAC, Lead Capture, Digital Coins, and Smart Queue Plan
+# Twilio Games: TAC, Lead Capture, Digital Coins, and Smart Queue Plan
 
 **Date:** 2026-07-20
-**Status:** Approved planning baseline; implementation not started
-**Project:** Twilio Games, proposed rename to Twilio Arcade
-**Canonical memory:** This file is the durable source of truth for the product direction agreed in
-the planning session. Future sessions should read this document before designing or implementing
+**Status:** Core station/TAC messaging baseline implemented; Conversation Intelligence and richer Memory/knowledge roadmap items remain
+**Project:** Twilio Games
+**Canonical memory:** This file is the durable source of truth for the product direction and current
+implementation. Future sessions should read this document before changing
 TAC, registration, digital coins, earning challenges, queues, post-game messaging, or Conversation
 Intelligence.
 
@@ -15,7 +15,7 @@ queue-wave details in this broader plan.
 
 ## 1. Executive Summary
 
-Twilio Games will evolve into **Twilio Arcade**, a single-display event experience that demonstrates
+Twilio Games now provides a single-display event experience that demonstrates
 Twilio Agent Connect (TAC), the new Twilio Conversations layer, Conversation Relay, Messaging,
 Conversation Memory, Conversation Intelligence, and application tools through a cohesive arcade
 metaphor.
@@ -27,21 +27,22 @@ The intended event journey is:
    receives coins without a lead form, or completes a required lead-capture form.
 3. Lead-capture registration requires first name, last name, work email, company name, phone number,
    and a two-character country code. Work email is not verified. Job title is not collected.
-4. A registered visitor receives one Arcade Coin by default.
+4. A registered visitor receives one game coin by default.
 5. The visitor joins the virtual line for the one physical arcade display.
 6. When promoted, the visitor checks in and one coin is reserved.
 7. The coin is redeemed only when the match actually starts.
 8. Multiplayer games form waves based on each game's capacity. Standby players replace no-shows.
-9. After a match, TAC sends a localized score summary, wallet balance, rematch/queue options, and
-   simple one-click opportunities to earn more coins.
+9. After a match, the station outbox sends a localized result summary and optional wallet balance.
+   Browser challenges provide one-click opportunities to earn more coins; conversational rematch
+   options remain roadmap work.
 10. A visitor earns a coin immediately by clicking a configured tracked URL. Challenges are simple
     click-through links with configurable titles, destinations, rewards, ordering, schedules, and
     runtime enable/disable controls.
-11. Conversation Intelligence can analyze the call for confusion, sentiment, repeated commands,
+11. A future Conversation Intelligence integration can analyze the call for confusion, sentiment, repeated commands,
     language mismatch, help requests, and product interest. It never determines game results,
     balances, rewards, or refunds.
 
-Every feature must be runtime-configurable. Disabling Arcade Coins must restore the current Twilio
+Every feature must be runtime-configurable. Disabling game coins must restore the current Twilio
 Games experience without deleting player profiles, wallets, balances, queue history, or results.
 
 ## 2. Locked Product Decisions
@@ -50,17 +51,18 @@ These decisions are approved unless explicitly revisited later.
 
 | Area | Decision |
 |---|---|
-| Product name | Proposed rename from Twilio Games to Twilio Arcade |
+| Product name | Twilio Games |
 | Physical setup | One shared display, one active match at a time |
 | Communications framework | Use Twilio Agent Connect as the communications/agent gateway |
-| Voice transport | TAC uses Conversation Relay underneath for Voice |
+| Voice transport | Direct Conversation Relay remains the deterministic gameplay path; TAC currently owns SMS/WhatsApp |
 | Gameplay authority | Existing deterministic game servers remain authoritative |
 | LLM role | Optional conversational assistance only; never authoritative for commands, scores, coins, queue order, or rewards |
 | Coin feature | Runtime mode: `off`, `coin_only`, or `lead_capture` |
-| Starting balance | Configurable live; approved default is `1` |
-| Default coin cost | One coin per human player per match |
+| Starting balance | Paid `per_player` play requires `1` through `100`; free play uses `0`; approved default is `1` |
+| Default coin cost | Fixed at one coin per admitted human player per match |
 | AI opponents | Never consume coins |
 | Coin consumption | Reserve at check-in; redeem at match start |
+| Messaging replenishment | A messaging-only player with a prior paid redemption receives one automatic next-play coin; browser players use challenges or an explicit staff grant |
 | Lead fields | First name, last name, work email, company name, phone number, country code |
 | Required fields | Every enabled lead field is required by default |
 | Work email verification | Not required |
@@ -72,7 +74,7 @@ These decisions are approved unless explicitly revisited later.
 | Queue capacity | Independent of game capacity; configurable high limit, default 250 waiting players |
 | Queue fairness | FIFO with party, readiness, capacity, and one deferral adjustment |
 | Shared display privacy | Show first names/aliases and queue status only; never email, company, or phone |
-| Post-game | Configurable score, wallet, leaderboard, challenge, and rematch summary |
+| Post-game | Configurable SMS/WhatsApp results notice with optional wallet balance |
 | Intelligence | Configurable call analysis; advisory only |
 | Runtime changes | Stored centrally, versioned, audited, and pushed live without deployment |
 
@@ -85,7 +87,7 @@ can create invalid combinations.
 |---|---|---|---|---|
 | `off` | None | Disabled | Optional direct lobby | Current call-and-play experience |
 | `coin_only` | No lead form | Required | Enabled | Player gets an anonymous/channel-linked wallet |
-| `lead_capture` | Required lead form | Required | Enabled | Full Twilio Arcade experience |
+| `lead_capture` | Required lead form | Required | Enabled | Full Twilio Games station experience |
 
 Mode transitions must not delete data:
 
@@ -97,24 +99,25 @@ Mode transitions must not delete data:
 
 ## 4. Simple Product Mental Model
 
-| Product | Arcade responsibility |
+| Product | Twilio Games responsibility |
 |---|---|
 | Conversation Relay | The microphone and speakers: speech-to-text, text-to-speech, interruptions, and DTMF |
-| Twilio Agent Connect | The arcade attendant: connects Voice and Messaging to the application and tools |
+| Twilio Agent Connect | The arcade attendant for Orchestrator-captured SMS/WhatsApp and deterministic application tools |
 | Conversation Orchestrator | The activity timeline: links calls and messages into a continuous conversation |
 | Conversation Memory | The player profile card: name, language, preferences, and high-level history |
 | Conversation Intelligence | The analyst: detects confusion, sentiment, help requests, and product interest |
 | Enterprise Knowledge | The rulebook: game instructions, event information, and product documentation |
 | Arcade application database | The cash drawer and scoreboard: exact leads, balances, reservations, queue order, scores, and achievements |
 
-TAC does not remember a player by itself. Orchestrator links interactions, Conversation Memory stores
-and recalls context, and TAC retrieves that context and passes it to the game host.
+TAC does not remember a player by itself. Orchestrator links interactions and Conversation Memory
+resolves the cross-channel profile. The current application consumes recalled locale history and
+keeps exact lead, wallet, station, and result state in its own durable store.
 
 ## 5. Target Architecture
 
 ```mermaid
 flowchart TB
-  Display[Single Twilio Arcade display]
+  Display[Single Twilio Games display]
   Phone[Player phone]
   Form[Registration web app]
   Voice[Twilio Voice]
@@ -218,7 +221,7 @@ authenticated API and admin screen.
   "arcade": {
     "mode": "lead_capture",
     "cabinetId": "ARCADE-01",
-    "displayName": "Twilio Arcade"
+    "displayName": "Twilio Games"
   },
   "registration": {
     "requiredByDefault": true,
@@ -272,15 +275,15 @@ authenticated API and admin screen.
     "whatsapp": true
   },
   "postGame": {
-    "enabled": true,
-    "channels": ["sms", "whatsapp"],
-    "includeScore": true,
-    "includeLeaderboard": true,
+    "enabled": false,
+    "channels": [],
+    "includeScore": false,
+    "includeLeaderboard": false,
     "includeCoinBalance": true,
-    "includeChallenges": true,
-    "includeRematchLink": true,
-    "includeAchievement": true,
-    "includeIntelligenceTip": true
+    "includeChallenges": false,
+    "includeRematchLink": false,
+    "includeAchievement": false,
+    "includeIntelligenceTip": false
   },
   "intelligence": {
     "enabled": true,
@@ -320,7 +323,7 @@ transactional database. Configuration reads can be cached, but every update must
 | Mode changed to `lead_capture` | New players must complete all enabled required fields |
 | Starting balance changed | Applies only to new wallets |
 | Existing visitors need a top-up | Use an explicit grant operation; never silently rewrite balances |
-| Game cost changed | Applies to new reservations only |
+| Game cost differs from one | Reject the entire configuration; station admission is always one coin per admitted player |
 | Challenge changed | New clicks use the new version; prior claims remain valid |
 | Queue timing changed | Applies to newly created promotion waves |
 | Post-game disabled | New completed matches send no summary |
@@ -339,7 +342,7 @@ configuration version.
 | `lastName` | Required | Trimmed, length-limited Unicode text |
 | `workEmail` | Required | Syntax validation only; no verification workflow |
 | `companyName` | Required | Trimmed, length-limited Unicode text |
-| `phoneNumber` | Required | E.164 normalization where possible; no verification workflow by default |
+| `phoneNumber` | Required | E.164; no OTP or phone-verification step |
 | `countryCode` | Required | Exactly two uppercase letters |
 
 The examples `US` and `UK` are accepted as user input. If downstream CRM systems require ISO 3166-1
@@ -433,12 +436,18 @@ requests.
 
 | Policy | Meaning |
 |---|---|
-| `per_player` | Every human player pays the configured game cost; approved default |
+| `per_player` | Every admitted human player pays exactly one coin; approved default |
 | `per_match` | One wallet pays one cost for the whole match |
 | `host_sponsors` | Party leader pays for all human participants |
 | `free` | Coin insertion is visual only; no balance decrement |
 
 AI opponents and the shared spectator display never consume coins.
+
+The current station accepts only `per_player` and `free`. In `per_player`, every admitted human costs
+exactly one coin and `startingBalance` must be at least one so every new player can immediately enter
+the ready pool. `defaultGameCost` and every game-specific cost, including future-facing Trivia, must
+equal `1`; the validator rejects rather than ignores any other value. Free play uses a zero starting
+balance and does not create wallet grants or reservations.
 
 ## 9. One-Click Earning Challenges
 
@@ -476,6 +485,10 @@ claim that a follow occurred unless a future platform integration can verify it.
 
 Administrators can create, edit, reorder, enable, disable, and remove challenges at runtime.
 Removing a challenge stops new claims but preserves historical claims and ledger transactions.
+The staff-only operator console lists the active configuration and edits `id`, `title`, HTTPS `url`,
+`rewardCoins`, `maxClaimsPerPlayer`, `enabled`, `displayOrder`, and optional `startsAt`/`endsAt`.
+Every change uses the full versioned configuration PATCH. A revision conflict reloads the latest list
+for review rather than overwriting another operator's update.
 
 ### 9.3 Tracked Redirect
 
@@ -513,7 +526,7 @@ to exist, but visitors should never need to enter a room code.
 
 ```text
 Cabinet ID: ARCADE-01
-Persistent QR: https://arcade.example/join?cabinet=ARCADE-01
+Persistent QR: https://arcade.example/join?station=ARCADE-01
 Active match: internal UUID
 Queue: independent, potentially hundreds of entries
 ```
@@ -524,7 +537,7 @@ The same QR stays on the display throughout the event. Scanning it opens the app
 
 | Cabinet state | Phone experience |
 |---|---|
-| Attract mode | Register/identify, select game preference, join queue |
+| Idle / waiting for players | Register/identify, select game preference, join queue |
 | Accepting players | Offer to join the active lobby or general queue |
 | Match active | Join queue for a future match |
 | Results | Join queue, view challenge options, or wait for next lobby |
@@ -827,60 +840,20 @@ Post-game wallet: 0
   -> Tony can rejoin the queue
 ```
 
-## 13. Post-Game Summaries
+## 13. Post-Game Delivery
 
-The game server creates an authoritative structured result. TAC formats and delivers it.
+The implemented station completion notification is a factual results notice over configured SMS and/or
+WhatsApp channels. `includeCoinBalance` optionally adds the authoritative available wallet balance.
+Enabled delivery requires at least one selected channel, and every selected channel must also be enabled
+globally.
 
-Example result event:
+Score, leaderboard, challenge links, rematch links, achievements, and intelligence tips are not yet
+implemented. Their schema fields remain for persisted configuration compatibility, but all must be
+`false` whenever post-game delivery is enabled. Validation rejects enabled configurations requesting
+any of those fields, so no accepted runtime setting silently promises missing content. Disabled legacy
+snapshots may retain the old values without activating them; new defaults set them to `false`.
 
-```json
-{
-  "matchId": "match-uuid",
-  "game": "fighter",
-  "playerId": "player-uuid",
-  "displayName": "Tony",
-  "winner": true,
-  "opponent": "Maria",
-  "durationSeconds": 84,
-  "selectionId": "nyx",
-  "score": null,
-  "rank": 1,
-  "coinsRemaining": 0,
-  "achievementIds": ["first-knockout"],
-  "configVersion": 1
-}
-```
-
-Example message:
-
-```text
-Great game, Tony!
-
-You won with Nix in 1:24.
-Achievement unlocked: First Knockout.
-Coins remaining: 0.
-
-Earn another coin:
-[Explore Conversation Relay]
-[Visit our LinkedIn page]
-
-[Join the queue]
-[View leaderboard]
-```
-
-Post-game configuration controls:
-
-- Enabled/disabled
-- SMS and/or WhatsApp
-- Score/result
-- Leaderboard position
-- Wallet balance
-- Achievement
-- Rematch link
-- Queue link
-- Earning challenges
-- Intelligence-derived tip
-
+The operator console reports delivery as off, results-notice-only, or results notice with coin balance.
 WhatsApp outbound messages must follow applicable opt-in and template/session requirements.
 
 ## 14. Conversation Intelligence
@@ -1294,7 +1267,7 @@ for lead operations.
 - Deferral/no-show limits
 - ETA calculation
 - Game-specific capacity and AI fallback
-- Post-game summary formatting
+- Post-game enabled-option validation and results-notice formatting
 - Intelligence result validation
 
 ### Integration Tests
@@ -1459,11 +1432,11 @@ Intelligence analysis without delaying or changing the game result.
 
 ## 24. Acceptance Criteria
 
-The Twilio Arcade plan is fully implemented when:
+The Twilio Games station plan is fully implemented when:
 
 1. An administrator can switch coin/registration modes live without deployment.
 2. Lead-capture mode requires the approved six fields.
-3. Registration grants the runtime-configured starting balance once.
+3. Paid registration grants the runtime-configured starting balance once; free play grants none.
 4. Coin-only mode skips the lead form.
 5. Off mode preserves the current game experience.
 6. Challenges can be created, edited, removed, reordered, enabled, and disabled live.
@@ -1476,7 +1449,7 @@ The Twilio Arcade plan is fully implemented when:
 13. One coin per human is redeemed atomically at match start by default.
 14. Returning callers are recognized across games and channels.
 15. English and Portuguese flows remain complete.
-16. Post-game summaries are factual and configurable.
+16. Post-game results notices are factual and expose only implemented channel and coin-balance options.
 17. Intelligence analysis is advisory and cannot mutate authoritative state.
 18. PII never appears on the shared display.
 19. All mutable operations are audited and idempotent.

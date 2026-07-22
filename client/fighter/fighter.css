@@ -98,12 +98,12 @@ body[data-phase="victory"] .voice-feed,body[data-phase="results"] .voice-feed { 
 .game-home:focus-visible { outline:2px solid #ef223a; outline-offset:3px; }
 body[data-phase="fight"] .game-home,body[data-phase="victory"] .game-home,body[data-phase="results"] .game-home { top:max(82px,env(safe-area-inset-top)); }
 #music-toggle-container { position:fixed; top:max(16px,env(safe-area-inset-top)); left:max(118px,calc(env(safe-area-inset-left) + 118px)); z-index:30; }
-#music-toggle-container .music-toggle { min-height:44px; display:inline-flex; align-items:center; gap:7px; padding:10px 14px; border:1px solid rgba(255,255,255,.1); border-radius:14px; color:#aeb6cc; background:rgba(12,18,40,.82); backdrop-filter:blur(10px); font-size:13px; font-weight:700; letter-spacing:.03em; cursor:pointer; transition:border-color .18s,background .18s,color .18s,transform .12s; }
+#music-toggle-container .music-toggle { width:38px;height:38px;min-height:38px;display:inline-flex;align-items:center;justify-content:center;padding:0;border:1px solid rgba(255,255,255,.1);border-radius:10px;color:#aeb6cc;background:rgba(12,18,40,.82);backdrop-filter:blur(10px);cursor:pointer;transition:border-color .18s,background .18s,color .18s,transform .12s; }
 #music-toggle-container .music-toggle:hover { border-color:#ef223a; color:#fff; background:rgba(239,34,58,.16); }
 #music-toggle-container .music-toggle:active { transform:scale(.97); }
 #music-toggle-container .music-toggle:focus-visible { outline:2px solid #ef223a; outline-offset:3px; }
 #music-toggle-container .music-toggle-icon { display:flex; align-items:center; justify-content:center; line-height:0; }
-#music-toggle-container .music-toggle-icon svg { width:16px; height:16px; }
+#music-toggle-container .music-toggle-icon svg { width:18px; height:18px; }
 body[data-phase="fight"] #music-toggle-container,body[data-phase="victory"] #music-toggle-container,body[data-phase="results"] #music-toggle-container { top:max(82px,env(safe-area-inset-top)); }
 
 .hud { position: fixed; z-index: 2; top: 0; right: 0; left: 0; display: grid; grid-template-columns: 1fr 100px 1fr; gap: 20px; padding: max(25px,env(safe-area-inset-top)) max(34px,env(safe-area-inset-right)) 25px max(34px,env(safe-area-inset-left)); pointer-events: none; }
@@ -205,7 +205,7 @@ body.shake #arena { animation: shake .2s linear; }
   .voice-feed { top: 71px; }
   .game-home { top:max(10px,env(safe-area-inset-top)); left:max(10px,env(safe-area-inset-left)); }
   #music-toggle-container { top:max(10px,env(safe-area-inset-top)); left:max(106px,calc(env(safe-area-inset-left) + 106px)); }
-  #music-toggle-container .music-toggle { padding:10px 11px; }
+  #music-toggle-container .music-toggle { padding:0; }
   .command-deck { right: 8px; bottom: 8px; left: 8px; }
   .deck-title small { display: none; }
   .commands { gap: 3px; }

@@ -38,7 +38,7 @@ export class ArcadeChallengeTokenError extends Error {
 function secretBuffer(secret: ArcadeChallengeTokenSecret): Buffer {
   const value = typeof secret === 'string' ? Buffer.from(secret, 'utf8') : Buffer.from(secret);
   if (value.byteLength < 32) {
-    throw new ArcadeChallengeTokenError('WEAK_SECRET', 'Arcade challenge token secret must be at least 32 bytes');
+    throw new ArcadeChallengeTokenError('WEAK_SECRET', 'Twilio Games challenge token secret must be at least 32 bytes');
   }
   return value;
 }
@@ -70,7 +70,7 @@ function validatePayload(value: unknown): ArcadeChallengeTokenPayload {
     throw new ArcadeChallengeTokenError('INVALID_PAYLOAD', 'challenge token payload has unexpected fields');
   }
   if (object.v !== ARCADE_CHALLENGE_TOKEN_VERSION) {
-    throw new ArcadeChallengeTokenError('INVALID_VERSION', 'unsupported Arcade challenge token version');
+    throw new ArcadeChallengeTokenError('INVALID_VERSION', 'unsupported Twilio Games challenge token version');
   }
   const player = requireIdentifier(object.player, 'player');
   const challenge = requireIdentifier(object.challenge, 'challenge');

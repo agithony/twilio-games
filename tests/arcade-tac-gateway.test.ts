@@ -96,7 +96,7 @@ describe('ArcadeTacGateway', () => {
     expect(shutdownCalls).toBe(1);
   });
 
-  it('fails startup closed when enabled TAC configuration cannot initialize', async () => {
+  it('keeps deterministic fallback available when enabled TAC configuration cannot initialize', async () => {
     const { store, events } = await dependencies();
     await store.update({
       expectedVersion: 1,
@@ -110,13 +110,14 @@ describe('ArcadeTacGateway', () => {
       createClient: async () => { throw new Error('missing TAC credentials'); },
     });
 
-    await expect(gateway.start()).rejects.toThrow('missing TAC credentials');
+    await expect(gateway.start()).resolves.toBeUndefined();
     expect(gateway.getStatus()).toEqual({
-      started: false,
+      started: true,
       mode: 'lead_capture',
       connected: false,
       lastError: 'missing TAC credentials',
     });
+    expect(gateway.ownsMessaging()).toBe(false);
     await gateway.stop();
   });
 
@@ -153,5 +154,47 @@ describe('ArcadeTacGateway', () => {
     expect(gateway.getStatus().mode).toBe('off');
     expect(gateway.getStatus().connected).toBe(false);
     await expect(gateway.stop()).resolves.toBeUndefined();
+  });
+
+  it('routes Conversation Orchestrator webhooks through the connected TAC client', async () => {
+    const { store, events } = await dependencies();
+    const processed: Array<{ payload: unknown; token?: string }> = [];
+    let installedHandler = false;
+    let failWebhook = false;
+    const client: ArcadeTacClient = {
+      memory: {} as MemoryClient,
+      setMessageHandler: () => { installedHandler = true; },
+      processWebhook: async (payload, token) => {
+        if (failWebhook) throw new Error('temporary Orchestrator failure');
+        processed.push({ payload, ...(token ? { token } : {}) });
+      },
+      shutdown: () => undefined,
+    };
+    const gateway = new ArcadeTacGateway({ configStore: store, events, createClient: async () => client });
+    gateway.setMessageHandler(async () => 'READY');
+    await gateway.start();
+    await store.update({
+      expectedVersion: 1,
+      idempotencyKey: 'enable-tac-messaging',
+      updatedBy: 'operator@twilio.com',
+      settings: settings('lead_capture'),
+    });
+    await waitFor(() => gateway.getStatus().connected);
+
+    expect(installedHandler).toBe(true);
+    expect(gateway.ownsMessaging()).toBe(true);
+    await gateway.processWebhook({ eventType: 'COMMUNICATION_CREATED' }, 'token-1');
+    expect(processed).toEqual([{
+      payload: { eventType: 'COMMUNICATION_CREATED' }, token: 'token-1',
+    }]);
+    failWebhook = true;
+    await expect(gateway.processWebhook({ eventType: 'COMMUNICATION_CREATED' }, 'token-2'))
+      .rejects.toThrow('temporary Orchestrator failure');
+    expect(gateway.getStatus()).toMatchObject({ connected: false, lastError: 'temporary Orchestrator failure' });
+    expect(gateway.ownsMessaging()).toBe(false);
+    failWebhook = false;
+    await gateway.processWebhook({ eventType: 'COMMUNICATION_CREATED' }, 'token-2');
+    expect(gateway.getStatus()).toMatchObject({ connected: true, lastError: null });
+    await gateway.stop();
   });
 });

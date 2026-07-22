@@ -1,0 +1,238 @@
+import { PLAYABLE_ARCADE_GAMES } from '../shared/arcade-games';
+import type { ArcadeStationAggregate, StationReadyEntry } from '../shared/arcade-station';
+import { availableBalance } from '../shared/arcade-domain';
+import type { ArcadeState } from './arcade-state-store';
+
+export type PublicStationProjection = Readonly<{
+  phase: ArcadeStationAggregate['station']['phase'];
+  revision: number;
+  activeGame: ArcadeStationAggregate['station']['activeGame'];
+  deadline: string | null;
+  currentReadyCount: number;
+  nextReadyCount: number;
+  roster: readonly Readonly<{ position: number; displayName: string; status: StationReadyEntry['status'] }>[];
+  games: readonly Readonly<{
+    id: 'racer' | 'monsters' | 'fighter';
+    capacity: number;
+    playNow: number;
+    overflow: number;
+  }>[];
+  launch: Readonly<{
+    game: 'racer' | 'monsters' | 'fighter';
+    route: string;
+    roomCode: string;
+    matchId: string;
+    generation: number;
+  }> | null;
+}>;
+
+export type PlayerStationProjection = Readonly<{
+  phase: PublicStationProjection['phase'];
+  revision: number;
+  deadline: string | null;
+  ready: Readonly<{
+    status: StationReadyEntry['status'];
+    position: number | null;
+    reservation: Readonly<{ amount: number; status: string }> | null;
+  }> | null;
+  availableBalance: number;
+}>;
+
+export type OperatorStationProjection = Readonly<{
+  station: ArcadeStationAggregate['station'];
+  round: ArcadeStationAggregate['rounds'][string] | null;
+  match: ArcadeStationAggregate['matches'][string] | null;
+  readyEntries: readonly Readonly<{
+    id: string;
+    roundId: string;
+    displayName: string;
+    originalReadyAt: string;
+    status: StationReadyEntry['status'];
+    overflowOrdinal: number | null;
+    availableBalance: number;
+    connected: boolean;
+  }>[];
+  recentControls: readonly ArcadeState['stationControlEvents'][number][];
+}>;
+
+export function emptyPublicStation(): PublicStationProjection {
+  return {
+    phase: 'ATTRACT',
+    revision: 0,
+    activeGame: null,
+    deadline: null,
+    currentReadyCount: 0,
+    nextReadyCount: 0,
+    roster: [],
+    games: PLAYABLE_ARCADE_GAMES.map(game => ({
+      id: game.id,
+      capacity: game.humanCapacity,
+      playNow: 0,
+      overflow: 0,
+    })),
+    launch: null,
+  };
+}
+
+export function stationAggregateFromState(
+  state: ArcadeState,
+  stationId: string,
+): ArcadeStationAggregate | null {
+  const station = state.stations[stationId];
+  if (!station) return null;
+  return {
+    station,
+    rounds: Object.fromEntries(Object.entries(state.stationRounds).filter(([, round]) => round.stationId === stationId)),
+    readyEntries: Object.fromEntries(
+      Object.entries(state.stationReadyEntries).filter(([, entry]) => entry.stationId === stationId),
+    ),
+    matches: Object.fromEntries(Object.entries(state.stationMatches).filter(([, match]) => match.stationId === stationId)),
+  };
+}
+
+export function projectPublicStation(
+  state: ArcadeState,
+  aggregate: ArcadeStationAggregate | null,
+  includeLaunch = false,
+): PublicStationProjection {
+  if (!aggregate) return emptyPublicStation();
+  const current = readyForRound(aggregate, aggregate.station.activeRoundId);
+  const next = readyForRound(aggregate, aggregate.station.nextRoundId);
+  const match = aggregate.station.activeMatchId
+    ? aggregate.matches[aggregate.station.activeMatchId] ?? null
+    : null;
+  const overflowNextCount = match
+    ? match.overflowReadyEntryIds.filter(id => aggregate.readyEntries[id]?.status === 'OVERFLOW').length
+    : 0;
+  const launchDefinition = match
+    ? PLAYABLE_ARCADE_GAMES.find(game => game.id === match.game)
+    : undefined;
+  return {
+    phase: aggregate.station.phase,
+    revision: aggregate.station.revision,
+    activeGame: aggregate.station.activeGame,
+    deadline: stationDeadline(aggregate),
+    currentReadyCount: current.length,
+    nextReadyCount: next.length + overflowNextCount,
+    roster: current.map((entry, index) => ({
+      position: index + 1,
+      displayName: displayName(state, entry.playerId, index),
+      status: entry.status,
+    })),
+    games: PLAYABLE_ARCADE_GAMES.map(game => ({
+      id: game.id,
+      capacity: game.humanCapacity,
+      playNow: Math.min(current.length, game.humanCapacity),
+      overflow: Math.max(0, current.length - game.humanCapacity),
+    })),
+    launch: includeLaunch && match && launchDefinition && ['LAUNCHING', 'PLAYING', 'RESULTS'].includes(aggregate.station.phase)
+      ? {
+        game: match.game,
+        route: launchDefinition.route,
+        roomCode: match.engineRoomCode,
+        matchId: match.id,
+        generation: match.launchGeneration,
+      }
+      : null,
+  };
+}
+
+export function projectDisplayStation(
+  state: ArcadeState,
+  aggregate: ArcadeStationAggregate | null,
+): PublicStationProjection {
+  return projectPublicStation(state, aggregate, true);
+}
+
+export function projectPlayerStation(
+  state: ArcadeState,
+  aggregate: ArcadeStationAggregate | null,
+  playerId: string,
+): PlayerStationProjection {
+  const wallet = state.wallets[playerId];
+  if (!wallet) throw new Error('player wallet is missing');
+  if (!aggregate) {
+    return {
+      phase: 'ATTRACT', revision: 0, deadline: null, ready: null,
+      availableBalance: availableBalance(wallet),
+    };
+  }
+  const entry = Object.values(aggregate.readyEntries)
+    .filter(candidate => candidate.playerId === playerId && !['COMPLETED', 'LEFT'].includes(candidate.status))
+    .sort(compareReady)[0] ?? null;
+  const reservation = entry
+    ? wallet.reservations.find(candidate => candidate.id === entry.reservationId) ?? null
+    : null;
+  const peers = entry ? readyForRound(aggregate, entry.roundId) : [];
+  const position = entry ? peers.findIndex(candidate => candidate.id === entry.id) : -1;
+  return {
+    phase: aggregate.station.phase,
+    revision: aggregate.station.revision,
+    deadline: stationDeadline(aggregate),
+    ready: entry ? {
+      status: entry.status,
+      position: position >= 0 ? position + 1 : null,
+      reservation: reservation ? { amount: reservation.amount, status: reservation.status } : null,
+    } : null,
+    availableBalance: availableBalance(wallet),
+  };
+}
+
+export function projectOperatorStation(
+  state: ArcadeState,
+  aggregate: ArcadeStationAggregate,
+  connectedReadyEntryIds: ReadonlySet<string> = new Set(),
+): OperatorStationProjection {
+  return {
+    station: aggregate.station,
+    round: aggregate.station.activeRoundId ? aggregate.rounds[aggregate.station.activeRoundId] ?? null : null,
+    match: aggregate.station.activeMatchId ? aggregate.matches[aggregate.station.activeMatchId] ?? null : null,
+    readyEntries: Object.values(aggregate.readyEntries).sort(compareReady).map((entry, index) => ({
+      id: entry.id,
+      roundId: entry.roundId,
+      displayName: displayName(state, entry.playerId, index),
+      originalReadyAt: entry.originalReadyAt,
+      status: entry.status,
+      overflowOrdinal: entry.overflowOrdinal,
+      connected: connectedReadyEntryIds.has(entry.id),
+      availableBalance: state.wallets[entry.playerId]
+        ? availableBalance(state.wallets[entry.playerId]!)
+        : 0,
+    })),
+    recentControls: state.stationControlEvents
+      .filter(event => event.stationId === aggregate.station.id)
+      .slice(-20)
+      .reverse(),
+  };
+}
+
+function readyForRound(aggregate: ArcadeStationAggregate, roundId: string | null): StationReadyEntry[] {
+  if (!roundId) return [];
+  return Object.values(aggregate.readyEntries)
+    .filter(entry => entry.roundId === roundId && !['COMPLETED', 'LEFT'].includes(entry.status))
+    .sort(compareReady);
+}
+
+function compareReady(left: StationReadyEntry, right: StationReadyEntry): number {
+  return Date.parse(left.originalReadyAt) - Date.parse(right.originalReadyAt) || left.id.localeCompare(right.id);
+}
+
+function displayName(state: ArcadeState, playerId: string, index: number): string {
+  const name = state.players[playerId]?.lead?.firstName.trim();
+  return name ? name.slice(0, 50) : `PLAYER ${index + 1}`;
+}
+
+function stationDeadline(aggregate: ArcadeStationAggregate): string | null {
+  const round = aggregate.station.activeRoundId ? aggregate.rounds[aggregate.station.activeRoundId] : undefined;
+  if (!round) return null;
+  if (aggregate.station.phase === 'RECRUITING') {
+    if (!round.recruitingEndsAt) return round.hardEndsAt;
+    if (!round.hardEndsAt) return round.recruitingEndsAt;
+    return Date.parse(round.recruitingEndsAt) <= Date.parse(round.hardEndsAt)
+      ? round.recruitingEndsAt
+      : round.hardEndsAt;
+  }
+  if (aggregate.station.phase === 'GAME_SELECTION') return round.selectionEndsAt;
+  if (aggregate.station.phase === 'LOCKED') return round.lockedEndsAt;
+  return null;
+}

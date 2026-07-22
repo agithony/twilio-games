@@ -18,6 +18,11 @@ export function twimlEmpty(): string {
 <Response></Response>`;
 }
 
+export function twimlSayAndHangup(text: string, locale: SupportedLocale = DEFAULT_LOCALE): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<Response><Say language="${esc(LOCALE_PROFILES[locale].ttsLanguage)}">${esc(text)}</Say><Hangup /></Response>`;
+}
+
 export function twimlGatherRoomCode(opts: { actionUrl: string; locale?: SupportedLocale }): string {
   const locale = opts.locale ?? DEFAULT_LOCALE;
   const prompt = locale === 'pt-BR'
@@ -42,6 +47,9 @@ export function twimlConnectRelay(opts: {
   welcomeGreeting?: string;
   // Which game this call joins ('racer' | 'monsters'), passed to the WS so it routes correctly.
   game?: string;
+  readyEntryId?: string;
+  matchId?: string;
+  launchGeneration?: number;
   relayToken?: string;
   // ASR biasing hints — the game's key spoken words (commands / move names) for better recognition.
   hints?: string;
@@ -56,6 +64,10 @@ export function twimlConnectRelay(opts: {
   const greeting = esc(speechSafeText(opts.welcomeGreeting ?? ''));
   const hints = esc(opts.hints ?? 'left, right, boost, go, brake, slow, stop, nitro, power');
   const gameParam = opts.game ? `\n      <Parameter name="game" value="${esc(opts.game)}" />` : '';
+  const readyEntryParam = opts.readyEntryId ? `\n      <Parameter name="readyEntryId" value="${esc(opts.readyEntryId)}" />` : '';
+  const matchParams = opts.matchId && Number.isSafeInteger(opts.launchGeneration)
+    ? `\n      <Parameter name="matchId" value="${esc(opts.matchId)}" />\n      <Parameter name="launchGeneration" value="${opts.launchGeneration}" />`
+    : '';
   const relayTokenParam = opts.relayToken ? `\n      <Parameter name="relayToken" value="${esc(opts.relayToken)}" />` : '';
   const localeParams = `\n      <Parameter name="locale" value="${esc(locale)}" />\n      <Parameter name="commandLocale" value="${esc(locale)}" />`;
   // Interruption (barge-in) is a headline Conversation Relay feature and central to this app:
@@ -69,7 +81,7 @@ export function twimlConnectRelay(opts: {
 <Response>
   <Connect action="${esc(opts.sessionEndedUrl)}">
     <ConversationRelay url="${esc(opts.wsUrl)}"${ttsAttrs} transcriptionProvider="Deepgram" speechModel="flux" partialPrompts="true" transcriptionLanguage="${esc(profile.transcriptionLanguage)}" ttsLanguage="${esc(profile.ttsLanguage)}" interruptible="speech" reportInputDuringAgentSpeech="speech" interruptSensitivity="medium" ignoreBackchannel="true" dtmfDetection="true" hints="${hints}" speechTimeout="600" eotThreshold="0.6" welcomeGreeting="${greeting}">
-      <Parameter name="roomCode" value="${esc(opts.roomCode)}" />${gameParam}${relayTokenParam}${localeParams}
+      <Parameter name="roomCode" value="${esc(opts.roomCode)}" />${gameParam}${readyEntryParam}${matchParams}${relayTokenParam}${localeParams}
     </ConversationRelay>
   </Connect>
 </Response>`;

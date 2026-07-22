@@ -18,7 +18,7 @@ export class BattleConnection {
   private backoff = 500;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingReleaseSessionId: string | null = null;
-  private identity: { type: 'join'; roomCode: string; name: string; sessionId: string; locale?: SupportedLocale } | { type: 'spectate'; roomCode: string; locale?: SupportedLocale } | null = null;
+  private identity: { type: 'join'; roomCode: string; name: string; sessionId: string; locale?: SupportedLocale } | { type: 'spectate'; roomCode: string; locale?: SupportedLocale; displayToken?: string } | null = null;
 
   private onRosterCb?: (m: RosterEntry[]) => void;
   private onStateCb?: (m: BattleStateMsg) => void;
@@ -72,7 +72,7 @@ export class BattleConnection {
     this.identity = { type: 'join', roomCode, name, sessionId: sessionIdFor(roomCode), ...(this.locale ? { locale: this.locale } : {}) };
     this.rawSend(this.identity);
   }
-  spectate(roomCode: string) { this.identity = { type: 'spectate', roomCode, ...(this.locale ? { locale: this.locale } : {}) }; this.rawSend(this.identity); }
+  spectate(roomCode: string, displayToken?: string) { this.identity = { type: 'spectate', roomCode, ...(this.locale ? { locale: this.locale } : {}), ...(displayToken ? { displayToken } : {}) }; this.rawSend(this.identity); }
   /** Drop this client's player slot but keep watching (the shared screen's P-toggle-off). Reverts the
    *  replayed identity to spectator so a reconnect doesn't silently rejoin as a player. */
   leave(roomCode: string) {

@@ -1,11 +1,17 @@
 export const ARCADE_CONFIG_UPDATED_EVENT = 'arcade_config_updated' as const;
+export const ARCADE_STATION_UPDATED_EVENT = 'arcade_station_updated' as const;
 
 export type ArcadeConfigUpdatedEvent = Readonly<{
   type: typeof ARCADE_CONFIG_UPDATED_EVENT;
   version: number;
 }>;
 
-export type ArcadeEvent = ArcadeConfigUpdatedEvent;
+export type ArcadeStationUpdatedEvent = Readonly<{
+  type: typeof ARCADE_STATION_UPDATED_EVENT;
+  revision: number;
+}>;
+
+export type ArcadeEvent = ArcadeConfigUpdatedEvent | ArcadeStationUpdatedEvent;
 export type ArcadeEventSubscriber = (event: ArcadeEvent) => void | Promise<void>;
 
 export interface ArcadeEventPublisher {
@@ -17,6 +23,13 @@ export function createArcadeConfigUpdatedEvent(version: number): ArcadeConfigUpd
     throw new TypeError('arcade config event version must be a positive safe integer');
   }
   return Object.freeze({ type: ARCADE_CONFIG_UPDATED_EVENT, version });
+}
+
+export function createArcadeStationUpdatedEvent(revision: number): ArcadeStationUpdatedEvent {
+  if (!Number.isSafeInteger(revision) || revision < 1) {
+    throw new TypeError('arcade station event revision must be a positive safe integer');
+  }
+  return Object.freeze({ type: ARCADE_STATION_UPDATED_EVENT, revision });
 }
 
 export class ArcadeEventHub implements ArcadeEventPublisher {
@@ -34,8 +47,10 @@ export class ArcadeEventHub implements ArcadeEventPublisher {
   publish(event: ArcadeEvent): void {
     if (this.closed) return;
 
-    // Rebuild the event so callers cannot accidentally expose additional config or actor fields.
-    const safeEvent = createArcadeConfigUpdatedEvent(event.version);
+    // Rebuild each event so callers cannot attach internal state or actor fields.
+    const safeEvent = event.type === ARCADE_CONFIG_UPDATED_EVENT
+      ? createArcadeConfigUpdatedEvent(event.version)
+      : createArcadeStationUpdatedEvent(event.revision);
     for (const subscriber of [...this.subscribers]) {
       try {
         const result = subscriber(safeEvent);

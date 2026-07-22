@@ -5,12 +5,14 @@ import {
   closeStationRecruiting,
   completeStationMatch,
   createArcadeStation,
+  dropStationAdmittedEntry,
   insertStationCoin,
   failStationLaunch,
   leaveStationReadyEntry,
   markStationDisplayReady,
   markStationMatchStarted,
   requestStationLaunch,
+  resetArcadeStation,
   selectStationGame,
   stationReadyEntries,
   type ArcadeStationAggregate,
@@ -32,6 +34,84 @@ function insert(state: ArcadeStationAggregate, player: string, index: number, se
 }
 
 describe('Arcade station reducer', () => {
+  it.each([
+    'RECRUITING', 'GAME_SELECTION', 'LOCKED', 'LAUNCHING', 'PLAYING', 'RESULTS',
+  ] as const)('resets %s to an audited-safe idle aggregate in one revision', phase => {
+    let state = createArcadeStation('ARCADE-01', T0);
+    state = insert(state, 'player-1', 1);
+    if (phase !== 'RECRUITING') {
+      state = closeStationRecruiting(state, { at: at(90), expectedRevision: state.station.revision });
+    }
+    if (!['RECRUITING', 'GAME_SELECTION'].includes(phase)) {
+      state = selectStationGame(state, {
+        game: 'racer', matchId: 'match-1', engineRoomCode: '4821', at: at(91),
+        expectedRevision: state.station.revision,
+      });
+    }
+    if (['LAUNCHING', 'PLAYING', 'RESULTS'].includes(phase)) {
+      state = requestStationLaunch(state, { at: at(101), expectedRevision: state.station.revision });
+    }
+    if (['PLAYING', 'RESULTS'].includes(phase)) {
+      state = markStationDisplayReady(state, { at: at(102), expectedRevision: state.station.revision });
+      state = markStationMatchStarted(state, {
+        at: at(103), expectedRevision: state.station.revision,
+        redeemedReservationIds: ['reservation-1'],
+      });
+    }
+    if (phase === 'RESULTS') {
+      state = completeStationMatch(state, { at: at(104), expectedRevision: state.station.revision });
+    }
+
+    const previousRevision = state.station.revision;
+    state = resetArcadeStation(state, { at: at(200), expectedRevision: previousRevision });
+
+    expect(state.station).toMatchObject({
+      phase: 'ATTRACT', activeRoundId: null, nextRoundId: null,
+      activeGame: null, activeMatchId: null, revision: previousRevision + 1,
+    });
+    expect(state.rounds['round-1']).toMatchObject({ phase: 'CLOSED', closedAt: at(200) });
+    expect(state.readyEntries['ready-1']?.status).toBe(phase === 'RESULTS' ? 'COMPLETED' : 'LEFT');
+    if (state.matches['match-1']) {
+      expect(state.matches['match-1']).toMatchObject({
+        phase: phase === 'RESULTS' ? 'COMPLETED' : 'FAILED', completedAt: phase === 'RESULTS' ? at(104) : at(200),
+      });
+    }
+    expect(() => assertStationInvariants(state)).not.toThrow();
+  });
+
+  it('closes overflow and next-round work during a playing reset', () => {
+    let state = createArcadeStation('ARCADE-01', T0);
+    for (let index = 1; index <= 5; index++) state = insert(state, `player-${index}`, index);
+    state = closeStationRecruiting(state, { at: at(90), expectedRevision: state.station.revision });
+    state = selectStationGame(state, {
+      game: 'racer', matchId: 'match-1', engineRoomCode: '4821', at: at(91),
+      expectedRevision: state.station.revision,
+    });
+    state = requestStationLaunch(state, { at: at(101), expectedRevision: state.station.revision });
+    state = markStationDisplayReady(state, { at: at(102), expectedRevision: state.station.revision });
+    state = markStationMatchStarted(state, {
+      at: at(103), expectedRevision: state.station.revision,
+      redeemedReservationIds: ['reservation-1', 'reservation-2', 'reservation-3', 'reservation-4'],
+    });
+    state = insert(state, 'late-player', 6, 110);
+
+    state = resetArcadeStation(state, { at: at(120), expectedRevision: state.station.revision });
+
+    expect(Object.values(state.readyEntries).map(entry => entry.status)).toEqual(Array(6).fill('LEFT'));
+    expect(state.rounds['round-1']?.phase).toBe('CLOSED');
+    expect(state.rounds['round-6']?.phase).toBe('CLOSED');
+    expect(state.matches['match-1']).toMatchObject({ phase: 'FAILED', completedAt: at(120) });
+  });
+
+  it('rejects resetting an already idle station or a stale revision', () => {
+    const idle = createArcadeStation('ARCADE-01', T0);
+    expect(() => resetArcadeStation(idle, { at: at(1), expectedRevision: idle.station.revision }))
+      .toThrow(/already idle/);
+    const recruiting = insert(idle, 'player-1', 1);
+    expect(() => resetArcadeStation(recruiting, { at: at(2), expectedRevision: idle.station.revision }))
+      .toThrow(/revision changed/);
+  });
+
   it('starts recruiting on the first coin and rejects a duplicate live player', () => {
     let state = createArcadeStation('ARCADE-01', T0);
     state = insert(state, 'player-1', 1);
@@ -40,6 +120,17 @@ describe('Arcade station reducer', () => {
       recruitingEndsAt: at(91), hardEndsAt: at(121),
     });
     expect(() => insert(state, 'player-1', 2)).toThrow(/already has an active ready entry/);
+  });
+
+  it('places a coin arriving at the persisted cutoff into the next round', () => {
+    let state = createArcadeStation('ARCADE-01', T0);
+    state = insert(state, 'player-1', 1);
+    state = insert(state, 'player-2', 2, 91);
+    expect(state.station).toMatchObject({
+      phase: 'RECRUITING', activeRoundId: 'round-1', nextRoundId: 'round-2',
+    });
+    expect(state.readyEntries['ready-1']?.roundId).toBe('round-1');
+    expect(state.readyEntries['ready-2']?.roundId).toBe('round-2');
   });
 
   it('admits four Racer players and preserves FIFO overflow', () => {
@@ -92,6 +183,46 @@ describe('Arcade station reducer', () => {
     state = selectStationGame(state, { game: 'monsters', matchId: 'match-2', engineRoomCode: '4821',
       at: at(221), expectedRevision: state.station.revision });
     expect(state.matches['match-2']?.participantReadyEntryIds).toEqual(['ready-5','ready-6']);
+  });
+
+  it('advances delayed results with immediately due safe deadlines', () => {
+    let state = createArcadeStation('ARCADE-01', T0);
+    for (let index = 1; index <= 5; index++) state = insert(state, `player-${index}`, index);
+    state = closeStationRecruiting(state, { at: at(90), expectedRevision: state.station.revision });
+    state = selectStationGame(state, {
+      game: 'racer', matchId: 'match-1', engineRoomCode: '4821', at: at(91),
+      expectedRevision: state.station.revision,
+    });
+    state = requestStationLaunch(state, { at: at(101), expectedRevision: state.station.revision });
+    state = markStationDisplayReady(state, { at: at(102), expectedRevision: state.station.revision });
+    state = markStationMatchStarted(state, { at: at(103), expectedRevision: state.station.revision,
+      redeemedReservationIds: ['reservation-1', 'reservation-2', 'reservation-3', 'reservation-4'] });
+    state = completeStationMatch(state, { at: at(200), expectedRevision: state.station.revision });
+
+    state = advanceStationResults(state, { nextRoundId: 'round-next', at: at(400), configVersion: 1,
+      expectedRevision: state.station.revision });
+
+    expect(state.station).toMatchObject({ phase: 'RECRUITING', activeRoundId: 'round-next' });
+    expect(state.rounds['round-next']).toMatchObject({
+      firstCoinAt: at(400), recruitingEndsAt: at(400), hardEndsAt: at(400),
+    });
+    state = closeStationRecruiting(state, { at: at(400), expectedRevision: state.station.revision });
+    expect(state.station.phase).toBe('GAME_SELECTION');
+  });
+
+  it('rejects reducer timing with post-game recruiting after the hard deadline', () => {
+    const state = createArcadeStation('ARCADE-01', T0);
+    expect(() => insertStationCoin(state, {
+      readyEntryId: 'ready-1', roundId: 'round-1', playerId: 'player-1',
+      reservationId: 'reservation-1', at: at(1), configVersion: 1,
+      expectedRevision: state.station.revision,
+    }, {
+      recruitingSeconds: 15,
+      hardDeadlineSeconds: 44,
+      selectionSeconds: 30,
+      lockedSeconds: 10,
+      postGameRecruitingSeconds: 45,
+    })).toThrow(/hard deadline must not precede post-game recruiting deadline/);
   });
 
   it('rejects Trivia and malformed cross-record state', () => {
@@ -186,6 +317,17 @@ describe('Arcade station reducer', () => {
     });
     expect(state.station).toMatchObject({ phase: 'ATTRACT', activeRoundId: null });
     expect(state.rounds['round-1']).toMatchObject({ phase: 'CLOSED', closedAt: at(2) });
+  });
+
+  it('returns to attract when the last player leaves during game selection', () => {
+    let state = createArcadeStation('ARCADE-01', T0);
+    state = insert(state, 'player-1', 1);
+    state = closeStationRecruiting(state, { at: at(90), expectedRevision: state.station.revision });
+    state = leaveStationReadyEntry(state, {
+      readyEntryId: 'ready-1', at: at(91), expectedRevision: state.station.revision,
+    });
+    expect(state.station).toMatchObject({ phase: 'ATTRACT', activeRoundId: null });
+    expect(state.rounds['round-1']).toMatchObject({ phase: 'CLOSED', closedAt: at(91) });
   });
 
   it('promotes overflow when an existing next round emptied before results', () => {
@@ -344,5 +486,26 @@ describe('Arcade station reducer', () => {
       },
       matches: { ...state.matches, 'match-1': match },
     })).toThrow(/membership differs from match/);
+  });
+
+  it('drops an admitted no-show, promotes FIFO overflow, and renews an active launch window', () => {
+    let state = createArcadeStation('ARCADE-01', T0);
+    for (let index = 1; index <= 5; index++) state = insert(state, `player-${index}`, index);
+    state = closeStationRecruiting(state, { at: at(90), expectedRevision: state.station.revision });
+    state = selectStationGame(state, {
+      game: 'racer', matchId: 'match-no-show', engineRoomCode: 'DROP-ROOM', at: at(91),
+      expectedRevision: state.station.revision,
+    });
+    state = requestStationLaunch(state, { at: at(92), expectedRevision: state.station.revision });
+    state = dropStationAdmittedEntry(state, {
+      readyEntryId: 'ready-2', at: at(93), expectedRevision: state.station.revision,
+    });
+    expect(state.readyEntries['ready-2']?.status).toBe('LEFT');
+    expect(state.matches['match-no-show']?.participantReadyEntryIds)
+      .toEqual(['ready-1', 'ready-3', 'ready-4', 'ready-5']);
+    expect(state.readyEntries['ready-5']).toMatchObject({ status: 'ADMITTED', overflowOrdinal: null });
+    expect(state.matches['match-no-show']?.overflowReadyEntryIds).toEqual([]);
+    expect(state.matches['match-no-show']).toMatchObject({ launchGeneration: 2, launchRequestedAt: at(93) });
+    expect(() => assertStationInvariants(state)).not.toThrow();
   });
 });

@@ -59,6 +59,8 @@ const CHATTY_GAP_MS = 2000;
  *  optional so existing callers/tests that only drive intents keep working unchanged. */
 export interface AdapterDeps {
   findOrCreateRoom: (code: string) => RoomLike | null;
+  /** Rebind a reconnecting Conversation Relay transport to its existing Racer player. */
+  resumePlayer?: (callSid: string, roomCode: string) => { playerId: string; lane: number } | null;
   /** Speak a line to the caller (host wires this to a Relay `{type:'text'}` WS send). */
   say?: (text: string) => void;
   /** Register/unregister this adapter to receive its room's game events (greeting/countdown/result). */
@@ -159,7 +161,8 @@ export class ConversationRelayAdapter {
         if (!code) { console.log('[CR] no roomCode → unbound'); return; }
         const room = this.deps.findOrCreateRoom(code);
         if (!room) { console.log(`[CR] room ${code} not found → unbound`); return; }
-        const res = room.addPlayer(playerName(msg.from, this.commandLocale));
+        const res = this.deps.resumePlayer?.(msg.callSid, code)
+          ?? room.addPlayer(playerName(msg.from, this.commandLocale));
         if ('error' in res) {
           console.log(`[CR] addPlayer rejected: ${res.error} → unbound (caller cannot drive)`);
           this.deps.say?.(createTranslator(this.commandLocale, RACER_MESSAGES)('voice.roomFull'));
@@ -240,10 +243,10 @@ export class ConversationRelayAdapter {
     }
   }
 
-  handleClose(): void {
+  handleClose(preservePlayer = false): void {
     this.deps.unregister?.(this);
     // Prefer leaveRoom (drops the slot AND reaps an empty room); fall back to plain removePlayer.
-    if (this.playerId) {
+    if (this.playerId && !preservePlayer) {
       if (this.roomCode && this.deps.leaveRoom) this.deps.leaveRoom(this.roomCode, this.playerId);
       else this.room?.removePlayer(this.playerId);
     }

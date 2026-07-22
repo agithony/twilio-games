@@ -1,6 +1,6 @@
 # Azure Container App spec for Voice Racer. Rendered by deploy.yml via envsubst (${APP_NAME},
-# ${CONTAINER_IMAGE}, ${BASE_URL}, ${ACR_SERVER}, ${ACR_USERNAME}, ${ACR_PASSWORD}). One revision
-# carries image + registry + env + mount.
+# ${CONTAINER_IMAGE}, ${REVISION_SUFFIX}, ${BASE_URL}, ${ACR_SERVER}, ${ACR_USERNAME},
+# ${ACR_PASSWORD}). One uniquely named revision carries image + registry + env + mount.
 #
 # SINGLE REPLICA IS REQUIRED, not a tuning choice: room/lobby/race state is in-memory in ONE
 # process and the game/voice WebSockets are long-lived to it. Two replicas would let a player and
@@ -22,13 +22,17 @@ properties:
     # registry's PasswordSecretRef dangles → "PasswordSecretRef not found").
     secrets:
       - name: twilio-token
+      - name: twilio-pt-token
       - name: twilio-account-sid
       - name: twilio-api-key
       - name: twilio-api-secret
       - name: arcade-signing-secret
+      - name: arcade-display-token
+      - name: voice-relay-token
       - name: editor-token
       - name: google-oauth-client-id
       - name: google-oauth-client-secret
+      - name: openai-api-key
       - name: acr-password
         value: ${ACR_PASSWORD}
     registries:
@@ -36,6 +40,7 @@ properties:
         username: ${ACR_USERNAME}
         passwordSecretRef: acr-password
   template:
+    revisionSuffix: ${REVISION_SUFFIX}
     containers:
       - name: ${APP_NAME}
         image: ${CONTAINER_IMAGE}
@@ -48,6 +53,33 @@ properties:
         resources:
           cpu: 2.0
           memory: 4Gi
+        probes:
+          - type: Startup
+            httpGet:
+              path: /livez
+              port: 8080
+              scheme: HTTP
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            failureThreshold: 24
+            timeoutSeconds: 5
+          - type: Readiness
+            httpGet:
+              path: /livez
+              port: 8080
+              scheme: HTTP
+            periodSeconds: 5
+            failureThreshold: 3
+            timeoutSeconds: 5
+          - type: Liveness
+            httpGet:
+              path: /livez
+              port: 8080
+              scheme: HTTP
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            failureThreshold: 3
+            timeoutSeconds: 5
         env:
           - name: PORT
             value: "8080"
@@ -56,8 +88,7 @@ properties:
           # Public base URL for Twilio webhooks (the app derives the wss:// game/voice URLs from it).
           - name: PUBLIC_BASE_URL
             value: ${BASE_URL}
-          # The phone number players CALL to join, shown + QR-encoded on the lobby screen. Rendered
-          # from the GAME_PHONE_NUMBER repo variable via envsubst; empty → the lobby shows a placeholder.
+          # Legacy voice-number fallback. Locale-specific numbers are durable Arcade runtime settings.
           - name: GAME_PHONE_NUMBER
             value: "${GAME_PHONE_NUMBER}"
           # Locale used when no shared display is connected. The display's picker overrides this for
@@ -70,15 +101,50 @@ properties:
           # Twilio webhook signature validation is ON whenever this is set (fail-closed in index.ts).
           - name: TWILIO_AUTH_TOKEN
             secretRef: twilio-token
-          # TAC Orchestrator/Memory credentials. They are not read while Arcade mode is off.
+          # Portuguese Voice number is owned by a second Twilio account. Its Auth Token validates
+          # that account's incoming Voice and session-ended webhook signatures.
+          - name: TWILIO_PT_AUTH_TOKEN
+            secretRef: twilio-pt-token
+          - name: VOICE_RELAY_TOKEN
+            secretRef: voice-relay-token
+          # TAC, Conversation Orchestrator, and Conversation Memory credentials.
           - name: TWILIO_ACCOUNT_SID
             secretRef: twilio-account-sid
           - name: TWILIO_API_KEY
             secretRef: twilio-api-key
           - name: TWILIO_API_SECRET
             secretRef: twilio-api-secret
+          # SMS is intentionally separate from the locale-specific voice numbers.
           - name: TWILIO_PHONE_NUMBER
-            value: "${GAME_PHONE_NUMBER}"
+            value: "${TWILIO_SMS_NUMBER}"
+          - name: TWILIO_SMS_NUMBER
+            value: "${TWILIO_SMS_NUMBER}"
+          - name: TWILIO_WHATSAPP_NUMBER
+            value: "${TWILIO_WHATSAPP_NUMBER}"
+          - name: TWILIO_MESSAGING_SERVICE_SID
+            value: "${TWILIO_MESSAGING_SERVICE_SID}"
+          - name: ARCADE_OUTBOUND_MESSAGING_ENABLED
+            value: "${ARCADE_OUTBOUND_MESSAGING_ENABLED}"
+          - name: TWILIO_WHATSAPP_CONTENT_SID_STATION_ADMITTED_EN_US
+            value: "${TWILIO_WHATSAPP_CONTENT_SID_STATION_ADMITTED_EN_US}"
+          - name: TWILIO_WHATSAPP_CONTENT_SID_STATION_ADMITTED_PT_BR
+            value: "${TWILIO_WHATSAPP_CONTENT_SID_STATION_ADMITTED_PT_BR}"
+          - name: TWILIO_WHATSAPP_CONTENT_SID_STATION_OVERFLOW_EN_US
+            value: "${TWILIO_WHATSAPP_CONTENT_SID_STATION_OVERFLOW_EN_US}"
+          - name: TWILIO_WHATSAPP_CONTENT_SID_STATION_OVERFLOW_PT_BR
+            value: "${TWILIO_WHATSAPP_CONTENT_SID_STATION_OVERFLOW_PT_BR}"
+          - name: TWILIO_WHATSAPP_CONTENT_SID_STATION_CALL_NOW_EN_US
+            value: "${TWILIO_WHATSAPP_CONTENT_SID_STATION_CALL_NOW_EN_US}"
+          - name: TWILIO_WHATSAPP_CONTENT_SID_STATION_CALL_NOW_PT_BR
+            value: "${TWILIO_WHATSAPP_CONTENT_SID_STATION_CALL_NOW_PT_BR}"
+          - name: TWILIO_WHATSAPP_CONTENT_SID_STATION_RESULTS_EN_US
+            value: "${TWILIO_WHATSAPP_CONTENT_SID_STATION_RESULTS_EN_US}"
+          - name: TWILIO_WHATSAPP_CONTENT_SID_STATION_RESULTS_PT_BR
+            value: "${TWILIO_WHATSAPP_CONTENT_SID_STATION_RESULTS_PT_BR}"
+          - name: TWILIO_WHATSAPP_CONTENT_SID_STATION_NEXT_GAME_EN_US
+            value: "${TWILIO_WHATSAPP_CONTENT_SID_STATION_NEXT_GAME_EN_US}"
+          - name: TWILIO_WHATSAPP_CONTENT_SID_STATION_NEXT_GAME_PT_BR
+            value: "${TWILIO_WHATSAPP_CONTENT_SID_STATION_NEXT_GAME_PT_BR}"
           - name: TWILIO_CONVERSATION_CONFIGURATION_ID
             value: "${TWILIO_CONVERSATION_CONFIGURATION_ID}"
           # Gate the editor's /api writes on a public deploy. Empty = writes open (not recommended public).
@@ -96,8 +162,14 @@ properties:
           # One root key derives separate player-session and challenge-token keys. Mode-off ignores it.
           - name: ARCADE_SIGNING_SECRET
             secretRef: arcade-signing-secret
+          - name: ARCADE_DISPLAY_TOKEN
+            secretRef: arcade-display-token
           - name: ARCADE_STATE_PATH
             value: /app/data/arcade-state.json
+          # TAC owns active-event SMS and WhatsApp responses through Conversation Orchestrator while
+          # the deterministic game state machine remains authoritative inside the TAC callback.
+          - name: ARCADE_TAC_ENABLED
+            value: "true"
           # ElevenLabs voiceId for Conversation Relay talk-back (greeting/countdown/result to callers).
           # Empty → Relay's default voice (talk-back still speaks). Set to a high-energy sports-
           # announcer voiceId from the ElevenLabs library for the racing vibe. Rendered via envsubst
@@ -107,14 +179,10 @@ properties:
           # Optional Portuguese-specific ElevenLabs voice. Empty uses Relay's pt-BR default.
           - name: CR_TTS_VOICE_PT_BR
             value: "${CR_TTS_VOICE_PT_BR}"
-          # Conversational AI host (OpenAI). Rendered from the OPENAI_API_KEY GitHub secret via
-          # envsubst — a PLAIN env value (not a Container App secretRef) so the deploy works whether
-          # the key is set OR unset: empty → the server disables the AI and falls back to scripted
-          # phrase-bank lines (never breaks). A valueless secretRef fails when the secret was never
-          # created (the empty-key case), which is why this is a plain env. OPENAI_MODEL is an
-          # optional repo var (empty → server default).
+          # Conversational AI host. The deploy stores an optional missing key as `disabled`, which
+          # the server treats as unset and falls back to deterministic scripted behavior.
           - name: OPENAI_API_KEY
-            value: "${OPENAI_API_KEY}"
+            secretRef: openai-api-key
           - name: OPENAI_MODEL
             value: "${OPENAI_MODEL}"
         volumeMounts:

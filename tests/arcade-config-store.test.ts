@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -20,6 +21,7 @@ import {
 } from '../server/arcade-config-store';
 import { ArcadeEventHub } from '../server/arcade-events';
 import {
+  ARCADE_CONFIG_SCHEMA_VERSION,
   createDefaultArcadeConfig,
   parseArcadeConfig,
   type ArcadeConfigSettings,
@@ -41,6 +43,7 @@ function settings(mode: 'off' | 'coin_only' | 'lead_capture' = 'off'): ArcadeCon
   const config = createDefaultArcadeConfig();
   return {
     arcade: { ...config.arcade, mode },
+    station: config.station,
     registration: config.registration,
     coins: config.coins,
     earning: config.earning,
@@ -49,6 +52,43 @@ function settings(mode: 'off' | 'coin_only' | 'lead_capture' = 'off'): ArcadeCon
     postGame: config.postGame,
     intelligence: config.intelligence,
   };
+}
+
+function legacyConfig(version = 2): any {
+  const config = JSON.parse(JSON.stringify(createDefaultArcadeConfig()));
+  config.schemaVersion = 1;
+  config.version = version;
+  config.updatedAt = '2026-07-19T12:00:00.000Z';
+  config.updatedBy = 'legacy@example.com';
+  config.arcade.mode = 'coin_only';
+  delete config.station;
+  delete config.channels.voiceNumbers;
+  return config;
+}
+
+function legacyAuditRecord(config: any, previousHash = '0'.repeat(64)): any {
+  const record = {
+    auditVersion: 1,
+    idempotencyKey: `legacy-revision-${config.version}`,
+    requestHash: 'a'.repeat(64),
+    previousVersion: config.version - 1,
+    previousHash,
+    config,
+  };
+  return {
+    ...record,
+    recordHash: createHash('sha256').update(JSON.stringify(record)).digest('hex'),
+  };
+}
+
+function schema2Config(version = 2): any {
+  const config = JSON.parse(JSON.stringify(createDefaultArcadeConfig()));
+  config.schemaVersion = 2;
+  config.version = version;
+  config.updatedAt = '2026-07-19T13:00:00.000Z';
+  config.updatedBy = 'schema2@example.com';
+  delete config.channels.voiceNumbers;
+  return config;
 }
 
 function updateRequest(
@@ -69,10 +109,215 @@ describe('ArcadeConfigStore loading and persistence', () => {
     const store = new ArcadeConfigStore(await temporaryDirectory());
     const snapshot = await store.load();
 
-    expect(snapshot).toMatchObject({ version: 1, arcade: { mode: 'off' } });
+    expect(snapshot).toMatchObject({
+      schemaVersion: ARCADE_CONFIG_SCHEMA_VERSION,
+      version: 1,
+      arcade: { mode: 'off' },
+    });
     expect(Object.isFrozen(snapshot)).toBe(true);
     expect(Object.isFrozen(snapshot.arcade)).toBe(true);
     expect(store.getSnapshot()).toBe(snapshot);
+  });
+
+  it('loads v1 cache and audit bytes losslessly, then appends schema 3 to the old hash chain', async () => {
+    const directory = await temporaryDirectory();
+    const store = new ArcadeConfigStore(directory, {
+      now: () => new Date('2026-07-20T12:00:00.000Z'),
+    });
+    const oldConfig = legacyConfig();
+    const oldRecord = legacyAuditRecord(oldConfig);
+    const cacheBytes = `${JSON.stringify(oldConfig, null, 2)}\n`;
+    const auditBytes = `${JSON.stringify(oldRecord)}\n`;
+    await writeFile(store.cachePath, cacheBytes, 'utf8');
+    await writeFile(store.auditPath, auditBytes, 'utf8');
+
+    const migrated = await store.load();
+    expect(migrated).toMatchObject({
+      schemaVersion: ARCADE_CONFIG_SCHEMA_VERSION,
+      version: 2,
+      updatedAt: oldConfig.updatedAt,
+      updatedBy: oldConfig.updatedBy,
+      arcade: oldConfig.arcade,
+      station: createDefaultArcadeConfig().station,
+    });
+    const legacyShape = JSON.parse(JSON.stringify(migrated));
+    legacyShape.schemaVersion = 1;
+    delete legacyShape.station;
+    delete legacyShape.channels.voiceNumbers;
+    expect(legacyShape).toEqual(oldConfig);
+    expect(Object.isFrozen(migrated.station.automaticSelection.order)).toBe(true);
+    expect(await readFile(store.cachePath, 'utf8')).toBe(cacheBytes);
+    expect(await readFile(store.auditPath, 'utf8')).toBe(auditBytes);
+
+    const next = await store.update(updateRequest('schema-3-write', 2, 'off'));
+    expect(next).toMatchObject({ schemaVersion: ARCADE_CONFIG_SCHEMA_VERSION, version: 3 });
+    const auditLines = (await readFile(store.auditPath, 'utf8')).trim().split('\n');
+    expect(auditLines).toHaveLength(2);
+    expect(auditLines[0]).toBe(JSON.stringify(oldRecord));
+    const schema3Record = JSON.parse(auditLines[1]!) as any;
+    expect(schema3Record.previousHash).toBe(oldRecord.recordHash);
+    expect(schema3Record.config).toMatchObject({ schemaVersion: ARCADE_CONFIG_SCHEMA_VERSION, version: 3 });
+    expect(schema3Record.config.station).toEqual(createDefaultArcadeConfig().station);
+    expect(parseArcadeConfig(await readFile(store.cachePath, 'utf8'))).toEqual(next);
+
+    const restarted = new ArcadeConfigStore(directory);
+    expect(await restarted.load()).toEqual(next);
+    expect(restarted.getStatus().degraded).toBe(false);
+  });
+
+  it('safely disables a valid coin-only v1 config with no messaging channel and extends its hash chain', async () => {
+    const directory = await temporaryDirectory();
+    const store = new ArcadeConfigStore(directory, {
+      now: () => new Date('2026-07-20T12:00:00.000Z'),
+    });
+    const oldConfig = legacyConfig();
+    oldConfig.channels.voice = false;
+    oldConfig.channels.sms = false;
+    oldConfig.channels.whatsapp = false;
+    const oldRecord = legacyAuditRecord(oldConfig);
+    const cacheBytes = `${JSON.stringify(oldConfig, null, 2)}\n`;
+    const auditBytes = `${JSON.stringify(oldRecord)}\n`;
+    await writeFile(store.cachePath, cacheBytes, 'utf8');
+    await writeFile(store.auditPath, auditBytes, 'utf8');
+
+    const migrated = await store.load();
+    const expectedRuntime = parseArcadeConfig({
+      ...oldConfig,
+      schemaVersion: ARCADE_CONFIG_SCHEMA_VERSION,
+      arcade: { ...oldConfig.arcade, mode: 'off' },
+      station: createDefaultArcadeConfig().station,
+      channels: {
+        ...oldConfig.channels,
+        voiceNumbers: { 'en-US': null, 'pt-BR': null },
+      },
+    });
+    expect(migrated).toEqual(expectedRuntime);
+    expect(migrated).toMatchObject({
+      version: oldConfig.version,
+      updatedAt: oldConfig.updatedAt,
+      updatedBy: oldConfig.updatedBy,
+      arcade: { mode: 'off' },
+      channels: { voice: false, sms: false, whatsapp: false },
+    });
+    expect(await readFile(store.cachePath, 'utf8')).toBe(cacheBytes);
+    expect(await readFile(store.auditPath, 'utf8')).toBe(auditBytes);
+    expect(store.getStatus().degraded).toBe(false);
+
+    const next = await store.update(updateRequest('safe-v1-schema-3-write', oldConfig.version, 'off'));
+    const auditLines = (await readFile(store.auditPath, 'utf8')).trim().split('\n');
+    expect(next.version).toBe(oldConfig.version + 1);
+    expect(auditLines).toHaveLength(2);
+    expect(auditLines[0]).toBe(JSON.stringify(oldRecord));
+    expect(JSON.parse(auditLines[1]!) as any).toMatchObject({
+      previousVersion: oldConfig.version,
+      previousHash: oldRecord.recordHash,
+      config: {
+        schemaVersion: ARCADE_CONFIG_SCHEMA_VERSION,
+        version: oldConfig.version + 1,
+      },
+    });
+    expect(await new ArcadeConfigStore(directory).load()).toEqual(next);
+  });
+
+  it('normalizes formerly valid v1 economics and post-game flags without breaking the hash chain', async () => {
+    const directory = await temporaryDirectory();
+    const store = new ArcadeConfigStore(directory);
+    const oldConfig = legacyConfig();
+    oldConfig.coins.startingBalance = 0;
+    oldConfig.coins.defaultGameCost = 2;
+    oldConfig.coins.gameCosts = { racer: 2, monsters: 3, fighter: 4, trivia: 5 };
+    oldConfig.postGame.enabled = true;
+    oldConfig.postGame.includeScore = true;
+    const oldRecord = legacyAuditRecord(oldConfig);
+    await writeFile(store.cachePath, `${JSON.stringify(oldConfig, null, 2)}\n`, 'utf8');
+    await writeFile(store.auditPath, `${JSON.stringify(oldRecord)}\n`, 'utf8');
+
+    const migrated = await store.load();
+    expect(migrated).toMatchObject({
+      version: oldConfig.version,
+      arcade: { mode: 'off' },
+      coins: {
+        startingBalance: 1,
+        defaultGameCost: 1,
+        gameCosts: { racer: 1, monsters: 1, fighter: 1, trivia: 1 },
+      },
+      postGame: { enabled: false, includeScore: true },
+    });
+    expect(store.getStatus().degraded).toBe(false);
+    expect(await readFile(store.auditPath, 'utf8')).toBe(`${JSON.stringify(oldRecord)}\n`);
+
+    const next = await store.update(updateRequest('normalized-v1-write', oldConfig.version, 'off'));
+    const records = (await readFile(store.auditPath, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+    expect(records[0]).toEqual(oldRecord);
+    expect(records[1]).toMatchObject({ previousHash: oldRecord.recordHash, config: { version: next.version } });
+  });
+
+  it.each([
+    ['no delivery channels', (config: any) => { config.postGame.channels = []; }],
+    ['a disabled selected channel', (config: any) => {
+      config.postGame.channels = ['sms']; config.channels.sms = false;
+    }],
+  ])('safely disables valid v1 post-game delivery with %s', async (_label, configure) => {
+    const directory = await temporaryDirectory();
+    const store = new ArcadeConfigStore(directory);
+    const oldConfig = legacyConfig();
+    oldConfig.postGame.enabled = true;
+    oldConfig.postGame.includeScore = false;
+    configure(oldConfig);
+    const oldRecord = legacyAuditRecord(oldConfig);
+    await writeFile(store.cachePath, `${JSON.stringify(oldConfig, null, 2)}\n`, 'utf8');
+    await writeFile(store.auditPath, `${JSON.stringify(oldRecord)}\n`, 'utf8');
+
+    const migrated = await store.load();
+    expect(migrated).toMatchObject({ arcade: { mode: 'off' }, postGame: { enabled: false } });
+    expect(store.getStatus().degraded).toBe(false);
+    expect(await readFile(store.auditPath, 'utf8')).toBe(`${JSON.stringify(oldRecord)}\n`);
+  });
+
+  it('loads schema 2 cache and audit bytes losslessly with empty locale voice numbers', async () => {
+    const directory = await temporaryDirectory();
+    const store = new ArcadeConfigStore(directory);
+    const oldConfig = schema2Config();
+    const oldRecord = legacyAuditRecord(oldConfig);
+    const cacheBytes = `${JSON.stringify(oldConfig, null, 2)}\n`;
+    const auditBytes = `${JSON.stringify(oldRecord)}\n`;
+    await writeFile(store.cachePath, cacheBytes, 'utf8');
+    await writeFile(store.auditPath, auditBytes, 'utf8');
+
+    const migrated = await store.load();
+    expect(migrated).toMatchObject({
+      schemaVersion: ARCADE_CONFIG_SCHEMA_VERSION,
+      version: 2,
+      channels: { voiceNumbers: { 'en-US': null, 'pt-BR': null } },
+    });
+    expect(await readFile(store.cachePath, 'utf8')).toBe(cacheBytes);
+    expect(await readFile(store.auditPath, 'utf8')).toBe(auditBytes);
+    expect(store.getStatus().degraded).toBe(false);
+    const next = await store.update(updateRequest('schema-2-to-3-write', 2, 'off'));
+    expect(next).toMatchObject({ schemaVersion: ARCADE_CONFIG_SCHEMA_VERSION, version: 3 });
+    expect(await new ArcadeConfigStore(directory).load()).toEqual(next);
+  });
+
+  it('rejects a tampered v1 audit record using its original schema 1 hash shape', async () => {
+    const directory = await temporaryDirectory();
+    const store = new ArcadeConfigStore(directory);
+    const oldConfig = legacyConfig();
+    oldConfig.channels.sms = false;
+    oldConfig.channels.whatsapp = false;
+    const oldRecord = legacyAuditRecord(oldConfig);
+    oldRecord.config.arcade.displayName = 'Tampered Arcade';
+    await writeFile(store.cachePath, `${JSON.stringify(oldConfig, null, 2)}\n`, 'utf8');
+    await writeFile(store.auditPath, `${JSON.stringify(oldRecord)}\n`, 'utf8');
+
+    const recovered = await store.load();
+    expect(recovered).toMatchObject({
+      schemaVersion: ARCADE_CONFIG_SCHEMA_VERSION,
+      version: 1,
+      arcade: { mode: 'off' },
+    });
+    expect(store.getStatus()).toMatchObject({ degraded: true, version: 1 });
+    expect(store.getStatus().reason).toMatch(/record hash mismatch/);
+    expect(await readFile(store.auditPath, 'utf8')).toBe('');
   });
 
   it('rejects an explicitly non-single-process deployment', async () => {

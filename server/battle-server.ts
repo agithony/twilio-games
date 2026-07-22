@@ -12,7 +12,7 @@ import { rosterEntries } from '../shared/monster-roster';
 import type { BattleEvent, BattleAction } from '../shared/battle-world';
 import { DEFAULT_LOCALE, type SupportedLocale } from '../shared/i18n/locales';
 
-interface Conn { ws: WebSocket; roomCode?: string; playerId?: string; sessionId?: string; isAlive: boolean; locale?: SupportedLocale; }
+interface Conn { ws: WebSocket; roomCode?: string; playerId?: string; sessionId?: string; isAlive: boolean; locale?: SupportedLocale; stationDisplay?: boolean; hostAuthorized?: boolean; }
 interface PlayerSession {
   roomCode: string;
   playerId: string;
@@ -41,15 +41,19 @@ export class BattleServer {
    *  the caller-relevant ones — mirrors the racer's onRoomEvents seam. */
   private onRoomEvents: ((roomCode: string, events: BattleEvent[]) => void) | null = null;
   private onRoomState: ((roomCode: string) => void) | null = null;
+  private allowBrowserPlayer: (roomCode: string) => boolean = () => true;
+  private readonly displayToken: string;
 
-  constructor(opts: { port?: number; server?: HttpServer; heartbeatMs?: number }) {
+  constructor(opts: { port?: number; server?: HttpServer; heartbeatMs?: number; displayToken?: string }) {
     this.port = opts.port;
+    this.displayToken = opts.displayToken?.trim() ?? '';
     this.heartbeatMs = opts.heartbeatMs ?? HEARTBEAT_MS;   // overridable so tests can drive fast sweeps
     if (opts.server) this.attach(opts.server);
   }
 
   setOnRoomEvents(fn: (roomCode: string, events: BattleEvent[]) => void): void { this.onRoomEvents = fn; }
   setOnRoomState(fn: (roomCode: string) => void): void { this.onRoomState = fn; }
+  setBrowserPlayerAdmission(fn: (roomCode: string) => boolean): void { this.allowBrowserPlayer = fn; }
 
   // ── lifecycle: standalone vs mounted (parallels GameServer) ─────────────────────────────────────
   attach(_server: HttpServer): void { this.wss = new WebSocketServer({ noServer: true }); }
@@ -118,9 +122,15 @@ export class BattleServer {
   private onMessage(conn: Conn, raw: string): void {
     const msg = parseBattleClientMessage(raw);
     if (msg.type === 'error') { this.send(conn, msg); return; }
+    if (conn.stationDisplay && !conn.hostAuthorized && msg.type !== 'spectate' && msg.type !== 'leave') {
+      this.send(conn, { type: 'error', code: 'bad_display_auth', message: 'bad_display_auth' }); return;
+    }
     switch (msg.type) {
       case 'join': {
         if (msg.locale) conn.locale = msg.locale;
+        if (!this.allowBrowserPlayer(msg.roomCode)) {
+          this.send(conn, { type: 'error', code: 'station_voice_only', message: 'station_voice_only' }); return;
+        }
         if (conn.playerId && conn.roomCode) {
           this.send(conn, { type: 'joined', playerId: conn.playerId, roomCode: conn.roomCode });
           this.pushState(conn.roomCode);
@@ -146,6 +156,12 @@ export class BattleServer {
       case 'spectate': {
         if (msg.locale) conn.locale = msg.locale;
         if (conn.playerId) { this.send(conn, { type: 'error', code: 'already_joined', message: 'leave before spectating' }); return; }
+        const stationDisplay = !this.allowBrowserPlayer(msg.roomCode);
+        if (stationDisplay && (!this.displayToken || msg.displayToken !== this.displayToken)) {
+          this.send(conn, { type: 'error', code: 'bad_display_auth', message: 'bad_display_auth' }); return;
+        }
+        conn.stationDisplay = stationDisplay;
+        conn.hostAuthorized = !stationDisplay || msg.displayToken === this.displayToken;
         this.room(msg.roomCode);
         conn.roomCode = msg.roomCode;   // display / spectator: no slot
         this.pushState(msg.roomCode);
@@ -345,6 +361,31 @@ export class BattleServer {
   // so a voice pick/action shows on screen identically. Room is created on demand (the caller may
   // arrive before any browser opens the display).
   getOrCreateRoom(code: string): BattleRoom { return this.room(code); }
+
+  abortRoom(code: string): boolean {
+    const room = this.rooms.get(code);
+    if (!room) return false;
+    for (const conn of this.conns) {
+      if (conn.roomCode !== code) continue;
+      conn.roomCode = undefined;
+      conn.playerId = undefined;
+      conn.sessionId = undefined;
+      conn.ws.close(4002, 'station recovery');
+    }
+    for (const [sessionId, session] of this.playerSessions) {
+      if (session.roomCode !== code) continue;
+      if (session.leaveTimer) clearTimeout(session.leaveTimer);
+      this.playerSessions.delete(sessionId);
+    }
+    const ai = this.aiTimers.get(code);
+    if (ai) clearTimeout(ai.timer);
+    this.aiTimers.delete(code);
+    const results = this.resultsTimers.get(code);
+    if (results) clearTimeout(results);
+    this.resultsTimers.delete(code);
+    this.rooms.delete(code);
+    return true;
+  }
 
   /** A caller joins `code` as a player. Returns the new playerId, or null if the room is full. */
   voiceJoin(code: string, name: string): string | null {

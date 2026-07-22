@@ -1,13 +1,13 @@
-# Twilio Arcade: One-Display Expo Station Plan
+# Twilio Games: One-Display Expo Station Plan
 
 **Date:** 2026-07-21
-**Status:** Approved for implementation
+**Status:** Implemented baseline; live Twilio/Azure validation remains
 **Scope:** One shared display at one conference booth, one active game at a time
 **Supersedes:** The station, queue-wave, game-selection, capacity, and QR journey in
 `TWILIO_ARCADE_PLAN.md` where this document is more specific.
 
 This is the durable product and implementation source of truth for the one-display expo flow. Future
-sessions must read this document before changing Arcade station, round, QR, coin insertion,
+sessions must read this document before changing the Twilio Games station, round, QR, coin insertion,
 messaging, game-selection, or display behavior.
 
 ## 1. Locked Decisions
@@ -19,7 +19,7 @@ messaging, game-selection, or display behavior.
 | Hidden identifiers | Station ID and engine room IDs are internal and never shown to visitors |
 | Persistent entry | One localized station QR remains discoverable before, during, and after games |
 | Primary onboarding | SMS or WhatsApp through a mobile channel chooser |
-| Fallback onboarding | Collapsed fast web form for visitors who cannot use Messaging |
+| Fallback onboarding | Browser registration for visitors who cannot use Messaging |
 | Coin ownership | Server-side wallet; never a transferable text code |
 | Coin insertion | Player replies `COIN`; server reserves one coin for the station ready pool |
 | Coin cost | One coin per human per game; AI never consumes coins |
@@ -35,6 +35,10 @@ messaging, game-selection, or display behavior.
 | Browser display voice | No browser `speechSynthesis`; caller audio remains Conversation Relay |
 | Language | Display language flows into QR, chooser, messaging, wallet, queue, and Memory preference |
 | Authority | Deterministic station/game services own state; TAC/LLM may converse but never mutate directly |
+
+Runtime configuration enforces these economics: paid `per_player` play starts new players with at least
+one coin, and `defaultGameCost` plus every game-specific cost must equal exactly one. Free play uses zero.
+The operator console applies the same minimum and does not expose variable station pricing.
 
 ## 2. Visitor Mental Model
 
@@ -54,7 +58,7 @@ The confirmation message is not the coin. The wallet ledger is authoritative.
 ## 3. Display State Machine
 
 ```text
-ATTRACT / RECRUITING
+IDLE (internal phase: ATTRACT) / RECRUITING
   no ready players: no timer
   first COIN: start 90-second recruiting deadline
   staff may advance early
@@ -134,7 +138,7 @@ under FIFO. Party codes are deferred until expo observation proves they are need
 
 ## 6. Persistent QR Layout
 
-### 6.1 Attract and Recruiting
+### 6.1 Idle and Recruiting
 
 The root shared-display experience is one viewport with no vertical scrolling:
 
@@ -167,7 +171,7 @@ Games reserve a fixed 220-260px right rail on a 1080p display:
 ```
 
 The rail is preset, not draggable. Operator settings are `auto`, `always`, or `hidden`, with an
-optional temporary hotkey. `auto` means large on attract/results and compact during gameplay.
+optional temporary hotkey. `auto` means large while idle or showing results and compact during gameplay.
 
 The QR encodes only:
 
@@ -183,7 +187,10 @@ No PII, balance, player ID, round ID, or bearer credential appears in the QR.
 
 - Continue with SMS
 - Continue with WhatsApp
-- Can't use Messaging? Open the collapsed fast web form
+- Continue with browser registration when lead capture permits it
+
+Opening `/join` directly resolves the current cabinet automatically. A station query is used only to
+detect genuinely stale printed or cached QR links.
 
 Channel links prefill a deterministic command:
 
@@ -202,14 +209,14 @@ QR chooser
   -> localized reply
 ```
 
-The channel address supplies the trusted phone destination. TAC conversationally gathers missing
-fields, but deterministic application code validates exact fields, consent, idempotency, wallet,
-ready-pool, and match operations.
+The channel address supplies the trusted phone destination. TAC invokes the deterministic step-by-step
+registration flow; application code validates exact fields, consent, idempotency, wallet, ready-pool,
+and match operations. Recalled Memory contributes profile and locale continuity, not economic authority.
 
 After registration:
 
 ```text
-You have 1 Arcade coin.
+You have 1 game coin.
 
 Reply COIN when you are ready to play at the screen.
 ```
@@ -246,7 +253,7 @@ The selected display language is appended to the QR and initial message. It cont
 - Wallet and coin confirmation
 - Queue status and call messages
 - Post-game messages
-- Conversation Memory language preference
+- Conversation Memory profile continuity plus the authoritative application locale
 
 Supported v1 languages remain `en-US` and `pt-BR`. A player can explicitly switch language in the
 conversation without changing the shared display language.

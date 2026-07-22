@@ -280,6 +280,10 @@ export interface RegistrationGrantInput extends MutationContext {
   amount: number;
 }
 
+export interface CoinGrantInput extends MutationContext {
+  amount: number;
+}
+
 export interface ChallengeRewardInput extends MutationContext {
   claimId: string;
   challengeId: string;
@@ -924,6 +928,23 @@ export function grantRegistrationCoins(state: WalletState, input: RegistrationGr
     state,
     makeTransaction(state, input, 'registration_grant', input.amount),
     'REGISTRATION_GRANT',
+    state.wallet.playerId,
+    fingerprint,
+  );
+}
+
+export function grantOperatorCoins(state: WalletState, input: CoinGrantInput): WalletState {
+  assertWalletInvariants(state);
+  validateContext(input);
+  requirePositiveInteger(input.amount, 'operator grant amount');
+  const fingerprint = JSON.stringify([state.wallet.playerId, input.amount]);
+  if (idempotentReplay(state, input.idempotencyKey, 'OPERATOR_GRANT', fingerprint)) {
+    return freezeWalletState(state);
+  }
+  return appendMutation(
+    state,
+    makeTransaction(state, input, 'operator_grant', input.amount),
+    'OPERATOR_GRANT',
     state.wallet.playerId,
     fingerprint,
   );

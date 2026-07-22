@@ -26,11 +26,32 @@ function expectInvalid(candidate: unknown): void {
   expect(() => parseArcadeConfig(candidate)).toThrow(ArcadeConfigValidationError);
 }
 
-describe('Twilio Arcade runtime configuration', () => {
-  it('ships revision 1 of schema 1 in mode off with the complete approved defaults', () => {
+describe('Twilio Games runtime configuration', () => {
+  it('ships revision 1 of schema 3 in mode off with the complete approved defaults', () => {
     expect(DEFAULT_ARCADE_CONFIG.schemaVersion).toBe(ARCADE_CONFIG_SCHEMA_VERSION);
     expect(DEFAULT_ARCADE_CONFIG.version).toBe(1);
     expect(DEFAULT_ARCADE_CONFIG.arcade.mode).toBe('off');
+    expect(DEFAULT_ARCADE_CONFIG.station).toEqual({
+      timings: {
+        recruitingSeconds: 90,
+        hardDeadlineSeconds: 120,
+        selectionSeconds: 30,
+        lockedSeconds: 10,
+        launchTimeoutSeconds: 120,
+        resultsSeconds: 10,
+        postGameRecruitingSeconds: 45,
+      },
+      games: {
+        racer: { enabled: true },
+        monsters: { enabled: true },
+        fighter: { enabled: true },
+      },
+      automaticSelection: {
+        policy: 'best_fit_rotation',
+        order: ['racer', 'monsters', 'fighter'],
+      },
+      qrRail: 'auto',
+    });
     expect(DEFAULT_ARCADE_CONFIG.coins).toMatchObject({
       startingBalance: 1,
       defaultGameCost: 1,
@@ -45,9 +66,23 @@ describe('Twilio Arcade runtime configuration', () => {
       readyGraceSeconds: 20,
       hardStartDeadlineSeconds: 90,
     });
-    expect(DEFAULT_ARCADE_CONFIG.channels).toEqual({ voice: true, sms: false, whatsapp: false });
+    expect(DEFAULT_ARCADE_CONFIG.channels).toEqual({
+      voice: true,
+      sms: true,
+      whatsapp: false,
+      voiceNumbers: { 'en-US': null, 'pt-BR': null },
+    });
     expect(DEFAULT_ARCADE_CONFIG.postGame.enabled).toBe(false);
     expect(DEFAULT_ARCADE_CONFIG.postGame.channels).toEqual([]);
+    expect(DEFAULT_ARCADE_CONFIG.postGame).toMatchObject({
+      includeScore: false,
+      includeLeaderboard: false,
+      includeCoinBalance: true,
+      includeChallenges: false,
+      includeRematchLink: false,
+      includeAchievement: false,
+      includeIntelligenceTip: false,
+    });
     expect(DEFAULT_ARCADE_CONFIG.intelligence.enabled).toBe(false);
   });
 
@@ -67,6 +102,135 @@ describe('Twilio Arcade runtime configuration', () => {
     const candidate = rawConfig();
     candidate.arcade.mode = mode;
     expect(parseArcadeConfig(candidate).arcade.mode).toBe(mode);
+  });
+
+  it('accepts every station timing boundary', () => {
+    const minimum = rawConfig();
+    minimum.station.timings = {
+      recruitingSeconds: 15,
+      hardDeadlineSeconds: 15,
+      selectionSeconds: 5,
+      lockedSeconds: 3,
+      launchTimeoutSeconds: 10,
+      resultsSeconds: 3,
+      postGameRecruitingSeconds: 10,
+    };
+    expect(parseArcadeConfig(minimum).station.timings).toEqual(minimum.station.timings);
+
+    const maximum = rawConfig();
+    maximum.station.timings = {
+      recruitingSeconds: 600,
+      hardDeadlineSeconds: 900,
+      selectionSeconds: 180,
+      lockedSeconds: 60,
+      launchTimeoutSeconds: 180,
+      resultsSeconds: 120,
+      postGameRecruitingSeconds: 300,
+    };
+    expect(parseArcadeConfig(maximum).station.timings).toEqual(maximum.station.timings);
+  });
+
+  it.each([
+    ['recruitingSeconds', 14],
+    ['recruitingSeconds', 601],
+    ['hardDeadlineSeconds', 14],
+    ['hardDeadlineSeconds', 901],
+    ['selectionSeconds', 4],
+    ['selectionSeconds', 181],
+    ['lockedSeconds', 2],
+    ['lockedSeconds', 61],
+    ['launchTimeoutSeconds', 9],
+    ['launchTimeoutSeconds', 181],
+    ['resultsSeconds', 2],
+    ['resultsSeconds', 121],
+    ['postGameRecruitingSeconds', 9],
+    ['postGameRecruitingSeconds', 301],
+    ['resultsSeconds', 10.5],
+  ])('rejects station timing %s value %s', (field, value) => {
+    const candidate = rawConfig();
+    candidate.station.timings[field] = value;
+    expectInvalid(candidate);
+  });
+
+  it('requires the station hard deadline to cover recruiting', () => {
+    const candidate = rawConfig();
+    candidate.station.timings.recruitingSeconds = 121;
+    candidate.station.timings.hardDeadlineSeconds = 120;
+    expectInvalid(candidate);
+  });
+
+  it('orders results, post-game recruiting, and hard deadlines', () => {
+    const postGameAfterHard = rawConfig();
+    postGameAfterHard.station.timings.postGameRecruitingSeconds = 121;
+    postGameAfterHard.station.timings.hardDeadlineSeconds = 120;
+    expectInvalid(postGameAfterHard);
+
+    const resultsAfterPostGame = rawConfig();
+    resultsAfterPostGame.station.timings.resultsSeconds = 46;
+    resultsAfterPostGame.station.timings.postGameRecruitingSeconds = 45;
+    expectInvalid(resultsAfterPostGame);
+
+    const coincidentDeadlines = rawConfig();
+    coincidentDeadlines.station.timings.recruitingSeconds = 120;
+    coincidentDeadlines.station.timings.resultsSeconds = 120;
+    coincidentDeadlines.station.timings.postGameRecruitingSeconds = 120;
+    coincidentDeadlines.station.timings.hardDeadlineSeconds = 120;
+    expect(parseArcadeConfig(coincidentDeadlines).station.timings).toEqual(coincidentDeadlines.station.timings);
+  });
+
+  it('requires exact station game settings and an enabled game while arcade mode is on', () => {
+    const allDisabled = rawConfig();
+    for (const game of ['racer', 'monsters', 'fighter']) allDisabled.station.games[game].enabled = false;
+    expect(parseArcadeConfig(allDisabled).station.games.racer.enabled).toBe(false);
+
+    allDisabled.arcade.mode = 'coin_only';
+    expectInvalid(allDisabled);
+
+    const fixedRegistry = rawConfig();
+    fixedRegistry.station.games.racer.route = '/custom-racer';
+    expectInvalid(fixedRegistry);
+
+    const extraGame = rawConfig();
+    extraGame.station.games.trivia = { enabled: true };
+    expectInvalid(extraGame);
+
+    const missingGame = rawConfig();
+    delete missingGame.station.games.fighter;
+    expectInvalid(missingGame);
+  });
+
+  it.each(['best_fit_rotation', 'round_robin', 'fixed_priority'] as const)(
+    'accepts automatic selection policy %s',
+    policy => {
+      const candidate = rawConfig();
+      candidate.station.automaticSelection.policy = policy;
+      candidate.station.automaticSelection.order = ['fighter', 'racer', 'monsters'];
+      expect(parseArcadeConfig(candidate).station.automaticSelection).toEqual({
+        policy,
+        order: ['fighter', 'racer', 'monsters'],
+      });
+    },
+  );
+
+  it('requires every station game exactly once in automatic selection order', () => {
+    for (const order of [
+      ['racer', 'monsters'],
+      ['racer', 'monsters', 'fighter', 'racer'],
+      ['racer', 'racer', 'fighter'],
+      ['racer', 'monsters', 'trivia'],
+    ]) {
+      const candidate = rawConfig();
+      candidate.station.automaticSelection.order = order;
+      expectInvalid(candidate);
+    }
+
+    const policy = rawConfig();
+    policy.station.automaticSelection.policy = 'random';
+    expectInvalid(policy);
+
+    const rail = rawConfig();
+    rail.station.qrRail = 'sometimes';
+    expectInvalid(rail);
   });
 
   it('requires every field and requiredByDefault in lead_capture mode', () => {
@@ -146,6 +310,10 @@ describe('Twilio Arcade runtime configuration', () => {
     nested.coins.gameCosts.pong = 1;
     expectInvalid(nested);
 
+    const station = rawConfig();
+    station.station.timings.launchRoute = '/play.html';
+    expectInvalid(station);
+
     const challenge = rawConfig();
     challenge.earning.challenges = [{
       id: 'docs', title: 'Docs', url: 'https://twilio.com', rewardCoins: 1, enabled: true,
@@ -156,8 +324,8 @@ describe('Twilio Arcade runtime configuration', () => {
 
   it('rejects prototype-polluting keys and unsafe object prototypes', () => {
     const pollutedKey = JSON.stringify(rawConfig()).replace(
-      '"displayName":"Twilio Arcade"',
-      '"displayName":"Twilio Arcade","__proto__":{"polluted":true}',
+      '"displayName":"Twilio Games"',
+      '"displayName":"Twilio Games","__proto__":{"polluted":true}',
     );
     expectInvalid(pollutedKey);
 
@@ -287,11 +455,34 @@ describe('Twilio Arcade runtime configuration', () => {
     }
   });
 
+  it.each([
+    ['defaultGameCost', null, 0],
+    ['defaultGameCost', null, 2],
+    ['gameCosts', 'racer', 0],
+    ['gameCosts', 'monsters', 2],
+    ['gameCosts', 'fighter', 1.5],
+    ['gameCosts', 'trivia', 2],
+  ])('rejects non-one station coin cost %s.%s = %s', (field, game, value) => {
+    const candidate = rawConfig();
+    if (game === null) candidate.coins[field] = value;
+    else candidate.coins[field][game] = value;
+    expect(() => parseArcadeConfig(candidate)).toThrow(/must be exactly 1/);
+  });
+
+  it('requires a starting coin for paid play while allowing zero in free play', () => {
+    const paid = rawConfig();
+    paid.coins.startingBalance = 0;
+    expect(() => parseArcadeConfig(paid)).toThrow(/must be at least 1 when chargePolicy is per_player/);
+
+    const free = rawConfig();
+    free.coins.chargePolicy = 'free';
+    free.coins.startingBalance = 0;
+    expect(parseArcadeConfig(free).coins).toMatchObject({ chargePolicy: 'free', startingBalance: 0 });
+  });
+
   it('accepts documented milestone maxima and rejects values immediately above them', () => {
     const atLimit = rawConfig();
     atLimit.coins.startingBalance = 100;
-    atLimit.coins.defaultGameCost = 100;
-    atLimit.coins.gameCosts = { racer: 100, monsters: 100, fighter: 100, trivia: 100 };
     atLimit.earning.defaultRewardCoins = 100;
     atLimit.earning.challenges = [{
       id: 'docs', title: 'Docs', url: 'https://www.twilio.com/docs', rewardCoins: 100,
@@ -299,14 +490,12 @@ describe('Twilio Arcade runtime configuration', () => {
     }];
     atLimit.queue.maximumWaitingPlayers = 5_000;
     expect(parseArcadeConfig(atLimit)).toMatchObject({
-      coins: { startingBalance: 100, defaultGameCost: 100 },
+      coins: { startingBalance: 100, defaultGameCost: 1 },
       queue: { maximumWaitingPlayers: 5_000 },
     });
 
     for (const change of [
       (candidate: any) => { candidate.coins.startingBalance = 101; },
-      (candidate: any) => { candidate.coins.defaultGameCost = 101; },
-      (candidate: any) => { candidate.coins.gameCosts.racer = 101; },
       (candidate: any) => { candidate.earning.defaultRewardCoins = 101; },
       (candidate: any) => { candidate.queue.maximumWaitingPlayers = 5_001; },
       (candidate: any) => {
@@ -386,6 +575,57 @@ describe('Twilio Arcade runtime configuration', () => {
     expectInvalid(channels);
   });
 
+  it('accepts only implemented post-game delivery options when delivery is enabled', () => {
+    const supported = rawConfig();
+    supported.postGame.enabled = true;
+    supported.postGame.channels = ['sms'];
+    expect(parseArcadeConfig(supported).postGame).toMatchObject({
+      enabled: true,
+      channels: ['sms'],
+      includeCoinBalance: true,
+    });
+
+    for (const field of [
+      'includeScore',
+      'includeLeaderboard',
+      'includeChallenges',
+      'includeRematchLink',
+      'includeAchievement',
+      'includeIntelligenceTip',
+    ]) {
+      const candidate = rawConfig();
+      candidate.postGame.enabled = true;
+      candidate.postGame.channels = ['sms'];
+      candidate.postGame[field] = true;
+      expect(() => parseArcadeConfig(candidate)).toThrow(`${field}: is not supported`);
+    }
+  });
+
+  it('requires enabled post-game delivery to have an enabled messaging channel', () => {
+    const empty = rawConfig();
+    empty.postGame.enabled = true;
+    expect(() => parseArcadeConfig(empty)).toThrow(/must contain at least one channel/);
+
+    const disabledChannel = rawConfig();
+    disabledChannel.postGame.enabled = true;
+    disabledChannel.postGame.channels = ['whatsapp'];
+    expect(() => parseArcadeConfig(disabledChannel)).toThrow(/whatsapp must also be enabled/);
+  });
+
+  it('keeps disabled legacy post-game flags loadable without advertising them as active', () => {
+    const legacy = rawConfig();
+    Object.assign(legacy.postGame, {
+      enabled: false,
+      includeScore: true,
+      includeLeaderboard: true,
+      includeChallenges: true,
+      includeRematchLink: true,
+      includeAchievement: true,
+      includeIntelligenceTip: true,
+    });
+    expect(parseArcadeConfig(legacy).postGame).toMatchObject({ enabled: false, includeScore: true });
+  });
+
   it('accepts only currently modeled charge policies while retaining future-facing types', () => {
     const free = rawConfig();
     free.coins.chargePolicy = 'free';
@@ -402,11 +642,16 @@ describe('Twilio Arcade runtime configuration', () => {
     const candidate = rawConfig();
     const snapshot = createArcadeConfigSnapshot(candidate);
     candidate.arcade.displayName = 'Changed outside';
+    candidate.station.timings.recruitingSeconds = 600;
     candidate.registration.fields[0].required = false;
-    expect(snapshot.arcade.displayName).toBe('Twilio Arcade');
+    expect(snapshot.arcade.displayName).toBe('Twilio Games');
+    expect(snapshot.station.timings.recruitingSeconds).toBe(90);
     expect(snapshot.registration.fields[0]!.required).toBe(true);
     expect(Object.isFrozen(snapshot)).toBe(true);
     expect(Object.isFrozen(snapshot.coins.gameCosts)).toBe(true);
+    expect(Object.isFrozen(snapshot.station.timings)).toBe(true);
+    expect(Object.isFrozen(snapshot.station.games.racer)).toBe(true);
+    expect(Object.isFrozen(snapshot.station.automaticSelection.order)).toBe(true);
     expect(Object.isFrozen(snapshot.registration.fields)).toBe(true);
     expect(() => { (snapshot.arcade as any).mode = 'lead_capture'; }).toThrow(TypeError);
 
@@ -425,12 +670,16 @@ describe('Twilio Arcade runtime configuration', () => {
     const projected = projectPublicArcadeConfig(candidate);
     expect(projected.version).toBe(1);
     expect(projected.arcade.mode).toBe('off');
+    expect(projected.station).toEqual(DEFAULT_ARCADE_CONFIG.station);
     expect(projected).not.toHaveProperty('updatedAt');
     expect(projected).not.toHaveProperty('updatedBy');
     expect(projected.earning.challenges[0]).not.toHaveProperty('url');
     expect(Object.isFrozen(projected.earning.challenges[0])).toBe(true);
+    expect(Object.isFrozen(projected.station.games)).toBe(true);
     candidate.earning.challenges[0].title = 'Changed';
+    candidate.station.games.racer.enabled = false;
     expect(projected.earning.challenges[0]!.title).toBe('Docs');
+    expect(projected.station.games.racer.enabled).toBe(true);
   });
 
   it('parses only full settings payloads for replacement', () => {
@@ -456,7 +705,7 @@ describe('Twilio Arcade runtime configuration', () => {
 
     const updated = replaceArcadeConfigSettings(current, replacement);
     expect(updated).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: ARCADE_CONFIG_SCHEMA_VERSION,
       version: 42,
       updatedAt: '2026-07-20T00:00:00.000Z',
       updatedBy: 'original@example.com',
@@ -475,19 +724,36 @@ describe('Twilio Arcade runtime configuration', () => {
       updatedBy: ' admin@example.com ',
     });
     expect(updated.version).toBe(10);
-    expect(updated.schemaVersion).toBe(1);
+    expect(updated.schemaVersion).toBe(ARCADE_CONFIG_SCHEMA_VERSION);
     expect(updated.updatedAt).toBe('2026-07-20T12:34:56.000Z');
     expect(updated.updatedBy).toBe('admin@example.com');
   });
 
   it('does not conflate schemaVersion with revision version', () => {
     const wrongSchema = rawConfig();
-    wrongSchema.schemaVersion = 2;
+    wrongSchema.schemaVersion = 1;
     wrongSchema.version = 100;
     expectInvalid(wrongSchema);
 
     const highRevision = rawConfig();
     highRevision.version = 100;
-    expect(parseArcadeConfig(highRevision)).toMatchObject({ schemaVersion: 1, version: 100 });
+    expect(parseArcadeConfig(highRevision)).toMatchObject({
+      schemaVersion: ARCADE_CONFIG_SCHEMA_VERSION,
+      version: 100,
+    });
+  });
+
+  it('accepts nullable locale voice numbers only in E.164 format', () => {
+    const config = rawConfig();
+    config.channels.voiceNumbers = { 'en-US': '+18555993809', 'pt-BR': '+551155555555' };
+    expect(parseArcadeConfig(config).channels.voiceNumbers).toEqual(config.channels.voiceNumbers);
+    for (const invalid of ['18555993809', '+55', '+5511ABC', '', 551155555555]) {
+      const candidate = rawConfig();
+      candidate.channels.voiceNumbers['pt-BR'] = invalid;
+      expectInvalid(candidate);
+    }
+    const duplicate = rawConfig();
+    duplicate.channels.voiceNumbers = { 'en-US': '+18555993809', 'pt-BR': '+18555993809' };
+    expectInvalid(duplicate);
   });
 });

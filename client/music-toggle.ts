@@ -27,16 +27,14 @@ export function createMusicToggle(): HTMLButtonElement {
   const icon = document.createElement('span');
   icon.className = 'music-toggle-icon';
   
-  const label = document.createElement('span');
-  label.className = 'music-toggle-label';
-
   btn.appendChild(icon);
-  btn.appendChild(label);
 
   const updateButton = () => {
     const isMuted = getMusicManager().getIsMuted();
     icon.innerHTML = isMuted ? ICON_MUTED : ICON_UNMUTED;
-    label.textContent = isMuted ? commonText('music.off') : commonText('music.on');
+    const label = isMuted ? commonText('music.off') : commonText('music.on');
+    btn.title = label;
+    btn.setAttribute('aria-label', label);
     btn.setAttribute('aria-pressed', String(!isMuted));
   };
 

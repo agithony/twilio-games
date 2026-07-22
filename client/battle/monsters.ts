@@ -26,6 +26,9 @@ import { monsterName as localizedMonsterName, moveName as localizedMoveName } fr
 import { getMusicManager } from '../music-manager';
 import { injectMusicToggle } from '../music-toggle';
 import { getSoundEffectsManager } from '../sound-effects';
+import { createStationDisplay } from '../station-display';
+import { watchVoiceNumber } from '../station-client';
+import QRCode from 'qrcode';
 
 const params = new URLSearchParams(location.search);
 const text = createTranslator(locale, MONSTERS_MESSAGES);
@@ -40,6 +43,12 @@ const wsUrl = params.get('ws')
 const overlay = document.getElementById('overlay')!;
 const stageEl = document.getElementById('stage')!;
 const appEl = document.getElementById('app')!;
+const stationDisplay = createStationDisplay();
+let stationRosterReady = false;
+let stationStateReady = false;
+const maybeMarkStationReady = () => {
+  if (stationRosterReady && stationStateReady) stationDisplay.markEngineReady();
+};
 
 document.title = text('game.title');
 const gameTitleLabel = document.querySelector<HTMLElement>('#vm-hud .htitle');
@@ -100,6 +109,7 @@ let draining = false;                 // events currently animating
 let lockedMoveName: string | null = null;   // the move I committed this turn (for the "locked" beat)
 let menuLevel: 'root' | 'fight' = 'root';   // two-level command menu: root actions → FIGHT's moves
 let phoneNumber = '';   // the number players call to join (from /api/config) — shown in the lobby join flow
+let phoneQr = '/brand/join-qr.png?v=2';
 let joinedHere = false;
 
 function localizeBattleState(message: BattleStateMsg): BattleStateMsg {
@@ -114,11 +124,27 @@ function localizeBattleState(message: BattleStateMsg): BattleStateMsg {
 
 // Fetch the join phone number so the lobby QR + copy show the real number (matches the racer). Fire-
 // and-forget: the lobby renders immediately with a placeholder, then re-renders when this lands.
-void fetch('/api/config').then(r => r.ok ? r.json() : null).then((cfg) => {
-  if (cfg && typeof cfg.phoneNumber === 'string') { phoneNumber = cfg.phoneNumber; lastOverlayKey = ''; renderOverlay(); }
-}).catch(() => { /* keep the placeholder */ });
+let phoneQrGeneration = 0;
+const stopVoiceNumberUpdates = watchVoiceNumber(locale, async number => {
+  const generation = ++phoneQrGeneration;
+  phoneNumber = number;
+  if (!number) { phoneQr = '/brand/join-qr.png?v=2'; lastOverlayKey = ''; renderOverlay(); return; }
+  try {
+    const qr = await QRCode.toDataURL(`tel:${number}`, {
+      width: 520, margin: 1, color: { dark: '#000D25', light: '#FFFFFF' }, errorCorrectionLevel: 'M',
+    });
+    if (generation !== phoneQrGeneration) return;
+    phoneQr = qr;
+  } catch {
+    if (generation !== phoneQrGeneration) return;
+    phoneQr = '/brand/join-qr.png?v=2';
+  }
+  lastOverlayKey = ''; renderOverlay();
+});
+addEventListener('pagehide', stopVoiceNumberUpdates, { once: true });
 
 conn.onRoster((entries) => {
+  stationRosterReady = true; maybeMarkStationReady();
   roster = entries.map(entry => ({
     ...entry,
     name: localizedMonsterName(locale, entry.id),
@@ -130,12 +156,13 @@ conn.onJoined((id) => { myId = id; joinedHere = true; lastOverlayKey = ''; rende
 conn.onError((code, msg) => {
   console.error(`[battle] ${code}: ${msg}`);
   if (code === 'room_full' || code === 'battle_in_progress' || code === 'round_complete') {
-    myId = null; joinedHere = false; conn.spectate(roomCode);
+    myId = null; joinedHere = false; conn.spectate(roomCode, stationDisplay.displayToken ?? undefined);
   }
 });
 conn.onEvents((events) => queueEvents(events));
 
 conn.onState((incoming) => {
+  stationStateReady = true; maybeMarkStationReady();
   const m = localizeBattleState(incoming);
   const prevPhase = state?.phase;
   const prevPlayerCount = state?.players?.length ?? 0;
@@ -407,7 +434,7 @@ function lobbyHtml(): string {
     <div class="vm-lobby-main">
       <div class="vm-join">
         <div class="vm-join-qr">
-          <img src="/brand/join-qr.png?v=2" alt="${text('lobby.qrAlt')}" onerror="this.style.display='none'">
+          ${phoneQr ? `<img src="${esc(phoneQr)}" alt="${text('lobby.qrAlt')}">` : ''}
           <div class="vm-join-cap">${text('lobby.scanToJoin')}</div>
         </div>
         <ol class="vm-join-steps">
@@ -532,13 +559,13 @@ const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;
 // Matches Voice Racer's lobby model: the shared SCREEN defaults to a spectator (callers dial in as
 // players), and the operator presses P to add/drop a KEYBOARD TESTER player on this screen. A device
 // (phone browser) auto-joins as its own player. `joinedHere` = this client holds a player slot.
-if (isDisplay) conn.spectate(roomCode);
+if (isDisplay) conn.spectate(roomCode, stationDisplay.displayToken ?? undefined);
 else conn.join(roomCode, name);
 
 /** Shared-screen P-toggle: opt IN as a keyboard tester player (adds a slot), or opt back OUT (drops it,
  *  stays the display). No-op on a device (already a player). */
 function toggleSelfPlaying(): void {
-  if (!isDisplay) return;
+  if (!isDisplay || stationDisplay.active) return;
   if (joinedHere) { conn.leave(roomCode); joinedHere = false; }
   else conn.join(roomCode, name);
   lastOverlayKey = ''; renderOverlay();

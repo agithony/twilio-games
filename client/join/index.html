@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Join Twilio Games</title>
+  <link rel="icon" href="/brand/Twilio_Logo_Bug_White.svg">
+  <script>(function(){document.documentElement.dataset.theme=localStorage.getItem('twilio-theme')||'dark'}())</script>
+  <link rel="stylesheet" href="./join.css">
+</head>
+<body>
+  <main class="join-shell">
+    <header><div class="join-brand"><img src="/brand/Twilio_Logo_Bug_White.svg" alt="Twilio"><span>Twilio Games</span></div><button id="themeToggle" class="icon-button" type="button" title="Light theme" aria-label="Light theme"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.66 6.34l1.41-1.41"></path></svg></button></header>
+    <section class="join-card">
+      <span id="join-page-eyebrow" class="eyebrow">Phone setup</span>
+      <h1 id="join-page-title">Choose how to join.</h1>
+      <p id="intro">Choose a way to join. The available options will appear below.</p>
+      <div id="stationBadge" class="station-badge">Checking station</div>
+      <div id="channelActions" class="channel-actions" aria-live="polite"></div>
+      <p id="join-privacy" class="privacy">Your information is used only to create and operate your game profile. Never provide payment details or passwords.</p>
+      <section class="terms" aria-labelledby="terms-title">
+        <h2 id="terms-title">Participation terms</h2>
+        <p id="terms-copy">By continuing, you agree to participate in this event experience and allow Twilio Games to use the information you provide to operate your session. Marketing follow-up requires separate consent.</p>
+      </section>
+      <p id="error" class="error" role="alert" hidden></p>
+    </section>
+    <footer><span>Voice · Messaging · Conversation Relay</span></footer>
+  </main>
+  <script type="module" src="./join.ts"></script>
+</body>
+</html>

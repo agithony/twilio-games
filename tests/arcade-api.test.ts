@@ -2,14 +2,17 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import WebSocket from 'ws';
 import { DEFAULT_ARCADE_CONFIG, type ArcadeConfigSettings } from '../shared/arcade-config';
 import { ArcadeApi } from '../server/arcade-api';
 import { ArcadeConfigStore } from '../server/arcade-config-store';
 import { ArcadeEventHub } from '../server/arcade-events';
 import { HttpServer } from '../server/http-server';
 import { ArcadePlayerRuntime } from '../server/arcade-player-runtime';
+import type { ArcadeMessagingTransport } from '../server/arcade-messaging-runtime';
 
 const ADMIN_HEADER = { 'x-test-arcade-admin': 'admin@twilio.com' };
+const DISPLAY_TOKEN = 'test-arcade-display-token';
 let server: HttpServer | undefined;
 let directory: string | undefined;
 
@@ -45,12 +48,29 @@ async function harness(options: {
   maxEventStreams?: number;
   playerMode?: 'coin_only' | 'lead_capture';
   signingSecret?: string | null;
+  fallbackVoiceNumber?: string | null;
+  smsNumber?: string | null;
+  whatsappNumber?: string | null;
+  displayToken?: string | null;
+  outboundTransport?: ArcadeMessagingTransport;
+  inboundMessagingRateLimits?: {
+    addressLimit?: number;
+    addressWindowMs?: number;
+    processLimit?: number;
+    processWindowMs?: number;
+  };
 } = {}): Promise<{
   baseUrl: string;
   store: ArcadeConfigStore;
   playerRuntime: ArcadePlayerRuntime;
+  api: ArcadeApi;
 }> {
   directory = await mkdtemp(path.join(tmpdir(), 'arcade-api-'));
+  const fallbackVoiceNumber = options.fallbackVoiceNumber === undefined
+    ? '+18555993809'
+    : options.fallbackVoiceNumber ?? undefined;
+  const smsNumber = options.smsNumber === undefined ? '+15005550006' : options.smsNumber ?? undefined;
+  const whatsappNumber = options.whatsappNumber ?? undefined;
   const events = new ArcadeEventHub();
   const store = new ArcadeConfigStore({ directory: path.join(directory, 'arcade'), events });
   await store.load();
@@ -70,6 +90,11 @@ async function harness(options: {
     signingSecret: () => options.signingSecret === null
       ? undefined
       : options.signingSecret ?? '0123456789abcdef'.repeat(4),
+    outboundMessaging: options.outboundTransport ? {
+      enabled: (channel?: 'sms' | 'whatsapp') => channel !== 'whatsapp',
+      callNumber: () => fallbackVoiceNumber,
+      createTransport: () => options.outboundTransport!,
+    } : undefined,
   });
   const api = new ArcadeApi({
     configStore: store,
@@ -78,6 +103,10 @@ async function harness(options: {
     heartbeatMs: 20,
     maxEventStreams: options.maxEventStreams,
     playerRuntime,
+    displayToken: options.displayToken === undefined ? DISPLAY_TOKEN : options.displayToken ?? undefined,
+    fallbackVoiceNumber,
+    messagingCapabilities: { sms: Boolean(smsNumber), whatsapp: Boolean(whatsappNumber) },
+    inboundMessagingRateLimits: options.inboundMessagingRateLimits,
     authorizeAdmin: request => {
       const header = request.headers['x-test-arcade-admin'];
       const email = Array.isArray(header) ? header[0] : header;
@@ -97,9 +126,13 @@ async function harness(options: {
     fighterMapsPath: path.join(directory, 'fighter-maps.json'),
     fighterPreviewDir: path.join(directory, 'fighter-previews'),
     clientDir: path.join(directory, 'client'),
+    gamePhoneNumber: fallbackVoiceNumber,
+    smsNumber,
+    whatsappNumber,
+    fighterDisplayToken: options.displayToken === undefined ? DISPLAY_TOKEN : options.displayToken ?? undefined,
   });
   const port = await server.start();
-  return { baseUrl: `http://127.0.0.1:${port}`, store, playerRuntime };
+  return { baseUrl: `http://127.0.0.1:${port}`, store, playerRuntime, api };
 }
 
 async function updateConfig(
@@ -167,6 +200,60 @@ const REGISTRATION = {
 };
 
 describe('Arcade API', () => {
+  it('selects public voice numbers and call locale without coupling the SMS number', async () => {
+    const { baseUrl, store, api } = await harness({
+      fallbackVoiceNumber: '+18555993809',
+      smsNumber: '+15005550006',
+    });
+    expect(api.getVoiceNumbers()).toEqual({
+      'en-US': '+18555993809',
+      'pt-BR': '+18555993809',
+    });
+    expect(api.voiceLocaleForNumber('+18555993809')).toBeNull();
+    const localized = settings('off') as Record<string, any>;
+    localized.channels.voiceNumbers = {
+      'en-US': '+18555993809',
+      'pt-BR': '+551155555555',
+    };
+    await store.update({
+      expectedVersion: 1,
+      idempotencyKey: 'localized-voice-numbers',
+      updatedBy: 'test@twilio.com',
+      settings: localized,
+    });
+
+    expect(api.getVoiceNumbers()).toEqual(localized.channels.voiceNumbers);
+    expect(api.voiceLocaleForNumber('+551155555555')).toBe('pt-BR');
+    expect(api.voiceLocaleForNumber('+18555993809')).toBe('en-US');
+    const bootstrap = await (await fetch(`${baseUrl}/api/config`)).json() as Record<string, any>;
+    expect(bootstrap).toMatchObject({
+      phoneNumber: '+18555993809',
+      smsNumber: '+15005550006',
+      voiceNumbers: localized.channels.voiceNumbers,
+    });
+
+    const voice = await fetch(`${baseUrl}/voice/incoming`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        From: '+14155550199', To: '+551155555555', CallSid: 'CA-localized-number',
+      }),
+    });
+    const xml = await voice.text();
+    expect(xml).toContain('transcriptionLanguage="pt-BR"');
+    expect(xml).toContain('name="commandLocale" value="pt-BR"');
+
+    localized.channels.voiceNumbers['pt-BR'] = null;
+    await store.update({
+      expectedVersion: 2,
+      idempotencyKey: 'single-locale-voice-number',
+      updatedBy: 'test@twilio.com',
+      settings: localized,
+    });
+    expect(api.getVoiceNumbers()).toEqual({ 'en-US': '+18555993809', 'pt-BR': null });
+    expect(api.voiceLocaleForNumber('+18555993809')).toBe('en-US');
+  });
+
   it('serves redacted mode-off public config without changing existing endpoints', async () => {
     const { baseUrl } = await harness();
     const response = await fetch(`${baseUrl}/api/arcade/config/public`);
@@ -201,6 +288,59 @@ describe('Arcade API', () => {
       .toBe('https://www.twilio.com/docs/voice');
     const publicConfig = await (await fetch(`${baseUrl}/api/arcade/config/public`)).json() as Record<string, any>;
     expect(publicConfig.earning.challenges[0].url).toBeUndefined();
+  });
+
+  it('rejects active station config without complete Voice and configured coin-only messaging', async () => {
+    const { baseUrl } = await harness({
+      fallbackVoiceNumber: null,
+      smsNumber: null,
+      whatsappNumber: null,
+    });
+    const noVoice = settings('lead_capture') as Record<string, any>;
+    noVoice.channels.voice = false;
+    let response = await updateConfig(baseUrl, noVoice as ArcadeConfigSettings, { key: 'no-voice' });
+    expect(response.status).toBe(422);
+    expect(await response.json()).toMatchObject({
+      error: { code: 'STATION_VOICE_REQUIRED' },
+    });
+
+    const partialVoice = settings('lead_capture') as Record<string, any>;
+    partialVoice.channels.voiceNumbers = { 'en-US': '+14155550100', 'pt-BR': null };
+    response = await updateConfig(baseUrl, partialVoice as ArcadeConfigSettings, { key: 'partial-voice' });
+    expect(response.status).toBe(422);
+    expect(await response.json()).toMatchObject({
+      error: { code: 'STATION_VOICE_NUMBERS_REQUIRED' },
+    });
+
+    const noSender = settings('coin_only') as Record<string, any>;
+    noSender.channels.voiceNumbers = {
+      'en-US': '+14155550100',
+      'pt-BR': '+551155555555',
+    };
+    noSender.channels.sms = true;
+    noSender.channels.whatsapp = true;
+    response = await updateConfig(baseUrl, noSender as ArcadeConfigSettings, { key: 'no-sender' });
+    expect(response.status).toBe(422);
+    const body = await response.json() as Record<string, any>;
+    expect(body.error.code).toBe('COIN_ONLY_MESSAGING_REQUIRED');
+    expect(body.error.message).toContain('TWILIO_SMS_NUMBER');
+  });
+
+  it('requires a display token for activation and reports persisted capability drift as degraded', async () => {
+    const { baseUrl } = await harness({ playerMode: 'lead_capture', displayToken: null });
+    const update = await updateConfig(baseUrl, settings('lead_capture'), {
+      etag: '"arcade-config-2"', key: 'missing-display-token-update',
+    });
+    expect(update.status).toBe(422);
+    expect(await update.json()).toMatchObject({
+      error: { code: 'STATION_DISPLAY_TOKEN_REQUIRED' },
+    });
+    expect((await fetch(`${baseUrl}/healthz`)).status).toBe(503);
+    const session = await createPlayerSession(baseUrl, 'missing-display-token');
+    expect(session.status).toBe(503);
+    expect(await session.json()).toMatchObject({
+      error: { code: 'STATION_CAPABILITY_UNAVAILABLE' },
+    });
   });
 
   it('enforces optimistic concurrency, idempotency, origin, media type, and body limits', async () => {
@@ -293,12 +433,615 @@ describe('Arcade API', () => {
     await first.body?.cancel();
   });
 
+  it('exposes privacy-scoped station views and generation-safe display readiness', async () => {
+    const { baseUrl, playerRuntime } = await harness({ playerMode: 'coin_only' });
+    const empty = await fetch(`${baseUrl}/api/arcade/station/public`);
+    expect(await empty.json()).toMatchObject({ phase: 'ATTRACT', revision: 0, currentReadyCount: 0 });
+
+    const events = await fetch(`${baseUrl}/api/arcade/events`);
+    const reader = events.body!.getReader();
+    await readUntil(reader, 'arcade_config_updated');
+    const stationResources = await playerRuntime.getActive();
+    const stationPlayerId = 'station-player';
+    await stationResources.service.identifyCoinOnly({
+      playerId: stationPlayerId,
+      destination: '+14155550199',
+      idempotencyKey: 'identify-station-player',
+    });
+    const cookie = stationResources.sessions.issue(
+      stationPlayerId, 'http://localhost#ARCADE-01',
+    ).cookie.split(';', 1)[0]!;
+    await stationResources.store.transaction(state => {
+      state.channelAddresses['channel:test-station-player'] = {
+        id: 'channel:test-station-player', playerId: stationPlayerId, channel: 'sms',
+        normalizedAddress: '+14155550199', providerAddress: '+14155550199',
+        preferredLocale: 'en-US', firstSeenAt: '2026-07-20T10:00:00.000Z',
+        lastSeenAt: '2026-07-20T10:00:00.000Z',
+      };
+      state.messagingDrafts[stationPlayerId] = {
+        playerId: stationPlayerId, stationId: 'ARCADE-01', step: 'COMPLETE',
+        firstName: null, lastName: null, workEmail: null, companyName: null, countryCode: null,
+        createdAt: '2026-07-20T10:00:00.000Z', updatedAt: '2026-07-20T10:00:00.000Z',
+      };
+    });
+    const coin = await fetch(`${baseUrl}/api/arcade/station/coin`, {
+      method: 'POST',
+      headers: {
+        Cookie: cookie, Origin: 'http://localhost', 'Content-Type': 'application/json',
+        'Idempotency-Key': 'station-coin-1',
+      },
+      body: '{}',
+    });
+    expect(coin.status).toBe(200);
+    expect(await coin.json()).toMatchObject({
+      phase: 'RECRUITING', ready: { status: 'READY', position: 1, reservation: { amount: 1, status: 'ACTIVE' } },
+    });
+    const presentationOnly = settings('coin_only') as Record<string, any>;
+    presentationOnly.arcade.displayName = 'Expo station';
+    expect((await updateConfig(baseUrl, presentationOnly as ArcadeConfigSettings, {
+      etag: '"arcade-config-2"', key: 'active-presentation-change',
+    })).status).toBe(200);
+    const policyChange = JSON.parse(JSON.stringify(presentationOnly)) as Record<string, any>;
+    policyChange.station.timings.recruitingSeconds = 120;
+    const lockedConfig = await updateConfig(baseUrl, policyChange as ArcadeConfigSettings, {
+      etag: '"arcade-config-3"', key: 'active-policy-change',
+    });
+    expect(lockedConfig.status).toBe(409);
+    expect((await lockedConfig.json() as Record<string, any>).error.code)
+      .toBe('ACTIVE_STATION_CONFIG_LOCKED');
+    const stationEvent = await readUntil(reader, 'arcade_station_updated');
+    expect(stationEvent).toContain('id: station:2');
+    await reader.cancel();
+
+    const publicResponse = await fetch(`${baseUrl}/api/arcade/station/public`);
+    const publicStation = await publicResponse.json() as Record<string, any>;
+    expect(publicStation).toMatchObject({ phase: 'RECRUITING', revision: 2, currentReadyCount: 1 });
+    expect(JSON.stringify(publicStation)).not.toMatch(/player:|reservation|email|phone|company/i);
+
+    const operator = await fetch(`${baseUrl}/api/admin/arcade/station`, { headers: ADMIN_HEADER });
+    expect(operator.status).toBe(200);
+    expect(JSON.stringify(await operator.clone().json())).not.toMatch(/playerId|reservationId|email|phone/i);
+    let etag = operator.headers.get('etag')!;
+    const control = async (route: string, body: Record<string, unknown>, key: string) => {
+      const response = await fetch(`${baseUrl}${route}`, {
+        method: 'POST',
+        headers: {
+          ...ADMIN_HEADER,
+          Origin: 'http://localhost', 'Content-Type': 'application/json',
+          'If-Match': etag, 'Idempotency-Key': key,
+        },
+        body: JSON.stringify(body),
+      });
+      if (response.ok) etag = response.headers.get('etag')!;
+      return response;
+    };
+    expect((await control(
+      '/api/admin/arcade/station/recruiting/close', { reason: 'start selection' }, 'station-close',
+    )).status).toBe(200);
+    expect((await control(
+      '/api/admin/arcade/station/game/select', { game: 'fighter', reason: 'best fit' }, 'station-select',
+    )).status).toBe(200);
+    expect((await control(
+      '/api/admin/arcade/station/launch/request', { reason: 'countdown elapsed' }, 'station-launch',
+    )).status).toBe(200);
+
+    const publicLaunching = await fetch(`${baseUrl}/api/arcade/station/public`);
+    expect(await publicLaunching.json()).toMatchObject({ phase: 'LAUNCHING', launch: null });
+    const launchingResponse = await fetch(`${baseUrl}/api/arcade/station/display`, {
+      headers: { 'X-Arcade-Display-Token': DISPLAY_TOKEN },
+    });
+    const launching = await launchingResponse.json() as Record<string, any>;
+    expect(launching).toMatchObject({
+      phase: 'LAUNCHING', launch: { game: 'fighter', route: '/fighter.html', generation: 1 },
+    });
+    const unauthorizedDisplay = await fetch(`${baseUrl}/api/arcade/station/display/ready`, {
+      method: 'POST',
+      headers: {
+        Origin: 'http://localhost', 'Content-Type': 'application/json',
+        'If-Match': launchingResponse.headers.get('etag')!, 'Idempotency-Key': 'display-unauthorized',
+      },
+      body: JSON.stringify({ matchId: launching.launch.matchId, launchGeneration: 1 }),
+    });
+    expect(unauthorizedDisplay.status).toBe(401);
+    const stale = await fetch(`${baseUrl}/api/arcade/station/display/ready`, {
+      method: 'POST',
+      headers: {
+        Origin: 'http://localhost', 'Content-Type': 'application/json',
+        'If-Match': launchingResponse.headers.get('etag')!, 'Idempotency-Key': 'display-stale',
+        'X-Arcade-Display-Token': DISPLAY_TOKEN,
+      },
+      body: JSON.stringify({ matchId: 'stale-match', launchGeneration: 1 }),
+    });
+    expect(stale.status).toBe(409);
+    expect((await stale.json() as Record<string, any>).error.code).toBe('STALE_STATION_LAUNCH');
+
+    const ready = await fetch(`${baseUrl}/api/arcade/station/display/ready`, {
+      method: 'POST',
+      headers: {
+        Origin: 'http://localhost', 'Content-Type': 'application/json',
+        'If-Match': launchingResponse.headers.get('etag')!, 'Idempotency-Key': 'display-ready',
+        'X-Arcade-Display-Token': DISPLAY_TOKEN,
+      },
+      body: JSON.stringify({
+        matchId: launching.launch.matchId, launchGeneration: launching.launch.generation,
+      }),
+    });
+    expect(ready.status).toBe(200);
+    expect(await ready.json()).toMatchObject({ phase: 'LAUNCHING', revision: 6 });
+    expect((await playerRuntime.getActive()).store.snapshot().stationControlEvents).toMatchObject([
+      { action: 'CLOSE_STATION_RECRUITING', actorKind: 'operator', reason: 'start selection' },
+      { action: 'SELECT_STATION_GAME', actorKind: 'operator', reason: 'best fit' },
+      { action: 'REQUEST_STATION_LAUNCH', actorKind: 'operator', reason: 'countdown elapsed' },
+      { action: 'MARK_STATION_DISPLAY_READY', actorKind: 'system' },
+    ]);
+  });
+
+  it('protects emergency reset with operator auth, same-origin, idempotency, and a current station ETag', async () => {
+    const { baseUrl, playerRuntime, api } = await harness({ playerMode: 'coin_only' });
+    const resources = await playerRuntime.getActive();
+    await resources.service.identifyCoinOnly({
+      playerId: 'reset-player', destination: '+14155550999', idempotencyKey: 'reset:identify',
+    });
+    await resources.store.transaction(state => {
+      state.channelAddresses['reset-channel'] = {
+        id: 'reset-channel', playerId: 'reset-player', channel: 'sms',
+        normalizedAddress: '+14155550999', providerAddress: '+14155550999',
+        preferredLocale: 'en-US', firstSeenAt: '2026-07-20T10:00:00.000Z',
+        lastSeenAt: '2026-07-20T10:00:00.000Z',
+      };
+    });
+    const coin = await resources.service.insertStationCoin({
+      stationId: 'ARCADE-01', playerId: 'reset-player', idempotencyKey: 'reset:coin',
+    });
+    const authorization = resources.operatorAuthorization('admin@twilio.com');
+    const selecting = await resources.service.closeStationRecruiting({
+      stationId: 'ARCADE-01', expectedRevision: coin.station.revision,
+      idempotencyKey: 'reset:close', authorization, reason: 'prepare reset test',
+    });
+    const locked = await resources.station.selectGame({
+      game: 'racer', expectedRevision: selecting.station.revision,
+      idempotencyKey: 'reset:select', authorization, reason: 'prepare reset test',
+    });
+    const launching = await resources.service.requestStationLaunch({
+      stationId: 'ARCADE-01', expectedRevision: locked.station.revision,
+      idempotencyKey: 'reset:launch', authorization, reason: 'prepare reset test',
+    });
+    const roomCode = launching.match!.engineRoomCode;
+    const voiceRoute = await api.stationVoiceRoute('+14155550999', 'CA-reset');
+    expect(voiceRoute).toMatchObject({ roomCode, admitted: true });
+    expect(await api.validateStationVoiceSetup({
+      callSid: 'CA-reset', readyEntryId: voiceRoute!.readyEntryId!,
+      matchId: voiceRoute!.matchId, launchGeneration: voiceRoute!.launchGeneration,
+      game: voiceRoute!.game, roomCode,
+    })).toBe(true);
+    expect(api.isStationEngineRoom(roomCode)).toBe(true);
+    const display = new WebSocket(`${baseUrl.replace('http:', 'ws:')}/game`);
+    await new Promise<void>((resolve, reject) => {
+      display.once('open', resolve);
+      display.once('error', reject);
+    });
+    display.send(JSON.stringify({ type: 'spectate', roomCode, displayToken: DISPLAY_TOKEN }));
+    const displayClosed = new Promise<number>(resolve => display.once('close', resolve));
+    const currentEtag = `"arcade-station-${launching.station.revision}"`;
+    const reset = (options: {
+      admin?: boolean;
+      origin?: string;
+      etag?: string;
+      key?: string;
+      body?: unknown;
+    } = {}) => fetch(`${baseUrl}/api/admin/arcade/station/reset`, {
+      method: 'POST',
+      headers: {
+        ...(options.admin === false ? {} : ADMIN_HEADER),
+        Origin: options.origin ?? 'http://localhost',
+        'Content-Type': 'application/json',
+        'If-Match': options.etag ?? currentEtag,
+        'Idempotency-Key': options.key ?? 'station-emergency-reset',
+      },
+      body: JSON.stringify(options.body ?? { reason: 'physical cabinet emergency' }),
+    });
+
+    expect((await reset({ admin: false, key: 'reset-unauthorized' })).status).toBe(401);
+    expect((await reset({ origin: 'https://evil.example', key: 'reset-wrong-origin' })).status).toBe(403);
+    expect((await reset({ body: {}, key: 'reset-missing-reason' })).status).toBe(400);
+    const stale = await reset({
+      etag: `"arcade-station-${launching.station.revision - 1}"`, key: 'reset-stale',
+    });
+    expect(stale.status).toBe(412);
+    expect(await stale.json()).toMatchObject({ error: { code: 'ARCADE_STATION_VERSION_CONFLICT' } });
+    expect((await resources.service.getStation('ARCADE-01'))?.station.phase).toBe('LAUNCHING');
+    expect(api.isStationEngineRoom(roomCode)).toBe(true);
+
+    const response = await reset();
+    expect(response.status).toBe(200);
+    expect(response.headers.get('etag')).toBe(`"arcade-station-${launching.station.revision + 1}"`);
+    const resetBody = await response.json() as Record<string, any>;
+    expect(resetBody).toMatchObject({
+      station: { phase: 'ATTRACT', revision: launching.station.revision + 1 },
+      round: null,
+      match: null,
+    });
+    expect(resetBody.recentControls[0]).toMatchObject({
+      action: 'RESET_STATION', actorKind: 'operator', actorSubject: 'admin@twilio.com',
+      reason: 'physical cabinet emergency',
+    });
+    expect((await reset()).status).toBe(200);
+    expect(await displayClosed).toBe(4002);
+    expect(await api.validateStationVoiceSetup({
+      callSid: 'CA-reset', readyEntryId: voiceRoute!.readyEntryId!,
+      matchId: voiceRoute!.matchId, launchGeneration: voiceRoute!.launchGeneration,
+      game: voiceRoute!.game, roomCode,
+    })).toBe(false);
+    expect(api.isStationEngineRoom(roomCode)).toBe(false);
+    const state = resources.store.snapshot();
+    expect(state.stationMatches[launching.match!.id]?.phase).toBe('FAILED');
+    expect(state.stationReadyEntries[coin.readyEntry.id]?.status).toBe('LEFT');
+    expect(state.wallets['reset-player']?.reservations[0]?.status).toBe('RELEASED');
+    expect(state.stationControlEvents.filter(event => event.action === 'RESET_STATION')).toHaveLength(1);
+  });
+
+  it('routes signed-provider SMS commands through durable Arcade messaging when enabled', async () => {
+    const { baseUrl, store, playerRuntime, api } = await harness({ playerMode: 'coin_only' });
+    const enabled = settings('coin_only') as Record<string, any>;
+    enabled.channels.sms = true;
+    await store.update({
+      expectedVersion: 2,
+      idempotencyKey: 'enable-arcade-sms',
+      updatedBy: 'test@twilio.com',
+      settings: enabled as ArcadeConfigSettings,
+    });
+    const send = (sid: string, body: string) => fetch(`${baseUrl}/sms`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        From: '+14155550199', Body: body, MessageSid: sid, NumMedia: '0',
+      }),
+    });
+
+    const joined = await send('SM-ARCADE-1', 'JOIN ARCADE-01 LANG en-US');
+    expect(joined.status).toBe(200);
+    expect(await joined.text()).toContain('Reply YES');
+    expect(await (await send('SM-ARCADE-2', 'YES')).text()).toContain('Reply COIN');
+    expect(await (await send('SM-ARCADE-3', 'COIN')).text()).toContain('Coin inserted');
+    expect(await (await send('SM-ARCADE-4', 'STATUS')).text()).toContain('Station status: READY');
+    expect(await (await send('SM-ARCADE-1', 'JOIN ARCADE-01 LANG en-US')).text()).toContain('Reply YES');
+    expect(await api.processMessagingWebhook({
+      from: '+14155550199', body: 'JOIN ARCADE-01 LANG en-US', providerMessageId: 'SM-ARCADE-1',
+      conversationProfileId: 'mem_profile_fallback', conversationId: 'conv_fallback',
+    })).toBeNull();
+
+    const state = (await playerRuntime.getActive()).store.snapshot();
+    expect(Object.keys(state.inboundMessages)).toHaveLength(4);
+    expect(Object.values(state.stationReadyEntries)).toHaveLength(1);
+    const resources = await playerRuntime.getActive();
+    const adminStatus = await fetch(`${baseUrl}/api/admin/arcade/status`, { headers: ADMIN_HEADER });
+    expect(await adminStatus.json()).toMatchObject({
+      messaging: {
+        enabled: false,
+        counts: { PENDING: 0, DELIVERED: 0, FAILED: 0 },
+        storage: {
+          players: 1,
+          messagingIdentities: 1,
+          identityCapacity: 90_000,
+          remainingIdentityCapacity: 89_999,
+          drafts: 1,
+          cleanupEligible: 0,
+        },
+      },
+    });
+    const remembered = await api.processMessagingWebhook({
+      from: '+14155550200', body: 'JOIN ARCADE-01 LANG pt-BR', providerMessageId: 'comm-memory-replay',
+      conversationProfileId: 'mem_profile_replay', conversationId: 'conv_replay',
+    });
+    expect(await api.processMessagingWebhook({
+      from: '+14155550200', body: 'JOIN ARCADE-01 LANG pt-BR', providerMessageId: 'comm-memory-replay',
+      conversationProfileId: 'mem_profile_replay', conversationId: 'conv_replay',
+    })).toBe(remembered);
+    await expect(api.processMessagingWebhook({
+      from: '+14155550200', body: 'JOIN ARCADE-01 LANG pt-BR', providerMessageId: 'comm-memory-replay',
+      conversationProfileId: 'mem_profile_other', conversationId: 'conv_replay',
+    })).rejects.toMatchObject({ code: 'IDEMPOTENCY_CONFLICT' });
+    const station = await resources.service.getStation('ARCADE-01');
+    const selecting = await resources.service.closeStationRecruiting({
+      stationId: 'ARCADE-01', expectedRevision: station!.station.revision,
+      idempotencyKey: 'voice-route-close', authorization: resources.operatorAuthorization('test@twilio.com'),
+    });
+    const locked = await resources.station.selectGame({
+      game: 'racer', expectedRevision: selecting.station.revision,
+      idempotencyKey: 'voice-route-select', authorization: resources.operatorAuthorization('test@twilio.com'),
+    });
+    await resources.service.requestStationLaunch({
+      stationId: 'ARCADE-01', expectedRevision: locked.station.revision,
+      idempotencyKey: 'voice-route-launch', authorization: resources.operatorAuthorization('test@twilio.com'),
+    });
+    expect(await api.stationVoiceRoute('+14155550199')).toMatchObject({ game: 'racer', admitted: true });
+    expect(await api.stationVoiceRoute('+14155550000')).toMatchObject({ game: 'racer', admitted: false });
+  });
+
+  it('bounds inbound messaging by address and process without charging durable provider replays', async () => {
+    const { api, playerRuntime } = await harness({
+      playerMode: 'coin_only',
+      inboundMessagingRateLimits: {
+        addressLimit: 1,
+        addressWindowMs: 60_000,
+        processLimit: 2,
+        processWindowMs: 60_000,
+      },
+    });
+    const first = {
+      from: '+14155550101', body: 'JOIN ARCADE-01', providerMessageId: 'SM-RATE-001',
+    };
+    const firstReply = await api.processMessagingWebhook(first);
+    expect(firstReply).toContain('Reply YES');
+    expect(await api.processMessagingWebhook(first)).toBe(firstReply);
+    expect(await api.processMessagingWebhook({
+      ...first, providerMessageId: 'SM-RATE-002', body: 'STATUS',
+    })).toContain('Too many messages');
+
+    expect(await api.processMessagingWebhook({
+      from: '+14155550102', body: 'JOIN ARCADE-01', providerMessageId: 'SM-RATE-003',
+    })).toContain('Reply YES');
+    expect(await api.processMessagingWebhook({
+      from: '+14155550103', body: 'JOIN ARCADE-01', providerMessageId: 'SM-RATE-004',
+    })).toContain('Too many messages');
+    expect(await api.processMessagingWebhook(first)).toBe(firstReply);
+
+    const state = (await playerRuntime.getActive()).store.snapshot();
+    expect(Object.keys(state.players)).toHaveLength(2);
+    expect(Object.keys(state.inboundMessages)).toHaveLength(2);
+  });
+
+  it('reports effective outbound status and performs authenticated same-origin audited retries', async () => {
+    let sends = 0;
+    const { baseUrl, playerRuntime, api } = await harness({
+      playerMode: 'coin_only',
+      outboundTransport: {
+        send: async () => ({
+          providerMessageId: `SM${(++sends).toString(16).padStart(32, '0')}`,
+          status: 'failed',
+        }),
+      },
+    });
+    expect(await api.processMessagingWebhook({
+      from: '+14155550199', body: 'JOIN ARCADE-01 LANG en-US', providerMessageId: 'SM-RETRY-JOIN',
+    })).toContain('Reply YES');
+    await api.processMessagingWebhook({
+      from: '+14155550199', body: 'YES', providerMessageId: 'SM-RETRY-TERMS',
+    });
+    expect(await api.processMessagingWebhook({
+      from: '+14155550199', body: 'COIN', providerMessageId: 'SM-RETRY-COIN',
+    })).toContain('we will text assignment and call updates');
+    const resources = await playerRuntime.getActive();
+    const recruiting = await resources.service.getStation('ARCADE-01');
+    const selecting = await resources.service.closeStationRecruiting({
+      stationId: 'ARCADE-01', expectedRevision: recruiting!.station.revision,
+      idempotencyKey: 'retry-close', authorization: resources.operatorAuthorization('admin@twilio.com'),
+    });
+    await resources.service.selectStationGame({
+      stationId: 'ARCADE-01', expectedRevision: selecting.station.revision,
+      game: 'racer', engineRoomCode: '4821', idempotencyKey: 'retry-select',
+      authorization: resources.operatorAuthorization('admin@twilio.com'),
+    });
+    await resources.messaging.flush();
+    const failed = Object.values(resources.store.snapshot().outboundNotifications)[0]!;
+    expect(failed.status).toBe('FAILED');
+
+    const statusResponse = await fetch(`${baseUrl}/api/admin/arcade/status`, { headers: ADMIN_HEADER });
+    const status = await statusResponse.json() as Record<string, any>;
+    expect(status.messaging).toMatchObject({
+      configured: true,
+      enabled: true,
+      started: true,
+      lastError: null,
+      onboarding: { sms: true, whatsapp: false },
+      channels: { sms: true, whatsapp: false },
+      counts: { FAILED: 1 },
+      recentFailures: [{ notificationId: failed.id, retryEligible: true, attempts: 1 }],
+    });
+
+    const retryUrl = `${baseUrl}/api/admin/arcade/messaging/notifications/${encodeURIComponent(failed.id)}/retry`;
+    const retry = (headers: Record<string, string>, reason: string, key = 'operator-retry') => fetch(retryUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key, ...headers },
+      body: JSON.stringify({ reason }),
+    });
+    expect((await retry({ Origin: 'http://localhost' }, 'not authenticated')).status).toBe(401);
+    expect((await retry(ADMIN_HEADER, 'missing origin')).status).toBe(403);
+    expect((await retry({ ...ADMIN_HEADER, Origin: 'http://localhost' }, '   ')).status).toBe(400);
+
+    const accepted = await retry(
+      { ...ADMIN_HEADER, Origin: 'http://localhost' }, 'visitor confirmed handset recovery',
+    );
+    expect(accepted.status).toBe(200);
+    expect(await accepted.json()).toMatchObject({
+      notificationId: failed.id, status: 'PENDING', attempts: 1, replayed: false,
+    });
+    await resources.messaging.flush();
+    expect(sends).toBe(2);
+    const replay = await retry(
+      { ...ADMIN_HEADER, Origin: 'http://localhost' }, 'visitor confirmed handset recovery',
+    );
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toMatchObject({
+      notificationId: failed.id, status: 'FAILED', attempts: 2, replayed: true,
+    });
+    const conflict = await retry(
+      { ...ADMIN_HEADER, Origin: 'http://localhost' }, 'a different retry reason',
+    );
+    expect(conflict.status).toBe(409);
+    expect(await conflict.json()).toMatchObject({ error: { code: 'IDEMPOTENCY_CONFLICT' } });
+    expect(sends).toBe(2);
+    expect(Object.values(resources.store.snapshot().messagingAuditEvents)).toEqual([
+      expect.objectContaining({
+        notificationId: failed.id,
+        actorSubject: 'admin@twilio.com',
+        reason: 'visitor confirmed handset recovery',
+        attemptCount: 1,
+      }),
+    ]);
+  });
+
+  it('routes Voice by the unique admitted identity across lead and channel addresses', async () => {
+    const { baseUrl, playerRuntime, api } = await harness({ playerMode: 'lead_capture' });
+    const firstCookie = cookieFrom(await createPlayerSession(baseUrl, 'voice-lead-one'));
+    const secondCookie = cookieFrom(await createPlayerSession(baseUrl, 'voice-lead-two'));
+    const register = (cookie: string, key: string, phoneNumber: string) => fetch(
+      `${baseUrl}/api/arcade/register`,
+      {
+        method: 'POST',
+        headers: {
+          Cookie: cookie, Origin: 'http://localhost',
+          'Content-Type': 'application/json', 'Idempotency-Key': key,
+        },
+        body: JSON.stringify({
+          ...REGISTRATION,
+          lead: { ...REGISTRATION.lead, phoneNumber },
+        }),
+      },
+    );
+    expect((await register(firstCookie, 'voice-lead-register-one', '+14155550199')).status).toBe(200);
+    expect((await register(secondCookie, 'voice-lead-register-two', '+14155550200')).status).toBe(200);
+    const resources = await playerRuntime.getActive();
+    const firstPlayerId = resources.sessions.readCookie(firstCookie, 'http://localhost#ARCADE-01')!.player;
+    const secondPlayerId = resources.sessions.readCookie(secondCookie, 'http://localhost#ARCADE-01')!.player;
+    const coin = (cookie: string, key: string) => fetch(`${baseUrl}/api/arcade/station/coin`, {
+      method: 'POST',
+      headers: {
+        Cookie: cookie, Origin: 'http://localhost',
+        'Content-Type': 'application/json', 'Idempotency-Key': key,
+      },
+      body: '{}',
+    });
+    expect((await coin(firstCookie, 'voice-lead-coin-one')).status).toBe(200);
+    expect((await coin(secondCookie, 'voice-lead-coin-two')).status).toBe(200);
+
+    await api.processMessagingWebhook({
+      from: '+14155550300', body: 'JOIN ARCADE-01', providerMessageId: 'SM-NON-ADMITTED',
+    });
+    await resources.store.transaction(state => {
+      const address = Object.values(state.channelAddresses)
+        .find(candidate => candidate.normalizedAddress === '+14155550300')!;
+      state.channelAddresses[address.id] = { ...address, normalizedAddress: '+14155550199' };
+    });
+    const station = await resources.service.getStation('ARCADE-01');
+    const selecting = await resources.service.closeStationRecruiting({
+      stationId: 'ARCADE-01', expectedRevision: station!.station.revision,
+      idempotencyKey: 'identity-route-close',
+      authorization: resources.operatorAuthorization('test@twilio.com'),
+    });
+    const locked = await resources.station.selectGame({
+      game: 'racer', expectedRevision: selecting.station.revision,
+      idempotencyKey: 'identity-route-select',
+      authorization: resources.operatorAuthorization('test@twilio.com'),
+    });
+    await resources.service.requestStationLaunch({
+      stationId: 'ARCADE-01', expectedRevision: locked.station.revision,
+      idempotencyKey: 'identity-route-launch',
+      authorization: resources.operatorAuthorization('test@twilio.com'),
+    });
+
+    const routed = await api.stationVoiceRoute('+14155550199');
+    expect(routed).toMatchObject({ admitted: true });
+    expect(resources.store.snapshot().stationReadyEntries[routed!.readyEntryId!]?.playerId)
+      .toBe(firstPlayerId);
+
+  });
+
+  it('returns the localized call number only for an admitted browser lead during launch', async () => {
+    const { baseUrl, store, playerRuntime } = await harness({ playerMode: 'lead_capture' });
+    const localized = settings('lead_capture') as Record<string, any>;
+    localized.channels.voiceNumbers = {
+      'en-US': '+14155550100',
+      'pt-BR': '+551155555555',
+    };
+    await store.update({
+      expectedVersion: 2,
+      idempotencyKey: 'browser-call-numbers',
+      updatedBy: 'test@twilio.com',
+      settings: localized,
+    });
+    const cookie = cookieFrom(await createPlayerSession(baseUrl, 'browser-call-player'));
+    const registration = await fetch(`${baseUrl}/api/arcade/register`, {
+      method: 'POST',
+      headers: {
+        Cookie: cookie, Origin: 'http://localhost',
+        'Content-Type': 'application/json', 'Idempotency-Key': 'browser-call-register',
+      },
+      body: JSON.stringify({ ...REGISTRATION, preferredLocale: 'pt-BR' }),
+    });
+    expect(registration.status).toBe(200);
+    const resources = await playerRuntime.getActive();
+    expect((await fetch(`${baseUrl}/api/arcade/station/coin`, {
+      method: 'POST',
+      headers: {
+        Cookie: cookie, Origin: 'http://localhost',
+        'Content-Type': 'application/json', 'Idempotency-Key': 'browser-call-coin',
+      },
+      body: '{}',
+    })).status).toBe(200);
+    const station = await resources.service.getStation('ARCADE-01');
+    const selecting = await resources.service.closeStationRecruiting({
+      stationId: 'ARCADE-01', expectedRevision: station!.station.revision,
+      idempotencyKey: 'browser-call-close',
+      authorization: resources.operatorAuthorization('test@twilio.com'),
+    });
+    const locked = await resources.station.selectGame({
+      game: 'racer', expectedRevision: selecting.station.revision,
+      idempotencyKey: 'browser-call-select',
+      authorization: resources.operatorAuthorization('test@twilio.com'),
+    });
+    expect(await (await fetch(`${baseUrl}/api/arcade/station/me`, {
+      headers: { Cookie: cookie },
+    })).json()).toMatchObject({ phase: 'LOCKED', ready: { status: 'ADMITTED' }, callNumber: null });
+    await resources.service.requestStationLaunch({
+      stationId: 'ARCADE-01', expectedRevision: locked.station.revision,
+      idempotencyKey: 'browser-call-launch',
+      authorization: resources.operatorAuthorization('test@twilio.com'),
+    });
+    expect(await (await fetch(`${baseUrl}/api/arcade/station/me`, {
+      headers: { Cookie: cookie },
+    })).json()).toMatchObject({
+      phase: 'LAUNCHING', ready: { status: 'ADMITTED' }, callNumber: '+551155555555',
+    });
+  });
+
+  it('does not let browser registration claim an existing messaging identity', async () => {
+    const { baseUrl, api } = await harness({ playerMode: 'lead_capture' });
+    const joined = await api.processMessagingWebhook({
+      from: '+14155550199', body: 'JOIN ARCADE-01 LANG en-US', providerMessageId: 'SM-LINK-1',
+    });
+    expect(joined).toContain('first name');
+    const browserSession = await createPlayerSession(baseUrl, 'linked-browser');
+    const registered = await fetch(`${baseUrl}/api/arcade/register`, {
+      method: 'POST',
+      headers: {
+        Cookie: cookieFrom(browserSession), Origin: 'http://localhost',
+        'Content-Type': 'application/json', 'Idempotency-Key': 'linked-browser-register',
+      },
+      body: JSON.stringify({ ...REGISTRATION, preferredLocale: 'en-US' }),
+    });
+    expect(registered.status).toBe(409);
+    expect((await registered.json() as Record<string, any>).error.code).toBe('PHONE_ALREADY_LINKED');
+  });
+
   it('keeps player state and signing secrets untouched while mode is off', async () => {
-    const { baseUrl } = await harness({ signingSecret: null });
+    const { baseUrl, playerRuntime } = await harness({ signingSecret: null });
     const response = await createPlayerSession(baseUrl, 'off-session');
     expect(response.status).toBe(409);
     expect((await response.json() as Record<string, any>).error.code).toBe('ARCADE_MODE_DISABLED');
     expect(response.headers.get('set-cookie')).toBeNull();
+    const display = await fetch(`${baseUrl}/api/arcade/station/display`, {
+      headers: { 'X-Arcade-Display-Token': DISPLAY_TOKEN },
+    });
+    expect(display.status).toBe(200);
+    expect(await display.json()).toMatchObject({ phase: 'ATTRACT', revision: 0 });
+    const voice = await fetch(`${baseUrl}/voice/incoming`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ From: '+14155550199', CallSid: 'CA-mode-off' }),
+    });
+    expect(voice.status).toBe(200);
+    expect(playerRuntime.getStatus().initialized).toBe(false);
     expect((await fetch(`${baseUrl}/healthz`)).status).toBe(200);
   });
 
@@ -346,7 +1089,7 @@ describe('Arcade API', () => {
 
     const player = await (await fetch(`${baseUrl}/api/arcade/player`, { headers: { Cookie: cookie } })).json();
     const wallet = await (await fetch(`${baseUrl}/api/arcade/wallet`, { headers: { Cookie: cookie } })).json();
-    expect(JSON.stringify(player)).not.toMatch(/email|phone|company|lastName|destination|player:/i);
+    expect(JSON.stringify(player)).not.toMatch(/email|phoneNumber|company|lastName|destination|player:/i);
     expect(wallet).toMatchObject({ ledgerBalance: 1, reservedBalance: 0, availableBalance: 1 });
     expect(JSON.stringify(wallet)).not.toMatch(/transaction|reservation|idempotency|player:/i);
 
@@ -354,6 +1097,21 @@ describe('Arcade API', () => {
     const persistedPlayer = Object.values(resources.store.snapshot().players)[0]!;
     expect(persistedPlayer.lead?.phoneNumber).toBe('+14155550199');
     expect(persistedPlayer.trustedDestination).toBeNull();
+  });
+
+  it('allows a registered browser player to join without an OTP step', async () => {
+    const { baseUrl } = await harness({ playerMode: 'lead_capture' });
+    const cookie = cookieFrom(await createPlayerSession(baseUrl, 'browser-player'));
+    const mutate = (path: string, key: string, body: unknown) => fetch(`${baseUrl}${path}`, {
+      method: 'POST',
+      headers: {
+        Cookie: cookie, Origin: 'http://localhost', 'Content-Type': 'application/json',
+        'Idempotency-Key': key,
+      },
+      body: JSON.stringify(body),
+    });
+    expect((await mutate('/api/arcade/register', 'browser-register', REGISTRATION)).status).toBe(200);
+    expect((await mutate('/api/arcade/station/coin', 'browser-coin', {})).status).toBe(200);
   });
 
   it('rejects missing origins, caller-controlled identity fields, and tampered sessions', async () => {
@@ -391,43 +1149,34 @@ describe('Arcade API', () => {
     expect((await unauthorized.json() as Record<string, any>).error.code).toBe('ARCADE_SESSION_REQUIRED');
   });
 
-  it('bootstraps coin-only wallets once', async () => {
+  it('does not materialize browser identities or wallets in coin-only mode', async () => {
     const { baseUrl, playerRuntime } = await harness({ playerMode: 'coin_only' });
     const first = await createPlayerSession(baseUrl, 'coin-player-one');
     const second = await createPlayerSession(baseUrl, 'coin-player-two');
-    expect(await first.json()).toEqual({ mode: 'coin_only', registered: false, availableBalance: 1 });
-    expect(await second.json()).toEqual({ mode: 'coin_only', registered: false, availableBalance: 1 });
-    const firstCookie = cookieFrom(first);
-    const refreshed = await fetch(`${baseUrl}/api/arcade/session`, {
-      method: 'POST',
-      headers: {
-        Cookie: firstCookie, Origin: 'http://localhost',
-        'Content-Type': 'application/json',
-        'Idempotency-Key': Buffer.from('arcade-session:shared-external-key').toString('base64url'),
-      },
-      body: JSON.stringify({ cabinetId: 'ARCADE-01' }),
-    });
-    expect((await refreshed.json() as Record<string, any>).availableBalance).toBe(1);
+    expect(first.status).toBe(409);
+    expect(second.status).toBe(409);
+    expect((await first.json() as Record<string, any>).error.code).toBe('MESSAGING_IDENTITY_REQUIRED');
+    expect(first.headers.get('set-cookie')).toBeNull();
     const state = (await playerRuntime.getActive()).store.snapshot();
-    expect(Object.keys(state.players)).toHaveLength(2);
-    expect(Object.values(state.wallets).every(wallet => (
-      wallet.transactions.filter(transaction => transaction.type === 'registration_grant').length === 1
-    ))).toBe(true);
+    expect(Object.keys(state.players)).toHaveLength(0);
+    expect(Object.keys(state.wallets)).toHaveLength(0);
   });
 
   it('namespaces one external idempotency key independently for each authenticated player', async () => {
     const { baseUrl, playerRuntime } = await harness({ playerMode: 'lead_capture' });
     const firstCookie = cookieFrom(await createPlayerSession(baseUrl, 'namespace-player-one'));
     const secondCookie = cookieFrom(await createPlayerSession(baseUrl, 'namespace-player-two'));
-    const register = (cookie: string) => fetch(`${baseUrl}/api/arcade/register`, {
+    const register = (cookie: string, phoneNumber: string) => fetch(`${baseUrl}/api/arcade/register`, {
       method: 'POST',
       headers: {
         Cookie: cookie, Origin: 'http://localhost',
         'Content-Type': 'application/json', 'Idempotency-Key': 'same-browser-key',
       },
-      body: JSON.stringify(REGISTRATION),
+      body: JSON.stringify({ ...REGISTRATION, lead: { ...REGISTRATION.lead, phoneNumber } }),
     });
-    const [first, second] = await Promise.all([register(firstCookie), register(secondCookie)]);
+    const [first, second] = await Promise.all([
+      register(firstCookie, '+14155550199'), register(secondCookie, '+14155550200'),
+    ]);
     expect(first.status).toBe(200);
     expect(second.status).toBe(200);
     const state = (await playerRuntime.getActive()).store.snapshot();
@@ -595,12 +1344,12 @@ describe('Arcade API', () => {
       updatedBy: 'admin@twilio.com',
       settings: movedCabinet,
     });
-    expect((await claim('challenge-claim')).status).toBe(200);
+    expect((await claim('challenge-claim')).status).toBe(401);
 
-    const after = await (await fetch(`${baseUrl}/api/arcade/challenges`, {
+    const after = await fetch(`${baseUrl}/api/arcade/challenges`, {
       headers: { Cookie: cookie },
-    })).json() as Record<string, any>;
-    expect(after.challenges[0]).toMatchObject({ claimCount: 1, available: false });
+    });
+    expect(after.status).toBe(401);
   });
 
   it('lets authenticated operators advance and release a player queue journey with audit reasons', async () => {

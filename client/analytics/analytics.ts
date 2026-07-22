@@ -20,7 +20,7 @@ async function checkSession(): Promise<void> {
       auth.hidden = true; dashboard.hidden = false; download.disabled = false;
       el('user').textContent = session.email ?? ''; await refresh(); return;
     }
-    if (session.authenticated && !session.analyticsAuthorized) authMessage.textContent = 'This account is authorized for Arcade operations, not private activation analytics.';
+    if (session.authenticated && !session.analyticsAuthorized) authMessage.textContent = 'This account is authorized for Twilio Games station operations, not private activation analytics.';
     else if (!session.configured) authMessage.textContent = 'Google OAuth is not configured for this deployment.';
     else if (reason === 'email_not_allowed') authMessage.textContent = 'That verified Google account is not authorized. Use a @twilio.com account.';
     else if (reason) authMessage.textContent = 'Google sign-in could not be completed. Please try again.';

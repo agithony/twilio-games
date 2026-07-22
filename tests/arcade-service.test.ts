@@ -11,10 +11,11 @@ import {
 import { availableBalance } from '../shared/arcade-domain';
 import {
   ArcadeService,
+  assertArcadeMutationCapacity,
   type ClaimArcadeChallengeInput,
   type RegisterArcadePlayerInput,
 } from '../server/arcade-service';
-import { ArcadeStateStore } from '../server/arcade-state-store';
+import { ArcadeStateStore, createEmptyArcadeState } from '../server/arcade-state-store';
 import { signArcadeChallengeToken } from '../server/arcade-challenge-token';
 
 const directories: string[] = [];
@@ -24,6 +25,30 @@ const OPERATOR_AUTHORIZATION = Object.freeze({ token: 'trusted-test-operator' })
 const OPERATOR = Object.freeze({
   authorization: OPERATOR_AUTHORIZATION,
   reason: 'test operator action',
+});
+
+it('enforces proactive global and per-player history quotas before hard store limits', () => {
+  const state = createEmptyArcadeState();
+  const generous = {
+    stateBytes: 1_000_000,
+    globalIdempotency: 10,
+    stationHistory: 10,
+    queueHistory: 10,
+    playerServiceHistory: 10,
+    playerWalletHistory: 10,
+  };
+  expect(() => assertArcadeMutationCapacity(state, null, generous)).not.toThrow();
+  expect(() => assertArcadeMutationCapacity(state, null, { ...generous, stateBytes: 1 }))
+    .toThrowError(expect.objectContaining({ code: 'STATE_CAPACITY_EXHAUSTED' }));
+
+  state.idempotencyRecords['history'] = {
+    key: 'history', operation: 'REGISTER_PLAYER', playerId: 'player:one',
+    fingerprint: 'a'.repeat(64), result: null, configVersion: 1,
+    createdAt: '2026-07-20T10:00:00.000Z',
+  };
+  expect(() => assertArcadeMutationCapacity(state, 'player:one', {
+    ...generous, playerServiceHistory: 1,
+  })).toThrowError(expect.objectContaining({ code: 'STATE_CAPACITY_EXHAUSTED' }));
 });
 
 afterEach(async () => {
@@ -39,7 +64,6 @@ function arcadeConfig(
     maxClaimsPerPlayer?: number;
     chargePolicy?: 'per_player' | 'per_match' | 'host_sponsors' | 'free';
     refundOnLobbyTimeout?: boolean;
-    gameCosts?: Partial<Record<'racer' | 'monsters' | 'fighter' | 'trivia', number>>;
   } = {},
 ): ArcadeConfigSnapshot {
   const input = JSON.parse(JSON.stringify(DEFAULT_ARCADE_CONFIG)) as Record<string, any>;
@@ -52,9 +76,6 @@ function arcadeConfig(
     ? 'per_player'
     : chargePolicy;
   input.coins.refundOnLobbyTimeout = overrides.refundOnLobbyTimeout ?? true;
-  input.coins.gameCosts = {
-    racer: 1, monsters: 1, fighter: 1, trivia: 1, ...overrides.gameCosts,
-  };
   input.earning.challenges = [{
     id: 'voice-docs',
     title: 'Read the Voice docs',
@@ -125,6 +146,7 @@ function challengeToken(
 }
 
 function registration(playerId: string, idempotencyKey = `register:${playerId}`): RegisterArcadePlayerInput {
+  const phoneSuffix = String(198 + (Number(/\d+$/.exec(playerId)?.[0]) || 1)).padStart(4, '0');
   return {
     playerId,
     destination: `+1415555${playerId === 'p1' ? '0101' : '0202'}`,
@@ -134,7 +156,7 @@ function registration(playerId: string, idempotencyKey = `register:${playerId}`)
       lastName: ' Lovelace ',
       workEmail: `${playerId.toUpperCase()}@EXAMPLE.COM`,
       companyName: ' Analytical Engines ',
-      phoneNumber: '+1 (415) 555-0199',
+      phoneNumber: `+1 (415) 555-${phoneSuffix}`,
       countryCode: ' uk ',
     },
     termsAccepted: true,
@@ -168,7 +190,7 @@ describe('ArcadeService durable journey', () => {
     const wallet = await h.service.getWalletStatus('p1');
     expect(player).toEqual({ registered: true, firstName: 'Ada', preferredLocale: null });
     expect(wallet).toMatchObject({ ledgerBalance: 2, reservedBalance: 0, availableBalance: 2 });
-    expect(JSON.stringify(player)).not.toMatch(/email|phone|company|destination|crm|lastName/i);
+    expect(JSON.stringify(player)).not.toMatch(/email|phoneNumber|company|destination|crm|lastName/i);
     expect(JSON.stringify(wallet)).not.toMatch(/transaction|reservation|idempotency|player/i);
   });
 
@@ -349,7 +371,7 @@ describe('ArcadeService durable journey', () => {
 
     const { destination: _unverifiedDestination, ...unverified } = registration('p2', 'register:p2:unverified');
     const unverifiedPlayer = await h.service.registerPlayer(unverified);
-    expect(unverifiedPlayer.player.lead?.phoneNumber).toBe('+14155550199');
+    expect(unverifiedPlayer.player.lead?.phoneNumber).toBe('+14155550200');
     expect(unverifiedPlayer.player.trustedDestination).toBeNull();
   });
 });
@@ -524,10 +546,9 @@ describe('ArcadeService atomicity and idempotency', () => {
     expect(await restarted.claimChallenge(same)).toEqual(first);
   });
 
-  it('prices flexible players using the game assigned at check-in', async () => {
+  it('keeps one-coin pricing when a flexible player is assigned at check-in', async () => {
     const h = await harness(arcadeConfig('lead_capture', {
-      startingBalance: 3,
-      gameCosts: { fighter: 1, racer: 3 },
+      startingBalance: 1,
     }));
     await h.service.registerPlayer(registration('p1'));
     const joined = await h.service.joinQueue({
@@ -547,7 +568,7 @@ describe('ArcadeService atomicity and idempotency', () => {
       playerId: 'p1', queueEntryId: joined.entry.id, game: 'racer',
       idempotencyKey: 'flexible:check-in',
     });
-    expect(checkedIn.reservation?.amount).toBe(3);
+    expect(checkedIn.reservation?.amount).toBe(1);
     expect(checkedIn.availableBalance).toBe(0);
     expect(h.store.snapshot().queueEntryConfigs[joined.entry.id]?.assignedGame).toBe('racer');
   });

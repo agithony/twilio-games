@@ -31,6 +31,12 @@ const AUDIT_VERSION = 1;
 const FILE_MODE = 0o600;
 const DIRECTORY_MODE = 0o700;
 const GENESIS_HASH = '0'.repeat(64);
+const LEGACY_CONFIG_SCHEMA_VERSION = 1;
+const STATION_CONFIG_SCHEMA_VERSION = 2;
+const LEGACY_CONFIG_KEYS = [
+  'schemaVersion', 'version', 'updatedAt', 'updatedBy',
+  'arcade', 'registration', 'coins', 'earning', 'queue', 'channels', 'postGame', 'intelligence',
+] as const;
 
 export interface ArcadeConfigStoreFileSystem {
   readFile(file: string): Promise<string>;
@@ -151,6 +157,20 @@ type DegradedMarker = {
   reason: string;
   quarantinePath: string | null;
 };
+
+type ParsedStoredConfig = {
+  snapshot: ArcadeConfigSnapshot;
+  hashConfig: unknown;
+};
+
+type HashableAuditRecord = Readonly<{
+  auditVersion: typeof AUDIT_VERSION;
+  idempotencyKey: string;
+  requestHash: string;
+  previousVersion: number;
+  previousHash: string;
+  config: unknown;
+}>;
 
 const defaultFileSystem: ArcadeConfigStoreFileSystem = {
   readFile: file => readFile(file, 'utf8'),
@@ -331,7 +351,7 @@ export class ArcadeConfigStore {
     let cached: ArcadeConfigSnapshot | null = null;
     if (cacheFile.exists) {
       try {
-        cached = parseArcadeConfig(cacheFile.contents);
+        cached = parseStoredConfig(cacheFile.contents).snapshot;
       } catch { /* The authoritative audit repairs an invalid cache below. */ }
     }
 
@@ -708,18 +728,115 @@ function parseAuditRecord(input: unknown): ArcadeConfigAuditRecord {
   if (typeof object.recordHash !== 'string' || !/^[a-f0-9]{64}$/.test(object.recordHash)) {
     throw new Error('invalid record hash');
   }
+  const storedConfig = parseStoredConfig(object.config);
   const recordWithoutHash: Omit<ArcadeConfigAuditRecord, 'recordHash'> = {
     auditVersion: AUDIT_VERSION,
     idempotencyKey,
     requestHash: object.requestHash,
     previousVersion: object.previousVersion as number,
     previousHash: object.previousHash,
-    config: parseArcadeConfig(object.config),
+    config: storedConfig.snapshot,
   };
-  if (object.recordHash !== hashAuditRecord(recordWithoutHash)) {
+  if (object.recordHash !== hashAuditRecord({ ...recordWithoutHash, config: storedConfig.hashConfig })) {
     throw new Error('record hash mismatch');
   }
   return Object.freeze({ ...recordWithoutHash, recordHash: object.recordHash });
+}
+
+function parseStoredConfig(input: unknown): ParsedStoredConfig {
+  const decoded = typeof input === 'string' ? JSON.parse(input) as unknown : input;
+  if (decoded === null || typeof decoded !== 'object' || Array.isArray(decoded)) {
+    throw new Error('stored config must be an object');
+  }
+  const object = decoded as Record<string, unknown>;
+  if (object.schemaVersion === STATION_CONFIG_SCHEMA_VERSION) {
+    const legacyChannels = object.channels as Record<string, unknown>;
+    const snapshot = parseArcadeConfig({
+      ...object,
+      schemaVersion: 3,
+      channels: {
+        ...legacyChannels,
+        voiceNumbers: { 'en-US': null, 'pt-BR': null },
+      },
+    });
+    return { snapshot, hashConfig: decoded };
+  }
+  if (object.schemaVersion !== LEGACY_CONFIG_SCHEMA_VERSION) {
+    const snapshot = parseArcadeConfig(decoded);
+    return { snapshot, hashConfig: snapshot };
+  }
+
+  const keys = Object.keys(object).sort();
+  const expectedKeys = [...LEGACY_CONFIG_KEYS].sort();
+  if (keys.length !== expectedKeys.length || keys.some((key, index) => key !== expectedKeys[index])) {
+    throw new Error('unexpected or missing schema 1 config fields');
+  }
+  const station = createDefaultArcadeConfig().station;
+  const legacyArcade = object.arcade as { mode?: unknown };
+  const legacyChannels = object.channels as { voice?: unknown; sms?: unknown; whatsapp?: unknown };
+  const legacyCoins = object.coins as Record<string, unknown>;
+  const legacyCosts = legacyCoins.gameCosts as Record<string, unknown>;
+  const legacyPostGame = object.postGame as Record<string, unknown>;
+  const legacyPostGameChannels = Array.isArray(legacyPostGame.channels)
+    ? legacyPostGame.channels
+    : [];
+  const unsupportedPostGame = legacyPostGame.enabled === true && (
+    legacyPostGameChannels.length === 0
+    || legacyPostGameChannels.some(channel => (
+      channel === 'sms' ? legacyChannels.sms !== true
+        : channel === 'whatsapp' ? legacyChannels.whatsapp !== true : false
+    ))
+    || [
+      'includeScore', 'includeLeaderboard', 'includeChallenges', 'includeRematchLink',
+      'includeAchievement', 'includeIntelligenceTip',
+    ].some(field => legacyPostGame[field] === true)
+  );
+  const incompatibleEconomy = legacyCoins.defaultGameCost !== 1
+    || ['racer', 'monsters', 'fighter', 'trivia'].some(game => legacyCosts[game] !== 1)
+    || (legacyCoins.chargePolicy === 'per_player'
+      && (!Number.isSafeInteger(legacyCoins.startingBalance) || (legacyCoins.startingBalance as number) < 1));
+  const disableForSafety = incompatibleEconomy || unsupportedPostGame
+    || (legacyArcade.mode === 'coin_only'
+      && legacyChannels.sms === false && legacyChannels.whatsapp === false);
+  const migratedArcade = disableForSafety
+    ? { ...legacyArcade, mode: 'off' }
+    : object.arcade;
+  const migratedCoins = incompatibleEconomy ? {
+    ...legacyCoins,
+    startingBalance: legacyCoins.chargePolicy === 'per_player'
+      ? Math.max(1, Number.isSafeInteger(legacyCoins.startingBalance)
+        ? legacyCoins.startingBalance as number
+        : 1)
+      : legacyCoins.startingBalance,
+    defaultGameCost: 1,
+    gameCosts: { racer: 1, monsters: 1, fighter: 1, trivia: 1 },
+  } : object.coins;
+  const migratedPostGame = unsupportedPostGame
+    ? { ...legacyPostGame, enabled: false }
+    : object.postGame;
+  const snapshot = parseArcadeConfig({
+    schemaVersion: 3,
+    version: object.version,
+    updatedAt: object.updatedAt,
+    updatedBy: object.updatedBy,
+    arcade: migratedArcade,
+    station,
+    registration: object.registration,
+    coins: migratedCoins,
+    earning: object.earning,
+    queue: object.queue,
+    channels: {
+      ...(object.channels as Record<string, unknown>),
+      voiceNumbers: { 'en-US': null, 'pt-BR': null },
+    },
+    postGame: migratedPostGame,
+    intelligence: object.intelligence,
+  });
+  return {
+    snapshot,
+    // Hash historical records using their untouched v1 shape, not the safe runtime migration.
+    hashConfig: decoded,
+  };
 }
 
 function parseExpectedVersion(value: number): number {
@@ -772,7 +889,7 @@ function hashRequest(
   })).digest('hex');
 }
 
-function hashAuditRecord(record: Omit<ArcadeConfigAuditRecord, 'recordHash'>): string {
+function hashAuditRecord(record: HashableAuditRecord): string {
   return createHash('sha256').update(JSON.stringify(record)).digest('hex');
 }
 

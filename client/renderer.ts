@@ -43,17 +43,18 @@ export class Renderer {
   private ambient: THREE.HemisphereLight;
   private ground!: THREE.Mesh;         // surrounding terrain (theme-tinted); set in buildWorld()
 
-  constructor(mount: HTMLElement, private assets?: AssetLoader) {
+  constructor(private readonly mount: HTMLElement, private assets?: AssetLoader) {
+    const size = this.viewportSize();
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-    this.renderer.setSize(innerWidth, innerHeight);
+    this.renderer.setSize(size.width, size.height);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     // Filmic tone mapping + sRGB output for a far less "flat" look.
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.15;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
-    mount.appendChild(this.renderer.domElement);
+    this.mount.appendChild(this.renderer.domElement);
     this.scene.background = new THREE.Color(0x0b1020);
     this.scene.fog = new THREE.FogExp2(0x0b1020, 0.0016);   // gentle depth haze, far horizon
 
@@ -62,7 +63,7 @@ export class Renderer {
     const pmrem = new THREE.PMREMGenerator(this.renderer);
     this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 
-    this.camera = new THREE.PerspectiveCamera(46, innerWidth / innerHeight, 0.1, 4000);
+    this.camera = new THREE.PerspectiveCamera(46, size.width / size.height, 0.1, 4000);
 
     // Key light (sun) with a real shadow frustum covering the play area.
     this.sun = new THREE.DirectionalLight(0xfff4e2, 2.1);
@@ -84,7 +85,7 @@ export class Renderer {
     this.composer = new EffectComposer(this.renderer);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
     this.bloom = new UnrealBloomPass(
-      new THREE.Vector2(innerWidth, innerHeight),
+      new THREE.Vector2(size.width, size.height),
       0.45,   // strength — subtle, not blown out
       0.7,    // radius
       0.85,   // threshold — only genuinely bright things bloom
@@ -93,10 +94,18 @@ export class Renderer {
     this.composer.addPass(new OutputPass());
 
     addEventListener('resize', () => {
-      this.camera.aspect = innerWidth / innerHeight; this.camera.updateProjectionMatrix();
-      this.renderer.setSize(innerWidth, innerHeight);
-      this.composer.setSize(innerWidth, innerHeight);
+      const next = this.viewportSize();
+      this.camera.aspect = next.width / next.height; this.camera.updateProjectionMatrix();
+      this.renderer.setSize(next.width, next.height);
+      this.composer.setSize(next.width, next.height);
     });
+  }
+
+  private viewportSize(): { width: number; height: number } {
+    return {
+      width: Math.max(1, this.mount.clientWidth || innerWidth),
+      height: Math.max(1, this.mount.clientHeight || innerHeight),
+    };
   }
 
   private composer!: EffectComposer;

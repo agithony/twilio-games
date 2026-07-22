@@ -56,6 +56,26 @@ export class BattleRoom {
     return this.slots.map(s => ({ playerId: s.id, name: s.name, monsterId: s.monsterId, isAi: s.isAi }));
   }
 
+  participantResults(): Array<{
+    enginePlayerId: string;
+    rank: number | null;
+    completed: boolean;
+    won: boolean | null;
+    score: number | null;
+    durationSeconds: number | null;
+  }> {
+    if (this._phase !== 'results' || !this._result) return [];
+    const winnerIndex = this._result.winner === 'a' ? 0 : 1;
+    return this.slots.map((slot, index) => ({
+      enginePlayerId: slot.id,
+      rank: index === winnerIndex ? 1 : 2,
+      completed: true,
+      won: index === winnerIndex,
+      score: null,
+      durationSeconds: null,
+    }));
+  }
+
   /** Add a human player. Battles are 1v1, so at most 2 humans. A late second player may join while
    *  results remain visible, but the finished battle stays intact until an explicit rematch. */
   addPlayer(name: string): { playerId: string } | { error: string } {

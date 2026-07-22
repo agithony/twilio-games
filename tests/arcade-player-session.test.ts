@@ -35,7 +35,7 @@ describe('ArcadePlayerSessionService', () => {
     expect(() => service().verify(`${issued.token}x`, 'ARCADE-01')).toThrow(/signature|malformed/);
     expect(() => service(NOW + ARCADE_PLAYER_SESSION_TTL_SECONDS).verify(issued.token, 'ARCADE-01'))
       .toThrow(/expired/);
-    expect(() => service().verify(issued.token, 'ARCADE-02')).toThrow(/another cabinet/);
+    expect(() => service().verify(issued.token, 'ARCADE-02')).toThrow(/another station/);
     expect(() => service().readCookie(
       `${ARCADE_PLAYER_SESSION_COOKIE}=${issued.token}; ${ARCADE_PLAYER_SESSION_COOKIE}=${issued.token}`,
       'ARCADE-01',

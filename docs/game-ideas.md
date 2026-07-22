@@ -21,8 +21,8 @@ Future design decisions include answer-matching tolerance, simultaneous-answer t
 question categories and difficulty, round length, and whether incorrect answers lock a player out
 for the rest of the question.
 
-## Twilio Arcade Platform
+## Twilio Games Station Platform
 
-The approved plan to evolve this repository into Twilio Arcade, including TAC, lead capture, digital
+The approved plan to evolve the Twilio Games station, including TAC, lead capture, digital
 coins, earning challenges, a smart single-display queue, post-game summaries, Conversation Memory,
-and Conversation Intelligence, is the canonical [Twilio Arcade plan](TWILIO_ARCADE_PLAN.md).
+and Conversation Intelligence, is the canonical [Twilio Games station plan](TWILIO_ARCADE_PLAN.md).

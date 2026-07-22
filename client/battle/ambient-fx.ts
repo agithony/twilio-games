@@ -20,11 +20,11 @@ export class AmbientFx {
   private sparks: Spark[] = [];           // streaking sparks flung out on a flash
   private rings: Ring[] = [];             // expanding shockwave rings on a flash
 
-  constructor(host: HTMLElement) {
+  constructor(private readonly host: HTMLElement) {
     this.canvas = document.createElement('canvas');
     // Fixed, full-viewport, BEHIND the stage/overlay, non-interactive.
     this.canvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;z-index:0;pointer-events:none;display:block';
-    host.insertBefore(this.canvas, host.firstChild);   // first child → lowest sibling in #app
+    this.host.insertBefore(this.canvas, this.host.firstChild);   // first child → lowest sibling in #app
     this.ctx = this.canvas.getContext('2d')!;
     this.resize();
     window.addEventListener('resize', this.resize);
@@ -33,12 +33,13 @@ export class AmbientFx {
 
   private resize = (): void => {
     const dpr = Math.min(2, window.devicePixelRatio || 1);
-    this.canvas.width = Math.floor(window.innerWidth * dpr);
-    this.canvas.height = Math.floor(window.innerHeight * dpr);
+    const w = Math.max(1, this.host.clientWidth || window.innerWidth);
+    const h = Math.max(1, this.host.clientHeight || window.innerHeight);
+    this.canvas.width = Math.floor(w * dpr);
+    this.canvas.height = Math.floor(h * dpr);
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     // Big drifting glow orbs — index-seeded (stable, not random). A handful of large, colorful blobs
     // floating behind the aurora give obvious depth + motion.
-    const w = window.innerWidth, h = window.innerHeight;
     const ORB_HUES = ['#2b6cff', '#8a3cff', '#1fb6c9', '#ff3a6a', '#2ee6a6'];
     this.orbs = Array.from({ length: 6 }, (_, i) => ({
       bx: (0.12 + (i * 0.16) % 0.8) * w,
@@ -55,7 +56,8 @@ export class AmbientFx {
     this.flashColor = color;
     this.tintColor = color;
     this.flashLevel = 1;
-    const w = window.innerWidth, h = window.innerHeight;
+    const w = Math.max(1, this.host.clientWidth || window.innerWidth);
+    const h = Math.max(1, this.host.clientHeight || window.innerHeight);
     const cx = w / 2, cy = h / 2;
     // two shockwave rings, staggered
     this.rings.push({ x: cx, y: cy, r: 20, life: 1, color, delay: 0 });

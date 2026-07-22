@@ -1,4 +1,4 @@
-export const ARCADE_CONFIG_SCHEMA_VERSION = 1 as const;
+export const ARCADE_CONFIG_SCHEMA_VERSION = 3 as const;
 
 export type ArcadeMode = 'off' | 'coin_only' | 'lead_capture';
 export type ArcadeGame = 'racer' | 'monsters' | 'fighter' | 'trivia';
@@ -44,6 +44,38 @@ export type ArcadeSettings = {
   readonly mode: ArcadeMode;
   readonly cabinetId: string;
   readonly displayName: string;
+};
+
+export type StationGame = 'racer' | 'monsters' | 'fighter';
+export type AutomaticSelectionPolicy = 'best_fit_rotation' | 'round_robin' | 'fixed_priority';
+export type StationQrRail = 'auto' | 'always' | 'hidden';
+
+export type StationTimingSettings = {
+  readonly recruitingSeconds: number;
+  readonly hardDeadlineSeconds: number;
+  readonly selectionSeconds: number;
+  readonly lockedSeconds: number;
+  readonly launchTimeoutSeconds: number;
+  readonly resultsSeconds: number;
+  readonly postGameRecruitingSeconds: number;
+};
+
+export type StationGameSettings = {
+  readonly enabled: boolean;
+};
+
+export type StationGamesSettings = Readonly<Record<StationGame, StationGameSettings>>;
+
+export type StationAutomaticSelectionSettings = {
+  readonly policy: AutomaticSelectionPolicy;
+  readonly order: readonly StationGame[];
+};
+
+export type StationSettings = {
+  readonly timings: StationTimingSettings;
+  readonly games: StationGamesSettings;
+  readonly automaticSelection: StationAutomaticSelectionSettings;
+  readonly qrRail: StationQrRail;
 };
 
 export type RegistrationSettings = {
@@ -107,6 +139,10 @@ export type ChannelSettings = {
   readonly voice: boolean;
   readonly sms: boolean;
   readonly whatsapp: boolean;
+  readonly voiceNumbers: Readonly<{
+    readonly 'en-US': string | null;
+    readonly 'pt-BR': string | null;
+  }>;
 };
 
 export type PostGameSettings = {
@@ -133,6 +169,7 @@ export type IntelligenceSettings = {
 
 export type ArcadeConfigSettings = {
   readonly arcade: ArcadeSettings;
+  readonly station: StationSettings;
   readonly registration: RegistrationSettings;
   readonly coins: CoinSettings;
   readonly earning: EarningSettings;
@@ -175,11 +212,12 @@ export class ArcadeConfigValidationError extends Error {
 
 const CONFIG_KEYS = [
   'schemaVersion', 'version', 'updatedAt', 'updatedBy',
-  'arcade', 'registration', 'coins', 'earning', 'queue', 'channels', 'postGame', 'intelligence',
+  'arcade', 'station', 'registration', 'coins', 'earning', 'queue', 'channels', 'postGame', 'intelligence',
 ] as const;
 const SETTINGS_KEYS = [
-  'arcade', 'registration', 'coins', 'earning', 'queue', 'channels', 'postGame', 'intelligence',
+  'arcade', 'station', 'registration', 'coins', 'earning', 'queue', 'channels', 'postGame', 'intelligence',
 ] as const;
+const STATION_GAMES: readonly StationGame[] = ['racer', 'monsters', 'fighter'];
 const REGISTRATION_FIELD_KEYS: readonly RegistrationFieldKey[] = [
   'firstName', 'lastName', 'workEmail', 'companyName', 'phoneNumber', 'countryCode',
 ];
@@ -272,6 +310,11 @@ function integerAt(value: unknown, minimum: number, maximum: number, path: strin
     invalid(path, `expected an integer from ${minimum} through ${maximum}`);
   }
   return value as number;
+}
+
+function stationGameCostAt(value: unknown, path: string): number {
+  if (value !== 1) invalid(path, 'must be exactly 1 because station admission costs one coin per player');
+  return 1;
 }
 
 function enumAt<T extends string>(value: unknown, allowed: readonly T[], path: string): T {
@@ -415,6 +458,84 @@ function parseArcade(value: unknown): ArcadeSettings {
   };
 }
 
+function parseStation(value: unknown, mode: ArcadeMode): StationSettings {
+  const object = exactObject(value, ['timings', 'games', 'automaticSelection', 'qrRail'], '$.station');
+  const timingInput = exactObject(object.timings, [
+    'recruitingSeconds', 'hardDeadlineSeconds', 'selectionSeconds', 'lockedSeconds',
+    'launchTimeoutSeconds', 'resultsSeconds', 'postGameRecruitingSeconds',
+  ], '$.station.timings');
+  const timings: StationTimingSettings = {
+    recruitingSeconds: integerAt(timingInput.recruitingSeconds, 15, 600, '$.station.timings.recruitingSeconds'),
+    hardDeadlineSeconds: integerAt(timingInput.hardDeadlineSeconds, 15, 900, '$.station.timings.hardDeadlineSeconds'),
+    selectionSeconds: integerAt(timingInput.selectionSeconds, 5, 180, '$.station.timings.selectionSeconds'),
+    lockedSeconds: integerAt(timingInput.lockedSeconds, 3, 60, '$.station.timings.lockedSeconds'),
+    launchTimeoutSeconds: integerAt(timingInput.launchTimeoutSeconds, 10, 180, '$.station.timings.launchTimeoutSeconds'),
+    resultsSeconds: integerAt(timingInput.resultsSeconds, 3, 120, '$.station.timings.resultsSeconds'),
+    postGameRecruitingSeconds: integerAt(
+      timingInput.postGameRecruitingSeconds,
+      10,
+      300,
+      '$.station.timings.postGameRecruitingSeconds',
+    ),
+  };
+  if (timings.hardDeadlineSeconds < timings.recruitingSeconds) {
+    invalid('$.station.timings', 'hardDeadlineSeconds cannot be less than recruitingSeconds');
+  }
+  if (timings.hardDeadlineSeconds < timings.postGameRecruitingSeconds) {
+    invalid('$.station.timings', 'hardDeadlineSeconds cannot be less than postGameRecruitingSeconds');
+  }
+  if (timings.postGameRecruitingSeconds < timings.resultsSeconds) {
+    invalid('$.station.timings', 'postGameRecruitingSeconds cannot be less than resultsSeconds');
+  }
+
+  const gameInput = exactObject(object.games, STATION_GAMES, '$.station.games');
+  const games: StationGamesSettings = {
+    racer: parseStationGame(gameInput.racer, '$.station.games.racer'),
+    monsters: parseStationGame(gameInput.monsters, '$.station.games.monsters'),
+    fighter: parseStationGame(gameInput.fighter, '$.station.games.fighter'),
+  };
+  if (mode !== 'off' && !STATION_GAMES.some(game => games[game].enabled)) {
+    invalid('$.station.games', 'at least one game must be enabled when arcade mode is not off');
+  }
+
+  const selectionInput = exactObject(
+    object.automaticSelection,
+    ['policy', 'order'],
+    '$.station.automaticSelection',
+  );
+  if (!Array.isArray(selectionInput.order)) {
+    invalid('$.station.automaticSelection.order', 'expected an array');
+  }
+  if (selectionInput.order.length !== STATION_GAMES.length) {
+    invalid('$.station.automaticSelection.order', 'must contain all three station games exactly once');
+  }
+  const order = selectionInput.order.map((game, index) => (
+    enumAt(game, STATION_GAMES, `$.station.automaticSelection.order[${index}]`)
+  ));
+  if (new Set(order).size !== STATION_GAMES.length) {
+    invalid('$.station.automaticSelection.order', 'must contain all three station games exactly once');
+  }
+
+  return {
+    timings,
+    games,
+    automaticSelection: {
+      policy: enumAt(
+        selectionInput.policy,
+        ['best_fit_rotation', 'round_robin', 'fixed_priority'],
+        '$.station.automaticSelection.policy',
+      ),
+      order,
+    },
+    qrRail: enumAt(object.qrRail, ['auto', 'always', 'hidden'], '$.station.qrRail'),
+  };
+}
+
+function parseStationGame(value: unknown, path: string): StationGameSettings {
+  const object = exactObject(value, ['enabled'], path);
+  return { enabled: booleanAt(object.enabled, `${path}.enabled`) };
+}
+
 function parseRegistrationField(value: unknown, index: number): RegistrationField {
   const path = `$.registration.fields[${index}]`;
   const object = objectAt(value, path);
@@ -483,20 +604,25 @@ function parseCoins(value: unknown): CoinSettings {
   const expiresAfterHours = object.expiresAfterHours === null
     ? null
     : integerAt(object.expiresAfterHours, 1, 87_600, '$.coins.expiresAfterHours');
+  const chargePolicy = enumAt(
+    object.chargePolicy,
+    ['per_player', 'free'] as const,
+    '$.coins.chargePolicy',
+  );
+  const startingBalance = integerAt(object.startingBalance, 0, MAX_COIN_AMOUNT, '$.coins.startingBalance');
+  if (chargePolicy === 'per_player' && startingBalance < 1) {
+    invalid('$.coins.startingBalance', 'must be at least 1 when chargePolicy is per_player');
+  }
   return {
-    startingBalance: integerAt(object.startingBalance, 0, MAX_COIN_AMOUNT, '$.coins.startingBalance'),
-    defaultGameCost: integerAt(object.defaultGameCost, 0, MAX_COIN_AMOUNT, '$.coins.defaultGameCost'),
+    startingBalance,
+    defaultGameCost: stationGameCostAt(object.defaultGameCost, '$.coins.defaultGameCost'),
     gameCosts: {
-      racer: integerAt(costs.racer, 0, MAX_COIN_AMOUNT, '$.coins.gameCosts.racer'),
-      monsters: integerAt(costs.monsters, 0, MAX_COIN_AMOUNT, '$.coins.gameCosts.monsters'),
-      fighter: integerAt(costs.fighter, 0, MAX_COIN_AMOUNT, '$.coins.gameCosts.fighter'),
-      trivia: integerAt(costs.trivia, 0, MAX_COIN_AMOUNT, '$.coins.gameCosts.trivia'),
+      racer: stationGameCostAt(costs.racer, '$.coins.gameCosts.racer'),
+      monsters: stationGameCostAt(costs.monsters, '$.coins.gameCosts.monsters'),
+      fighter: stationGameCostAt(costs.fighter, '$.coins.gameCosts.fighter'),
+      trivia: stationGameCostAt(costs.trivia, '$.coins.gameCosts.trivia'),
     },
-    chargePolicy: enumAt(
-      object.chargePolicy,
-      ['per_player', 'free'] as const,
-      '$.coins.chargePolicy',
-    ),
+    chargePolicy,
     consumeWhen: enumAt(object.consumeWhen, ['match_start'], '$.coins.consumeWhen'),
     expiresAfterHours,
     refundOnLobbyTimeout: booleanAt(object.refundOnLobbyTimeout, '$.coins.refundOnLobbyTimeout'),
@@ -621,12 +747,30 @@ function parseQueue(value: unknown): QueueSettings {
 }
 
 function parseChannels(value: unknown): ChannelSettings {
-  const object = exactObject(value, ['voice', 'sms', 'whatsapp'], '$.channels');
+  const object = exactObject(value, ['voice', 'sms', 'whatsapp', 'voiceNumbers'], '$.channels');
+  const voiceNumbers = exactObject(object.voiceNumbers, ['en-US', 'pt-BR'], '$.channels.voiceNumbers');
+  const englishVoiceNumber = nullablePhoneNumberAt(voiceNumbers['en-US'], '$.channels.voiceNumbers.en-US');
+  const portugueseVoiceNumber = nullablePhoneNumberAt(voiceNumbers['pt-BR'], '$.channels.voiceNumbers.pt-BR');
+  if (englishVoiceNumber !== null && englishVoiceNumber === portugueseVoiceNumber) {
+    invalid('$.channels.voiceNumbers', 'locale voice numbers must be different');
+  }
   return {
     voice: booleanAt(object.voice, '$.channels.voice'),
     sms: booleanAt(object.sms, '$.channels.sms'),
     whatsapp: booleanAt(object.whatsapp, '$.channels.whatsapp'),
+    voiceNumbers: {
+      'en-US': englishVoiceNumber,
+      'pt-BR': portugueseVoiceNumber,
+    },
   };
+}
+
+function nullablePhoneNumberAt(value: unknown, path: string): string | null {
+  if (value === null) return null;
+  if (typeof value !== 'string') invalid(path, 'expected an E.164 number or null');
+  const normalized = value.trim();
+  if (!/^\+[1-9][0-9]{7,14}$/.test(normalized)) invalid(path, 'expected an E.164 number or null');
+  return normalized;
 }
 
 function parsePostGame(value: unknown): PostGameSettings {
@@ -642,7 +786,7 @@ function parsePostGame(value: unknown): PostGameSettings {
     enumAt(channel, ['sms', 'whatsapp'] as const, `$.postGame.channels[${index}]`)
   ));
   if (new Set(channels).size !== channels.length) invalid('$.postGame.channels', 'duplicate channel');
-  return {
+  const postGame: PostGameSettings = {
     enabled: booleanAt(object.enabled, '$.postGame.enabled'),
     channels,
     includeScore: booleanAt(object.includeScore, '$.postGame.includeScore'),
@@ -653,6 +797,22 @@ function parsePostGame(value: unknown): PostGameSettings {
     includeAchievement: booleanAt(object.includeAchievement, '$.postGame.includeAchievement'),
     includeIntelligenceTip: booleanAt(object.includeIntelligenceTip, '$.postGame.includeIntelligenceTip'),
   };
+  if (postGame.enabled && postGame.channels.length === 0) {
+    invalid('$.postGame.channels', 'must contain at least one channel when post-game delivery is enabled');
+  }
+  if (postGame.enabled) {
+    for (const field of [
+      'includeScore',
+      'includeLeaderboard',
+      'includeChallenges',
+      'includeRematchLink',
+      'includeAchievement',
+      'includeIntelligenceTip',
+    ] as const) {
+      if (postGame[field]) invalid(`$.postGame.${field}`, 'is not supported for enabled post-game delivery');
+    }
+  }
+  return postGame;
 }
 
 function parseIntelligence(value: unknown): IntelligenceSettings {
@@ -676,14 +836,25 @@ function parseIntelligence(value: unknown): IntelligenceSettings {
 
 function parseSettingsObject(object: Record<string, unknown>): ArcadeConfigSettings {
   const arcade = parseArcade(object.arcade);
+  const channels = parseChannels(object.channels);
+  if (arcade.mode === 'coin_only' && !channels.sms && !channels.whatsapp) {
+    invalid('$.channels', 'coin_only mode requires SMS or WhatsApp identity');
+  }
+  const postGame = parsePostGame(object.postGame);
+  if (postGame.enabled) {
+    for (const channel of postGame.channels) {
+      if (!channels[channel]) invalid(`$.postGame.channels`, `${channel} must also be enabled in $.channels`);
+    }
+  }
   return {
     arcade,
+    station: parseStation(object.station, arcade.mode),
     registration: parseRegistration(object.registration, arcade.mode),
     coins: parseCoins(object.coins),
     earning: parseEarning(object.earning),
     queue: parseQueue(object.queue),
-    channels: parseChannels(object.channels),
-    postGame: parsePostGame(object.postGame),
+    channels,
+    postGame,
     intelligence: parseIntelligence(object.intelligence),
   };
 }
@@ -751,6 +922,7 @@ export function projectPublicArcadeConfig(input: unknown): PublicArcadeConfig {
     schemaVersion: config.schemaVersion,
     version: config.version,
     arcade: config.arcade,
+    station: config.station,
     registration: config.registration,
     coins: config.coins,
     earning: {
@@ -819,7 +991,28 @@ const DEFAULT_CONFIG_INPUT = {
   arcade: {
     mode: 'off',
     cabinetId: 'ARCADE-01',
-    displayName: 'Twilio Arcade',
+    displayName: 'Twilio Games',
+  },
+  station: {
+    timings: {
+      recruitingSeconds: 90,
+      hardDeadlineSeconds: 120,
+      selectionSeconds: 30,
+      lockedSeconds: 10,
+      launchTimeoutSeconds: 120,
+      resultsSeconds: 10,
+      postGameRecruitingSeconds: 45,
+    },
+    games: {
+      racer: { enabled: true },
+      monsters: { enabled: true },
+      fighter: { enabled: true },
+    },
+    automaticSelection: {
+      policy: 'best_fit_rotation',
+      order: ['racer', 'monsters', 'fighter'],
+    },
+    qrRail: 'auto',
   },
   registration: {
     requiredByDefault: true,
@@ -862,17 +1055,22 @@ const DEFAULT_CONFIG_INPUT = {
     removeAfterMisses: 2,
     snoozeSeconds: 300,
   },
-  channels: { voice: true, sms: false, whatsapp: false },
+  channels: {
+    voice: true,
+    sms: true,
+    whatsapp: false,
+    voiceNumbers: { 'en-US': null, 'pt-BR': null },
+  },
   postGame: {
     enabled: false,
     channels: [],
-    includeScore: true,
-    includeLeaderboard: true,
+    includeScore: false,
+    includeLeaderboard: false,
     includeCoinBalance: true,
-    includeChallenges: true,
-    includeRematchLink: true,
-    includeAchievement: true,
-    includeIntelligenceTip: true,
+    includeChallenges: false,
+    includeRematchLink: false,
+    includeAchievement: false,
+    includeIntelligenceTip: false,
   },
   intelligence: {
     enabled: false,

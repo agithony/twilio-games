@@ -44,7 +44,7 @@ export interface StationReadyEntry {
   readonly originalReadyAt: StationTimestamp;
   readonly readyAt: StationTimestamp;
   readonly status: ReadyEntryStatus;
-  readonly reservationId: string;
+  readonly reservationId: string | null;
   readonly overflowOrdinal: number | null;
 }
 
@@ -62,7 +62,23 @@ export interface StationMatch {
   readonly displayReadyAt: StationTimestamp | null;
   readonly startedAt: StationTimestamp | null;
   readonly completedAt: StationTimestamp | null;
+  readonly enginePlayerIdsByReadyEntryId: Readonly<Record<string, string>>;
+  readonly result: StationMatchResult | null;
   readonly configVersion: number;
+}
+
+export interface StationEngineParticipantResult {
+  readonly enginePlayerId: string;
+  readonly rank: number | null;
+  readonly completed: boolean;
+  readonly won: boolean | null;
+  readonly score: number | null;
+  readonly durationSeconds: number | null;
+}
+
+export interface StationMatchResult {
+  readonly source: 'ENGINE' | 'RECOVERY' | 'LEGACY_UNAVAILABLE';
+  readonly participants: readonly Readonly<StationEngineParticipantResult & { readyEntryId: string }>[];
 }
 
 export interface ArcadeStationAggregate {
@@ -126,7 +142,7 @@ export function insertStationCoin(
     readyEntryId: string;
     roundId: string;
     playerId: string;
-    reservationId: string;
+    reservationId: string | null;
     at: StationTimestamp;
     configVersion: number;
     expectedRevision: number;
@@ -138,13 +154,13 @@ export function insertStationCoin(
   const readyEntryId = identifier(input.readyEntryId, 'ready entry ID');
   const requestedRoundId = identifier(input.roundId, 'round ID');
   const playerId = identifier(input.playerId, 'player ID');
-  const reservationId = identifier(input.reservationId, 'reservation ID');
+  const reservationId = input.reservationId === null ? null : identifier(input.reservationId, 'reservation ID');
   const atMs = timestamp(input.at, 'coin timestamp');
   positiveInteger(input.configVersion, 'config version');
   requireRevision(state, input.expectedRevision);
   requireChronology(state.station, input.at);
   if (state.readyEntries[readyEntryId]) throw new ArcadeStationError('DUPLICATE_READY_ENTRY', 'ready entry already exists');
-  if (Object.values(state.readyEntries).some(entry => entry.reservationId === reservationId
+  if (reservationId !== null && Object.values(state.readyEntries).some(entry => entry.reservationId === reservationId
     && !['COMPLETED', 'LEFT'].includes(entry.status))) {
     throw new ArcadeStationError('DUPLICATE_RESERVATION', 'reservation already belongs to a live ready entry');
   }
@@ -157,7 +173,13 @@ export function insertStationCoin(
   let station = state.station;
   let targetRoundId: string;
   const activeRound = station.activeRoundId ? rounds[station.activeRoundId] : undefined;
-  const acceptsCurrent = station.phase === 'RECRUITING' && activeRound?.phase === 'RECRUITING';
+  const currentDeadline = activeRound
+    ? [activeRound.recruitingEndsAt, activeRound.hardEndsAt]
+      .filter((value): value is string => value !== null)
+      .sort((left, right) => Date.parse(left) - Date.parse(right))[0] ?? null
+    : null;
+  const acceptsCurrent = station.phase === 'RECRUITING' && activeRound?.phase === 'RECRUITING'
+    && (currentDeadline === null || atMs < timestamp(currentDeadline, 'recruiting deadline'));
   if (station.phase === 'ATTRACT' || acceptsCurrent) {
     targetRoundId = station.activeRoundId ?? requestedRoundId;
     if (!activeRound) {
@@ -283,6 +305,8 @@ export function selectStationGame(
     displayReadyAt: null,
     startedAt: null,
     completedAt: null,
+    enginePlayerIdsByReadyEntryId: Object.freeze({}),
+    result: null,
     configVersion: round.configVersion,
   });
   return checked({
@@ -322,7 +346,12 @@ export function requestStationLaunch(
 
 export function markStationMatchStarted(
   state: ArcadeStationAggregate,
-  input: { at: StationTimestamp; expectedRevision: number; redeemedReservationIds: readonly string[] },
+  input: {
+    at: StationTimestamp;
+    expectedRevision: number;
+    redeemedReservationIds: readonly string[];
+    enginePlayerIdsByReadyEntryId?: Readonly<Record<string, string>>;
+  },
 ): ArcadeStationAggregate {
   assertStationInvariants(state);
   requireRevision(state, input.expectedRevision);
@@ -339,11 +368,23 @@ export function markStationMatchStarted(
   }
   const expectedReservations = match.participantReadyEntryIds
     .map(id => state.readyEntries[id]!.reservationId)
+    .filter((id): id is string => id !== null)
     .sort();
   const redeemedReservations = [...input.redeemedReservationIds].sort();
   if (expectedReservations.length !== redeemedReservations.length
     || expectedReservations.some((id, index) => id !== redeemedReservations[index])) {
     throw new ArcadeStationError('RESERVATIONS_NOT_REDEEMED', 'every admitted reservation must be redeemed');
+  }
+  const bindings = input.enginePlayerIdsByReadyEntryId ?? Object.fromEntries(
+    match.participantReadyEntryIds.map(id => [id, `legacy:${id}`]),
+  );
+  const bindingKeys = Object.keys(bindings).sort();
+  const expectedBindingKeys = [...match.participantReadyEntryIds].sort();
+  if (bindingKeys.length !== expectedBindingKeys.length
+    || bindingKeys.some((id, index) => id !== expectedBindingKeys[index])
+    || new Set(Object.values(bindings)).size !== bindingKeys.length
+    || Object.values(bindings).some(id => typeof id !== 'string' || !id.trim())) {
+    throw new ArcadeStationError('ENGINE_BINDINGS_INVALID', 'every admitted player needs one unique engine binding');
   }
   const readyEntries = cloneRecord(state.readyEntries);
   for (const id of match.participantReadyEntryIds) {
@@ -354,13 +395,23 @@ export function markStationMatchStarted(
     station: reviseStation(station, input.at, { phase: 'PLAYING' }),
     rounds: { ...state.rounds, [round.id]: Object.freeze({ ...round, phase: 'PLAYING', startedAt: input.at }) },
     readyEntries,
-    matches: { ...state.matches, [match.id]: Object.freeze({ ...match, phase: 'PLAYING', startedAt: input.at }) },
+    matches: { ...state.matches, [match.id]: Object.freeze({
+      ...match,
+      phase: 'PLAYING',
+      startedAt: input.at,
+      enginePlayerIdsByReadyEntryId: Object.freeze({ ...bindings }),
+    }) },
   });
 }
 
 export function completeStationMatch(
   state: ArcadeStationAggregate,
-  input: { at: StationTimestamp; expectedRevision: number },
+  input: {
+    at: StationTimestamp;
+    expectedRevision: number;
+    engineResults?: readonly StationEngineParticipantResult[];
+    resultSource?: StationMatchResult['source'];
+  },
 ): ArcadeStationAggregate {
   assertStationInvariants(state);
   requireRevision(state, input.expectedRevision);
@@ -372,6 +423,24 @@ export function completeStationMatch(
   }
   const match = state.matches[station.activeMatchId]!;
   const round = state.rounds[station.activeRoundId]!;
+  const bindings = Object.entries(match.enginePlayerIdsByReadyEntryId);
+  let result: StationMatchResult;
+  if (input.engineResults) {
+    const byEngineId = new Map(input.engineResults.map(item => [item.enginePlayerId, item]));
+    if (byEngineId.size !== input.engineResults.length || byEngineId.size !== bindings.length
+      || bindings.some(([, enginePlayerId]) => !byEngineId.has(enginePlayerId))) {
+      throw new ArcadeStationError('ENGINE_RESULTS_INVALID', 'engine results do not match admitted players');
+    }
+    result = Object.freeze({
+      source: input.resultSource ?? 'ENGINE',
+      participants: Object.freeze(bindings.map(([readyEntryId, enginePlayerId]) => {
+        const item = byEngineId.get(enginePlayerId)!;
+        return Object.freeze({ ...item, readyEntryId });
+      })),
+    });
+  } else {
+    result = Object.freeze({ source: input.resultSource ?? 'LEGACY_UNAVAILABLE', participants: Object.freeze([]) });
+  }
   const readyEntries = cloneRecord(state.readyEntries);
   for (const id of match.participantReadyEntryIds) {
     const entry = readyEntries[id]!;
@@ -381,7 +450,9 @@ export function completeStationMatch(
     station: reviseStation(station, input.at, { phase: 'RESULTS' }),
     rounds: { ...state.rounds, [round.id]: Object.freeze({ ...round, phase: 'RESULTS', resultsAt: input.at }) },
     readyEntries,
-    matches: { ...state.matches, [match.id]: Object.freeze({ ...match, phase: 'COMPLETED', completedAt: input.at }) },
+    matches: { ...state.matches, [match.id]: Object.freeze({
+      ...match, phase: 'COMPLETED', completedAt: input.at, result,
+    }) },
   });
 }
 
@@ -394,7 +465,7 @@ export function advanceStationResults(
   validateTiming(timing);
   requireRevision(state, input.expectedRevision);
   requireChronology(state.station, input.at);
-  timestamp(input.at, 'results advance timestamp');
+  const atMs = timestamp(input.at, 'results advance timestamp');
   positiveInteger(input.configVersion, 'config version');
   if (state.station.phase !== 'RESULTS' || !state.station.activeRoundId || !state.station.activeMatchId) {
     throw new ArcadeStationError('RESULTS_NOT_ACTIVE', 'station results are not active');
@@ -421,8 +492,14 @@ export function advanceStationResults(
     const resultsAtMs = timestamp(currentRound.resultsAt, 'results timestamp');
     rounds[nextRoundId] = Object.freeze({
       ...nextRound,
-      recruitingEndsAt: new Date(resultsAtMs + timing.postGameRecruitingSeconds * 1000).toISOString(),
-      hardEndsAt: new Date(resultsAtMs + timing.hardDeadlineSeconds * 1000).toISOString(),
+      recruitingEndsAt: new Date(Math.max(
+        resultsAtMs + timing.postGameRecruitingSeconds * 1000,
+        atMs,
+      )).toISOString(),
+      hardEndsAt: new Date(Math.max(
+        resultsAtMs + timing.hardDeadlineSeconds * 1000,
+        atMs,
+      )).toISOString(),
     });
     overflowEntries.forEach(entry => {
       readyEntries[entry.id] = Object.freeze({
@@ -485,7 +562,8 @@ export function leaveStationReadyEntry(
   let station = state.station;
   const remaining = Object.values(readyEntries).some(candidate => candidate.roundId === entry.roundId
     && ['READY', 'OVERFLOW'].includes(candidate.status));
-  if (!remaining && station.activeRoundId === entry.roundId && station.phase === 'RECRUITING') {
+  if (!remaining && station.activeRoundId === entry.roundId
+    && (station.phase === 'RECRUITING' || station.phase === 'GAME_SELECTION')) {
     rounds[entry.roundId] = Object.freeze({ ...rounds[entry.roundId]!, phase: 'CLOSED', closedAt: input.at });
     const nextRound = station.nextRoundId ? rounds[station.nextRoundId] : undefined;
     const nextHasPlayers = nextRound && Object.values(readyEntries).some(candidate => (
@@ -517,6 +595,60 @@ export function leaveStationReadyEntry(
     rounds,
     readyEntries,
     matches,
+  });
+}
+
+export function dropStationAdmittedEntry(
+  state: ArcadeStationAggregate,
+  input: { readyEntryId: string; at: StationTimestamp; expectedRevision: number },
+): ArcadeStationAggregate {
+  assertStationInvariants(state);
+  requireRevision(state, input.expectedRevision);
+  requireChronology(state.station, input.at);
+  const readyEntryId = identifier(input.readyEntryId, 'ready entry ID');
+  if (!['LOCKED', 'LAUNCHING'].includes(state.station.phase) || !state.station.activeMatchId) {
+    throw new ArcadeStationError('MATCH_NOT_WAITING', 'players can be removed only before gameplay starts');
+  }
+  const match = state.matches[state.station.activeMatchId]!;
+  const target = state.readyEntries[readyEntryId];
+  if (!target || target.status !== 'ADMITTED' || !match.participantReadyEntryIds.includes(readyEntryId)) {
+    throw new ArcadeStationError('READY_ENTRY_NOT_ADMITTED', 'ready entry is not an admitted player');
+  }
+  const ordered = [...match.participantReadyEntryIds.filter(id => id !== readyEntryId), ...match.overflowReadyEntryIds]
+    .map(id => state.readyEntries[id]!)
+    .sort(compareReadyEntries);
+  const capacity = arcadeGameDefinition(match.game).humanCapacity!;
+  const participants = ordered.slice(0, capacity);
+  if (participants.length < arcadeGameDefinition(match.game).minimumHumans!) {
+    throw new ArcadeStationError('MINIMUM_PLAYERS_REQUIRED', 'cannot remove the final admitted player');
+  }
+  const overflow = ordered.slice(capacity);
+  const renewedLaunch = state.station.phase === 'LAUNCHING';
+  const readyEntries = cloneRecord(state.readyEntries);
+  readyEntries[readyEntryId] = Object.freeze({ ...target, status: 'LEFT', overflowOrdinal: null });
+  participants.forEach(entry => {
+    readyEntries[entry.id] = Object.freeze({ ...entry, status: 'ADMITTED', overflowOrdinal: null });
+  });
+  overflow.forEach((entry, index) => {
+    readyEntries[entry.id] = Object.freeze({ ...entry, status: 'OVERFLOW', overflowOrdinal: index + 1 });
+  });
+  return checked({
+    ...state,
+    station: reviseStation(state.station, input.at, {}),
+    readyEntries,
+    matches: {
+      ...state.matches,
+      [match.id]: Object.freeze({
+        ...match,
+        participantReadyEntryIds: Object.freeze(participants.map(entry => entry.id)),
+        overflowReadyEntryIds: Object.freeze(overflow.map(entry => entry.id)),
+        ...(renewedLaunch ? {
+          launchGeneration: match.launchGeneration + 1,
+          launchRequestedAt: input.at,
+          displayReadyAt: null,
+        } : {}),
+      }),
+    },
   });
 }
 
@@ -584,6 +716,55 @@ export function failStationLaunch(
       ...state.matches,
       [match.id]: Object.freeze({ ...match, phase: 'FAILED', completedAt: input.at }),
     },
+  });
+}
+
+export function resetArcadeStation(
+  state: ArcadeStationAggregate,
+  input: { at: StationTimestamp; expectedRevision: number },
+): ArcadeStationAggregate {
+  assertStationInvariants(state);
+  requireRevision(state, input.expectedRevision);
+  requireChronology(state.station, input.at);
+  timestamp(input.at, 'station reset timestamp');
+  if (state.station.phase === 'ATTRACT') {
+    throw new ArcadeStationError('STATION_ALREADY_IDLE', 'station is already idle');
+  }
+
+  const rounds = cloneRecord(state.rounds);
+  for (const roundId of [state.station.activeRoundId, state.station.nextRoundId]) {
+    if (!roundId) continue;
+    const round = rounds[roundId]!;
+    if (round.phase !== 'CLOSED') {
+      rounds[roundId] = Object.freeze({ ...round, phase: 'CLOSED', closedAt: input.at });
+    }
+  }
+
+  const readyEntries = cloneRecord(state.readyEntries);
+  for (const entry of Object.values(readyEntries)) {
+    if (!['COMPLETED', 'LEFT'].includes(entry.status)) {
+      readyEntries[entry.id] = Object.freeze({ ...entry, status: 'LEFT', overflowOrdinal: null });
+    }
+  }
+
+  const matches = cloneRecord(state.matches);
+  for (const match of Object.values(matches)) {
+    if (['PREPARING', 'LAUNCHING', 'PLAYING'].includes(match.phase)) {
+      matches[match.id] = Object.freeze({ ...match, phase: 'FAILED', completedAt: input.at });
+    }
+  }
+
+  return checked({
+    station: reviseStation(state.station, input.at, {
+      phase: 'ATTRACT',
+      activeRoundId: null,
+      nextRoundId: null,
+      activeGame: null,
+      activeMatchId: null,
+    }),
+    rounds,
+    readyEntries,
+    matches,
   });
 }
 
@@ -702,9 +883,11 @@ export function assertStationInvariants(value: ArcadeStationAggregate): void {
     }
     const original = timestamp(entry.originalReadyAt, 'originalReadyAt');
     if (timestamp(entry.readyAt, 'readyAt') < original) throw new ArcadeStationError('INVALID_STATION', 'readyAt precedes originalReadyAt');
-    identifier(entry.reservationId, 'reservation ID');
-    if (seenReservations.has(entry.reservationId)) throw new ArcadeStationError('INVALID_STATION', 'duplicate reservation ID');
-    seenReservations.add(entry.reservationId);
+    if (entry.reservationId !== null) {
+      identifier(entry.reservationId, 'reservation ID');
+      if (seenReservations.has(entry.reservationId)) throw new ArcadeStationError('INVALID_STATION', 'duplicate reservation ID');
+      seenReservations.add(entry.reservationId);
+    }
     if (Date.parse(entry.readyAt) > stationUpdatedAt) {
       throw new ArcadeStationError('INVALID_STATION', 'ready entry timestamp follows station updatedAt');
     }
@@ -749,6 +932,32 @@ export function assertStationInvariants(value: ArcadeStationAggregate): void {
     if (expectedOverflow.some((id, index) => id !== match.overflowReadyEntryIds[index])) {
       throw new ArcadeStationError('INVALID_STATION', 'match overflow assignment is not FIFO');
     }
+    const bindingEntries = Object.entries(match.enginePlayerIdsByReadyEntryId);
+    if (new Set(bindingEntries.map(([, engineId]) => engineId)).size !== bindingEntries.length
+      || bindingEntries.some(([readyEntryId, engineId]) => !match.participantReadyEntryIds.includes(readyEntryId)
+        || typeof engineId !== 'string' || !engineId.trim())) {
+      throw new ArcadeStationError('INVALID_STATION', 'match engine bindings are invalid');
+    }
+    if (['PLAYING', 'COMPLETED'].includes(match.phase)
+      && bindingEntries.length !== match.participantReadyEntryIds.length) {
+      throw new ArcadeStationError('INVALID_STATION', 'playing match lacks engine bindings');
+    }
+    if (match.phase === 'COMPLETED' && !match.result) {
+      throw new ArcadeStationError('INVALID_STATION', 'completed match lacks a result');
+    }
+    if (match.phase !== 'COMPLETED' && match.result !== null) {
+      throw new ArcadeStationError('INVALID_STATION', 'non-completed match has a result');
+    }
+    if (match.result) {
+      const resultIds = match.result.participants.map(item => item.readyEntryId);
+      if (new Set(resultIds).size !== resultIds.length
+        || resultIds.some(id => !match.participantReadyEntryIds.includes(id))) {
+        throw new ArcadeStationError('INVALID_STATION', 'match result participants are invalid');
+      }
+      if (match.result.source === 'ENGINE' && resultIds.length !== match.participantReadyEntryIds.length) {
+        throw new ArcadeStationError('INVALID_STATION', 'engine result is incomplete');
+      }
+    }
     const lifecycle = [match.launchRequestedAt, match.displayReadyAt, match.startedAt, match.completedAt]
       .filter((date): date is string => date !== null)
       .map(date => timestamp(date, 'match timestamp'));
@@ -773,7 +982,8 @@ export function assertStationInvariants(value: ArcadeStationAggregate): void {
       && (!match.launchRequestedAt || !match.displayReadyAt || !match.startedAt || !match.completedAt)) {
       throw new ArcadeStationError('INVALID_STATION', 'completed match lacks timestamp evidence');
     }
-    if (match.phase === 'FAILED' && (!match.completedAt || match.startedAt)) {
+    if (match.phase === 'FAILED' && (!match.completedAt
+      || (match.startedAt && (!match.launchRequestedAt || !match.displayReadyAt)))) {
       throw new ArcadeStationError('INVALID_STATION', 'failed match timestamp evidence is invalid');
     }
     if (station.activeMatchId === match.id) {
@@ -938,5 +1148,8 @@ function validateTiming(value: StationTimingPolicy): void {
   for (const [field, seconds] of Object.entries(value)) positiveInteger(seconds, field);
   if (value.hardDeadlineSeconds < value.recruitingSeconds) {
     throw new ArcadeStationError('INVALID_INPUT', 'hard deadline must not precede recruiting deadline');
+  }
+  if (value.hardDeadlineSeconds < value.postGameRecruitingSeconds) {
+    throw new ArcadeStationError('INVALID_INPUT', 'hard deadline must not precede post-game recruiting deadline');
   }
 }

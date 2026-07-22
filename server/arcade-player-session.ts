@@ -72,11 +72,11 @@ export class ArcadePlayerSessionService {
       const index = part.indexOf('=');
       if (index < 0 || part.slice(0, index).trim() !== ARCADE_PLAYER_SESSION_COOKIE) continue;
       try { values.push(decodeURIComponent(part.slice(index + 1).trim())); }
-      catch { throw new ArcadePlayerSessionError('MALFORMED_COOKIE', 'Arcade player session cookie is malformed'); }
+      catch { throw new ArcadePlayerSessionError('MALFORMED_COOKIE', 'Twilio Games player session cookie is malformed'); }
     }
     if (values.length === 0) return null;
     if (values.length !== 1) {
-      throw new ArcadePlayerSessionError('DUPLICATE_COOKIE', 'multiple Arcade player session cookies were supplied');
+      throw new ArcadePlayerSessionError('DUPLICATE_COOKIE', 'multiple Twilio Games player session cookies were supplied');
     }
     return this.verify(values[0]!, audience);
   }
@@ -89,7 +89,7 @@ export class ArcadePlayerSessionService {
 function secretBuffer(secret: ArcadePlayerSessionSecret): Buffer {
   const value = typeof secret === 'string' ? Buffer.from(secret, 'utf8') : Buffer.from(secret);
   if (value.byteLength < 32) {
-    throw new ArcadePlayerSessionError('WEAK_SECRET', 'Arcade player session secret must be at least 32 bytes');
+    throw new ArcadePlayerSessionError('WEAK_SECRET', 'Twilio Games player session secret must be at least 32 bytes');
   }
   return value;
 }
@@ -111,20 +111,20 @@ function epochSeconds(value: unknown, field: string): number {
 
 function validatePayload(value: unknown): ArcadePlayerSessionPayload {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-    throw new ArcadePlayerSessionError('INVALID_PAYLOAD', 'Arcade player session payload must be an object');
+    throw new ArcadePlayerSessionError('INVALID_PAYLOAD', 'Twilio Games player session payload must be an object');
   }
   const object = value as Record<string, unknown>;
   const keys = Object.keys(object).sort();
   if (keys.length !== 6 || keys.join(',') !== 'audience,expiry,issuedAt,jti,player,v') {
-    throw new ArcadePlayerSessionError('INVALID_PAYLOAD', 'Arcade player session payload has unexpected fields');
+    throw new ArcadePlayerSessionError('INVALID_PAYLOAD', 'Twilio Games player session payload has unexpected fields');
   }
   if (object.v !== ARCADE_PLAYER_SESSION_VERSION) {
-    throw new ArcadePlayerSessionError('INVALID_VERSION', 'unsupported Arcade player session version');
+    throw new ArcadePlayerSessionError('INVALID_VERSION', 'unsupported Twilio Games player session version');
   }
   const issuedAt = epochSeconds(object.issuedAt, 'issuedAt');
   const expiry = epochSeconds(object.expiry, 'expiry');
   if (expiry <= issuedAt || expiry - issuedAt > ARCADE_PLAYER_SESSION_TTL_SECONDS) {
-    throw new ArcadePlayerSessionError('INVALID_PAYLOAD', 'Arcade player session lifetime is invalid');
+    throw new ArcadePlayerSessionError('INVALID_PAYLOAD', 'Twilio Games player session lifetime is invalid');
   }
   return Object.freeze({
     v: ARCADE_PLAYER_SESSION_VERSION,
@@ -141,7 +141,7 @@ function signPayload(payload: ArcadePlayerSessionPayload, secret: Buffer): strin
   const signature = createHmac('sha256', secret).update(encoded, 'ascii').digest('base64url');
   const token = `${encoded}.${signature}`;
   if (Buffer.byteLength(token, 'utf8') > ARCADE_PLAYER_SESSION_MAX_BYTES) {
-    throw new ArcadePlayerSessionError('TOKEN_TOO_LARGE', 'Arcade player session token is too large');
+    throw new ArcadePlayerSessionError('TOKEN_TOO_LARGE', 'Twilio Games player session token is too large');
   }
   return token;
 }
@@ -154,30 +154,30 @@ function verifyToken(
 ): ArcadePlayerSessionPayload {
   if (typeof token !== 'string' || token.length === 0
     || Buffer.byteLength(token, 'utf8') > ARCADE_PLAYER_SESSION_MAX_BYTES) {
-    throw new ArcadePlayerSessionError('MALFORMED_TOKEN', 'Arcade player session token is malformed');
+    throw new ArcadePlayerSessionError('MALFORMED_TOKEN', 'Twilio Games player session token is malformed');
   }
   const parts = token.split('.');
-  if (parts.length !== 2) throw new ArcadePlayerSessionError('MALFORMED_TOKEN', 'Arcade player session token is malformed');
+  if (parts.length !== 2) throw new ArcadePlayerSessionError('MALFORMED_TOKEN', 'Twilio Games player session token is malformed');
   const payloadPart = canonicalBase64Url(parts[0]!, 'payload');
   const supplied = canonicalBase64Url(parts[1]!, 'signature');
   const expected = createHmac('sha256', secret).update(parts[0]!, 'ascii').digest();
   const comparable = supplied.byteLength === expected.byteLength ? supplied : Buffer.alloc(expected.byteLength);
   if (!timingSafeEqual(expected, comparable) || supplied.byteLength !== expected.byteLength) {
-    throw new ArcadePlayerSessionError('INVALID_SIGNATURE', 'Arcade player session signature is invalid');
+    throw new ArcadePlayerSessionError('INVALID_SIGNATURE', 'Twilio Games player session signature is invalid');
   }
   let decoded: unknown;
   try { decoded = JSON.parse(payloadPart.toString('utf8')) as unknown; }
-  catch { throw new ArcadePlayerSessionError('INVALID_PAYLOAD', 'Arcade player session payload is invalid'); }
+  catch { throw new ArcadePlayerSessionError('INVALID_PAYLOAD', 'Twilio Games player session payload is invalid'); }
   const payload = validatePayload(decoded);
   const audience = requireIdentifier(audienceInput, 'expected audience');
   if (payload.audience !== audience) {
-    throw new ArcadePlayerSessionError('WRONG_AUDIENCE', 'Arcade player session belongs to another cabinet');
+    throw new ArcadePlayerSessionError('WRONG_AUDIENCE', 'Twilio Games player session belongs to another station');
   }
   const now = epochSeconds(nowInput, 'session clock');
   if (payload.issuedAt > now + MAX_CLOCK_SKEW_SECONDS) {
-    throw new ArcadePlayerSessionError('NOT_YET_VALID', 'Arcade player session was issued in the future');
+    throw new ArcadePlayerSessionError('NOT_YET_VALID', 'Twilio Games player session was issued in the future');
   }
-  if (now >= payload.expiry) throw new ArcadePlayerSessionError('EXPIRED', 'Arcade player session has expired');
+  if (now >= payload.expiry) throw new ArcadePlayerSessionError('EXPIRED', 'Twilio Games player session has expired');
   return payload;
 }
 

@@ -48,7 +48,7 @@ export type ClientMessage =
   | { type: 'intent'; intent: Intent }
   | { type: 'ready' }
   | { type: 'restart' }
-  | { type: 'spectate'; roomCode: string; locale?: SupportedLocale }
+  | { type: 'spectate'; roomCode: string; locale?: SupportedLocale; displayToken?: string }
   | { type: 'leave' }                              // drop this conn's player slot but stay connected (→ spectator)
   | { type: 'select_car'; carIndex: number }      // player claims a car (car_select phase)
   | { type: 'select_map'; map: string }           // pick the level (map_select phase)

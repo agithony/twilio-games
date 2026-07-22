@@ -245,6 +245,15 @@ describe('GameServer integration', () => {
     expect(heard).toContain('finish');
     expect(heard).toContain('race_over');
   });
+
+  it('hard-aborts a station room', async () => {
+    server = new GameServer({ port: 0 });
+    await server.start();
+    server.getOrCreateRoom('ABORT').addPlayer('Caller');
+    expect(server.abortRoom('ABORT')).toBe(true);
+    expect(server.findRoom('ABORT')).toBeUndefined();
+    expect(server.abortRoom('ABORT')).toBe(false);
+  });
 });
 
 describe('HttpServer voice routing seams', () => {

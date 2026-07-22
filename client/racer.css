@@ -33,6 +33,7 @@
 
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--ink); font-family: var(--text); }
+#app { position: fixed; inset: 0; }
 
 /* ───────── Boot veil (covers scene assembly; fades out when attract is ready) ───────── */
 #veil {
@@ -308,13 +309,14 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); c
   border-radius: 10px; padding: 8px 12px; font-size: 13px; color: var(--ink); animation: chip-in .25s ease both; }
 #music-toggle-container .music-toggle {
   position: absolute; right: 16px; bottom: 16px; z-index: 20; cursor: pointer;
-  background: var(--glass-2); border: 1px solid var(--glass-brd); border-radius: 12px;
-  padding: 9px 14px; color: var(--ink-dim); font-family: var(--text); font-size: 13px; backdrop-filter: blur(10px);
-  display: flex; align-items: center; gap: 6px; text-decoration: none; outline: none;
+  width:38px;height:38px;background: var(--glass-2); border: 1px solid var(--glass-brd); border-radius: 10px;
+  padding:0;color: var(--ink-dim); backdrop-filter: blur(10px);
+  display: flex; align-items: center; justify-content:center;text-decoration: none; outline: none;
 }
 #music-toggle-container .music-toggle:hover { color: var(--ink); border-color: var(--glass-brd-2); }
+#music-toggle-container .music-toggle:focus-visible { outline:3px solid #2188EF;outline-offset:3px; }
 #music-toggle-container .music-toggle-icon { display: flex; align-items: center; line-height: 0; }
-#music-toggle-container .music-toggle-icon svg { width: 14px; height: 14px; stroke: currentColor; }
+#music-toggle-container .music-toggle-icon svg { width: 18px; height: 18px; stroke: currentColor; }
 
 /* ── Personal in-race gauge: power (nitro) charge + boost/brake bar ──
    Hidden by default; main.ts adds .show only for a genuine local player (never on a shared
@@ -375,10 +377,40 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); c
 body.in-menu #hud, body.in-menu #hint, body.in-menu #ticker, body.in-menu #gauge, body.in-menu #music-toggle-container { opacity: 0; pointer-events: none; transition: opacity .3s; }
 
 @media (max-width: 520px) {
+  #screens { overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+  .scr-head { flex: none; padding: 62px 12px 4px; }
+  .scr-title { margin-top: 4px; font-size: 32px; }
+  .scr-state { font-size: 14px; letter-spacing: .16em; }
+  .scr-sub { padding: 0 8px; font-size: 13px; }
+  .scr-body { flex: none; width: 100%; overflow: visible; padding: 8px 10px 14px; }
+  .scr-center, .scr-center.lobby-grid { flex: none; width: 100%; justify-content: flex-start; gap: 16px; }
+  .scr-center.lobby-grid { flex-direction: column; flex-wrap: nowrap; padding: 8px 10px 20px; }
+  .lobby-grid .lobby-main, .join-flow { width: 100%; gap: 14px; }
+  .join-qrs { gap: 8px; flex-wrap: wrap; }
+  .join-qr { flex: 1 1 145px; min-width: 0; gap: 6px; }
+  .join-qr img { width: min(100%, 160px); height: auto; padding: 8px; border-radius: 12px; }
+  .join-steps { width: 100%; gap: 8px; }
+  .join-steps li { gap: 9px; font-size: 14px; }
+  .join-steps .step-n { width: 28px; height: 28px; font-size: 14px; }
+  .join-steps .num, .join-steps .step-t > .num:not(.num-unset) { font-size: 17px; }
+  .controls-legend { width: 100%; min-width: 0; padding: 16px; }
+  .controls-legend .cl-title { font-size: 21px; }
+  .cl-row { grid-template-columns: minmax(108px,.8fr) 1fr; gap: 9px; padding: 8px 0; }
+  .cl-say, .cl-action { font-size: 13px; }
+  .chips { padding: 2px 0 6px; }
+  .chip { padding: 8px 12px; }
+  .scr-foot { padding: 10px 12px 18px; font-size: 13px; }
+  .grid { flex: none; grid-template-columns: repeat(2,minmax(0,1fr)) !important; grid-auto-rows: minmax(150px,190px); gap: 8px; }
+  .tile { min-height: 150px; }
+  .maps { grid-template-columns: 1fr; gap: 12px; padding: 0 10px; }
+  .map .thumb { height: 150px; }
+  .results-wrap { flex: none; flex-direction: column; align-items: stretch; gap: 18px; padding: 10px; }
+  .res-row, .res-row.win { gap: 8px; padding: 11px 10px; }
+  .res-row .place { width: 52px; }
+  .res-row .rcar { display: none; }
+  .res-row .rtime { width: 82px; }
+  .board { width: 100%; }
   .game-home { top: max(10px, env(safe-area-inset-top)); left: max(10px, env(safe-area-inset-left)); padding: 10px 12px; }
   #hud { top: 10px; left: 104px; }
   #hud .htitle { display: none; }
 }
-
-
-

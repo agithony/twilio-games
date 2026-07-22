@@ -53,13 +53,24 @@ function latestState(client: Client): Message | undefined {
 describe('FighterServer WebSocket authority and lifecycle', () => {
   it('requires the configured display token before granting host authority', async () => {
     const port = await start('secret'); const display = await connect(port);
+    fighter!.setBrowserPlayerAdmission(() => false);
     await waitFor(display, message => message.type === 'fighter_capabilities' && message.displayAuth === true);
     send(display, { type: 'spectate', roomCode: 'SECURE' });
-    await waitFor(display, message => message.type === 'host_identity' && message.isHost === false);
+    await waitFor(display, message => message.type === 'error' && message.code === 'bad_display_auth');
     send(display, { type: 'display_auth', roomCode: 'SECURE', token: 'wrong' });
     await waitFor(display, message => message.type === 'error' && message.code === 'bad_display_auth');
     send(display, { type: 'display_auth', roomCode: 'SECURE', token: 'secret' });
+    send(display, { type: 'spectate', roomCode: 'SECURE' });
     await waitFor(display, message => message.type === 'host_identity' && message.isHost === true);
+  });
+
+  it('grants a standalone display host authority without a station token', async () => {
+    const port = await start('station-secret'); const display = await connect(port);
+    send(display, { type: 'spectate', roomCode: 'FREEPLAY' });
+    await waitFor(display, message => message.type === 'host_identity' && message.isHost === true);
+    fighter!.voiceJoin('FREEPLAY', 'Ada');
+    send(display, { type: 'advance' });
+    await waitFor(display, message => message.type === 'fighter_state' && message.phase === 'fighter_select');
   });
   it('canonicalizes room codes and prevents a joined connection taking over another room', async () => {
     const port = await start(); const host = await connect(port); const player = await connect(port);
@@ -212,5 +223,13 @@ describe('FighterServer WebSocket authority and lifecycle', () => {
     expect(room.phase).toBe('fight');
     expect(fighter!.voiceCommand('VOICE', p1, 'forward')).toBe(true);
     expect(fighter!.voiceCommand('VOICE', p1, 'forward')).toBe(true);
+  });
+
+  it('hard-aborts a station room and reconnect state', async () => {
+    await start();
+    expect(fighter!.voiceJoin(' abort ', 'Caller')).not.toBeNull();
+    expect(fighter!.abortRoom('ABORT')).toBe(true);
+    expect(fighter!.findRoom('ABORT')).toBeUndefined();
+    expect(fighter!.abortRoom('ABORT')).toBe(false);
   });
 });

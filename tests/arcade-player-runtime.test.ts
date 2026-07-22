@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DEFAULT_ARCADE_CONFIG, type ArcadeConfigSettings } from '../shared/arcade-config';
 import { ArcadeConfigStore } from '../server/arcade-config-store';
+import { ArcadeApi } from '../server/arcade-api';
 import { ArcadeEventHub } from '../server/arcade-events';
 import { ArcadePlayerRuntime } from '../server/arcade-player-runtime';
 import { ArcadeStateStore } from '../server/arcade-state-store';
@@ -60,6 +61,29 @@ describe('ArcadePlayerRuntime', () => {
     await h.runtime.stop();
   });
 
+  it('does not construct outbound credentials while mode is off', async () => {
+    const h = await harness();
+    let transportCreates = 0;
+    const runtime = new ArcadePlayerRuntime({
+      configStore: h.store,
+      events: h.events,
+      stateFile: h.stateFile,
+      publicBaseUrl: 'https://arcade.example',
+      signingSecret: () => SECRET,
+      outboundMessaging: {
+        enabled: () => true,
+        createTransport: () => {
+          transportCreates++;
+          throw new Error('credentials should remain lazy');
+        },
+      },
+    });
+    await runtime.start();
+    expect(transportCreates).toBe(0);
+    expect(runtime.getMessagingStatus()).toBeNull();
+    await runtime.stop();
+  });
+
   it('initializes once for concurrent requests after enable and exposes signed sessions', async () => {
     const h = await harness();
     let opens = 0;
@@ -114,6 +138,98 @@ describe('ArcadePlayerRuntime', () => {
     });
     expect(runtime.getStatus().mode).toBe('off');
     await runtime.stop();
+  });
+
+  it('reports config degradation, blocks new value mutations, and permits cleanup', async () => {
+    const h = await harness();
+    await h.runtime.start();
+    const enabled = settings('lead_capture') as Record<string, any>;
+    enabled.earning.challenges = [{
+      id: 'voice-docs', title: 'Read the Voice docs', url: 'https://www.twilio.com/docs/voice',
+      rewardCoins: 1, enabled: true, maxClaimsPerPlayer: 1, displayOrder: 0,
+      startsAt: null, endsAt: null,
+    }];
+    await h.store.update({
+      expectedVersion: 1, idempotencyKey: 'degraded-enable', updatedBy: 'admin@twilio.com',
+      settings: enabled,
+    });
+    const active = await h.runtime.getActive();
+    const registrationInput = {
+      playerId: 'player:degraded',
+      idempotencyKey: 'degraded-register',
+      lead: {
+        firstName: 'Ada', lastName: 'Lovelace', workEmail: 'ada@example.com',
+        companyName: 'Analytical Engines', phoneNumber: '+14155550199', countryCode: 'US',
+      },
+      termsAccepted: true,
+    } as const;
+    await active.service.registerPlayer(registrationInput);
+    const joined = await active.service.joinQueue({
+      playerId: registrationInput.playerId,
+      preferredGame: 'racer',
+      idempotencyKey: 'degraded-queue-join',
+    });
+    await h.runtime.stop();
+    await appendFile(h.store.auditPath, 'not-json\n');
+
+    const events = new ArcadeEventHub();
+    const store = new ArcadeConfigStore({ directory: path.dirname(h.store.cachePath), events });
+    const runtime = new ArcadePlayerRuntime({
+      configStore: store,
+      events,
+      stateFile: h.stateFile,
+      publicBaseUrl: 'https://arcade.example',
+      signingSecret: () => SECRET,
+    });
+    const api = new ArcadeApi({
+      configStore: store,
+      events,
+      playerRuntime: runtime,
+      publicBaseUrl: 'https://arcade.example',
+      authorizeAdmin: () => null,
+    });
+    await api.start();
+    expect(store.getStatus().degraded).toBe(true);
+    expect(api.getHealthStatus()).toEqual({ degraded: true });
+    await expect(runtime.getActive()).rejects.toMatchObject({ code: 'CONFIG_DEGRADED' });
+
+    const cleanup = await runtime.getForCleanup();
+    await expect(cleanup.service.insertStationCoin({
+      stationId: 'ARCADE-01', playerId: registrationInput.playerId,
+      idempotencyKey: 'degraded-station-admission',
+    })).rejects.toMatchObject({ code: 'CONFIG_DEGRADED' });
+    await expect(cleanup.service.checkInQueueEntry({
+      playerId: registrationInput.playerId,
+      queueEntryId: joined.entry.id,
+      game: 'racer',
+      idempotencyKey: 'degraded-spending',
+    })).rejects.toMatchObject({ code: 'CONFIG_DEGRADED' });
+    const issuedAt = Math.floor(Date.now() / 1000);
+    const token = cleanup.challenges.sign({
+      v: 1,
+      player: registrationInput.playerId,
+      challenge: 'voice-docs',
+      audience: 'ARCADE-01',
+      jti: 'degraded-reward-token',
+      issuedAt,
+      expiry: issuedAt + 60,
+    });
+    await expect(cleanup.service.claimChallenge({
+      playerId: registrationInput.playerId,
+      challengeId: 'voice-docs',
+      token,
+      idempotencyKey: 'degraded-reward',
+    })).rejects.toMatchObject({ code: 'CONFIG_DEGRADED' });
+
+    await expect(cleanup.service.registerPlayer(registrationInput)).resolves.toMatchObject({
+      player: { id: registrationInput.playerId },
+    });
+    await expect(cleanup.service.leaveQueue({
+      playerId: registrationInput.playerId,
+      queueEntryId: joined.entry.id,
+      idempotencyKey: 'degraded-cleanup-leave',
+    })).resolves.toMatchObject({ entry: { status: 'LEFT_QUEUE' } });
+    await api.stop();
   });
 
   it('lazy-loads persisted state for authenticated cleanup after an off-mode restart', async () => {

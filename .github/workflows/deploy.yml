@@ -42,6 +42,74 @@ jobs:
         with:
           lfs: true
 
+      - name: Validate production credentials
+        env:
+          TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
+          TWILIO_PT_AUTH_TOKEN: ${{ secrets.TWILIO_PT_AUTH_TOKEN }}
+          TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
+          TWILIO_API_KEY: ${{ secrets.TWILIO_API_KEY }}
+          TWILIO_API_SECRET: ${{ secrets.TWILIO_API_SECRET }}
+          ARCADE_SIGNING_SECRET: ${{ secrets.ARCADE_SIGNING_SECRET }}
+          ARCADE_DISPLAY_TOKEN: ${{ secrets.ARCADE_DISPLAY_TOKEN }}
+          VOICE_RELAY_TOKEN: ${{ secrets.VOICE_RELAY_TOKEN }}
+          ARCADE_OUTBOUND_MESSAGING_ENABLED: ${{ vars.ARCADE_OUTBOUND_MESSAGING_ENABLED }}
+          GAME_PHONE_NUMBER: ${{ vars.GAME_PHONE_NUMBER }}
+          TWILIO_SMS_NUMBER: ${{ vars.TWILIO_SMS_NUMBER }}
+          TWILIO_WHATSAPP_NUMBER: ${{ vars.TWILIO_WHATSAPP_NUMBER }}
+          TWILIO_CONVERSATION_CONFIGURATION_ID: ${{ vars.TWILIO_CONVERSATION_CONFIGURATION_ID }}
+        run: |
+          if [ -z "$TWILIO_AUTH_TOKEN" ]; then
+            echo "TWILIO_AUTH_TOKEN is required for fail-closed production webhooks." >&2
+            exit 1
+          fi
+          if [ -z "$TWILIO_PT_AUTH_TOKEN" ] || [ "$TWILIO_PT_AUTH_TOKEN" = "$TWILIO_AUTH_TOKEN" ]; then
+            echo "TWILIO_PT_AUTH_TOKEN is required and must belong to the separate Portuguese Voice account." >&2
+            exit 1
+          fi
+          if [[ ! "$ARCADE_SIGNING_SECRET" =~ ^[0-9A-Fa-f]{64}$ ]]; then
+            echo "ARCADE_SIGNING_SECRET must contain exactly 64 hexadecimal characters." >&2
+            exit 1
+          fi
+          if [ "${#ARCADE_DISPLAY_TOKEN}" -lt 16 ]; then
+            echo "ARCADE_DISPLAY_TOKEN must contain at least 16 characters." >&2
+            exit 1
+          fi
+          if [ "${#VOICE_RELAY_TOKEN}" -lt 32 ]; then
+            echo "VOICE_RELAY_TOKEN must contain at least 32 characters and must not reuse TWILIO_AUTH_TOKEN." >&2
+            exit 1
+          fi
+          if [ "$VOICE_RELAY_TOKEN" = "$TWILIO_AUTH_TOKEN" ]; then
+            echo "VOICE_RELAY_TOKEN must be independent from TWILIO_AUTH_TOKEN." >&2
+            exit 1
+          fi
+          if [[ ! "$TWILIO_ACCOUNT_SID" =~ ^AC[0-9A-Fa-f]{32}$ ]] \
+            || [[ ! "$TWILIO_API_KEY" =~ ^SK[0-9A-Fa-f]{32}$ ]] \
+            || [ "${#TWILIO_API_SECRET}" -lt 16 ]; then
+            echo "TAC and Conversation Memory require a valid Twilio Account SID, API key SID, and API secret." >&2
+            exit 1
+          fi
+          if [[ ! "$TWILIO_CONVERSATION_CONFIGURATION_ID" =~ ^conv_configuration_[0-9a-z]{26}$ ]]; then
+            echo "TWILIO_CONVERSATION_CONFIGURATION_ID must match conv_configuration_<26 lowercase letters or digits>." >&2
+            exit 1
+          fi
+          if [[ ! "$TWILIO_SMS_NUMBER" =~ ^\+[1-9][0-9]{7,14}$ ]]; then
+            echo "TAC requires TWILIO_SMS_NUMBER in E.164 format." >&2
+            exit 1
+          fi
+          if [ -n "$TWILIO_WHATSAPP_NUMBER" ] \
+            && [[ ! "${TWILIO_WHATSAPP_NUMBER#whatsapp:}" =~ ^\+[1-9][0-9]{7,14}$ ]]; then
+            echo "TWILIO_WHATSAPP_NUMBER must be empty or an E.164 number." >&2
+            exit 1
+          fi
+          if [ "$ARCADE_OUTBOUND_MESSAGING_ENABLED" = "true" ]; then
+            if [[ ! "$TWILIO_ACCOUNT_SID" =~ ^AC[0-9A-Fa-f]{32}$ ]] \
+              || [[ ! "$TWILIO_API_KEY" =~ ^SK[0-9A-Fa-f]{32}$ ]] \
+              || [ "${#TWILIO_API_SECRET}" -lt 16 ]; then
+              echo "Outbound messaging requires a valid Twilio Account SID, API key SID, and API secret." >&2
+              exit 1
+            fi
+          fi
+
       - name: Login to Azure
         uses: azure/login@v3
         with:
@@ -58,6 +126,7 @@ jobs:
 
       - name: Ensure Container Registry exists
         run: |
+          # shellcheck disable=SC2086 # RESOURCE_TAGS intentionally expands into key=value arguments.
           az acr show --name "$ACR_NAME" --resource-group "$RESOURCE_GROUP" 2>/dev/null || \
           az acr create \
             --name "$ACR_NAME" \
@@ -69,6 +138,7 @@ jobs:
 
       - name: Ensure Storage Account exists
         run: |
+          # shellcheck disable=SC2086 # RESOURCE_TAGS intentionally expands into key=value arguments.
           az storage account show --name "$STORAGE_ACCOUNT" --resource-group "$RESOURCE_GROUP" 2>/dev/null || \
           az storage account create \
             --name "$STORAGE_ACCOUNT" \
@@ -97,6 +167,7 @@ jobs:
         # (the failure surfaces as a confusing CLI JSONDecodeError). Pre-create the workspace WITH
         # the required tag and pass it to env create so nothing untagged is generated.
         run: |
+          # shellcheck disable=SC2086 # RESOURCE_TAGS intentionally expands into key=value arguments.
           az monitor log-analytics workspace show \
             --workspace-name "$LAW_NAME" --resource-group "$RESOURCE_GROUP" 2>/dev/null || \
           az monitor log-analytics workspace create \
@@ -115,6 +186,7 @@ jobs:
             --workspace-name "$LAW_NAME" --resource-group "$RESOURCE_GROUP" --query customerId -o tsv)
           LAW_KEY=$(az monitor log-analytics workspace get-shared-keys \
             --workspace-name "$LAW_NAME" --resource-group "$RESOURCE_GROUP" --query primarySharedKey -o tsv)
+          # shellcheck disable=SC2086 # RESOURCE_TAGS intentionally expands into key=value arguments.
           az containerapp env create \
             --name "$ENV_NAME" \
             --resource-group "$RESOURCE_GROUP" \
@@ -155,22 +227,27 @@ jobs:
       - name: Get ACR credentials
         id: acr-creds
         run: |
-          echo "server=${ACR_NAME}.azurecr.io" >> "$GITHUB_OUTPUT"
-          echo "username=$(az acr credential show --name "$ACR_NAME" --query username -o tsv)" >> "$GITHUB_OUTPUT"
-          echo "password=$(az acr credential show --name "$ACR_NAME" --query 'passwords[0].value' -o tsv)" >> "$GITHUB_OUTPUT"
+          {
+            echo "server=${ACR_NAME}.azurecr.io"
+            echo "username=$(az acr credential show --name "$ACR_NAME" --query username -o tsv)"
+            echo "password=$(az acr credential show --name "$ACR_NAME" --query 'passwords[0].value' -o tsv)"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Set app secrets
         # secret set does NOT create a new revision (preserves the registry secret); the deploy step
         # below rolls the revision once with image + env + mount. Each secret is referenced by
-        # containerapp.yaml via secretRef. Optional Arcade/TAC secrets use a non-empty `disabled`
-        # placeholder when unset; mode-off never reads them. Secrets are passed via env (not inline
+        # containerapp.yaml via secretRef. TAC REST credentials are validated as required before
+        # this step. Secrets are passed via env (not inline
         # ${{ }}) so a value with shell metacharacters can't break the command or leak through args.
         env:
           TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
+          TWILIO_PT_AUTH_TOKEN: ${{ secrets.TWILIO_PT_AUTH_TOKEN }}
           TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
           TWILIO_API_KEY: ${{ secrets.TWILIO_API_KEY }}
           TWILIO_API_SECRET: ${{ secrets.TWILIO_API_SECRET }}
           ARCADE_SIGNING_SECRET: ${{ secrets.ARCADE_SIGNING_SECRET }}
+          ARCADE_DISPLAY_TOKEN: ${{ secrets.ARCADE_DISPLAY_TOKEN }}
+          VOICE_RELAY_TOKEN: ${{ secrets.VOICE_RELAY_TOKEN }}
           EDITOR_TOKEN: ${{ secrets.EDITOR_TOKEN }}
           GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
@@ -182,32 +259,294 @@ jobs:
               --resource-group "$RESOURCE_GROUP" \
               --secrets \
                 "twilio-token=$TWILIO_AUTH_TOKEN" \
-                "twilio-account-sid=${TWILIO_ACCOUNT_SID:-disabled}" \
-                "twilio-api-key=${TWILIO_API_KEY:-disabled}" \
-                "twilio-api-secret=${TWILIO_API_SECRET:-disabled}" \
-                "arcade-signing-secret=${ARCADE_SIGNING_SECRET:-disabled}" \
+                "twilio-pt-token=$TWILIO_PT_AUTH_TOKEN" \
+                "twilio-account-sid=$TWILIO_ACCOUNT_SID" \
+                "twilio-api-key=$TWILIO_API_KEY" \
+                "twilio-api-secret=$TWILIO_API_SECRET" \
+                "arcade-signing-secret=$ARCADE_SIGNING_SECRET" \
+                "arcade-display-token=$ARCADE_DISPLAY_TOKEN" \
+                "voice-relay-token=$VOICE_RELAY_TOKEN" \
                 "editor-token=$EDITOR_TOKEN" \
                 "google-oauth-client-id=$GOOGLE_OAUTH_CLIENT_ID" \
                 "google-oauth-client-secret=$GOOGLE_OAUTH_CLIENT_SECRET" \
+                "openai-api-key=${OPENAI_API_KEY:-disabled}" \
               --output none
           else
             echo "App does not exist yet — secrets set on create below."
           fi
 
-      - name: Deploy Container App
+      - name: Deploy and verify Container App
+        id: deploy
         # Secrets available here too, since a brand-new app sets them inside this step (between the
         # minimal create and the --yaml spec update). Passed via env, not inline, for safety.
         env:
           TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
+          TWILIO_PT_AUTH_TOKEN: ${{ secrets.TWILIO_PT_AUTH_TOKEN }}
           TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
           TWILIO_API_KEY: ${{ secrets.TWILIO_API_KEY }}
           TWILIO_API_SECRET: ${{ secrets.TWILIO_API_SECRET }}
           ARCADE_SIGNING_SECRET: ${{ secrets.ARCADE_SIGNING_SECRET }}
+          ARCADE_DISPLAY_TOKEN: ${{ secrets.ARCADE_DISPLAY_TOKEN }}
+          VOICE_RELAY_TOKEN: ${{ secrets.VOICE_RELAY_TOKEN }}
           EDITOR_TOKEN: ${{ secrets.EDITOR_TOKEN }}
           GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
+          set -Eeuo pipefail
+
+          declare -a OLD_REVISIONS=()
+          TEMP_REVISION=""
+          NEW_REVISION=""
+          DATA_SNAPSHOT=""
+          ROLLBACK_REQUIRED=false
+          DATA_RESTORE_SAFE=true
+
+          # ACA writes settle asynchronously and can transiently reject a following write.
+          aca_write_retry() {
+            local attempt=1 max=5
+            until "$@"; do
+              if [ "$attempt" -ge "$max" ]; then
+                echo "az write failed after $max attempts" >&2
+                return 1
+              fi
+              echo "az write hit a transient conflict (attempt $attempt/$max); retrying in $((attempt*10))s..."
+              sleep $((attempt*10))
+              attempt=$((attempt+1))
+            done
+          }
+
+          fail() {
+            echo "::error::$*" >&2
+            return 1
+          }
+
+          is_previous_revision() {
+            local candidate="$1" previous
+            for previous in "${OLD_REVISIONS[@]}"; do
+              [ "$candidate" = "$previous" ] && return 0
+            done
+            return 1
+          }
+
+          wait_for_zero_replicas() {
+            local revision revision_json active replicas attempt stopped
+            for revision in "$@"; do
+              stopped=false
+              for attempt in $(seq 1 60); do
+                revision_json=$(az containerapp revision show \
+                  --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" \
+                  --revision "$revision" --output json 2>/dev/null || true)
+                [ -n "$revision_json" ] || revision_json='{}'
+                active=$(jq -r '.properties.active // ""' <<< "$revision_json")
+                replicas=$(jq -r '.properties.replicas // ""' <<< "$revision_json")
+                if [ "$active" = "false" ] && [ "$replicas" = "0" ]; then
+                  echo "Revision $revision is inactive with zero replicas."
+                  stopped=true
+                  break
+                fi
+                echo "Waiting for $revision to stop (active=${active:-unknown}, replicas=${replicas:-unknown}, attempt $attempt/60)..."
+                sleep 5
+              done
+              [ "$stopped" = "true" ] || fail "Revision $revision did not reach inactive/zero-replica state."
+            done
+          }
+
+          wait_for_revision_serving() {
+            local revision="$1" revision_json active provisioning health replicas attempt
+            for attempt in $(seq 1 60); do
+              revision_json=$(az containerapp revision show \
+                --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" \
+                --revision "$revision" --output json 2>/dev/null || true)
+              [ -n "$revision_json" ] || revision_json='{}'
+              active=$(jq -r '.properties.active // ""' <<< "$revision_json")
+              provisioning=$(jq -r '.properties.provisioningState // ""' <<< "$revision_json")
+              health=$(jq -r '.properties.healthState // ""' <<< "$revision_json")
+              replicas=$(jq -r '.properties.replicas // 0' <<< "$revision_json")
+              if [ "$active" = "true" ] && [ "$provisioning" = "Provisioned" ] \
+                  && [ "$health" = "Healthy" ] && [ "$replicas" -ge 1 ]; then
+                return 0
+              fi
+              echo "Waiting for $revision to serve (active=${active:-unknown}, provisioning=${provisioning:-unknown}, health=${health:-unknown}, replicas=$replicas, attempt $attempt/60)..."
+              sleep 5
+            done
+            return 1
+          }
+
+          create_data_snapshot() {
+            local storage_key
+            storage_key=$(az storage account keys list \
+              --resource-group "$RESOURCE_GROUP" --account-name "$STORAGE_ACCOUNT" \
+              --query '[0].value' --output tsv)
+            DATA_SNAPSHOT=$(az storage share snapshot \
+              --name "$FILE_SHARE" --account-name "$STORAGE_ACCOUNT" \
+              --account-key "$storage_key" \
+              --metadata "deployment_run=${GITHUB_RUN_ID}" "deployment_attempt=${GITHUB_RUN_ATTEMPT}" \
+              --query snapshot --output tsv)
+            [ -n "$DATA_SNAPSHOT" ] || fail "Azure Files did not return a pre-rollout snapshot identifier."
+            echo "Created pre-rollout Azure Files snapshot $DATA_SNAPSHOT."
+          }
+
+          restore_data_snapshot() {
+            local storage_key restore_dir verify_dir
+            [ -n "$DATA_SNAPSHOT" ] || return 0
+            storage_key=$(az storage account keys list \
+              --resource-group "$RESOURCE_GROUP" --account-name "$STORAGE_ACCOUNT" \
+              --query '[0].value' --output tsv) || return 1
+            restore_dir=$(mktemp -d) || return 1
+            az storage file download-batch \
+              --source "$FILE_SHARE" --snapshot "$DATA_SNAPSHOT" \
+              --destination "$restore_dir" --account-name "$STORAGE_ACCOUNT" \
+              --account-key "$storage_key" --no-progress --output none || return 1
+            az storage file delete-batch \
+              --source "$FILE_SHARE" --pattern '*' \
+              --account-name "$STORAGE_ACCOUNT" --account-key "$storage_key" \
+              --output none || return 1
+            if [ -n "$(ls -A "$restore_dir")" ]; then
+              az storage file upload-batch \
+                --destination "$FILE_SHARE" --source "$restore_dir" \
+                --account-name "$STORAGE_ACCOUNT" --account-key "$storage_key" \
+                --no-progress --output none || return 1
+            fi
+            verify_dir=$(mktemp -d) || return 1
+            az storage file download-batch \
+              --source "$FILE_SHARE" --destination "$verify_dir" \
+              --account-name "$STORAGE_ACCOUNT" --account-key "$storage_key" \
+              --no-progress --output none || return 1
+            diff --recursive --brief "$restore_dir" "$verify_dir" || return 1
+            echo "Restored Azure Files from pre-rollout snapshot $DATA_SNAPSHOT."
+          }
+
+          delete_data_snapshot() {
+            local storage_key
+            [ -n "$DATA_SNAPSHOT" ] || return 0
+            storage_key=$(az storage account keys list \
+              --resource-group "$RESOURCE_GROUP" --account-name "$STORAGE_ACCOUNT" \
+              --query '[0].value' --output tsv)
+            az storage share delete \
+              --name "$FILE_SHARE" --snapshot "$DATA_SNAPSHOT" \
+              --account-name "$STORAGE_ACCOUNT" --account-key "$storage_key" \
+              --output none
+          }
+
+          rollback_previous_revisions() {
+            local failed=0 safe_to_restore=true latest_revision active_revisions_output
+            local candidate existing mode previous revisions_json rollback_app_json
+            local -a failed_revisions=()
+            echo "::warning::Rollout failed; stopping the new revision and restoring the previous revision."
+            if [ "$DATA_RESTORE_SAFE" != "true" ]; then
+              echo "::error::Automatic rollback is disabled because the candidate may have accepted durable or external side effects. Leaving the current revision and Azure Files intact for manual recovery." >&2
+              return 1
+            fi
+            if ! az containerapp show --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" \
+                --output none 2>/dev/null; then
+              echo "Container App was not created; rollback has nothing to stop or restore."
+              return 0
+            fi
+
+            # Multiple mode is required to select revisions explicitly. Continue every recovery
+            # action even if one control-plane call fails so the old writer has the best chance to return.
+            aca_write_retry az containerapp revision set-mode \
+              --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" \
+              --mode multiple --output none || failed=1
+
+            # Stop every non-previous active revision, plus latest in case provisioning failed
+            # before ACA marked it active. Deduplicate so each revision is deactivated once.
+            if ! revisions_json=$(az containerapp revision list \
+              --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" --all \
+              --output json 2>/dev/null); then
+              echo "::error::Could not inventory revisions; refusing automatic data restore or old-writer activation." >&2
+              return 1
+            fi
+            active_revisions_output=$(jq -r '.[] | select(.properties.active == true or (.properties.replicas // 0) > 0) | .name' \
+              <<< "$revisions_json")
+            while IFS= read -r candidate; do
+              [ -z "$candidate" ] || is_previous_revision "$candidate" \
+                || failed_revisions+=("$candidate")
+            done <<< "$active_revisions_output"
+            if ! rollback_app_json=$(az containerapp show \
+              --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" --output json 2>/dev/null); then
+              echo "::error::Could not read latest revision; refusing automatic data restore or old-writer activation." >&2
+              return 1
+            fi
+            latest_revision=$(jq -r '.properties.latestRevisionName // ""' <<< "$rollback_app_json")
+            for candidate in "$NEW_REVISION" "$latest_revision"; do
+              [ -n "$candidate" ] || continue
+              is_previous_revision "$candidate" && continue
+              for existing in "${failed_revisions[@]}"; do
+                [ "$candidate" = "$existing" ] && continue 2
+              done
+              failed_revisions+=("$candidate")
+            done
+
+            for candidate in "${failed_revisions[@]}"; do
+              aca_write_retry az containerapp revision deactivate \
+                --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" \
+                --revision "$candidate" --output none || failed=1
+            done
+            for candidate in "${failed_revisions[@]}"; do
+              if ! wait_for_zero_replicas "$candidate"; then
+                safe_to_restore=false
+                failed=1
+              fi
+            done
+
+            if [ "$safe_to_restore" = "true" ] && [ "${#OLD_REVISIONS[@]}" -gt 0 ] \
+                && ! restore_data_snapshot; then
+              echo "::error::Azure Files snapshot restoration failed; refusing to start schema-older code." >&2
+              safe_to_restore=false
+              failed=1
+            fi
+
+            if [ "$safe_to_restore" != "true" ]; then
+              echo "::error::Rollback prerequisites failed; refusing to start the previous writer." >&2
+            elif [ "${#OLD_REVISIONS[@]}" -gt 0 ]; then
+              for previous in "${OLD_REVISIONS[@]}"; do
+                aca_write_retry az containerapp revision activate \
+                  --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" \
+                  --revision "$previous" --output none || failed=1
+              done
+              for previous in "${OLD_REVISIONS[@]}"; do
+                wait_for_revision_serving "$previous" || failed=1
+              done
+
+              previous="${OLD_REVISIONS[0]}"
+              aca_write_retry az containerapp ingress traffic set \
+                --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" \
+                --revision-weight "${previous}=100" --output none || failed=1
+              mode=$(az containerapp show \
+                --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" \
+                --query properties.configuration.activeRevisionsMode --output tsv 2>/dev/null || true)
+              traffic=$(az containerapp show \
+                --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" \
+                --query "properties.configuration.ingress.traffic[?revisionName=='${previous}' && weight==\`100\`] | length(@)" \
+                --output tsv 2>/dev/null || true)
+              if [ "$mode" != "Multiple" ] || [ "$traffic" != "1" ]; then
+                echo "::error::Rollback could not pin 100 percent traffic to $previous in multiple mode (mode=${mode:-unknown}, matches=${traffic:-unknown})." >&2
+                failed=1
+              fi
+              for previous in "${OLD_REVISIONS[@]}"; do
+                if ! wait_for_revision_serving "$previous"; then
+                  echo "::error::Previous revision $previous was not serving after rollback traffic restoration." >&2
+                  failed=1
+                fi
+              done
+            else
+              echo "::warning::First deployment has no prior revision to restore; all incomplete revisions remain stopped."
+            fi
+            return "$failed"
+          }
+
+          rollback_on_error() {
+            local status=$?
+            trap - ERR
+            set +e
+            if [ "$ROLLBACK_REQUIRED" = "true" ] && ! rollback_previous_revisions; then
+              echo "::error::Automatic rollback was incomplete; manual recovery is required." >&2
+            fi
+            exit "$status"
+          }
+
           # Resolve the public FQDN (exists for an already-created app; a new app gets it on create,
           # then we patch BASE_URL in a second update so Twilio webhooks point at the real host).
           FQDN=$(az containerapp show \
@@ -217,6 +556,9 @@ jobs:
 
           export APP_NAME="$APP_NAME"
           export CONTAINER_IMAGE="${{ steps.acr-creds.outputs.server }}/${IMAGE_TAG}"
+          # A unique suffix forces a new revision for same-SHA workflow re-runs and identifies the
+          # full-spec revision independently from the first-create temporary revision.
+          export REVISION_SUFFIX="sha-${GITHUB_SHA:0:7}-r${GITHUB_RUN_ID}-a${GITHUB_RUN_ATTEMPT}"
           export BASE_URL="https://${FQDN}"
           # ACR registry config goes IN the YAML (update --yaml replaces the whole registries+secrets
           # block, so it must redeclare the registry + its password secret).
@@ -229,31 +571,33 @@ jobs:
           export DEFAULT_LOCALE="${{ vars.DEFAULT_LOCALE }}"
           # OpenAI model for the conversational AI host (optional repo var; empty → server default).
           export OPENAI_MODEL="${{ vars.OPENAI_MODEL }}"
-          # OpenAI key rendered as a PLAIN env value (empty when the secret is unset → AI disabled,
-          # scripted fallback). Already exported into this step's env from the GitHub secret.
-          export OPENAI_API_KEY="${OPENAI_API_KEY:-}"
-          # Phone number players call to join (optional repo var; empty → lobby shows a placeholder).
+          # One-time legacy voice fallback plus the independent SMS-capable sender.
           export GAME_PHONE_NUMBER="${{ vars.GAME_PHONE_NUMBER }}"
+          export TWILIO_SMS_NUMBER="${{ vars.TWILIO_SMS_NUMBER }}"
+          export TWILIO_WHATSAPP_NUMBER="${{ vars.TWILIO_WHATSAPP_NUMBER }}"
+          export TWILIO_MESSAGING_SERVICE_SID="${{ vars.TWILIO_MESSAGING_SERVICE_SID }}"
+          export ARCADE_OUTBOUND_MESSAGING_ENABLED="${{ vars.ARCADE_OUTBOUND_MESSAGING_ENABLED }}"
+          export TWILIO_WHATSAPP_CONTENT_SID_STATION_ADMITTED_EN_US="${{ vars.TWILIO_WHATSAPP_CONTENT_SID_STATION_ADMITTED_EN_US }}"
+          export TWILIO_WHATSAPP_CONTENT_SID_STATION_ADMITTED_PT_BR="${{ vars.TWILIO_WHATSAPP_CONTENT_SID_STATION_ADMITTED_PT_BR }}"
+          export TWILIO_WHATSAPP_CONTENT_SID_STATION_OVERFLOW_EN_US="${{ vars.TWILIO_WHATSAPP_CONTENT_SID_STATION_OVERFLOW_EN_US }}"
+          export TWILIO_WHATSAPP_CONTENT_SID_STATION_OVERFLOW_PT_BR="${{ vars.TWILIO_WHATSAPP_CONTENT_SID_STATION_OVERFLOW_PT_BR }}"
+          export TWILIO_WHATSAPP_CONTENT_SID_STATION_CALL_NOW_EN_US="${{ vars.TWILIO_WHATSAPP_CONTENT_SID_STATION_CALL_NOW_EN_US }}"
+          export TWILIO_WHATSAPP_CONTENT_SID_STATION_CALL_NOW_PT_BR="${{ vars.TWILIO_WHATSAPP_CONTENT_SID_STATION_CALL_NOW_PT_BR }}"
+          export TWILIO_WHATSAPP_CONTENT_SID_STATION_RESULTS_EN_US="${{ vars.TWILIO_WHATSAPP_CONTENT_SID_STATION_RESULTS_EN_US }}"
+          export TWILIO_WHATSAPP_CONTENT_SID_STATION_RESULTS_PT_BR="${{ vars.TWILIO_WHATSAPP_CONTENT_SID_STATION_RESULTS_PT_BR }}"
+          export TWILIO_WHATSAPP_CONTENT_SID_STATION_NEXT_GAME_EN_US="${{ vars.TWILIO_WHATSAPP_CONTENT_SID_STATION_NEXT_GAME_EN_US }}"
+          export TWILIO_WHATSAPP_CONTENT_SID_STATION_NEXT_GAME_PT_BR="${{ vars.TWILIO_WHATSAPP_CONTENT_SID_STATION_NEXT_GAME_PT_BR }}"
           # One optional non-Twilio Google account that may access activation analytics.
           export ANALYTICS_ALLOWED_EMAIL="${{ vars.ANALYTICS_ALLOWED_EMAIL }}"
           export ARCADE_ADMIN_EMAILS="${{ vars.ARCADE_ADMIN_EMAILS }}"
           export TWILIO_CONVERSATION_CONFIGURATION_ID="${{ vars.TWILIO_CONVERSATION_CONFIGURATION_ID }}"
           # Restrict substitution to our known vars so no other ${...} in the template is touched.
-          SUBST='${APP_NAME} ${CONTAINER_IMAGE} ${BASE_URL} ${ACR_SERVER} ${ACR_USERNAME} ${ACR_PASSWORD} ${CR_TTS_VOICE} ${CR_TTS_VOICE_PT_BR} ${DEFAULT_LOCALE} ${OPENAI_MODEL} ${OPENAI_API_KEY} ${GAME_PHONE_NUMBER} ${ANALYTICS_ALLOWED_EMAIL} ${ARCADE_ADMIN_EMAILS} ${TWILIO_CONVERSATION_CONFIGURATION_ID}'
+          # shellcheck disable=SC2016 # envsubst needs these names literally, not expanded here.
+          SUBST='${APP_NAME} ${CONTAINER_IMAGE} ${REVISION_SUFFIX} ${BASE_URL} ${ACR_SERVER} ${ACR_USERNAME} ${ACR_PASSWORD} ${CR_TTS_VOICE} ${CR_TTS_VOICE_PT_BR} ${DEFAULT_LOCALE} ${OPENAI_MODEL} ${GAME_PHONE_NUMBER} ${TWILIO_SMS_NUMBER} ${TWILIO_WHATSAPP_NUMBER} ${TWILIO_MESSAGING_SERVICE_SID} ${ARCADE_OUTBOUND_MESSAGING_ENABLED} ${TWILIO_WHATSAPP_CONTENT_SID_STATION_ADMITTED_EN_US} ${TWILIO_WHATSAPP_CONTENT_SID_STATION_ADMITTED_PT_BR} ${TWILIO_WHATSAPP_CONTENT_SID_STATION_OVERFLOW_EN_US} ${TWILIO_WHATSAPP_CONTENT_SID_STATION_OVERFLOW_PT_BR} ${TWILIO_WHATSAPP_CONTENT_SID_STATION_CALL_NOW_EN_US} ${TWILIO_WHATSAPP_CONTENT_SID_STATION_CALL_NOW_PT_BR} ${TWILIO_WHATSAPP_CONTENT_SID_STATION_RESULTS_EN_US} ${TWILIO_WHATSAPP_CONTENT_SID_STATION_RESULTS_PT_BR} ${TWILIO_WHATSAPP_CONTENT_SID_STATION_NEXT_GAME_EN_US} ${TWILIO_WHATSAPP_CONTENT_SID_STATION_NEXT_GAME_PT_BR} ${ANALYTICS_ALLOWED_EMAIL} ${ARCADE_ADMIN_EMAILS} ${TWILIO_CONVERSATION_CONFIGURATION_ID}'
           envsubst "$SUBST" < .github/containerapp.yaml > /tmp/containerapp.yaml
 
-          # Retry an `az containerapp` write on ACA's transient control-plane race
-          # (ConflictingConcurrentWriteNotAllowed): two writes to the same app back-to-back can
-          # collide because ACA settles them async. Retry with backoff instead of failing the deploy.
-          aca_write_retry() {
-            local attempt=1 max=5
-            until "$@"; do
-              if [ $attempt -ge $max ]; then echo "az write failed after $max attempts"; return 1; fi
-              echo "az write hit a transient conflict (attempt $attempt/$max) — retrying in $((attempt*10))s..."
-              sleep $((attempt*10)); attempt=$((attempt+1))
-            done
-          }
-          if az containerapp show --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" 2>/dev/null; then
+          if az containerapp show --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" \
+              --output none 2>/dev/null; then
             echo "Updating existing container app..."
             aca_write_retry az containerapp registry set \
               --name "$APP_NAME" \
@@ -264,11 +608,58 @@ jobs:
               --output none
             # Let the registry write settle before the full-spec update hits the same entity.
             sleep 10
-            aca_write_retry az containerapp update \
-              --name "$APP_NAME" \
-              --resource-group "$RESOURCE_GROUP" \
-              --yaml /tmp/containerapp.yaml \
-              --output none
+            # Both JSON stores are single-writer. ACA single-revision rollouts overlap old and new
+            # replicas while readiness settles, so explicitly stop the old revision before update.
+            # This creates a short planned outage but prevents duplicate messages and lost file writes.
+            CURRENT_MODE=$(az containerapp show \
+              --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" \
+              --query properties.configuration.activeRevisionsMode --output tsv)
+            REVISIONS_JSON=$(az containerapp revision list \
+              --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" \
+              --all --output json)
+            OLD_REVISIONS_OUTPUT=$(jq -r '.[] | select(.properties.active == true) | .name' \
+              <<< "$REVISIONS_JSON")
+            while IFS= read -r revision; do
+              [ -z "$revision" ] || OLD_REVISIONS+=("$revision")
+            done <<< "$OLD_REVISIONS_OUTPUT"
+
+            if { [ "$CURRENT_MODE" = "Single" ] || [ "$CURRENT_MODE" = "Multiple" ]; } \
+                && [ "${#OLD_REVISIONS[@]}" -eq 1 ]; then
+              ROLLBACK_REQUIRED=true
+              trap rollback_on_error ERR
+              if [ "$CURRENT_MODE" != "Multiple" ]; then
+                aca_write_retry az containerapp revision set-mode \
+                  --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" \
+                  --mode multiple --output none
+              fi
+              # Replace ACA's implicit latest-revision traffic rule before a candidate exists. Once
+              # the old writer stops, public requests may fail during the planned outage, but they
+              # can never reach the candidate before its revision-specific smoke passes.
+              aca_write_retry az containerapp ingress traffic set \
+                --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" \
+                --revision-weight "${OLD_REVISIONS[0]}=100" --output none
+              for revision in "${OLD_REVISIONS[@]}"; do
+                aca_write_retry az containerapp revision deactivate \
+                  --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" \
+                  --revision "$revision" --output none
+              done
+              wait_for_zero_replicas "${OLD_REVISIONS[@]}"
+              create_data_snapshot
+            elif [ "${#OLD_REVISIONS[@]}" -eq 0 ] \
+                && [ "$(jq '[.[] | select((.properties.replicas // 0) > 0)] | length' <<< "$REVISIONS_JSON")" -eq 0 ]; then
+              # A failed first deployment intentionally leaves no serving revision. A later dispatch
+              # may retry from that safe zero-replica state without promoting the minimal revision.
+              echo "Recovering a stopped first-deployment attempt."
+              ROLLBACK_REQUIRED=true
+              trap rollback_on_error ERR
+              if [ "$CURRENT_MODE" != "Multiple" ]; then
+                aca_write_retry az containerapp revision set-mode \
+                  --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" \
+                  --mode multiple --output none
+              fi
+            else
+              fail "Expected one active revision in single mode, or a stopped zero-replica first-deployment attempt; found mode=$CURRENT_MODE active=${#OLD_REVISIONS[@]}."
+            fi
           else
             # The tenant tag-enforcement-policy DENIES create without a created_by tag, but
             # `create --yaml` IGNORES --tags (warns + drops it) and rejects a top-level tags: in the
@@ -276,6 +667,11 @@ jobs:
             # (2) set secrets now that the app exists, (3) update --yaml to layer on the full spec
             # (volume mount, secretRefs, scale, env) — update preserves the tag from create.
             echo "Creating new container app (minimal, tagged)..."
+            ROLLBACK_REQUIRED=true
+            trap rollback_on_error ERR
+            # shellcheck disable=SC2086 # RESOURCE_TAGS intentionally expands into key=value arguments.
+            # Keep the temporary tagged shell at zero replicas; it exists only to obtain the ACA
+            # resource and FQDN before the fully configured revision is applied.
             az containerapp create \
               --name "$APP_NAME" \
               --resource-group "$RESOURCE_GROUP" \
@@ -286,23 +682,39 @@ jobs:
               --registry-server "${{ steps.acr-creds.outputs.server }}" \
               --registry-username "${{ steps.acr-creds.outputs.username }}" \
               --registry-password "${{ steps.acr-creds.outputs.password }}" \
-              --min-replicas 1 --max-replicas 1 \
+              --min-replicas 0 --max-replicas 1 \
               --tags $RESOURCE_TAGS \
               --output none
 
+            TEMP_REVISION=$(az containerapp show \
+              --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" \
+              --query properties.latestRevisionName --output tsv)
+            [ -n "$TEMP_REVISION" ] || fail "Could not identify the temporary first-create revision."
+            aca_write_retry az containerapp revision set-mode \
+              --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" \
+              --mode multiple --output none
+            aca_write_retry az containerapp revision deactivate \
+              --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" \
+              --revision "$TEMP_REVISION" --output none
+            wait_for_zero_replicas "$TEMP_REVISION"
+
             echo "Setting secrets on the new app..."
-            az containerapp secret set \
+            aca_write_retry az containerapp secret set \
               --name "$APP_NAME" \
               --resource-group "$RESOURCE_GROUP" \
               --secrets \
                 "twilio-token=${TWILIO_AUTH_TOKEN:-}" \
-                "twilio-account-sid=${TWILIO_ACCOUNT_SID:-disabled}" \
-                "twilio-api-key=${TWILIO_API_KEY:-disabled}" \
-                "twilio-api-secret=${TWILIO_API_SECRET:-disabled}" \
-                "arcade-signing-secret=${ARCADE_SIGNING_SECRET:-disabled}" \
+                "twilio-pt-token=${TWILIO_PT_AUTH_TOKEN:-}" \
+                "twilio-account-sid=$TWILIO_ACCOUNT_SID" \
+                "twilio-api-key=$TWILIO_API_KEY" \
+                "twilio-api-secret=$TWILIO_API_SECRET" \
+                "arcade-signing-secret=$ARCADE_SIGNING_SECRET" \
+                "arcade-display-token=$ARCADE_DISPLAY_TOKEN" \
+                "voice-relay-token=$VOICE_RELAY_TOKEN" \
                 "editor-token=${EDITOR_TOKEN:-}" \
                 "google-oauth-client-id=${GOOGLE_OAUTH_CLIENT_ID:-}" \
                 "google-oauth-client-secret=${GOOGLE_OAUTH_CLIENT_SECRET:-}" \
+                "openai-api-key=${OPENAI_API_KEY:-disabled}" \
               --output none
 
             # The app now exists + has its FQDN. Re-render the YAML with the real BASE_URL so
@@ -316,39 +728,168 @@ jobs:
             echo "Applying full spec via --yaml (BASE_URL=$BASE_URL)..."
             envsubst "$SUBST" < .github/containerapp.yaml > /tmp/containerapp.yaml
             sleep 10   # let the create + secret writes settle before the full-spec update
-            aca_write_retry az containerapp update \
-              --name "$APP_NAME" \
-              --resource-group "$RESOURCE_GROUP" \
-              --yaml /tmp/containerapp.yaml \
-              --output none
           fi
 
-      - name: Resolve app FQDN
-        id: fqdn
-        run: |
-          FQDN=$(az containerapp show \
+          if [ "$ARCADE_OUTBOUND_MESSAGING_ENABLED" = "true" ]; then
+            # ACA may start the candidate before the update command returns. Mark snapshot restore
+            # unsafe before that can happen because the worker may already call Twilio.
+            DATA_RESTORE_SAFE=false
+          fi
+          aca_write_retry az containerapp update \
             --name "$APP_NAME" \
             --resource-group "$RESOURCE_GROUP" \
-            --query properties.configuration.ingress.fqdn -o tsv)
-          if [ -z "$FQDN" ]; then echo "Could not resolve container app FQDN."; exit 1; fi
-          echo "fqdn=$FQDN" >> "$GITHUB_OUTPUT"
+            --yaml /tmp/containerapp.yaml \
+            --output none
 
-      - name: Smoke test /healthz
-        env:
-          FQDN: ${{ steps.fqdn.outputs.fqdn }}
-        run: |
-          for i in $(seq 1 30); do
-            CODE=$(curl -s -o /tmp/health.json -w "%{http_code}" "https://$FQDN/healthz" || true)
-            if [ "$CODE" = "200" ]; then
-              echo "Healthz OK after attempt $i"; cat /tmp/health.json; echo; break
+          # Do not commit the rollout until ACA identifies the exact SHA-backed full-spec revision
+          # as its latest provisioned, healthy, ready revision with one running replica.
+          REVISION_READY=false
+          for attempt in $(seq 1 60); do
+            APP_JSON=$(az containerapp show \
+              --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" --output json)
+            NEW_REVISION=$(jq -r '.properties.latestRevisionName // ""' <<< "$APP_JSON")
+            LATEST_READY=$(jq -r '.properties.latestReadyRevisionName // ""' <<< "$APP_JSON")
+            REVISION_JSON=$(az containerapp revision show \
+              --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" \
+              --revision "$NEW_REVISION" --output json 2>/dev/null || true)
+            [ -n "$REVISION_JSON" ] || REVISION_JSON='{}'
+            IMAGE=$(jq -r '.properties.template.containers[0].image // ""' <<< "$REVISION_JSON")
+            PROVISIONING=$(jq -r '.properties.provisioningState // ""' <<< "$REVISION_JSON")
+            HEALTH=$(jq -r '.properties.healthState // ""' <<< "$REVISION_JSON")
+            RUNNING=$(jq -r '.properties.runningState // ""' <<< "$REVISION_JSON")
+            ACTIVE=$(jq -r '.properties.active // ""' <<< "$REVISION_JSON")
+            REPLICAS=$(jq -r '.properties.replicas // 0' <<< "$REVISION_JSON")
+            ACTUAL_SUFFIX=$(jq -r '.properties.template.revisionSuffix // ""' <<< "$REVISION_JSON")
+            VOLUME_SIGNATURE=$(jq -r 'first(.properties.template.volumes[]? | select(.name == "appdata") | [.name,.storageName,.storageType] | join(":")) // ""' <<< "$REVISION_JSON")
+            VOLUME_MOUNT_SIGNATURE=$(jq -r 'first(.properties.template.containers[0].volumeMounts[]? | select(.volumeName == "appdata") | [.volumeName,.mountPath] | join(":")) // ""' <<< "$REVISION_JSON")
+            PROBE_SIGNATURE=$(jq -r '[.properties.template.containers[0].probes[]? | [.type,.httpGet.path,(.httpGet.port|tostring),.httpGet.scheme,((.initialDelaySeconds // 0)|tostring),(.periodSeconds|tostring),(.failureThreshold|tostring),(.timeoutSeconds|tostring)] | join(":")] | sort | join(",")' <<< "$REVISION_JSON")
+
+            if [ "$NEW_REVISION" != "$TEMP_REVISION" ] \
+                && [ "$ACTUAL_SUFFIX" = "$REVISION_SUFFIX" ] \
+                && [ "$IMAGE" = "$CONTAINER_IMAGE" ] \
+                && [ "$PROVISIONING" = "Provisioned" ] \
+                && [ "$HEALTH" = "Healthy" ] \
+                && [ "$LATEST_READY" = "$NEW_REVISION" ] \
+                && [ "$ACTIVE" = "true" ] \
+                && [ "$REPLICAS" -eq 1 ] \
+                && [ "$VOLUME_SIGNATURE" = "appdata:appdata:AzureFile" ] \
+                && [ "$VOLUME_MOUNT_SIGNATURE" = "appdata:/app/appdata" ] \
+                && [ "$PROBE_SIGNATURE" = "Liveness:/livez:8080:HTTP:15:15:3:5,Readiness:/livez:8080:HTTP:0:5:3:5,Startup:/livez:8080:HTTP:3:5:24:5" ]; then
+              REVISION_READY=true
+              break
             fi
-            echo "Attempt $i: status=$CODE — retrying in 10s"; sleep 10
-            if [ "$i" = "30" ]; then echo "Healthz never returned 200 after 5 minutes."; exit 1; fi
+
+            case "$PROVISIONING:$RUNNING" in
+              ProvisioningFailed:*|*:ActivationFailed|*:Failed)
+                fail "Revision $NEW_REVISION entered terminal state provisioning=${PROVISIONING:-unknown}, running=${RUNNING:-unknown}."
+                ;;
+            esac
+            echo "Waiting for expected revision (latest=${NEW_REVISION:-unknown}, latestReady=${LATEST_READY:-unknown}, image=${IMAGE:-unknown}, provisioning=${PROVISIONING:-unknown}, health=${HEALTH:-unknown}, replicas=$REPLICAS, attempt $attempt/60)..."
+            sleep 5
           done
+          [ "$REVISION_READY" = "true" ] \
+            || fail "Expected full-spec revision did not become Provisioned, Healthy, and latestReady."
+
+          # shellcheck disable=SC2016 # JMESPath numeric literals use backticks inside single quotes.
+          RUNNING_REVISIONS_OUTPUT=$(az containerapp revision list \
+            --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" --all \
+            --query '[?properties.replicas > `0`].name' --output tsv)
+          RUNNING_REVISIONS=()
+          while IFS= read -r revision; do
+            [ -z "$revision" ] || RUNNING_REVISIONS+=("$revision")
+          done <<< "$RUNNING_REVISIONS_OUTPUT"
+          [ "${#RUNNING_REVISIONS[@]}" -eq 1 ] \
+            && [ "${RUNNING_REVISIONS[0]}" = "$NEW_REVISION" ] \
+            || fail "Expected only $NEW_REVISION to have running replicas."
+
+          # Smoke the candidate's revision-specific FQDN before assigning the public app hostname.
+          # These routes are read-only and cannot mutate the persistent stores.
+          REVISION_FQDN=$(jq -r '.properties.fqdn // ""' <<< "$REVISION_JSON")
+          if [ -z "$REVISION_FQDN" ]; then
+            APP_FQDN=$(jq -r '.properties.configuration.ingress.fqdn // ""' <<< "$APP_JSON")
+            [ -n "$APP_FQDN" ] && REVISION_FQDN="${NEW_REVISION}.${APP_FQDN#*.}"
+          fi
+          [ -n "$REVISION_FQDN" ] || fail "Could not resolve the candidate revision FQDN."
+          SMOKE_OK=false
+          for attempt in $(seq 1 30); do
+            FAILED_ROUTES=()
+            for route in /livez /healthz / /join /player /operator; do
+              CODE=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+                --connect-timeout 5 --max-time 20 "https://${REVISION_FQDN}${route}" || true)
+              [ "$CODE" = "200" ] || FAILED_ROUTES+=("${route}:${CODE:-000}")
+            done
+            if [ "${#FAILED_ROUTES[@]}" -eq 0 ]; then
+              echo "Candidate route smoke passed on attempt $attempt."
+              SMOKE_OK=true
+              break
+            fi
+            echo "Candidate smoke attempt $attempt/30 failed: ${FAILED_ROUTES[*]}"
+            [ "$attempt" -eq 30 ] || sleep 10
+          done
+          [ "$SMOKE_OK" = "true" ] || fail "Candidate route smoke did not pass within five minutes."
+
+          # Once public traffic is admitted, registrations and webhooks can mutate durable state.
+          # Never erase those accepted writes by restoring the pre-rollout snapshot automatically.
+          DATA_RESTORE_SAFE=false
+          aca_write_retry az containerapp ingress traffic set \
+            --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" \
+            --revision-weight "${NEW_REVISION}=100" --output none
+          APP_JSON=$(az containerapp show \
+            --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" --output json)
+          FQDN=$(jq -r '.properties.configuration.ingress.fqdn // ""' <<< "$APP_JSON")
+          LATEST_TRAFFIC=$(jq --arg revision "$NEW_REVISION" \
+            '[.properties.configuration.ingress.traffic[]? | select((.latestRevision == true or .revisionName == $revision) and .weight == 100)] | length' \
+            <<< "$APP_JSON")
+          [ -n "$FQDN" ] || fail "Could not resolve the Container App FQDN."
+          [ "$LATEST_TRAFFIC" -eq 1 ] \
+            || fail "Ingress does not send 100 percent of public traffic to the latest revision."
+
+          aca_write_retry az containerapp revision set-mode \
+            --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" \
+            --mode single --output none
+          SINGLE_MODE=false
+          for attempt in $(seq 1 12); do
+            FINAL_APP_JSON=$(az containerapp show \
+              --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" --output json)
+            FINAL_REVISION_JSON=$(az containerapp revision show \
+              --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" \
+              --revision "$NEW_REVISION" --output json 2>/dev/null || true)
+            [ -n "$FINAL_REVISION_JSON" ] || FINAL_REVISION_JSON='{}'
+            FINAL_MODE=$(jq -r '.properties.configuration.activeRevisionsMode // ""' <<< "$FINAL_APP_JSON")
+            FINAL_LATEST=$(jq -r '.properties.latestRevisionName // ""' <<< "$FINAL_APP_JSON")
+            FINAL_READY=$(jq -r '.properties.latestReadyRevisionName // ""' <<< "$FINAL_APP_JSON")
+            FINAL_IMAGE=$(jq -r '.properties.template.containers[0].image // ""' <<< "$FINAL_REVISION_JSON")
+            FINAL_PROVISIONING=$(jq -r '.properties.provisioningState // ""' <<< "$FINAL_REVISION_JSON")
+            FINAL_HEALTH=$(jq -r '.properties.healthState // ""' <<< "$FINAL_REVISION_JSON")
+            FINAL_ACTIVE=$(jq -r '.properties.active // ""' <<< "$FINAL_REVISION_JSON")
+            FINAL_REPLICAS=$(jq -r '.properties.replicas // 0' <<< "$FINAL_REVISION_JSON")
+            if [ "$FINAL_MODE" = "Single" ] && [ "$FINAL_LATEST" = "$NEW_REVISION" ] \
+                && [ "$FINAL_READY" = "$NEW_REVISION" ] \
+                && [ "$FINAL_IMAGE" = "$CONTAINER_IMAGE" ] \
+                && [ "$FINAL_PROVISIONING" = "Provisioned" ] \
+                && [ "$FINAL_HEALTH" = "Healthy" ] \
+                && [ "$FINAL_ACTIVE" = "true" ] \
+                && [ "$FINAL_REPLICAS" -eq 1 ]; then
+              SINGLE_MODE=true
+              break
+            fi
+            echo "Waiting to restore single mode (mode=${FINAL_MODE:-unknown}, latest=${FINAL_LATEST:-unknown}, latestReady=${FINAL_READY:-unknown}, health=${FINAL_HEALTH:-unknown}, active=${FINAL_ACTIVE:-unknown}, replicas=$FINAL_REPLICAS, attempt $attempt/12)..."
+            sleep 5
+          done
+          [ "$SINGLE_MODE" = "true" ] \
+            || fail "Single revision mode was not restored around the verified revision."
+
+          delete_data_snapshot || echo "::warning::Deployment succeeded, but pre-rollout snapshot $DATA_SNAPSHOT could not be deleted."
+          ROLLBACK_REQUIRED=false
+          trap - ERR
+          {
+            echo "fqdn=$FQDN"
+            echo "revision=$NEW_REVISION"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Print app URL
         env:
-          FQDN: ${{ steps.fqdn.outputs.fqdn }}
+          FQDN: ${{ steps.deploy.outputs.fqdn }}
         run: |
           echo "=========================================="
           echo "  Deployment complete!"

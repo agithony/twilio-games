@@ -19,6 +19,9 @@ import { fighterIntroStage, type FighterState } from '../../shared/fighter-proto
 import { FIGHTER_MESSAGES, type FighterMessageKey } from '../../shared/i18n/fighter';
 import { createTranslator } from '../../shared/i18n/translate';
 import { fighterName as translatedFighterName } from '../../shared/i18n/content';
+import { createStationDisplay } from '../station-display';
+import { watchVoiceNumber } from '../station-client';
+import QRCode from 'qrcode';
 
 const t = createTranslator(locale, FIGHTER_MESSAGES);
 const COMMAND_MESSAGE_KEYS: Record<FighterCommand, FighterMessageKey> = {
@@ -59,20 +62,23 @@ const p1PlayerName = $('p1-player-name'), p2PlayerName = $('p2-player-name');
 const commandButtons = [...document.querySelectorAll<HTMLButtonElement>('[data-command]')];
 injectMusicToggle('music-toggle-container');
 localizeStaticUi();
+const stationDisplay = createStationDisplay();
 
 const params = new URLSearchParams(location.search);
 const roomCode = params.get('room') || DEFAULT_ROOM;
 const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
 const connection = new FighterConnection(`${wsProtocol}//${location.host}/fighter`, locale);
-connection.setDisplayAuth(roomCode, params.get('displayToken') ?? params.get('hostToken'));
+connection.setDisplayAuth(roomCode, stationDisplay.active ? stationDisplay.displayToken : params.get('hostToken'));
 
+const arenaSize = () => ({ width: Math.max(1, arena.clientWidth || innerWidth), height: Math.max(1, arena.clientHeight || innerHeight) });
+const initialArenaSize = arenaSize();
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); renderer.setSize(initialArenaSize.width, initialArenaSize.height);
 renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace; renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.12;
 arena.appendChild(renderer.domElement);
 const scene = new THREE.Scene(); scene.background = new THREE.Color(0x05060a); scene.fog = new THREE.FogExp2(0x08090e, 0.06);
-const camera = new THREE.PerspectiveCamera(36, innerWidth / innerHeight, 0.05, 5000);
+const camera = new THREE.PerspectiveCamera(36, initialArenaSize.width / initialArenaSize.height, 0.05, 5000);
 camera.position.set(0, 2.15, 10.5); camera.lookAt(0, 1.05, 0);
 const theme = buildArena();
 
@@ -84,6 +90,7 @@ let playerId: string | null = null;
 let roster: FighterRosterEntry[] = [];
 let maps: FighterMapEntry[] = [];
 let phoneNumber = t('phone.fallback');
+let phoneQr = '/brand/join-qr.png?v=2';
 let movement: Partial<Record<FighterId, { from: number; to: number; elapsed: number; jump: boolean; duration: number }>> = {};
 const actionDurations: Record<FighterId, number> = { p1: FIGHTER_RUN_FORWARD_DURATION, p2: FIGHTER_RUN_FORWARD_DURATION };
 let lastTime = performance.now();
@@ -146,6 +153,7 @@ connection.onState(next => {
     if (['lobby', 'fighter_select', 'map_select', 'loading'].includes(next.phase)) getMusicManager().switchContext('lobby');
   }
   state = next;
+  maybeMarkStationDisplayReady();
   if (next.phase === 'countdown') {
     const count = Math.ceil(next.countdown ?? 0);
     if (locale === 'en-US' && isCountdownSoundCue(count) && !countdownSoundPlayed) { countdownSoundPlayed = true; getSoundEffectsManager().playCountdown(); }
@@ -169,7 +177,24 @@ connection.onState(next => {
   renderFlow();
 });
 connection.spectate(roomCode);
-void fetch('/api/config').then(r => r.json()).then(config => { if (config.phoneNumber) phoneNumber = config.phoneNumber; renderFlow(); }).catch(() => {});
+let phoneQrGeneration = 0;
+const stopVoiceNumberUpdates = watchVoiceNumber(locale, async number => {
+  const generation = ++phoneQrGeneration;
+  phoneNumber = number || t('phone.fallback');
+  if (!number) { phoneQr = '/brand/join-qr.png?v=2'; renderFlow(); return; }
+  try {
+    const qr = await QRCode.toDataURL(`tel:${number}`, {
+      width: 520, margin: 1, color: { dark: '#000D25', light: '#FFFFFF' }, errorCorrectionLevel: 'M',
+    });
+    if (generation !== phoneQrGeneration) return;
+    phoneQr = qr;
+  } catch {
+    if (generation !== phoneQrGeneration) return;
+    phoneQr = '/brand/join-qr.png?v=2';
+  }
+  renderFlow();
+});
+addEventListener('pagehide', stopVoiceNumberUpdates, { once: true });
 
 function setLoading(progress: number, label: string): void {
   const value = Math.round(progress * 100); loadingLabel.textContent = label;
@@ -189,6 +214,7 @@ async function initialize(): Promise<void> {
     animationSources = await loadAnimationSources((loaded, total) => setLoading(loaded / total, t('loading.preparingAssets')));
     if (attempt !== initializationAttempt) return;
     setLoading(1, t('loading.ready'));
+    maybeMarkStationDisplayReady();
     if (state?.phase === 'loading' || state?.phase === 'intro' || state?.phase === 'countdown' || state?.phase === 'fight') prepareFight(state);
     maybeSignalReady(); renderFlow();
   } catch (error) {
@@ -216,7 +242,7 @@ function renderFlow(): void {
   lastOverlayKey = key;
   lastPhase = state.phase;
   if (state.phase === 'lobby') {
-    overlay.innerHTML = `<section class="flow-panel lobby-panel"><div class="lobby-head"><span class="flow-kicker">${escapeHtml(t('lobby.room', { room: roomCode }))}</span><h1>${t('app.title')}</h1><p>${t('lobby.tagline')}</p></div><div class="lobby-layout"><div class="qr-card"><img src="/brand/join-qr.png?v=2" alt="${t('lobby.qrAlt')}"><strong>${t('lobby.scanToJoin')}</strong><span>${escapeHtml(phoneNumber)}</span></div><div class="lobby-center"><h2>${t('lobby.getStarted')}</h2><ol class="join-steps"><li><b>1</b><span>${t('lobby.step1')}</span></li><li><b>2</b><span>${t('lobby.step2')}</span></li><li><b>3</b><span>${t('lobby.step3')}</span></li></ol><div class="player-list"><h2>${t(state.players.length ? 'lobby.challengers' : 'lobby.title')}</h2>${state.players.length ? state.players.map(playerChip).join('') : `<p>${t('lobby.waitingFirst')}</p>`}</div></div><aside class="how-to"><h2>${t('lobby.howToFight')}</h2><p>${t('lobby.rules')}</p><div class="instruction-grid"><span><b>${t('command.forward')}</b> ${t('instruction.forward')}</span><span><b>${t('command.back')}</b> ${t('instruction.back')}</span><span><b>${t('command.jump')}</b> ${t('instruction.jump')}</span><span><b>${t('command.punch')}</b> ${t('instruction.punch')}</span><span><b>${t('command.kick')}</b> ${t('instruction.kick')}</span><span><b>${t('command.block')}</b> ${t('instruction.block')}</span></div><p class="voice-tip">${t('lobby.voiceTip')}</p></aside></div><div class="flow-actions lobby-actions"><button id="local-join">${t(playerId ? 'lobby.playingHere' : 'lobby.pressP')}</button><button id="flow-next" ${state.players.length && isHost ? '' : 'disabled'}>${t('lobby.chooseFighters')}</button></div>${isHost ? '' : `<p class="flow-hint">${t('lobby.viewOnly')}</p>`}</section>`;
+    overlay.innerHTML = `<section class="flow-panel lobby-panel"><div class="lobby-head"><span class="flow-kicker">${escapeHtml(t('lobby.room', { room: roomCode }))}</span><h1>${t('app.title')}</h1><p>${t('lobby.tagline')}</p></div><div class="lobby-layout"><div class="qr-card">${phoneQr ? `<img src="${escapeHtml(phoneQr)}" alt="${t('lobby.qrAlt')}">` : ''}<strong>${t('lobby.scanToJoin')}</strong><span>${escapeHtml(phoneNumber)}</span></div><div class="lobby-center"><h2>${t('lobby.getStarted')}</h2><ol class="join-steps"><li><b>1</b><span>${t('lobby.step1')}</span></li><li><b>2</b><span>${t('lobby.step2')}</span></li><li><b>3</b><span>${t('lobby.step3')}</span></li></ol><div class="player-list"><h2>${t(state.players.length ? 'lobby.challengers' : 'lobby.title')}</h2>${state.players.length ? state.players.map(playerChip).join('') : `<p>${t('lobby.waitingFirst')}</p>`}</div></div><aside class="how-to"><h2>${t('lobby.howToFight')}</h2><p>${t('lobby.rules')}</p><div class="instruction-grid"><span><b>${t('command.forward')}</b> ${t('instruction.forward')}</span><span><b>${t('command.back')}</b> ${t('instruction.back')}</span><span><b>${t('command.jump')}</b> ${t('instruction.jump')}</span><span><b>${t('command.punch')}</b> ${t('instruction.punch')}</span><span><b>${t('command.kick')}</b> ${t('instruction.kick')}</span><span><b>${t('command.block')}</b> ${t('instruction.block')}</span></div><p class="voice-tip">${t('lobby.voiceTip')}</p></aside></div><div class="flow-actions lobby-actions">${stationDisplay.active ? '' : `<button id="local-join">${t(playerId ? 'lobby.playingHere' : 'lobby.pressP')}</button>`}<button id="flow-next" ${state.players.length && isHost ? '' : 'disabled'}>${t('lobby.chooseFighters')}</button></div>${isHost ? '' : `<p class="flow-hint">${t('lobby.viewOnly')}</p>`}</section>`;
   } else if (state.phase === 'fighter_select') {
     const allPicked = state.players.length > 0 && state.players.every(player => player.fighterId);
     overlay.innerHTML = selectScreen(t('select.fighterTitle'), t('select.fighterDescription'), roster.map((fighter, index) => {
@@ -501,7 +527,7 @@ function updateNames(next: FighterState): void {
   }
 }
 function playerChip(player: FighterState['players'][number]): string { return `<div class="player-chip"><strong>${escapeHtml(player.name)}</strong><span>${t(player.isAi ? 'status.cpu' : 'status.connected')}</span></div>`; }
-function toggleLocalPlayer(): void { if (playerId) { connection.leave(roomCode); playerId = null; } else connection.join(roomCode, t('player.keyboard')); renderFlow(); }
+function toggleLocalPlayer(): void { if (stationDisplay.active) return; if (playerId) { connection.leave(roomCode); playerId = null; } else connection.join(roomCode, t('player.keyboard')); renderFlow(); }
 function announce(text: string): void { voiceCommand.textContent = text.replace('-', ' '); voiceFeed.classList.remove('heard'); void (voiceFeed as HTMLElement).offsetWidth; voiceFeed.classList.add('heard'); }
 function flashButton(command: FighterCommand): void { const button = commandButtons.find(item => item.dataset.command === command); button?.classList.add('active'); setTimeout(() => button?.classList.remove('active'), 220); }
 function showImpact(text: string, defender: FighterId): void { document.body.classList.remove('shake'); void document.body.offsetWidth; document.body.classList.add('shake'); const element = document.createElement('div'); element.className = 'impact'; element.style.left = defender === 'p1' ? '39%' : '61%'; element.textContent = text; document.body.appendChild(element); setTimeout(() => element.remove(), 600); }
@@ -638,6 +664,10 @@ function maybeSignalReady(): void {
     if (state?.phase !== 'loading' || state.selectedMap !== mapId) return;
     readySentFor = mapId; connection.ready();
   }, 350);
+}
+
+function maybeMarkStationDisplayReady(): void {
+  if (state && animationSources) stationDisplay.markEngineReady();
 }
 
 /** Custom stages never move, so flatten millions of environment triangles into the authored camera
@@ -789,12 +819,14 @@ function handleNumericSelection(key: string): void {
   }, 450);
 }
 addEventListener('resize', () => {
-  camera.aspect = innerWidth / innerHeight; updateCameraProjection(); renderer.setSize(innerWidth, innerHeight);
+  const size = arenaSize();
+  camera.aspect = size.width / size.height; updateCameraProjection(); renderer.setSize(size.width, size.height);
   if (mapModel && customMapStatic) captureMapBackdrop();
 });
 rematch.addEventListener('click', () => connection.advance());
 for (const link of document.querySelectorAll<HTMLAnchorElement>('.game-home, #result a[href="/"]')) {
   link.addEventListener('click', event => {
+    if (stationDisplay.active) return;
     event.preventDefault(); connection.leaveAndClose(roomCode); setTimeout(() => { location.href = '/'; }, 60);
   });
 }
