@@ -235,10 +235,13 @@ jobs:
       - name: Get ACR credentials
         id: acr-creds
         run: |
+          acr_username=$(az acr credential show --name "$ACR_NAME" --query username -o tsv)
+          acr_password=$(az acr credential show --name "$ACR_NAME" --query 'passwords[0].value' -o tsv)
+          echo "::add-mask::$acr_password"
           {
             echo "server=${ACR_NAME}.azurecr.io"
-            echo "username=$(az acr credential show --name "$ACR_NAME" --query username -o tsv)"
-            echo "password=$(az acr credential show --name "$ACR_NAME" --query 'passwords[0].value' -o tsv)"
+            echo "username=$acr_username"
+            echo "password=$acr_password"
           } >> "$GITHUB_OUTPUT"
 
       - name: Set app secrets
@@ -371,7 +374,7 @@ jobs:
                   --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" --all \
                   --query "[?name=='${revision}'] | [0]" --output json 2>/dev/null || true)
                 [ -n "$revision_json" ] || revision_json='{}'
-                active=$(jq -r '.properties.active // ""' <<< "$revision_json")
+                active=$(jq -r '.properties.active | if . == null then "" else tostring end' <<< "$revision_json")
                 replicas=$(jq -r '.properties.replicas // ""' <<< "$revision_json")
                 if [ "$active" = "false" ] && [ "$replicas" = "0" ]; then
                   echo "Revision $revision is inactive with zero replicas."
@@ -392,7 +395,7 @@ jobs:
                 --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" \
                 --revision "$revision" --output json 2>/dev/null || true)
               [ -n "$revision_json" ] || revision_json='{}'
-              active=$(jq -r '.properties.active // ""' <<< "$revision_json")
+              active=$(jq -r '.properties.active | if . == null then "" else tostring end' <<< "$revision_json")
               provisioning=$(jq -r '.properties.provisioningState // ""' <<< "$revision_json")
               health=$(jq -r '.properties.healthState // ""' <<< "$revision_json")
               replicas=$(jq -r '.properties.replicas // 0' <<< "$revision_json")
@@ -761,7 +764,7 @@ jobs:
             PROVISIONING=$(jq -r '.properties.provisioningState // ""' <<< "$REVISION_JSON")
             HEALTH=$(jq -r '.properties.healthState // ""' <<< "$REVISION_JSON")
             RUNNING=$(jq -r '.properties.runningState // ""' <<< "$REVISION_JSON")
-            ACTIVE=$(jq -r '.properties.active // ""' <<< "$REVISION_JSON")
+            ACTIVE=$(jq -r '.properties.active | if . == null then "" else tostring end' <<< "$REVISION_JSON")
             REPLICAS=$(jq -r '.properties.replicas // 0' <<< "$REVISION_JSON")
             ACTUAL_SUFFIX=$(jq -r '.properties.template.revisionSuffix // ""' <<< "$REVISION_JSON")
             VOLUME_SIGNATURE=$(jq -r 'first(.properties.template.volumes[]? | select(.name == "appdata") | [.name,.storageName,.storageType] | join(":")) // ""' <<< "$REVISION_JSON")
@@ -865,7 +868,7 @@ jobs:
             FINAL_IMAGE=$(jq -r '.properties.template.containers[0].image // ""' <<< "$FINAL_REVISION_JSON")
             FINAL_PROVISIONING=$(jq -r '.properties.provisioningState // ""' <<< "$FINAL_REVISION_JSON")
             FINAL_HEALTH=$(jq -r '.properties.healthState // ""' <<< "$FINAL_REVISION_JSON")
-            FINAL_ACTIVE=$(jq -r '.properties.active // ""' <<< "$FINAL_REVISION_JSON")
+            FINAL_ACTIVE=$(jq -r '.properties.active | if . == null then "" else tostring end' <<< "$FINAL_REVISION_JSON")
             FINAL_REPLICAS=$(jq -r '.properties.replicas // 0' <<< "$FINAL_REVISION_JSON")
             if [ "$FINAL_MODE" = "Single" ] && [ "$FINAL_LATEST" = "$NEW_REVISION" ] \
                 && [ "$FINAL_READY" = "$NEW_REVISION" ] \

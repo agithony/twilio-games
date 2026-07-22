@@ -4,6 +4,25 @@ import { describe, expect, it } from 'vitest';
 const workflow = readFileSync(new URL('../.github/workflows/deploy.yml', import.meta.url), 'utf8');
 
 describe('deployment rollback safety', () => {
+  it('masks generated registry credentials before exporting them', () => {
+    const credentials = workflow.slice(
+      workflow.indexOf('- name: Get ACR credentials'),
+      workflow.indexOf('- name: Set app secrets'),
+    );
+    expect(credentials).toContain('echo "::add-mask::$acr_password"');
+    expect(credentials.indexOf('acr_password=$(az acr credential show'))
+      .toBeLessThan(credentials.indexOf('echo "::add-mask::$acr_password"'));
+    expect(credentials.indexOf('echo "::add-mask::$acr_password"'))
+      .toBeLessThan(credentials.indexOf('>> "$GITHUB_OUTPUT"'));
+  });
+
+  it('preserves false when checking whether revisions are inactive', () => {
+    expect(workflow).not.toContain('.properties.active // ""');
+    expect(workflow).toContain(
+      '.properties.active | if . == null then "" else tostring end',
+    );
+  });
+
   it('arms first-create cleanup before creating a serving revision', () => {
     const createBranch = workflow.slice(
       workflow.indexOf('echo "Creating new container app (minimal, tagged)..."'),
