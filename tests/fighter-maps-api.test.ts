@@ -17,12 +17,18 @@ async function start() {
 describe('fighter map API', () => {
   it('seeds the live catalog and rejects malformed replacement data', async () => {
     const port = await start(), base = `http://127.0.0.1:${port}`;
-    const before = await (await fetch(`${base}/api/fighter-maps`)).json() as unknown[];
+    const before = await (await fetch(`${base}/api/fighter-maps`)).json() as Array<{ id?: string; file?: string }>;
     expect(before.length).toBeGreaterThan(1);
+    expect(before.find(map => map.id === 'rain')).not.toHaveProperty('file');
     const bad = await fetch(`${base}/api/fighter-maps`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify([{ id: '<script>', name: 'Bad', blurb: 'Bad', color: '#ffffff', bounds: [9, -9] }]) });
     expect(bad.status).toBe(400);
     expect((await (await fetch(`${base}/api/fighter-maps`)).json() as unknown[]).length).toBe(before.length);
+
+    const update = await fetch(`${base}/api/fighter-maps`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify([{ id: 'rain', name: 'Rain', blurb: 'Rain arena', color: '#6c8cff', bounds: [-10, 10], file: 'rain.glb' }]) });
+    expect(update.status).toBe(200);
+    expect(await update.json()).toEqual([{ id: 'rain', name: 'Rain', blurb: 'Rain arena', color: '#6c8cff', bounds: [-10, 10] }]);
   });
 
   it('validates preview uploads and serves persistent PNG files', async () => {

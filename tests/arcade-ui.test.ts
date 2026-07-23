@@ -15,6 +15,7 @@ const homeScript = readFileSync(new URL('../client/home.ts', import.meta.url), '
 const homeCss = readFileSync(new URL('../client/home.css', import.meta.url), 'utf8');
 const stationClient = readFileSync(new URL('../client/station-client.ts', import.meta.url), 'utf8');
 const stationDisplay = readFileSync(new URL('../client/station-display.ts', import.meta.url), 'utf8');
+const stationDisplayCss = readFileSync(new URL('../client/station-display.css', import.meta.url), 'utf8');
 const monsters = readFileSync(new URL('../client/battle/monsters.ts', import.meta.url), 'utf8');
 const fighter = readFileSync(new URL('../client/fighter/fighter.ts', import.meta.url), 'utf8');
 const musicToggle = readFileSync(new URL('../client/music-toggle.ts', import.meta.url), 'utf8');
@@ -268,7 +269,7 @@ describe('Arcade browser UI', () => {
     expect(css).toContain('overflow-x:auto');
     expect(css).toContain('.operator-nav button[aria-selected="true"]');
     expect(css).toContain('.operator-section:focus-visible');
-    expect(css).toContain('.overview-grid{display:grid;grid-template-columns:repeat(4');
+    expect(css).toContain('.overview-grid{display:grid;grid-template-columns:repeat(auto-fit');
     expect(css).toContain('@media(max-width:999px){.operator-page .overview-grid{grid-template-columns:repeat(2');
     expect(css).toContain('.operator-page .overview-grid{grid-template-columns:1fr}');
     const operatorReordering = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
@@ -282,7 +283,7 @@ describe('Arcade browser UI', () => {
     expect(html).toMatch(/<details class="advanced-settings">\s*<summary>Timing<\/summary>/);
     expect(html).toMatch(/<details id="admin-challenge-panel"[^>]*setup-details/);
     expect(html).toMatch(/<details class="panel compact qr-operator-panel setup-details">/);
-    expect(html).toMatch(/<details id="display-connect-panel"[^>]*setup-details/);
+    expect(html).toMatch(/id="operator-overview"[\s\S]*id="display-connect-panel"[\s\S]*id="live-event"/);
     for (const id of ['station-phase', 'station-controls', 'station-ready', 'messaging-failure-list']) {
       const beforeControl = html.slice(0, html.indexOf(`id="${id}"`));
       expect(beforeControl.lastIndexOf('<details')).toBeLessThanOrEqual(beforeControl.lastIndexOf('</details>'));
@@ -351,6 +352,15 @@ describe('Arcade browser UI', () => {
     expect(css).toContain('.messaging-panel{grid-column:1/-1');
   });
 
+  it('offers a destructive fresh-start reset only for safe test-player states', () => {
+    expect(script).toContain("['READY','OVERFLOW','COMPLETED'].includes(entry.status)");
+    expect(script).toContain("reset.textContent='Reset test player'");
+    expect(script).toContain("requestOperatorReason('Reset test player'");
+    expect(script).toContain('/reset-test-player`');
+    expect(script).toContain("'If-Match':state.operatorStationEtag");
+    expect(script).toContain("window.confirm(`Reset ${entry.displayName}? This cannot be undone.`)");
+  });
+
   it('does not wire browser speech synthesis into the Voice Racer display', () => {
     expect(racerMain).toContain('new Announcer({ sink: null');
     expect(racerMain).not.toContain('browserSpeechSink');
@@ -370,6 +380,8 @@ describe('Arcade browser UI', () => {
     expect(racerMain).toContain('isDisplay && !stationDisplay.active');
     expect(monsters).toContain('!isDisplay || stationDisplay.active');
     expect(fighter).toContain('if (stationDisplay.active) return');
+    expect(stationDisplay).not.toContain('if (rail.root.hidden === !visible) return');
+    expect(stationDisplayCss).toContain('.station-rail[hidden] { display:none !important; }');
     expect(racerMain).toContain('watchVoiceNumber(locale');
     expect(monsters).toContain('watchVoiceNumber(locale');
     expect(fighter).toContain('watchVoiceNumber(locale');
@@ -402,8 +414,12 @@ describe('Arcade browser UI', () => {
   it('installs booth access from the authenticated operator console, signs out, and replaces the same tab', () => {
     expect(html).toContain('id="display-connect-panel"');
     expect(html).toContain('id="connect-booth-display"');
-    expect(html).toContain('Connect this tab as booth display');
-    expect(html).toContain('current tab into the booth display for this browser session');
+    expect(html).toContain('id="overview-display"');
+    expect(script).toContain("show('display-connect-panel',displayKnown&&!displayConnected&&!display?.checking)");
+    expect(script).toContain('function isDisplayConnected(');
+    expect(html).toContain('id="overview-display-card"');
+    expect(html).toContain('Use this tab as the big screen');
+    expect(html).toContain('turns the current tab into the big screen');
     expect(html).toContain('signs you out of the operator console');
     const flow = /async function connectBoothDisplay\(\):Promise<void>\{[\s\S]*?\n}/.exec(script)?.[0] ?? '';
     expect(flow).toContain("'/api/admin/arcade/display/connect'");
@@ -493,7 +509,8 @@ describe('Arcade browser UI', () => {
     expect(css).toContain('.settings-layout{display:grid;grid-template-columns:repeat(2');
     expect(css).toContain('.choice-card:has(input:checked)');
     expect(script).toContain("document.body.classList.add(operatorView?'operator-page':'player-page')");
-    expect(joinScript).toContain("link.className = 'channel'");
+    expect(joinScript).toContain('link.className = `channel channel--${kind}`');
+    expect(joinScript).not.toContain('messageCommandPanel');
     expect(joinScript).not.toContain('available.length === 0');
     expect(joinCss).not.toContain('.channel.primary');
     expect(joinCss).toContain('.channel:focus-visible');

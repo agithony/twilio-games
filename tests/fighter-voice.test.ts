@@ -20,10 +20,11 @@ describe('fighter voice session', () => {
     ada.prompt('start');
     expect(ada.spoken.at(-1)).toBe('Choose your fighter. Say the name or number shown on screen.');
     ada.prompt('Nicks', false);
-    expect(game.room.state().players.find(player => player.playerId === ada.playerId)?.fighterId).toBe('nyx');
+    expect(game.room.state().players.find(player => player.playerId === ada.playerId)?.fighterId).toBeNull();
     const afterInterimSelection = ada.spoken.length;
     ada.prompt('Nicks');
-    expect(ada.spoken).toHaveLength(afterInterimSelection);
+    expect(game.room.state().players.find(player => player.playerId === ada.playerId)?.fighterId).toBe('nyx');
+    expect(ada.spoken.length).toBeGreaterThan(afterInterimSelection);
     ada.prompt('next');
     expect(ada.spoken.at(-1)).toBe('Choose your arena. Say the name or number shown on screen.');
     ada.prompt('second');
@@ -133,6 +134,12 @@ describe('fighter voice session', () => {
     expect(matchVoiceChoice('Nicks', FIGHTER_ROSTER)?.id).toBe('nyx');
     expect(matchVoiceChoice('a segunda', choices, 'pt-BR')?.id).toBe('rain-temple');
     expect(matchVoiceChoice('número três', choices, 'pt-BR')?.id).toBe('void-circuit');
+    const productionMaps=[...FIGHTER_MAPS,{id:'cyberpunk-city',name:'Cyberpunk City'},
+      {id:'inakaya',name:'Inakaya Restaurant'},{id:'rain',name:'Rain'}];
+    expect(matchVoiceChoice('option four',productionMaps)?.id).toBe('inakaya');
+    expect(matchVoiceChoice('Ina Kaya',productionMaps)?.id).toBe('inakaya');
+    expect(matchVoiceChoice('start training',productionMaps)).toBeNull();
+    expect(matchVoiceChoice('brainstorm',productionMaps)).toBeNull();
   });
 
   it('uses the setup command locale for Portuguese menus, choices, commands, and speech', () => {
@@ -209,7 +216,7 @@ describe('fighter voice session', () => {
     const game = voiceGame(), ada = game.connect('CA-INTERRUPT');
     ada.prompt('Ada'); ada.prompt('start');
     ada.prompt('Nicks', false);
-    expect(game.room.state().players[0]?.fighterId).toBe('nyx');
+    expect(game.room.state().players[0]?.fighterId).toBeNull();
     ada.interrupt();
     ada.prompt('Wraith');
     expect(game.room.state().players[0]?.fighterId).toBe('wraith');

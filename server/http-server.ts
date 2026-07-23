@@ -64,6 +64,14 @@ const VOICE_UNAVAILABLE_MESSAGES: Record<SupportedLocale, string> = {
   'pt-BR': 'O Twilio Games está pausado ou indisponível no momento. Tente novamente quando o evento estiver aberto. Até logo.',
 };
 
+function runtimeFighterMaps(maps: FighterMapEntry[]): FighterMapEntry[] {
+  return maps.map(map => {
+    if (map.id !== 'rain' || !map.file) return map;
+    const { file: _file, ...procedural } = map;
+    return procedural;
+  });
+}
+
 export function isRacerAdvanceWord(spoken: string, locale: SupportedLocale = DEFAULT_LOCALE): boolean {
   const text = normalizeForMatching(spoken, locale);
   return locale === 'pt-BR'
@@ -307,7 +315,7 @@ export class HttpServer {
     this.battle.setOnRoomState((roomCode) => {
       const room = this.battle.findRoom(roomCode); if (room) this.analyticsObserver.battleState(room);
       this.updateStationEngineLifecycle(
-        'monsters', roomCode, room?.phase, 'battle', ['results'], room?.participantResults() ?? [],
+        'monsters', roomCode, room?.phase, ['battle'], ['results'], room?.participantResults() ?? [],
       );
       const set = this.battleVoice.get(roomCode);
       if (!set) return;
@@ -321,7 +329,7 @@ export class HttpServer {
       const room = this.fighter.findRoom(roomCode); if (room) this.analyticsObserver.fighterState(room);
       const state = room?.state();
       const humanPlayers = state?.players.filter(player => !player.isAi) ?? [];
-      this.updateStationEngineLifecycle('fighter', roomCode, room?.phase, 'fight', ['victory', 'results'],
+      this.updateStationEngineLifecycle('fighter', roomCode, room?.phase, ['intro','countdown','fight'], ['victory', 'results'],
         humanPlayers.map((player, index) => ({
           enginePlayerId: player.playerId,
           rank: state?.result ? (player.side === state.result.winner ? 1 : 2) : index + 1,
@@ -360,13 +368,13 @@ export class HttpServer {
     game: 'monsters' | 'fighter',
     roomCode: string,
     phase: string | undefined,
-    startedPhase: string,
+    startedPhases: readonly string[],
     completedPhases: readonly string[],
     results: readonly import('../shared/arcade-station').StationEngineParticipantResult[] = [],
   ): void {
     const key = `${game}:${roomCode}`;
     const started = this.activeStationEngines.has(key);
-    if (phase === startedPhase) {
+    if (phase&&startedPhases.includes(phase)) {
       if (started) return;
       this.activeStationEngines.add(key);
       this.arcadeApi?.stationEngineStarted(game, roomCode);
@@ -447,6 +455,9 @@ export class HttpServer {
         console.log(`[fighter-maps] seeded ${this.fighterMapsPath} from ${this.bundledFighterMapsPath}`);
       } catch (error) { console.error('[fighter-maps] using built-in fallback:', (error as Error).message); }
     }
+    // The Rain GLB is too large for a reliable kiosk load (191 embedded textures). Keep the map's
+    // atmosphere and bounds but force its deterministic procedural stage, including for persisted catalogs.
+    this.fighterMaps = runtimeFighterMaps(this.fighterMaps);
     this.fighter.setMaps(this.fighterMaps);
   }
 
@@ -719,8 +730,12 @@ export class HttpServer {
         ? ['frente', 'avançar', 'avance', 'aproximar', 'aproxime-se', 'trás', 'recuar', 'recue', 'afastar', 'afaste-se', 'pular', 'pule', 'saltar', 'soco', 'socar', 'dê um soco', 'golpear', 'chute', 'chutar', 'dê um chute', 'bloquear', 'bloqueie', 'defender', 'defenda-se', 'começar', 'próximo', 'lutar', 'revanche', 'ajuda']
         : ['forward', 'closer', 'back', 'backward', 'away', 'jump', 'leap', 'hop', 'punch', 'jab', 'strike', 'kick', 'roundhouse', 'block', 'guard', 'defend', 'start', 'next', 'fight', 'rematch', 'help'];
       const fighters = FIGHTER_ROSTER.flatMap(fighter => localizedFighterAliases(fighter.id, fighter.name));
-      const maps = this.fighterMaps.flatMap(map => [map.name, localizedFighterMapName(locale, map.id, map.name)]);
-      return [...fighters, ...maps, ...commands, 'um', 'dois', 'três', 'primeiro', 'segundo', 'terceiro', 'vezes'].join(', ');
+      const maps = this.fighterMaps.flatMap(map => [map.name, localizedFighterMapName(locale, map.id, map.name),
+        ...(map.id==='inakaya'?['Inakaya','Ina Kaya','Izakaya']:[])]);
+      const numbers=locale==='pt-BR'
+        ? ['um','dois','três','quatro','cinco','seis','sete','oito','nove','dez','onze','doze','primeiro','segundo','terceiro','quarto','quinto']
+        : ['one','two','three','four','five','six','seven','eight','nine','ten','eleven','twelve','first','second','third','fourth','fifth'];
+      return [...fighters, ...maps, ...commands, ...numbers].join(', ');
     }
     const commands = locale === 'pt-BR'
       ? ['esquerda', 'direita', 'acelerar', 'acelere', 'acelera', 'vai', 'frear', 'freie', 'freia', 'devagar', 'reduzir', 'reduza', 'desacelerar', 'desacelere', 'parar', 'nitro', 'turbo', 'poder', 'começar', 'iniciar', 'próximo', 'próxima', 'corrida', 'correr', 'revanche', 'sim']
@@ -1735,7 +1750,7 @@ export class HttpServer {
       if (!this.authorizeWrite(req, res)) return;
       let maps: unknown;
       try { maps = JSON.parse(await readBody(req)); } catch { res.writeHead(400).end('invalid JSON'); return; }
-      try { this.fighterMaps = parseFighterMaps(maps); }
+      try { this.fighterMaps = runtimeFighterMaps(parseFighterMaps(maps)); }
       catch (error) { res.writeHead(400).end((error as Error).message); return; }
       await this.writeFileAtomic(this.fighterMapsPath, JSON.stringify(this.fighterMaps, null, 2));
       this.fighter.setMaps(this.fighterMaps);

@@ -22,17 +22,14 @@ function localizePage(): void {
   document.getElementById('join-page-eyebrow')!.textContent = 'Configuração do telefone';
   document.getElementById('join-page-title')!.textContent = 'Escolha como entrar.';
   document.getElementById('intro')!.textContent = 'Escolha como entrar. As opções disponíveis aparecerão abaixo.';
-  document.getElementById('message-command-label')!.textContent = 'Mensagem para enviar';
-  document.getElementById('joinCommand')!.textContent = 'ENTRAR';
-  document.getElementById('message-command-help')!.textContent = 'Os botões de mensagem abrem ENTRAR preenchido. Basta tocar em Enviar. Cada resposta seguinte diz exatamente o que responder.';
   document.getElementById('join-privacy')!.textContent = 'Suas informações são usadas apenas para criar e operar seu perfil de jogo. Nunca envie dados de pagamento ou senhas.';
   document.getElementById('terms-title')!.textContent = 'Termos de participação';
   document.getElementById('terms-copy')!.textContent = 'Ao continuar, você concorda em participar desta experiência e permite que o Twilio Games use as informações fornecidas para operar sua sessão. O acompanhamento de marketing exige consentimento separado.';
 }
 
-function channelLink(label: string, detail: string, href: string): HTMLAnchorElement {
+function channelLink(label: string, detail: string, href: string,kind:'sms'|'whatsapp'|'browser'): HTMLAnchorElement {
   const link = document.createElement('a');
-  link.className = 'channel';
+  link.className = `channel channel--${kind}`;
   link.href = href;
   link.innerHTML = `<div><strong>${label}</strong><span>${detail}</span></div><b aria-hidden="true">-></b>`;
   return link;
@@ -81,9 +78,6 @@ async function initialize(): Promise<void> {
     });
     const command = guidance.command;
     document.getElementById('intro')!.textContent = guidance.intro;
-    document.getElementById('joinCommand')!.textContent = command;
-    document.getElementById('message-command-help')!.textContent = guidance.commandHelp;
-    document.getElementById('messageCommandPanel')!.hidden = !guidance.messaging;
     stationBadge.textContent = portuguese ? 'Twilio Games · Português' : 'Twilio Games · English';
     const browserRegistrationUrl = `/player?cabinet=${encodeURIComponent(station)}&locale=${encodeURIComponent(locale)}`;
     const available: HTMLElement[] = [];
@@ -91,7 +85,7 @@ async function initialize(): Promise<void> {
       available.push(channelLink(
         portuguese ? 'Entrar com SMS' : 'Join with SMS',
         guidance.channelDetail,
-        `sms:${smsNumber}?body=${encodeURIComponent(command)}`,
+        `sms:${smsNumber}?body=${encodeURIComponent(command)}`,'sms',
       ));
     }
     if (whatsapp) {
@@ -99,14 +93,14 @@ async function initialize(): Promise<void> {
       available.push(channelLink(
         portuguese ? 'Entrar com WhatsApp' : 'Join with WhatsApp',
         guidance.channelDetail,
-        `https://wa.me/${digits}?text=${encodeURIComponent(command)}`,
+        `https://wa.me/${digits}?text=${encodeURIComponent(command)}`,'whatsapp',
       ));
     }
     if (mode === 'lead_capture') {
       available.push(channelLink(
         portuguese ? 'Continuar no navegador' : 'Continue in browser',
         guidance.browserDetail,
-        browserRegistrationUrl,
+        browserRegistrationUrl,'browser',
       ));
     }
     if (!available.length) {

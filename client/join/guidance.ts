@@ -11,7 +11,6 @@ export interface JoinGuidance {
   command: 'JOIN' | 'ENTRAR';
   messaging: boolean;
   intro: string;
-  commandHelp: string;
   channelDetail: string;
   browserDetail: string;
 }
@@ -40,9 +39,6 @@ export function buildJoinGuidance(input: JoinGuidanceInput): JoinGuidance {
     command,
     messaging,
     intro,
-    commandHelp: portuguese
-      ? `Os botões de mensagem abrem ${command} preenchido. Basta tocar em Enviar. Cada resposta seguinte diz exatamente o que responder.`
-      : `Messaging buttons open ${command} prefilled. Just tap Send. Every subsequent reply tells you exactly what to answer.`,
     channelDetail: portuguese
       ? `Abre ${command} preenchido; basta tocar em Enviar`
       : `Opens ${command} prefilled; just tap Send`,

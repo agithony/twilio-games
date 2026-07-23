@@ -67,6 +67,7 @@ const QUEUE_BODY_LIMIT = 4 * 1024;
 const CHALLENGE_BODY_LIMIT = 8 * 1024;
 const STATION_BODY_LIMIT = 4 * 1024;
 const DISPLAY_CONNECT_BODY_LIMIT = 2 * 1024;
+const DISPLAY_PRESENCE_TIMEOUT_MS = 20_000;
 const DEFAULT_MESSAGING_ADDRESS_LIMIT = 30;
 const DEFAULT_MESSAGING_ADDRESS_WINDOW_MS = 10 * 60_000;
 const DEFAULT_MESSAGING_PROCESS_LIMIT = 600;
@@ -93,6 +94,8 @@ export interface ArcadeApiOptions {
   readonly messagingProfileNameReady?: (identity: {
     profileId: string; firstName: string; locale: 'en-US' | 'pt-BR'; phoneNumber: string;
   }) => void;
+  readonly deleteMemoryProfile?: (profileId: string) => Promise<void>;
+  readonly memoryProfileDeleted?: (profileId: string) => boolean;
   readonly inboundMessagingRateLimits?: Readonly<{
     addressLimit?: number;
     addressWindowMs?: number;
@@ -127,9 +130,13 @@ export class ArcadeApi {
   private readonly rateLimiter: ArcadeRateLimiter;
   private readonly processRateLimiter: ArcadeRateLimiter;
   private readonly displayToken: Buffer;
+  private readonly displayPresenceStartedAt: number;
+  private displayLastSeenAt: number | null = null;
   private readonly fallbackVoiceNumber: string | null;
   private readonly messagingCapabilities: Readonly<{ sms: boolean; whatsapp: boolean }>;
   private readonly messagingProfileNameReady?: ArcadeApiOptions['messagingProfileNameReady'];
+  private readonly deleteMemoryProfile?: ArcadeApiOptions['deleteMemoryProfile'];
+  private readonly memoryProfileDeleted?: ArcadeApiOptions['memoryProfileDeleted'];
   private readonly inboundMessagingRateLimits: Readonly<{
     addressLimit: number;
     addressWindowMs: number;
@@ -157,7 +164,10 @@ export class ArcadeApi {
     this.tacRequired = options.tacRequired === true;
     this.playerRuntime = options.playerRuntime;
     this.messagingProfileNameReady = options.messagingProfileNameReady;
+    this.deleteMemoryProfile = options.deleteMemoryProfile;
+    this.memoryProfileDeleted = options.memoryProfileDeleted;
     this.now = options.now ?? Date.now;
+    this.displayPresenceStartedAt = this.now();
     this.displayToken = Buffer.from(options.displayToken?.trim() ?? '', 'utf8');
     const fallbackVoiceNumber = options.fallbackVoiceNumber?.trim() ?? '';
     this.fallbackVoiceNumber = /^\+[1-9][0-9]{7,14}$/.test(fallbackVoiceNumber)
@@ -361,9 +371,15 @@ export class ArcadeApi {
     const profileId = input.conversationProfileId.trim();
     if (!/^\+[1-9][0-9]{7,14}$/.test(normalizedAddress)
       || !/^[A-Za-z0-9][A-Za-z0-9:._-]{0,255}$/.test(profileId)
+      || this.memoryProfileDeleted?.(profileId)
       || !this.playerRuntime) return false;
     const store = await this.playerRuntime.getStateStoreForCleanup();
     const attached = await store.transaction(state => {
+      const profileHash=createHash('sha256').update(`retired-profile:${profileId}`).digest('hex');
+      if(this.memoryProfileDeleted?.(profileId)||Object.values(state.idempotencyRecords).some(record=>(
+        record.operation==='RESET_TEST_PLAYER'
+        &&(record.result as {retiredProfileHash?:unknown}|null)?.retiredProfileHash===profileHash
+      )))return false;
       const playerIds = new Set(Object.values(state.channelAddresses)
         .filter(address => address.normalizedAddress === normalizedAddress)
         .map(address => address.playerId));
@@ -842,6 +858,7 @@ export class ArcadeApi {
           config: this.configStore.getStatus(),
           tac: this.tacStatus?.() ?? null,
           players: this.playerRuntime?.getStatus() ?? null,
+          display: this.displayStatus(),
           messaging: messaging ? {
             ...messaging,
             onboarding: {
@@ -868,6 +885,12 @@ export class ArcadeApi {
       const stationCoinGrant = parseOperatorStationCoinGrantRoute(pathname);
       if (stationCoinGrant) {
         await this.handleOperatorStationCoinGrant(request, response, stationCoinGrant.readyEntryId);
+        return;
+      }
+
+      const testPlayerReset = parseOperatorTestPlayerResetRoute(pathname);
+      if (testPlayerReset) {
+        await this.handleOperatorTestPlayerReset(request, response, testPlayerReset.readyEntryId);
         return;
       }
 
@@ -976,6 +999,8 @@ export class ArcadeApi {
       playerId = null;
     }
 
+    let player = playerId ? await resources.service.getPlayerStatus(playerId) : null;
+    if (playerId && !player) playerId = null;
     let issuance: ReturnType<ArcadePlayerSessionService['issue']> | null = null;
     if (!playerId) {
       if (config.arcade.mode === 'coin_only') {
@@ -987,9 +1012,9 @@ export class ArcadeApi {
       }
       issuance = resources.sessions.issue(runtime.newPlayerId(), audience);
       playerId = issuance.payload.player;
+      player = null;
     }
 
-    const player = await resources.service.getPlayerStatus(playerId);
     if (config.arcade.mode === 'coin_only' && !player) {
       throw new ArcadeHttpError(
         409,
@@ -1055,6 +1080,9 @@ export class ArcadeApi {
     this.enforceRate(`read-player-profile:${playerId}`, 120, 60_000);
     this.enforceProcessRate('read-process', 3_000, 60_000);
     const player = await resources.service.getPlayerStatus(playerId);
+    if (!player && await resources.service.isRetiredPlayer(playerId)) {
+      throw new ArcadeHttpError(409, 'PLAYER_SESSION_RETIRED', 'player session was reset; start a new session');
+    }
     sendJson(response, 200, player ?? {
       registered: false,
       firstName: null,
@@ -1288,6 +1316,7 @@ export class ArcadeApi {
     this.requireDisplayAuthorization(request);
     const config = this.configStore.getSnapshot();
     if (config.arcade.mode === 'off') {
+      this.displayLastSeenAt = this.now();
       sendJson(response, 200, emptyPublicStation(), {
         'Cache-Control': 'no-store', ETag: stationEtag(0),
       });
@@ -1300,9 +1329,33 @@ export class ArcadeApi {
       stationAggregateFromState(state, config.arcade.cabinetId),
       enabledStationGames(config),
     );
+    this.displayLastSeenAt = this.now();
     sendJson(response, 200, projection, {
       'Cache-Control': 'no-store', ETag: stationEtag(projection.revision),
     });
+  }
+
+  private displayStatus(): {
+    configured: boolean;
+    connected: boolean;
+    checking: boolean;
+    lastSeenAt: string | null;
+    presenceTimeoutSeconds: number;
+  } {
+    const now = this.now();
+    const connected = this.displayLastSeenAt !== null
+      && now >= this.displayLastSeenAt
+      && now - this.displayLastSeenAt <= DISPLAY_PRESENCE_TIMEOUT_MS;
+    const configured = this.displayToken.length >= 16;
+    return {
+      configured,
+      connected,
+      checking: configured && this.displayLastSeenAt === null
+        && now >= this.displayPresenceStartedAt
+        && now - this.displayPresenceStartedAt <= DISPLAY_PRESENCE_TIMEOUT_MS,
+      lastSeenAt: this.displayLastSeenAt === null ? null : new Date(this.displayLastSeenAt).toISOString(),
+      presenceTimeoutSeconds: DISPLAY_PRESENCE_TIMEOUT_MS / 1000,
+    };
   }
 
   private async handlePlayerStation(
@@ -1590,6 +1643,76 @@ export class ArcadeApi {
     if (!aggregate) throw new ArcadeHttpError(503, 'ARCADE_STATE_UNAVAILABLE', 'Twilio Games state is unavailable');
     sendJson(response, 200, projectOperatorStation(state, aggregate), {
       'Cache-Control': 'no-store', ETag: stationEtag(aggregate.station.revision),
+    });
+  }
+
+  private async handleOperatorTestPlayerReset(
+    request: http.IncomingMessage,
+    response: http.ServerResponse,
+    readyEntryId: string,
+  ): Promise<void> {
+    this.requireMethod(request, ['POST']);
+    const principal = this.requireAdmin(request);
+    this.requireSameOrigin(request);
+    requireJsonContentType(request);
+    const expectedRevision = parseStationIfMatch(request.headers['if-match']);
+    const idempotencyKey = requireHeader(
+      request.headers['idempotency-key'], 'Idempotency-Key', PLAYER_IDEMPOTENCY_KEY_LIMIT,
+    );
+    const body = requireExactObject(await readJson(request, STATION_BODY_LIMIT), ['reason'], []);
+    const resources = await this.requirePlayerRuntime().getForCleanup();
+    const beforeState = await resources.store.read();
+    const stationId = this.configStore.getSnapshot().arcade.cabinetId;
+    if (this.configStore.getSnapshot().arcade.mode === 'off') {
+      throw new ArcadeHttpError(409, 'TEST_PLAYER_RESET_PAUSED', 'Open the event before resetting a test player.');
+    }
+    const aggregate = stationAggregateFromState(beforeState, stationId);
+    if (!aggregate) throw new ArcadeHttpError(404, 'STATION_NOT_FOUND', 'Twilio Games station was not found.');
+    const resetInput = {
+      stationId,
+      readyEntryId,
+      expectedRevision,
+      reason: operatorReason(body.reason),
+      idempotencyKey: playerServiceKey(
+        `operator:${principal.email}`, `test-player-reset:${readyEntryId}`, idempotencyKey,
+      ),
+      authorization: resources.operatorAuthorization(principal.email),
+      deleteMemoryProfile: this.deleteMemoryProfile,
+    };
+    if (aggregate.station.revision !== expectedRevision) {
+      // Service idempotency can still replay a completed reset; a first stale request fails closed.
+      await resources.service.resetTestPlayer(resetInput);
+      const replayState = await resources.store.read();
+      const replayAggregate = stationAggregateFromState(replayState, stationId);
+      if (!replayAggregate) throw new ArcadeHttpError(503, 'ARCADE_STATE_UNAVAILABLE', 'Twilio Games state is unavailable');
+      sendJson(response, 200, projectOperatorStation(replayState, replayAggregate), {
+        'Cache-Control': 'no-store', ETag: stationEtag(replayAggregate.station.revision),
+      });
+      return;
+    }
+    const entry = aggregate.readyEntries[readyEntryId];
+    if (!entry || entry.status === 'LEFT') {
+      throw new ArcadeHttpError(409, 'READY_ENTRY_NOT_FOUND', 'The test player is no longer in this event.');
+    }
+    if (!['READY', 'OVERFLOW', 'COMPLETED'].includes(entry.status)) {
+      throw new ArcadeHttpError(409, 'TEST_PLAYER_RESET_UNSAFE', 'Wait until the game finishes before resetting this player.');
+    }
+    const player = beforeState.players[entry.playerId];
+    if (!player) throw new ArcadeHttpError(409, 'READY_ENTRY_NOT_FOUND', 'The test player identity was not found.');
+    const connected = resources.station.connectedParticipantIds();
+    if (Object.values(beforeState.stationReadyEntries)
+      .some(candidate => candidate.playerId === player.id && connected.has(candidate.id))) {
+      throw new ArcadeHttpError(409, 'TEST_PLAYER_RESET_CONNECTED', 'Hang up the player call before resetting this test player.');
+    }
+    await resources.service.resetTestPlayer(resetInput);
+    for (const address of Object.values(beforeState.channelAddresses)) {
+      if (address.playerId === player.id) this.messagingProfilesByAddress.delete(address.normalizedAddress);
+    }
+    const state = await resources.store.read();
+    const updated = stationAggregateFromState(state, stationId);
+    if (!updated) throw new ArcadeHttpError(503, 'ARCADE_STATE_UNAVAILABLE', 'Twilio Games state is unavailable');
+    sendJson(response, 200, projectOperatorStation(state, updated), {
+      'Cache-Control': 'no-store', ETag: stationEtag(updated.station.revision),
     });
   }
 
@@ -2106,13 +2229,18 @@ function parseOperatorMessagingRetryRoute(pathname: string): { notificationId: s
 }
 
 function parseOperatorStationCoinGrantRoute(pathname: string): { readyEntryId: string } | null {
-  const match = /^\/api\/admin\/arcade\/station\/ready\/([A-Za-z0-9](?:[A-Za-z0-9:._-]{0,127}))\/coins\/grant$/.exec(pathname);
-  return match ? { readyEntryId: match[1]! } : null;
+  const match = /^\/api\/admin\/arcade\/station\/ready\/([A-Za-z0-9](?:(?:%3A)|[A-Za-z0-9:._-]){0,127})\/coins\/grant$/i.exec(pathname);
+  return match ? { readyEntryId: match[1]!.replace(/%3A/ig, ':') } : null;
 }
 
 function parseOperatorStationDropRoute(pathname: string): { readyEntryId: string } | null {
-  const match = /^\/api\/admin\/arcade\/station\/ready\/([A-Za-z0-9](?:[A-Za-z0-9:._-]{0,127}))\/drop$/.exec(pathname);
-  return match ? { readyEntryId: match[1]! } : null;
+  const match = /^\/api\/admin\/arcade\/station\/ready\/([A-Za-z0-9](?:(?:%3A)|[A-Za-z0-9:._-]){0,127})\/drop$/i.exec(pathname);
+  return match ? { readyEntryId: match[1]!.replace(/%3A/ig, ':') } : null;
+}
+
+function parseOperatorTestPlayerResetRoute(pathname: string): { readyEntryId: string } | null {
+  const match = /^\/api\/admin\/arcade\/station\/ready\/([A-Za-z0-9](?:(?:%3A)|[A-Za-z0-9:._-]){0,127})\/reset-test-player$/i.exec(pathname);
+  return match ? { readyEntryId: match[1]!.replace(/%3A/ig, ':') } : null;
 }
 
 function parseOperatorMatchRoute(pathname: string): { matchId: string } | null {
@@ -2258,6 +2386,8 @@ function playerServiceError(serviceCode: string): { status: number; code: string
       return { status: 422, code: serviceCode, message: 'terms acknowledgement is required' };
     case 'IDEMPOTENCY_CONFLICT':
       return { status: 409, code: serviceCode, message: 'idempotency key was reused for another request' };
+    case 'STALE_STATION_REVISION':
+      return { status: 412, code: serviceCode, message: 'The live event changed. Refresh and review the player before retrying.' };
     case 'MODE_DISABLED':
       return { status: 409, code: 'ARCADE_MODE_DISABLED', message: 'station mode does not allow this operation' };
     case 'PAUSED_EVENT_RESET_REQUIRED':
@@ -2274,6 +2404,12 @@ function playerServiceError(serviceCode: string): { status: number; code: string
     case 'PLAYER_NOT_FOUND':
     case 'WALLET_NOT_FOUND':
       return { status: 409, code: 'REGISTRATION_REQUIRED', message: 'player registration is required' };
+    case 'PLAYER_SESSION_RETIRED':
+      return { status: 409, code: serviceCode, message: 'player session was reset; start a new session' };
+    case 'CONVERSATION_MEMORY_RESET_UNAVAILABLE':
+      return { status: 503, code: serviceCode, message: 'Conversation Memory reset is unavailable' };
+    case 'CONVERSATION_MEMORY_RESET_FAILED':
+      return { status: 502, code: serviceCode, message: 'Conversation Memory could not be cleared; retry the reset' };
     case 'PHONE_ALREADY_LINKED':
       return { status: 409, code: serviceCode, message: 'phone number is already linked to another player' };
     case 'PHONE_CHANGE_REQUIRES_RELINK':
@@ -2294,6 +2430,8 @@ function playerServiceError(serviceCode: string): { status: number; code: string
     case 'READY_ENTRY_NOT_FOUND':
     case 'READY_ENTRY_FORBIDDEN':
     case 'READY_ENTRY_NOT_READY':
+    case 'TEST_PLAYER_RESET_UNSAFE':
+    case 'TEST_PLAYER_RESET_MESSAGES_PENDING':
     case 'RESERVATION_NOT_ACTIVE':
     case 'STALE_STATION_LAUNCH':
     case 'SELECTION_NOT_ACTIVE':

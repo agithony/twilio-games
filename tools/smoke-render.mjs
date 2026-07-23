@@ -30,7 +30,8 @@ page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text(
 page.on('pageerror', (e) => pageErrors.push(String(e)));
 page.on('response', (r) => { if (r.url().endsWith('.glb')) glb.set(r.url().split('/').pop(), r.status()); });
 
-await page.goto(`${CLIENT}/play.html?display=1&room=SMOKE`, { waitUntil: 'networkidle2', timeout: 30000 });
+// Display mode keeps game, station, and config streams open, so network-idle is not reachable.
+await page.goto(`${CLIENT}/play.html?display=1&room=SMOKE`, { waitUntil: 'domcontentloaded', timeout: 30000 });
 await wait(3500);                       // Draco decode + GLTF parse
 await page.keyboard.press('Enter');     // start the race
 await wait(5000);

@@ -4,6 +4,7 @@
 @font-face { font-family: 'Twilio Sans Mono'; src: url('/fonts/TwilioSansMono-Regular.otf') format('opentype'); font-weight: 400; font-display: swap; }
 
 :root { --station-rail-width: 248px; }
+.station-rail[hidden] { display:none !important; }
 body.station-mode #app,
 body.station-mode #arena,
 body.station-mode .flow-overlay,
@@ -15,6 +16,10 @@ body.station-mode .flow-panel { width: min(1240px, calc(100vw - var(--station-ra
 body.station-mode #hint, body.station-mode #gauge { right: calc(var(--station-rail-width) + 16px); }
 body.station-mode #big { right: var(--station-rail-width); }
 body.station-mode #music-toggle-container .music-toggle { right: calc(var(--station-rail-width) + 16px); }
+body.station-mode .countdown-screen,body.station-mode .intro-screen,body.station-mode .loading { right:var(--station-rail-width); }
+body.station-mode .flow-error,body.station-mode .voice-feed,body.station-mode .fight-call,
+body.station-mode .result,body.station-mode .error,body.station-mode .impact { left:calc((100vw - var(--station-rail-width))/2); }
+body.station-mode .connection-status { right:calc(var(--station-rail-width) + 14px); }
 
 .station-rail {
   position: fixed; z-index: 500; inset: 0 0 0 auto; width: var(--station-rail-width);
@@ -49,6 +54,10 @@ body.station-mode #music-toggle-container .music-toggle { right: calc(var(--stat
   body.station-mode .command-deck { right:24px; bottom:170px; }
   body.station-mode #music-toggle-container .music-toggle { right:16px; bottom:166px; }
   body.station-mode #ticker { bottom:166px; }
+  body.station-mode .countdown-screen,body.station-mode .intro-screen,body.station-mode .loading { right:0;bottom:150px; }
+  body.station-mode .flow-error,body.station-mode .voice-feed,body.station-mode .fight-call,
+  body.station-mode .result,body.station-mode .error,body.station-mode .impact { left:50%; }
+  body.station-mode .connection-status { right:14px;top:auto;bottom:162px; }
   .station-rail { inset: auto 0 0; width: 100%; height: 150px; flex-direction: row; align-items: center; padding: 12px; border-left: 0; border-top: 1px solid #38425E; }
   .station-rail-brand, .station-rail-status { display: none; }
   .station-rail-copy { margin: 0; flex: 1; }

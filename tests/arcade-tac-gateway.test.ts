@@ -193,6 +193,7 @@ describe('ArcadeTacGateway', () => {
     let installedHandler = false;
     let failWebhook = false;
     const syncedNames: string[] = [];
+    const deletedProfiles: string[] = [];
     const client: ArcadeTacClient = {
       memory: {} as MemoryClient,
       setMessageHandler: () => { installedHandler = true; },
@@ -201,6 +202,8 @@ describe('ArcadeTacGateway', () => {
         processed.push({ payload, ...(token ? { token } : {}) });
       },
       syncProfileName: async input => { syncedNames.push(input.firstName); },
+      deleteProfile: async profileId => { deletedProfiles.push(profileId); },
+      isProfileDeleted: profileId => deletedProfiles.includes(profileId),
       shutdown: () => undefined,
     };
     const gateway = new ArcadeTacGateway({ configStore: store, events, createClient: async () => client });
@@ -218,6 +221,9 @@ describe('ArcadeTacGateway', () => {
     expect(gateway.ownsMessaging()).toBe(true);
     await gateway.syncProfileName({profileId:'mem_profile_1',phoneNumber:'+14155550199',firstName:'Ada',locale:'en-US'});
     expect(syncedNames).toEqual(['Ada']);
+    await gateway.deleteProfile('mem_profile_1');
+    expect(deletedProfiles).toEqual(['mem_profile_1']);
+    expect(gateway.isProfileDeleted('mem_profile_1')).toBe(true);
     await gateway.processWebhook({ eventType: 'COMMUNICATION_CREATED' }, 'token-1');
     expect(processed).toEqual([{
       payload: { eventType: 'COMMUNICATION_CREATED' }, token: 'token-1',

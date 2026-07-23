@@ -34,7 +34,7 @@ describe('join guidance', () => {
     expect(guidance.messaging).toBe(true);
     expect(guidance.command).toBe('JOIN');
     expect(guidance.intro).toBe('Register in your browser or send JOIN by SMS.');
-    expect(guidance.commandHelp).toContain('Just tap Send');
+    expect(guidance.channelDetail).toBe('Opens JOIN prefilled; just tap Send');
   });
 
   it('localizes the concise channel subtitle', () => {

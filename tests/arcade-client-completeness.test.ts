@@ -67,7 +67,7 @@ describe('Arcade client completeness', () => {
 
   it('derives operator overview cards from existing config, station, and messaging state', () => {
     for (const id of [
-      'operator-overview', 'overview-event', 'overview-game', 'overview-players', 'overview-messaging',
+      'operator-overview', 'overview-event', 'overview-game', 'overview-players', 'overview-messaging', 'overview-display',
       'operator-tab-overview', 'operator-tab-live-event', 'operator-tab-messages', 'operator-tab-setup',
       'live-event', 'messages', 'setup', 'settings-savebar', 'settings-open-blocker', 'voice-number-fields',
     ]) expect(arcadeHtml).toContain(`id="${id}"`);
@@ -88,15 +88,18 @@ describe('Arcade client completeness', () => {
     expect(joinGuidance).not.toContain('JOIN ${station}');
     expect(joinGuidance).toContain('Send ${command} by ${englishChannel}.');
     expect(joinGuidance).not.toContain('including YES for terms');
-    expect(joinGuidance).toContain('Just tap Send');
-    expect(joinGuidance).toContain('Basta tocar em Enviar');
-    expect(join).toContain('messageCommandPanel');
-    expect(join).toContain('hidden = !guidance.messaging');
+    expect(joinGuidance).toContain('just tap Send');
+    expect(joinGuidance).toContain('basta tocar em Enviar');
+    expect(join).not.toContain('messageCommandPanel');
+    expect(join).toContain('sms:${smsNumber}?body=${encodeURIComponent(command)}');
+    expect(join).toContain('https://wa.me/${digits}?text=${encodeURIComponent(command)}');
     expect(join).toContain('const smsNumber = availableNumber(bootstrap.smsNumber)');
     expect(join).toContain('const whatsappNumber = availableNumber(bootstrap.whatsappNumber)');
     expect(join).toContain('const sms = arcade.channels.sms && Boolean(smsNumber)');
     expect(join).toContain('const whatsapp = arcade.channels.whatsapp && Boolean(whatsappNumber)');
     expect(join).not.toContain("' primary'");
+    expect(join).toContain("'sms'");
+    expect(join).toContain("'whatsapp'");
   });
 
   it('lets a current ready browser player cast and change a localized game vote', () => {

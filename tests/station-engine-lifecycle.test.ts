@@ -94,10 +94,12 @@ describe('station engine room lifecycle', () => {
     expect(room.phase).toBe('loading');
     expect(room.ready(room.state().loadingGeneration)).toBe(true);
     fighter.voiceCommand(roomCode, playerId, 'forward');
+    expect(started).toHaveBeenCalledTimes(1);
+    expect(started).toHaveBeenCalledWith('fighter', roomCode);
     room.tick(FIGHTER_INTRO_SECONDS);
     expect(room.phase).toBe('countdown');
     fighter.voiceCommand(roomCode, playerId, 'forward');
-    expect(started).not.toHaveBeenCalled();
+    expect(started).toHaveBeenCalledTimes(1);
     expect(completed).not.toHaveBeenCalled();
     expect(abandoned).not.toHaveBeenCalled();
 
@@ -106,7 +108,6 @@ describe('station engine room lifecycle', () => {
     fighter.voiceCommand(roomCode, playerId, 'forward');
     fighter.voiceCommand(roomCode, playerId, 'back');
     expect(started).toHaveBeenCalledTimes(1);
-    expect(started).toHaveBeenCalledWith('fighter', roomCode);
     fighter.voiceLeave(roomCode, playerId);
     expect(abandoned).toHaveBeenCalledTimes(1);
     expect(abandoned).toHaveBeenCalledWith('fighter', roomCode);

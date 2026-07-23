@@ -109,12 +109,13 @@ input,select{width:100%;color:var(--th-text);background:var(--th-input);border:1
 .operator-section-heading{display:flex;align-items:end;justify-content:space-between;gap:24px;margin-bottom:14px}
 .operator-section-heading h2{font-size:1.75rem}
 .operator-section-heading>p{max-width:480px;color:var(--th-text-dim);font-size:.84rem;text-align:right}
-.overview-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.overview-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}
 .overview-card{min-width:0;display:grid;gap:6px;padding:17px 18px;color:var(--th-text);text-decoration:none;background:var(--th-card);border:1px solid var(--th-card-border);border-radius:15px;transition:border-color .15s ease,transform .15s ease}
-.overview-card:hover{transform:translateY(-2px);border-color:var(--th-text-muted)}
+.overview-card[href]:hover{transform:translateY(-2px);border-color:var(--th-text-muted)}
 .overview-card>span{color:var(--th-text-dim);font:.7rem 'Twilio Sans Mono',monospace;text-transform:uppercase;letter-spacing:.06em}
 .overview-card strong{overflow:hidden;font:800 1.35rem/1.1 'Twilio Sans Display',sans-serif;text-overflow:ellipsis}
 .overview-card small{overflow:hidden;color:var(--th-text-muted);font-size:.72rem;text-overflow:ellipsis;white-space:nowrap}
+#overview-display-detail{line-height:1.35;white-space:normal}
 .overview-card[data-state="active"]{border-top:3px solid var(--blue)}
 .overview-card[data-state="attention"]{border-top:3px solid var(--red)}
 .operator-page .station-panel{padding:30px;border-top:0}
@@ -190,7 +191,7 @@ input,select{width:100%;color:var(--th-text);background:var(--th-input);border:1
 .setup-details-body{padding:20px}
 .setup-details-body>.panel-heading>p{margin:0!important}
 .operator-page .challenge-form{grid-template-columns:repeat(2,minmax(0,1fr))}
-.display-connect-body{display:flex;align-items:center;justify-content:space-between;gap:24px;border-left:5px solid var(--red)}
+.display-connect-panel{margin-top:14px;padding:0!important;overflow:hidden;border-color:var(--red)!important}.display-connect-body{display:flex;align-items:center;justify-content:space-between;gap:24px;padding:22px;border-left:5px solid var(--red)}
 .display-connect-body>div{max-width:800px}.display-connect-body .button{flex:0 0 auto}.display-connect-body p{margin-top:8px!important}
 .qr-operator-panel{text-align:left}
 .qr-operator-panel .player-qr{width:min(230px,100%);margin:0 0 14px}

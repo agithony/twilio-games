@@ -139,10 +139,11 @@ export function createStationDisplay(): StationDisplay {
   };
 
   function setRailVisible(visible: boolean): void {
-    if (rail.root.hidden === !visible) return;
+    const changed=rail.root.hidden!==!visible
+      ||document.body.classList.contains('station-mode')!==visible;
     rail.root.hidden = !visible;
     document.body.classList.toggle('station-mode', visible);
-    dispatchEvent(new Event('resize'));
+    if(changed)dispatchEvent(new Event('resize'));
   }
 }
 

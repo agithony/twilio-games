@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { createHash } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -126,6 +127,81 @@ describe('ArcadeService station journey', () => {
     expect(left.readyEntry.status).toBe('LEFT');
     expect(left.reservation!.status).toBe('RELEASED');
     expect(await h.service.getWalletStatus('p1')).toMatchObject({ reservedBalance: 0, availableBalance: 2 });
+  });
+
+  it('rotates a reset test player into anonymous history so the next JOIN starts fresh', async () => {
+    const h = await harness();
+    await identify(h, 'p1');
+    await h.store.transaction(state => {
+      state.players.p1 = {
+        ...state.players.p1!,
+        conversationProfileId: 'mem-profile-1',
+        trustedDestination: '+14155550199',
+      };
+      state.messagingDrafts.p1 = {
+        playerId: 'p1', stationId: 'expo', step: 'COMPLETE', firstName: 'Ada',
+        lastName: null, workEmail: null, companyName: null, countryCode: null,
+        createdAt: new Date(T0).toISOString(), updatedAt: new Date(T0).toISOString(),
+      };
+      state.channelAddresses['channel:p1'] = {
+        id: 'channel:p1', playerId: 'p1', channel: 'sms', normalizedAddress: '+14155550199',
+        providerAddress: '+14155550199', preferredLocale: 'en-US',
+        firstSeenAt: new Date(T0).toISOString(), lastSeenAt: new Date(T0).toISOString(),
+      };
+      state.channelAddresses['channel:p1:alternate'] = {
+        id: 'channel:p1:alternate', playerId: 'p1', channel: 'sms', normalizedAddress: '+14155550198',
+        providerAddress: '+14155550198', preferredLocale: 'en-US',
+        firstSeenAt: new Date(T0).toISOString(), lastSeenAt: new Date(T0).toISOString(),
+      };
+    });
+    const inserted = await coin(h, 'p1');
+    h.advance();
+    const command = {
+      ...OPERATOR,
+      stationId: 'expo',
+      readyEntryId: inserted.readyEntry.id,
+      expectedRevision: inserted.station.revision,
+      idempotencyKey: 'reset-player:p1',
+      reason: 'repeat the attendee test',
+      deleteMemoryProfile: async () => undefined,
+    };
+
+    const reset = await h.service.resetTestPlayer(command);
+    expect(await h.service.resetTestPlayer(command)).toEqual(reset);
+    const state = h.store.snapshot();
+    const historicalEntry = state.stationReadyEntries[inserted.readyEntry.id]!;
+    const tombstoneId = historicalEntry.playerId;
+    expect(tombstoneId).not.toBe('p1');
+    expect(historicalEntry.status).toBe('LEFT');
+    expect(state.players.p1).toBeUndefined();
+    expect(state.wallets.p1).toBeUndefined();
+    expect(state.players[tombstoneId]).toMatchObject({
+      lead: null, conversationProfileId: null, trustedDestination: null,
+    });
+    expect(state.wallets[tombstoneId]?.reservations[0]?.status).toBe('RELEASED');
+    expect(state.messagingDrafts.p1).toBeUndefined();
+    expect(Object.values(state.channelAddresses).some(address => address.normalizedAddress === '+14155550199')).toBe(false);
+    expect(new Set(Object.values(state.channelAddresses).map(address => address.normalizedAddress)).size)
+      .toBe(Object.keys(state.channelAddresses).length);
+    expect(state.stationControlEvents.filter(event => event.action === 'RESET_TEST_PLAYER')).toHaveLength(1);
+
+    h.advance();
+    const providerMessageId = `SM${'a'.repeat(32)}`;
+    const joined = await h.service.processInboundStationMessage({
+      channel: 'sms',
+      normalizedAddress: '+14155550199',
+      providerAddress: '+14155550199',
+      providerMessageId,
+      body: 'JOIN',
+      stationId: 'expo',
+      preferredLocale: 'en-US',
+      conversationProfileId: 'mem-profile-1',
+      idempotencyKey: `provider:${createHash('sha256').update(providerMessageId).digest('hex')}`,
+    });
+    expect(joined.reply).toContain('first name');
+    expect(joined.playerId).not.toBe('p1');
+    expect(joined.playerId).not.toBe(tombstoneId);
+    expect(await h.service.getWalletStatus(joined.playerId!)).toMatchObject({ availableBalance: 0 });
   });
 
   it('records enabled game choices by trusted player identity and replays idempotently', async () => {

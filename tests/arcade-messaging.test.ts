@@ -502,7 +502,7 @@ describe('Arcade messaging commands', () => {
     ]);
   });
 
-  it('replenishes one coin for a messaging player after their prior paid game', async () => {
+  it('does not silently replenish a paid messaging player after their coin is used', async () => {
     const h = await harness('coin_only', 'per_player', config => { config.coins.startingBalance = 1; });
     const joined = await message(h.service, 'SM-REP-001', 'JOIN ARCADE-01 LANG en-US');
     await message(h.service, 'SM-REP-002', 'Ada');
@@ -541,11 +541,11 @@ describe('Arcade messaging commands', () => {
     });
 
     const second = await message(h.service, 'SM-REP-004', 'COIN');
-    expect(second.reply).toContain('Coin inserted');
+    expect(second.reply).toContain('do not have an available coin');
     const wallet = h.store.snapshot().wallets[joined.playerId!]!;
     expect(wallet.transactions.filter(transaction => transaction.type === 'operator_grant'))
-      .toHaveLength(1);
-    expect(wallet.reservations.filter(reservation => reservation.status === 'ACTIVE')).toHaveLength(1);
+      .toHaveLength(0);
+    expect(wallet.reservations.filter(reservation => reservation.status === 'ACTIVE')).toHaveLength(0);
   });
 
   it('prunes stale anonymous drafts in bounded batches while retaining active, economic, and lead players', async () => {

@@ -54,6 +54,8 @@ async function harness(options: {
   displayToken?: string | null;
   standaloneVoiceEnabled?: boolean;
   outboundTransport?: ArcadeMessagingTransport;
+  deleteMemoryProfile?: (profileId: string) => Promise<void>;
+  now?: () => number;
   inboundMessagingRateLimits?: {
     addressLimit?: number;
     addressWindowMs?: number;
@@ -108,6 +110,8 @@ async function harness(options: {
     fallbackVoiceNumber,
     messagingCapabilities: { sms: Boolean(smsNumber), whatsapp: Boolean(whatsappNumber) },
     inboundMessagingRateLimits: options.inboundMessagingRateLimits,
+    deleteMemoryProfile: options.deleteMemoryProfile,
+    now: options.now,
     authorizeAdmin: request => {
       const header = request.headers['x-test-arcade-admin'];
       const email = Array.isArray(header) ? header[0] : header;
@@ -276,7 +280,10 @@ describe('Arcade API', () => {
     expect((await fetch(`${baseUrl}/api/admin/arcade/status`)).status).toBe(401);
 
     const status = await fetch(`${baseUrl}/api/admin/arcade/status`, { headers: ADMIN_HEADER });
-    expect(await status.json()).toMatchObject({ config: { initialized: true, version: 1 }, tac: null });
+    expect(await status.json()).toMatchObject({
+      config: { initialized: true, version: 1 }, tac: null,
+      display: { configured: true, connected: false, checking: true, lastSeenAt: null, presenceTimeoutSeconds: 20 },
+    });
 
     const updated = await updateConfig(baseUrl, settings('coin_only'));
     expect(updated.status).toBe(200);
@@ -293,7 +300,8 @@ describe('Arcade API', () => {
   });
 
   it('connects an authenticated same-origin booth display without initializing mode-off player state', async () => {
-    const { baseUrl, playerRuntime } = await harness();
+    let now = Date.parse('2026-07-23T12:00:00.000Z');
+    const { baseUrl, playerRuntime } = await harness({ now: () => now });
     const endpoint = `${baseUrl}/api/admin/arcade/display/connect`;
     const validHeaders = {
       ...ADMIN_HEADER,
@@ -337,6 +345,16 @@ describe('Arcade API', () => {
     expect(connected.headers.get('access-control-allow-origin')).toBeNull();
     expect(await connected.json()).toEqual({ displayToken: DISPLAY_TOKEN });
     expect(playerRuntime.getStatus()).toMatchObject({ mode: 'off', initialized: false });
+
+    const display = await fetch(`${baseUrl}/api/arcade/station/display`, {
+      headers: { 'X-Arcade-Display-Token': DISPLAY_TOKEN },
+    });
+    expect(display.status).toBe(200);
+    const status = await fetch(`${baseUrl}/api/admin/arcade/status`, { headers: ADMIN_HEADER });
+    expect(await status.json()).toMatchObject({ display: { configured: true, connected: true } });
+    now += 20_001;
+    const expired = await fetch(`${baseUrl}/api/admin/arcade/status`, { headers: ADMIN_HEADER });
+    expect(await expired.json()).toMatchObject({ display: { configured: true, connected: false } });
 
     const adminConfig = await (await fetch(`${baseUrl}/api/admin/arcade/config`, { headers: ADMIN_HEADER })).text();
     const publicConfig = await (await fetch(`${baseUrl}/api/arcade/config/public`)).text();
@@ -978,6 +996,69 @@ describe('Arcade API', () => {
     expect(state.stationControlEvents.filter(event => event.action === 'RESET_STATION')).toHaveLength(1);
   });
 
+  it('resets a safe test player through the audited operator route and clears Conversation Memory', async () => {
+    const deletedProfiles: string[] = [];
+    const { baseUrl, playerRuntime, api } = await harness({
+      playerMode: 'coin_only',
+      deleteMemoryProfile: async profileId => { deletedProfiles.push(profileId); },
+    });
+    const resources = await playerRuntime.getActive();
+    await resources.service.identifyCoinOnly({
+      playerId: 'test-player', destination: '+14155550123', idempotencyKey: 'test-reset:identify',
+    });
+    await resources.store.transaction(state => {
+      state.players['test-player'] = {
+        ...state.players['test-player']!, conversationProfileId: 'mem-test-player',
+      };
+      state.messagingDrafts['test-player'] = {
+        playerId: 'test-player', stationId: 'ARCADE-01', step: 'COMPLETE', firstName: 'Ada',
+        lastName: null, workEmail: null, companyName: null, countryCode: null,
+        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      };
+      state.channelAddresses['test-reset-channel'] = {
+        id: 'test-reset-channel', playerId: 'test-player', channel: 'sms',
+        normalizedAddress: '+14155550123', providerAddress: '+14155550123', preferredLocale: 'en-US',
+        firstSeenAt: new Date().toISOString(), lastSeenAt: new Date().toISOString(),
+      };
+    });
+    const coin = await resources.service.insertStationCoin({
+      stationId: 'ARCADE-01', playerId: 'test-player', idempotencyKey: 'test-reset:coin',
+    });
+    const endpoint = `${baseUrl}/api/admin/arcade/station/ready/${encodeURIComponent(coin.readyEntry.id)}/reset-test-player`;
+    const request = (key = 'test-player-reset') => fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        ...ADMIN_HEADER,
+        Origin: 'http://localhost',
+        'Content-Type': 'application/json',
+        'If-Match': `"arcade-station-${coin.station.revision}"`,
+        'Idempotency-Key': key,
+      },
+      body: JSON.stringify({ reason: 'repeat attendee flow' }),
+    });
+
+    expect((await fetch(endpoint, {
+      method: 'POST',
+      headers: { Origin: 'http://localhost', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: 'unauthorized' }),
+    })).status).toBe(401);
+    const response = await request();
+    expect(response.status).toBe(200);
+    expect(response.headers.get('etag')).toBe(`"arcade-station-${coin.station.revision + 1}"`);
+    expect(deletedProfiles).toEqual(['mem-test-player']);
+    expect((await response.json() as Record<string, any>).recentControls[0]).toMatchObject({
+      action: 'RESET_TEST_PLAYER', actorSubject: 'admin@twilio.com', reason: 'repeat attendee flow',
+    });
+    expect((await request()).status).toBe(200);
+    expect(deletedProfiles).toEqual(['mem-test-player']);
+    expect(await api.attachMessagingProfile({
+      from: '+14155550123', conversationProfileId: 'mem-test-player',
+    })).toBe(false);
+    const state = resources.store.snapshot();
+    expect(state.players['test-player']).toBeUndefined();
+    expect(Object.values(state.channelAddresses).some(address => address.normalizedAddress === '+14155550123')).toBe(false);
+  });
+
   it('routes signed-provider SMS commands through durable Arcade messaging when enabled', async () => {
     const { baseUrl, store, playerRuntime, api } = await harness({ playerMode: 'coin_only' });
     const enabled = settings('coin_only') as Record<string, any>;
@@ -1460,7 +1541,7 @@ describe('Arcade API', () => {
   });
 
   it('allows a registered browser player to join without an OTP step', async () => {
-    const { baseUrl } = await harness({ playerMode: 'lead_capture' });
+    const { baseUrl, playerRuntime } = await harness({ playerMode: 'lead_capture' });
     const cookie = cookieFrom(await createPlayerSession(baseUrl, 'browser-player'));
     const mutate = (path: string, key: string, body: unknown) => fetch(`${baseUrl}${path}`, {
       method: 'POST',
@@ -1472,6 +1553,30 @@ describe('Arcade API', () => {
     });
     expect((await mutate('/api/arcade/register', 'browser-register', REGISTRATION)).status).toBe(200);
     expect((await mutate('/api/arcade/station/coin', 'browser-coin', {})).status).toBe(200);
+
+    const resources = await playerRuntime.getActive();
+    const before = resources.store.snapshot();
+    const readyEntry = Object.values(before.stationReadyEntries)[0]!;
+    const station = before.stations['ARCADE-01']!;
+    await resources.service.resetTestPlayer({
+      stationId: 'ARCADE-01', readyEntryId: readyEntry.id, expectedRevision: station.revision,
+      idempotencyKey: 'browser-player-reset', reason: 'repeat browser journey',
+      authorization: resources.operatorAuthorization('admin@twilio.com'),
+    });
+    const retiredRegistration = await mutate('/api/arcade/register', 'browser-register-after-reset', REGISTRATION);
+    expect(retiredRegistration.status).toBe(409);
+    expect(await retiredRegistration.json()).toMatchObject({ error: { code: 'PLAYER_SESSION_RETIRED' } });
+    const restarted = await fetch(`${baseUrl}/api/arcade/session`, {
+      method: 'POST',
+      headers: {
+        Cookie: cookie, Origin: 'http://localhost', 'Content-Type': 'application/json',
+        'Idempotency-Key': 'browser-player-restart',
+      },
+      body: JSON.stringify({ cabinetId: 'ARCADE-01' }),
+    });
+    expect(restarted.status).toBe(200);
+    expect(restarted.headers.get('set-cookie')).not.toBeNull();
+    expect(await restarted.json()).toEqual({ mode: 'lead_capture', registered: false, availableBalance: null });
   });
 
   it('rejects missing origins, caller-controlled identity fields, and tampered sessions', async () => {

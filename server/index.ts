@@ -108,6 +108,10 @@ const arcadeApi = new ArcadeApi({
       console.error('[TAC] Conversation Memory name sync failed:', error instanceof Error ? error.message : String(error));
     });
   },
+  deleteMemoryProfile: arcadeTacGateway
+    ? profileId => arcadeTacGateway.deleteProfile(profileId)
+    : undefined,
+  memoryProfileDeleted: profileId => arcadeTacGateway?.isProfileDeleted(profileId) === true,
   authorizeAdmin: request => {
     if (arcadeDevAdmin && isLoopbackAddress(request.socket.remoteAddress)
       && request.headers['x-arcade-dev-admin'] === 'true') {

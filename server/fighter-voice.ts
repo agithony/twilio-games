@@ -60,7 +60,6 @@ export class FighterVoiceSession {
   private interimCandidate: FighterCommand | null = null;
   private interimCount = 0;
   private interimFiredCommand: FighterCommand | null = null;
-  private interimSelectionId: string | null = null;
   private commandLocale: SupportedLocale = DEFAULT_LOCALE;
   private authoritativeName: string | null = null;
   private stationManaged=false;
@@ -99,12 +98,7 @@ export class FighterVoiceSession {
     if (message.type === 'prompt' && this.code && this.playerId) {
       const snapshot = this.deps.snapshot(this.code, this.playerId, this.commandLocale);
       if (!message.last) {
-        if (snapshot?.phase === 'fighter_select' || snapshot?.phase === 'map_select') {
-          const choices = snapshot.phase === 'fighter_select' ? snapshot.fighters : snapshot.maps;
-          const choice = matchChoice(message.voicePrompt, choices, this.commandLocale);
-          if (choice && choice.id !== this.interimSelectionId) { this.interimSelectionId = choice.id; this.handleUtterance(message.voicePrompt); }
-          return;
-        }
+        if (snapshot?.phase === 'fighter_select' || snapshot?.phase === 'map_select') return;
         if (snapshot?.phase !== 'fight') return;
         const command = matchFighterCommand(message.voicePrompt, this.commandLocale);
         if (!command) { this.interimCandidate = null; this.interimCount = 0; return; }
@@ -113,11 +107,6 @@ export class FighterVoiceSession {
         // Two matching interim frames provide low latency without acting on one unstable ASR guess.
         if (this.interimCount >= 2 && !this.interimFiredCommand && this.deps.command(this.code, this.playerId, command)) this.interimFiredCommand = command;
         return;
-      }
-      if (this.interimSelectionId) {
-        const choices = snapshot?.phase === 'fighter_select' ? snapshot.fighters : snapshot?.phase === 'map_select' ? snapshot.maps : [];
-        const finalChoice = matchChoice(message.voicePrompt, choices, this.commandLocale);
-        if (finalChoice?.id === this.interimSelectionId) { this.resetInterim(); return; }
       }
       if (this.interimFiredCommand) {
         const commands = matchFighterCommands(message.voicePrompt, this.commandLocale);
@@ -296,7 +285,7 @@ export class FighterVoiceSession {
     return !name || name === 'Caller' || name === 'Jogador';
   }
 
-  private resetInterim(): void { this.interimCandidate = null; this.interimCount = 0; this.interimFiredCommand = null; this.interimSelectionId = null; }
+  private resetInterim(): void { this.interimCandidate = null; this.interimCount = 0; this.interimFiredCommand = null; }
 
   handleClose(): void {
     const preserve=this.stationManaged&&this.code&&this.playerId
@@ -323,8 +312,8 @@ export function matchVoiceChoice(spoken: string, maps: { id: string; name: strin
     : ordinals.findIndex(word => new RegExp(`\\b${word}\\b`).test(text));
   const choiceIndex = digit ? Number(digit[1]) - 1 : ordinalIndex >= 0 ? ordinalIndex : wordIndex;
   if (choiceIndex >= 0 && maps[choiceIndex]) return maps[choiceIndex];
-  return maps.find(map => text.includes(normalizeForMatching(map.id, locale)) || text.includes(normalizeForMatching(map.name, locale)))
-    ?? maps.find(map => (VOICE_CHOICE_ALIASES[map.id] ?? []).some(alias => text.includes(normalizeForMatching(alias, locale))))
+  return maps.find(map => containsChoicePhrase(text,normalizeForMatching(map.id,locale)) || containsChoicePhrase(text,normalizeForMatching(map.name,locale)))
+    ?? maps.find(map => (VOICE_CHOICE_ALIASES[map.id] ?? []).some(alias => containsChoicePhrase(text,normalizeForMatching(alias,locale))))
     ?? maps.find(map => {
       const first = normalizeForMatching(map.name, locale).split(' ')[0];
       return first && text === first && maps.filter(candidate => normalizeForMatching(candidate.name, locale).split(' ')[0] === first).length === 1;
@@ -334,13 +323,18 @@ export function matchVoiceChoice(spoken: string, maps: { id: string; name: strin
 }
 
 const matchChoice = matchVoiceChoice;
+function containsChoicePhrase(text:string,phrase:string):boolean{
+  if(!phrase)return false;
+  const escaped=phrase.replace(/[.*+?^${}()|[\]\\]/g,'\\$&').replace(/\s+/g,'\\s+');
+  return new RegExp(`(?:^|\\b)${escaped}(?:$|\\b)`).test(text);
+}
 const VOICE_CHOICE_ALIASES: Record<string, string[]> = {
   nyx: ['nix', 'nicks', 'nick'], wraith: ['wreath', 'raith', 'espectro'], 'remy-riot': ['remy', 'remi riot', 'remy revolta'],
   'cinder-capone': ['cinder', 'brasa capone'], 'rune-warden': ['rune', 'guardiao runico'], 'shroom-boom': ['shroom', 'mushroom', 'cogumelo bomba'],
   'gran-slam': ['grand slam', 'gran', 'vo pancada'], 'bass-nova': ['bass', 'grave nova'], 'velvet-thunder': ['velvet', 'trovao de veludo'],
   'iron-oni': ['iron', 'oni de ferro'], bulkhead: ['bulk head', 'blindado'], 'sir-knockout': ['knockout', 'sir nocaute'],
   foundry: ['fundição neon', 'fundicao neon'], void: ['circuito do vazio'],
-  'cyberpunk-city': ['cidade cyberpunk'], inakaya: ['restaurante inakaya'], rain: ['chuva'],
+  'cyberpunk-city': ['cidade cyberpunk'], inakaya: ['restaurante inakaya','inakaya restaurant','ina kaya','izakaya'], rain: ['chuva'],
 };
 const FIGHTER_MAP_NAME_KEYS: Record<string, FighterMessageKey> = {
   foundry: 'content.mapName.foundry', void: 'content.mapName.void', 'cyberpunk-city': 'content.mapName.cyberpunk-city',

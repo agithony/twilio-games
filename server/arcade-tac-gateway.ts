@@ -1,4 +1,5 @@
 import type { ConversationId, MemoryClient, TACMemoryResponse } from 'twilio-agent-connect';
+import twilio from 'twilio';
 import type { ArcadeMode } from '../shared/arcade-config';
 import type { ArcadeConfigStore } from './arcade-config-store';
 import { ARCADE_CONFIG_UPDATED_EVENT, type ArcadeEventHub } from './arcade-events';
@@ -8,6 +9,8 @@ export interface ArcadeTacClient {
   setMessageHandler?(handler: ArcadeTacMessageHandler): void;
   processWebhook?(payload: unknown, idempotencyToken?: string): Promise<void>;
   syncProfileName?(input: { profileId: string; phoneNumber: string; firstName: string; locale: 'en-US' | 'pt-BR' }): Promise<void>;
+  deleteProfile?(profileId: string): Promise<void>;
+  isProfileDeleted?(profileId: string): boolean;
   shutdown(): void;
 }
 
@@ -159,6 +162,15 @@ export class ArcadeTacGateway {
     await this.client.syncProfileName(input);
   }
 
+  async deleteProfile(profileId: string): Promise<void> {
+    if(!this.client?.deleteProfile)throw new Error('Conversation Memory profile deletion is unavailable');
+    await this.client.deleteProfile(profileId);
+  }
+
+  isProfileDeleted(profileId: string): boolean {
+    return this.client?.isProfileDeleted?.(profileId) === true;
+  }
+
   private reconcile(): Promise<void> {
     if (this.stopped) return Promise.resolve();
     // ConfigStore publishes synchronously after replacing its snapshot, so mode-off is observed
@@ -238,12 +250,18 @@ async function createDefaultTacClient(): Promise<ArcadeTacClient> {
   let handler: ArcadeTacMessageHandler | null = null;
   const syncedProfileNames=new Map<string,string>();
   const profileNameSyncs=new Map<string,{fingerprint:string;task:Promise<void>}>();
+  const deletedProfileIds=new Set<string>();
+  const accountSid=process.env.TWILIO_ACCOUNT_SID?.trim()??'';
+  const apiKey=process.env.TWILIO_API_KEY?.trim()??'';
+  const apiSecret=process.env.TWILIO_API_SECRET?.trim()??'';
+  const authToken=process.env.TWILIO_AUTH_TOKEN?.trim()??'';
   const inFlight = new Set<Promise<void>>();
   const callbackFailures: unknown[] = [];
   tac.onMessageReady(async ({
     conversationId, profileId, message, author, memory: recalled, session, channel,
   }) => {
     if ((channel !== 'sms' && channel !== 'whatsapp') || !handler) return null;
+    if(profileId&&deletedProfileIds.has(String(profileId)))return null;
     // Orchestrator channelId is the original SMS/WhatsApp provider SID. Prefer it so a direct
     // signed-webhook fallback and a later Orchestrator retry share one durable idempotency key.
     const providerMessageId = resolveTacProviderMessageId({
@@ -327,16 +345,17 @@ async function createDefaultTacClient(): Promise<ArcadeTacClient> {
     memory,
     setMessageHandler: next => { handler = next; },
     syncProfileName: async input => {
+      if(deletedProfileIds.has(input.profileId))return;
       const fingerprint=JSON.stringify([input.firstName,input.locale]);
       if(syncedProfileNames.get(input.profileId)===fingerprint)return;
       const pending=profileNameSyncs.get(input.profileId);
       if(pending?.fingerprint===fingerprint){await pending.task;return;}
       const prior=pending?.task??Promise.resolve();
       const task=prior.catch(()=>undefined).then(async()=>{
+        if(deletedProfileIds.has(input.profileId))return;
         if(syncedProfileNames.get(input.profileId)===fingerprint)return;
         await memory.createObservation(
           input.profileId,JSON.stringify({firstName:input.firstName,locale:input.locale}),
-          'twilio-games-player-profile',
         );
         syncedProfileNames.set(input.profileId,fingerprint);
       }).finally(()=>{
@@ -345,6 +364,21 @@ async function createDefaultTacClient(): Promise<ArcadeTacClient> {
       profileNameSyncs.set(input.profileId,{fingerprint,task});
       await task;
     },
+    deleteProfile: async profileId => {
+      if(!/^AC[a-f0-9]{32}$/i.test(accountSid))throw new Error('TWILIO_ACCOUNT_SID is required for Conversation Memory profile deletion');
+      const username=apiKey||accountSid,password=apiKey?apiSecret:authToken;
+      if(!username||!password)throw new Error('Twilio API credentials are required for Conversation Memory profile deletion');
+      const client=twilio(username,password,{accountSid,autoRetry:false,timeout:10_000});
+      deletedProfileIds.add(profileId);
+      try{
+        await profileNameSyncs.get(profileId)?.task.catch(()=>undefined);
+        await client.memory.v1.profiles(memory.getStoreId(),profileId).remove();
+      }catch(error){
+        if((error as {status?:unknown}).status!==404){deletedProfileIds.delete(profileId);throw error;}
+      }
+      syncedProfileNames.delete(profileId);profileNameSyncs.delete(profileId);
+    },
+    isProfileDeleted: profileId => deletedProfileIds.has(profileId),
     processWebhook: (payload, _idempotencyToken) => {
       const run = webhookQueue.then(
         () => processWebhook(payload),

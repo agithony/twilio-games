@@ -305,6 +305,13 @@ export interface DropStationAdmittedEntryInput extends StationRevisionInput {
   readonly reason: string;
 }
 
+export interface ResetTestPlayerInput extends StationRevisionInput {
+  readonly readyEntryId: string;
+  readonly authorization: unknown;
+  readonly reason: string;
+  readonly deleteMemoryProfile?: (profileId: string) => Promise<void>;
+}
+
 export interface SelectStationGameInput extends StationControlInput {
   readonly game: PlayableArcadeGame;
   readonly engineRoomCode: string;
@@ -426,6 +433,7 @@ const DEGRADED_CLEANUP_OPERATIONS = new Set([
   'FAIL_STATION_LAUNCH',
   'RECOVER_STATION_RESTART',
   'RESET_STATION',
+  'RESET_TEST_PLAYER',
 ]);
 
 interface ArcadeMutationStorageLimits {
@@ -504,6 +512,52 @@ function stationOccurredAt(value: string | undefined, now: string): string {
 
 function own<Value>(record: Record<string, Value>, key: string): Value | undefined {
   return Object.prototype.hasOwnProperty.call(record, key) ? record[key] : undefined;
+}
+
+function resetPhoneNumber(state: ArcadeState, tombstoneId: string): string {
+  for (let salt = 0; salt < 100; salt++) {
+    const digest = createHash('sha256').update(`${tombstoneId}:${salt}`).digest('hex');
+    const suffix = BigInt(`0x${digest.slice(0, 16)}`).toString().padStart(12, '0').slice(-12);
+    const candidate = `+999${suffix}`;
+    if (!Object.values(state.channelAddresses).some(address => address.normalizedAddress === candidate)) {
+      return candidate;
+    }
+  }
+  throw new ArcadeServiceError('TEST_PLAYER_RESET_FAILED', 'could not allocate an anonymous history identity');
+}
+
+function scrubResetValue(value: unknown, replacements: ReadonlyMap<string, string>): unknown {
+  if (typeof value === 'string') {
+    let scrubbed = value;
+    const ordered = [...replacements].sort((left, right) => right[0].length - left[0].length);
+    for (const [sensitive, replacement] of ordered) {
+      if (sensitive.length >= 3) scrubbed = scrubbed.replaceAll(sensitive, replacement);
+      else scrubbed = scrubbed.replace(new RegExp(`\\b${sensitive.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'g'), replacement);
+    }
+    return scrubbed;
+  }
+  if (Array.isArray(value)) return value.map(item => scrubResetValue(item, replacements));
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, scrubResetValue(item, replacements)]));
+}
+
+function containsResetPlayer(value: unknown, playerId: string): boolean {
+  if (value === playerId) return true;
+  if (Array.isArray(value)) return value.some(item => containsResetPlayer(item, playerId));
+  return Boolean(value && typeof value === 'object'
+    && Object.values(value).some(item => containsResetPlayer(item, playerId)));
+}
+
+function retiredPlayerHash(playerId: string): string {
+  return createHash('sha256').update(`retired-player:${playerId}`).digest('hex');
+}
+
+function isRetiredPlayer(state: ArcadeState, playerId: string): boolean {
+  const hash = retiredPlayerHash(playerId);
+  return Object.values(state.idempotencyRecords).some(record => (
+    record.operation === 'RESET_TEST_PLAYER'
+    && (record.result as { retiredPlayerHash?: unknown } | null)?.retiredPlayerHash === hash
+  ));
 }
 
 function requireReason(value: unknown): string {
@@ -1147,6 +1201,11 @@ export class ArcadeService {
       retentionDays: this.messagingRetentionMs / (24 * 60 * 60 * 1000),
       pruneBatchSize: this.messagingPruneBatchSize,
     });
+  }
+
+  async isRetiredPlayer(playerIdInput: string): Promise<boolean> {
+    const playerId = requireIdentifier(playerIdInput, 'playerId');
+    return isRetiredPlayer(await this.store.read(), playerId);
   }
 
   async getPlayerStatus(playerIdInput: string): Promise<ArcadePlayerStatus | null> {
@@ -2207,7 +2266,7 @@ export class ArcadeService {
             return finish(command, messagingCopy(locale, 'cannotLeave'));
           }
           const aggregate = this.requireStationAggregate(state, entry.stationId);
-          let wallet = this.requireWallet(state, playerId);
+          const wallet = this.requireWallet(state, playerId);
           const reservation = entry.reservationId === null
             ? null
             : wallet.reservations.find(candidate => candidate.id === entry.reservationId);
@@ -2232,22 +2291,6 @@ export class ArcadeService {
           if (Object.values(state.stationReadyEntries).some(entry => entry.playerId === playerId
             && !['COMPLETED', 'LEFT'].includes(entry.status))) {
             return finish(command, messagingCopy(locale, 'alreadyReady'));
-          }
-          if (!freePlay && availableBalance(wallet) < STATION_COIN_COST
-            && wallet.transactions.some(transaction => transaction.type === 'redemption')) {
-            wallet = grantOperatorCoins(wallet, {
-              amount: STATION_COIN_COST,
-              transactionId: this.id('wallet-transaction'),
-              idempotencyKey: `${input.idempotencyKey}:replenish`,
-              createdAt: at,
-              configVersion: config.version,
-              metadata: {
-                source: 'messaging_replenishment',
-                channel: input.channel,
-                stationId,
-              },
-            });
-            state.wallets[playerId] = wallet;
           }
           if (!freePlay && availableBalance(wallet) < STATION_COIN_COST) {
             return finish(command, messagingCopy(locale, 'noCoins'));
@@ -2552,6 +2595,200 @@ export class ArcadeService {
       }
       return stationResult(updated);
     }));
+  }
+
+  resetTestPlayer(input: ResetTestPlayerInput): Promise<{ reset: true; stationRevision: number }> {
+    const stationId = requireIdentifier(input.stationId, 'stationId');
+    const readyEntryId = requireIdentifier(input.readyEntryId, 'readyEntryId');
+    const expectedRevision = requirePositiveInteger(input.expectedRevision, 'expectedRevision');
+    const principal = this.authorizeOperator(input.authorization, 'STATION_ACTION_UNAUTHORIZED');
+    const reason = requireReason(input.reason);
+    let publishedRevision = 0;
+    const pending = this.execute('RESET_TEST_PLAYER', input.idempotencyKey, null, {
+      stationId, readyEntryId, expectedRevision, reason, authorizedBy: principal,
+    }, async (state, config, at) => {
+      const before = this.requireStationAggregate(state, stationId);
+      if (before.station.revision !== expectedRevision) {
+        throw new ArcadeServiceError('STALE_STATION_REVISION', 'station revision changed');
+      }
+      const entry = own(before.readyEntries, readyEntryId);
+      if (!entry || entry.status === 'LEFT') {
+        throw new ArcadeServiceError('READY_ENTRY_NOT_FOUND', 'test player entry was not found');
+      }
+      if (!['READY', 'OVERFLOW', 'COMPLETED'].includes(entry.status)) {
+        throw new ArcadeServiceError(
+          'TEST_PLAYER_RESET_UNSAFE',
+          'test player can be reset only while waiting or after the game completes',
+        );
+      }
+      const player = this.requirePlayer(state, entry.playerId);
+      const playerEntries = Object.values(state.stationReadyEntries).filter(candidate => candidate.playerId === player.id);
+      if (playerEntries.some(candidate => candidate.id !== readyEntryId
+        && ['READY', 'OVERFLOW', 'ADMITTED', 'PLAYING'].includes(candidate.status))
+        || Object.values(state.queueEntries).some(candidate => (
+          candidate.playerId === player.id && !isTerminalQueueStatus(candidate.status)
+        ))) {
+        throw new ArcadeServiceError(
+          'TEST_PLAYER_RESET_UNSAFE',
+          'test player has another active game entry',
+        );
+      }
+      const wallet = this.requireWallet(state, entry.playerId);
+      const addressIds = new Set(Object.values(state.channelAddresses)
+        .filter(address => address.playerId === player.id).map(address => address.id));
+      const targetNotifications = Object.values(state.outboundNotifications)
+        .filter(notification => notification.playerId === player.id || addressIds.has(notification.channelAddressId));
+      if (targetNotifications.some(notification => ['PENDING', 'SENDING', 'RETRY_WAIT', 'ACCEPTED'].includes(notification.status))) {
+        throw new ArcadeServiceError(
+          'TEST_PLAYER_RESET_MESSAGES_PENDING',
+          'wait for pending player messages to finish before resetting',
+        );
+      }
+
+      if (player.conversationProfileId) {
+        if (!input.deleteMemoryProfile) {
+          throw new ArcadeServiceError(
+            'CONVERSATION_MEMORY_RESET_UNAVAILABLE',
+            'Conversation Memory profile deletion is unavailable',
+          );
+        }
+        try {
+          await input.deleteMemoryProfile(player.conversationProfileId);
+        } catch {
+          throw new ArcadeServiceError(
+            'CONVERSATION_MEMORY_RESET_FAILED',
+            'Conversation Memory profile deletion failed',
+          );
+        }
+      }
+
+      let updated = before;
+      let settledWallet = wallet;
+      if (entry.status === 'READY' || entry.status === 'OVERFLOW') {
+        updated = reduceLeaveStationReadyEntry(
+          before, { readyEntryId, at, expectedRevision }, this.stationTiming(config),
+        );
+        const reservation = entry.reservationId === null
+          ? null
+          : wallet.reservations.find(candidate => candidate.id === entry.reservationId) ?? null;
+        if (reservation?.status === 'ACTIVE') {
+          settledWallet = releaseReservation(wallet, {
+            reservationId: reservation.id,
+            transactionId: this.id('wallet-transaction'),
+            idempotencyKey: `${input.idempotencyKey}:release`,
+            createdAt: at,
+            configVersion: reservation.configVersion,
+            metadata: { reason, authorizedBy: principal },
+          });
+        }
+      } else {
+        updated = {
+          ...before,
+          station: Object.freeze({
+            ...before.station,
+            revision: before.station.revision + 1,
+            updatedAt: at,
+          }),
+        };
+      }
+      state.wallets[player.id] = settledWallet;
+      this.persistStationAggregate(state, updated);
+
+      const tombstoneId = this.id('reset-player');
+      const draft = own(state.messagingDrafts, player.id);
+      const replacements = new Map<string, string>([[player.id, tombstoneId]]);
+      for (const value of [
+        player.conversationProfileId, player.crmLeadId, player.trustedDestination,
+        ...(player.lead ? Object.values(player.lead) : []),
+        ...(draft ? [draft.firstName, draft.lastName, draft.workEmail, draft.companyName] : []),
+      ]) if (value) replacements.set(value, '[reset]');
+
+      state.players[tombstoneId] = {
+        id: tombstoneId,
+        createdAt: player.createdAt,
+        updatedAt: at,
+        lead: null,
+        preferredLocale: null,
+        conversationProfileId: null,
+        crmLeadId: null,
+        termsAcceptedAt: null,
+        marketingConsent: false,
+        trustedDestination: null,
+      };
+      delete state.players[player.id];
+      state.wallets[tombstoneId] = {
+        wallet: { ...settledWallet.wallet, playerId: tombstoneId, updatedAt: at },
+        transactions: settledWallet.transactions.map(transaction => ({ ...transaction, playerId: tombstoneId })),
+        reservations: settledWallet.reservations.map(reservation => ({ ...reservation, playerId: tombstoneId })),
+        challengeClaims: settledWallet.challengeClaims.map(claim => ({ ...claim, playerId: tombstoneId })),
+        idempotencyRecords: settledWallet.idempotencyRecords.map(record => ({ ...record, playerId: tombstoneId })),
+      };
+      delete state.wallets[player.id];
+      delete state.messagingDrafts[player.id];
+
+      for (const [id, queueEntry] of Object.entries(state.queueEntries)) {
+        if (queueEntry.playerId === player.id) state.queueEntries[id] = { ...queueEntry, playerId: tombstoneId };
+      }
+      state.queueEvents = state.queueEvents.map(event => (
+        event.playerId === player.id ? { ...event, playerId: tombstoneId } : event
+      ));
+      for (const [id, readyEntry] of Object.entries(state.stationReadyEntries)) {
+        if (readyEntry.playerId === player.id) state.stationReadyEntries[id] = { ...readyEntry, playerId: tombstoneId };
+      }
+      for (const [id, address] of Object.entries(state.channelAddresses)) {
+        if (address.playerId !== player.id) continue;
+        const addressPhone = resetPhoneNumber(state, `${tombstoneId}:${id}`);
+        const providerAddress = address.channel === 'whatsapp' ? `whatsapp:${addressPhone}` : addressPhone;
+        replacements.set(address.normalizedAddress, '[reset]');
+        replacements.set(address.providerAddress, '[reset]');
+        state.channelAddresses[id] = {
+          ...address,
+          playerId: tombstoneId,
+          normalizedAddress: addressPhone,
+          providerAddress,
+          preferredLocale: 'en-US',
+          lastSeenAt: at,
+        };
+      }
+      const notificationIds = new Set(targetNotifications.map(notification => notification.id));
+      for (const id of notificationIds) delete state.outboundNotifications[id];
+      for (const [id, event] of Object.entries(state.messagingAuditEvents)) {
+        if (notificationIds.has(event.notificationId)) delete state.messagingAuditEvents[id];
+      }
+      for (const [id, message] of Object.entries(state.inboundMessages)) {
+        if (message.channelAddressId && addressIds.has(message.channelAddressId)) {
+          state.inboundMessages[id] = {
+            ...message,
+            command: 'RESET',
+            reply: 'Player reset by operator.',
+          };
+        }
+      }
+      for (const [id, record] of Object.entries(state.idempotencyRecords)) {
+        if (record.playerId !== player.id && !containsResetPlayer(record.result, player.id)) continue;
+        state.idempotencyRecords[id] = {
+          ...record,
+          playerId: record.playerId === player.id ? tombstoneId : record.playerId,
+          result: scrubResetValue(record.result, replacements),
+        };
+      }
+      this.recordStationControlEvent(
+        state, 'RESET_TEST_PLAYER', before, updated, principal, reason, at, config.version,
+      );
+      publishedRevision = updated.station.revision;
+      return {
+        reset: true as const,
+        stationRevision: updated.station.revision,
+        retiredPlayerHash: retiredPlayerHash(player.id),
+        retiredProfileHash: player.conversationProfileId
+          ? createHash('sha256').update(`retired-profile:${player.conversationProfileId}`).digest('hex')
+          : null,
+      };
+    }, undefined, true);
+    return pending.then(result => {
+      if (publishedRevision > 0) this.stationUpdated?.(publishedRevision);
+      return result;
+    });
   }
 
   closeStationRecruiting(input: StationControlInput): Promise<StationMutationResult> {
@@ -2976,7 +3213,7 @@ export class ArcadeService {
     idempotencyKeyInput: string,
     playerId: string | null,
     payload: unknown,
-    mutate: (state: ArcadeState, config: ArcadeConfigSnapshot, at: string) => Result,
+    mutate: (state: ArcadeState, config: ArcadeConfigSnapshot, at: string) => Result | Promise<Result>,
     validateBeforeMutation?: (config: ArcadeConfigSnapshot, at: string) => void,
     allowWhenNewMutationsBlocked = false,
   ): Promise<Result> {
@@ -2986,7 +3223,7 @@ export class ArcadeService {
       MAX_IDEMPOTENCY_KEY_LENGTH,
     );
     const requestFingerprint = fingerprint(payload);
-    return this.store.transaction(state => {
+    return this.store.transaction(async state => {
       const existing = own(state.idempotencyRecords, idempotencyKey);
       if (existing) {
         if (existing.operation !== operation || existing.fingerprint !== requestFingerprint) {
@@ -3010,7 +3247,15 @@ export class ArcadeService {
       const config = this.config();
       const at = this.now();
       validateBeforeMutation?.(config, at);
-      const result = mutate(state, config, at);
+      const requestPlayerId = playerId ?? (
+        payload && typeof payload === 'object' && typeof (payload as { playerId?: unknown }).playerId === 'string'
+          ? (payload as { playerId: string }).playerId
+          : null
+      );
+      if (operation !== 'RESET_TEST_PLAYER' && requestPlayerId && isRetiredPlayer(state, requestPlayerId)) {
+        throw new ArcadeServiceError('PLAYER_SESSION_RETIRED', 'player session was reset');
+      }
+      const result = await mutate(state, config, at);
       const record: ArcadeServiceIdempotencyRecord = {
         key: idempotencyKey,
         operation,
