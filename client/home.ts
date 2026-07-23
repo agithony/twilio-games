@@ -16,7 +16,6 @@ import {
   stationJoinUrl,
   stationLaunchUrl,
   StationRequestError,
-  storeDisplayToken,
   subscribeToStation,
   type PublicStation,
 } from './station-client';
@@ -39,11 +38,11 @@ const copy = locale === 'pt-BR' ? {
   standaloneDescription: 'Escolha um jogo na tela compartilhada. Os jogadores ligam de qualquer telefone e usam a voz como controle.',
   nextGame: 'Próximo jogo', gameComplete: 'Partida concluída',
   playersNext: 'jogadores já estão prontos para a próxima partida',
-  displaySetup: 'Configuração da tela necessária', missingDisplayToken: 'Token da tela ausente',
-  invalidDisplayToken: 'Token da tela inválido', connectDisplay: 'Conectar esta tela', displayTokenLabel: 'Token da tela',
-  missingDisplayExplanation: 'Esta tela precisa do token de exibição antes de iniciar o jogo. Digite o token fornecido pelo operador.',
-  invalidDisplayExplanation: 'O token salvo foi rejeitado. Digite um token de exibição válido para reconectar esta tela.',
-  configureDisplay: 'Configurar tela', retryDisplay: 'Tentar novamente',
+  displaySetup: 'Conexão segura necessária', missingDisplayToken: 'Tela não conectada',
+  invalidDisplayToken: 'Acesso da tela rejeitado', connectDisplay: 'Conecte pelo console do operador',
+  missingDisplayExplanation: 'Somente a tela do estande pode iniciar jogos compartilhados. Um operador autenticado deve conectar este navegador para impedir que visitantes controlem os jogos.',
+  invalidDisplayExplanation: 'O acesso desta tela foi rejeitado. Para proteger os jogos contra o controle de visitantes, um operador autenticado deve reconectar este navegador.',
+  openOperator: 'Abrir console do operador',
   lightTheme: 'Tema claro', darkTheme: 'Tema escuro', operator: 'Console do operador', playerMax: 'máx. {count} jogadores',
   playNow: '{count} jogam agora', keepPriority: '{count} mantêm prioridade',
   racerBlurb: 'Uma corrida por uma pista neon controlada por voz.',
@@ -70,11 +69,11 @@ const copy = locale === 'pt-BR' ? {
   standaloneDescription: 'Choose a game on the shared screen. Players call from any phone and use their voices as controllers.',
   nextGame: 'Next game', gameComplete: 'Game complete',
   playersNext: 'players are already ready for the next game',
-  displaySetup: 'Display setup required', missingDisplayToken: 'Missing display token',
-  invalidDisplayToken: 'Invalid display token', connectDisplay: 'Connect this display', displayTokenLabel: 'Display token',
-  missingDisplayExplanation: 'This display needs its display token before it can launch the game. Enter the token provided by the operator.',
-  invalidDisplayExplanation: 'The saved display token was rejected. Enter a valid display token to reconnect this screen.',
-  configureDisplay: 'Configure display', retryDisplay: 'Retry display',
+  displaySetup: 'Secure connection required', missingDisplayToken: 'Display not connected',
+  invalidDisplayToken: 'Display access rejected', connectDisplay: 'Connect through the operator console',
+  missingDisplayExplanation: 'Only the booth display may launch shared games. A signed-in operator must connect this browser to prevent visitors from controlling the games.',
+  invalidDisplayExplanation: 'This display access was rejected. To protect games from visitor control, a signed-in operator must reconnect this browser.',
+  openOperator: 'Open operator console',
   lightTheme: 'Light theme', darkTheme: 'Dark theme', operator: 'Operator console', playerMax: '{count} player max',
   playNow: '{count} play now', keepPriority: '{count} keep priority',
   racerBlurb: 'A voice-powered sprint through a neon circuit.',
@@ -270,8 +269,7 @@ function showDisplaySetup(reason: 'missing' | 'invalid'): void {
   document.getElementById('displaySetupTitle')!.textContent = copy.connectDisplay;
   document.getElementById('displaySetupExplanation')!.textContent = reason === 'missing'
     ? copy.missingDisplayExplanation : copy.invalidDisplayExplanation;
-  document.getElementById('displayTokenLabel')!.textContent = copy.displayTokenLabel;
-  document.getElementById('displaySetupSubmit')!.textContent = reason === 'missing' ? copy.configureDisplay : copy.retryDisplay;
+  document.getElementById('displaySetupOperator')!.textContent = copy.openOperator;
   connection.textContent = reason === 'missing' ? copy.missingDisplayToken : copy.invalidDisplayToken;
 }
 
@@ -303,35 +301,6 @@ async function refresh(): Promise<void> {
   } finally {
     refreshing = false;
     if (refreshPending) { refreshPending = false; void refresh(); }
-  }
-}
-
-async function configureDisplay(event: SubmitEvent): Promise<void> {
-  event.preventDefault();
-  const input = document.getElementById('displayTokenInput') as HTMLInputElement;
-  const button = document.getElementById('displaySetupSubmit') as HTMLButtonElement;
-  const candidate = input.value.trim();
-  if (!candidate) { showDisplaySetup('missing'); input.focus(); return; }
-  button.disabled = true;
-  try {
-    const result = await fetchPublicStation(candidate);
-    if (!storeDisplayToken(candidate)) throw new Error('display token storage unavailable');
-    displayToken = candidate;
-    displayTokenRejected = false;
-    input.value = '';
-    render(result.station);
-  } catch (cause) {
-    if (cause instanceof StationRequestError && [401, 403].includes(cause.status)) {
-      rejectDisplayToken(candidate);
-      displayToken = null;
-      displayTokenRejected = true;
-      showDisplaySetup('invalid');
-      input.select();
-    } else {
-      connection.textContent = copy.reconnecting;
-    }
-  } finally {
-    button.disabled = false;
   }
 }
 
@@ -455,7 +424,6 @@ async function initialize(): Promise<void> {
   injectMusicToggle('header-controls');
   injectLanguagePicker('header-controls');
   injectMagicHat();
-  document.getElementById('displaySetupPanel')!.addEventListener('submit', event => void configureDisplay(event as SubmitEvent));
   document.addEventListener('click', () => getMusicManager().switchContext('lobby'), { once: true });
   document.querySelectorAll<HTMLVideoElement>('video').forEach(video => void video.play().catch(() => undefined));
   await refreshConfiguration();

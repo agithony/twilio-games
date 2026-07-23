@@ -89,16 +89,14 @@
       <h1 id="lockedGame">Voice Racer</h1>
       <strong id="lockedCountdown">--</strong>
       <p id="countdownDescription">Stay close. The game is loading on this screen.</p>
-      <form id="displaySetupPanel" class="display-setup-panel" hidden>
+      <section id="displaySetupPanel" class="display-setup-panel" hidden>
         <div>
-          <span id="displaySetupEyebrow" class="eyebrow">Display setup required</span>
-          <h2 id="displaySetupTitle">Connect this display</h2>
-          <p id="displaySetupExplanation">This display needs its display token before it can launch the game.</p>
+          <span id="displaySetupEyebrow" class="eyebrow">Secure connection required</span>
+          <h2 id="displaySetupTitle">Connect through the operator console</h2>
+          <p id="displaySetupExplanation">Only the booth display may launch shared games. A signed-in operator must connect this browser to prevent visitors from controlling the games.</p>
         </div>
-        <label for="displayTokenInput" id="displayTokenLabel">Display token</label>
-        <input id="displayTokenInput" name="displayToken" type="password" autocomplete="off" required>
-        <button id="displaySetupSubmit" type="submit">Configure display</button>
-      </form>
+        <a id="displaySetupOperator" href="/operator">Open operator console</a>
+      </section>
     </section>
     <aside id="persistentJoin" class="persistent-join" hidden>
       <div><span id="persistentJoinLabel">Next round</span><strong id="persistentJoinTitle">Scan to join</strong></div>

@@ -553,6 +553,13 @@ describe('ArcadeService station journey', () => {
       stationId: 'expo', expectedRevision: selecting.station.revision,
       idempotencyKey: 'drop-select', game: 'racer', engineRoomCode: 'DROP', ...CONTROL,
     });
+    h.setConfig(stationConfig({ mode: 'off' }));
+    await expect(h.service.dropStationAdmittedEntry({
+      stationId: 'expo', readyEntryId: entries[1]!.readyEntry.id,
+      expectedRevision: locked.station.revision, idempotencyKey: 'drop-player-paused',
+      reason: 'must reset while paused', ...OPERATOR,
+    })).rejects.toMatchObject({ code: 'PAUSED_EVENT_RESET_REQUIRED' });
+    h.setConfig(stationConfig());
     const dropped = await h.service.dropStationAdmittedEntry({
       stationId: 'expo', readyEntryId: entries[1]!.readyEntry.id,
       expectedRevision: locked.station.revision, idempotencyKey: 'drop-player',

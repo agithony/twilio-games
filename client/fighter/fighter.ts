@@ -64,11 +64,16 @@ injectMusicToggle('music-toggle-container');
 localizeStaticUi();
 const stationDisplay = createStationDisplay();
 
-const params = new URLSearchParams(location.search);
+const pageUrl = new URL(location.href);
+if (pageUrl.searchParams.has('hostToken')) {
+  pageUrl.searchParams.delete('hostToken');
+  history.replaceState(history.state, '', `${pageUrl.pathname}${pageUrl.search}${pageUrl.hash}`);
+}
+const params = pageUrl.searchParams;
 const roomCode = params.get('room') || DEFAULT_ROOM;
 const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
 const connection = new FighterConnection(`${wsProtocol}//${location.host}/fighter`, locale);
-connection.setDisplayAuth(roomCode, stationDisplay.active ? stationDisplay.displayToken : params.get('hostToken'));
+connection.setDisplayAuth(roomCode, stationDisplay.active ? stationDisplay.displayToken : null);
 
 const arenaSize = () => ({ width: Math.max(1, arena.clientWidth || innerWidth), height: Math.max(1, arena.clientHeight || innerHeight) });
 const initialArenaSize = arenaSize();

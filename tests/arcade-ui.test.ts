@@ -99,10 +99,10 @@ describe('Arcade browser UI', () => {
     expect(stationGameSelect).toContain('value="monsters"');
     expect(stationGameSelect).toContain('value="fighter"');
     expect(stationGameSelect).not.toContain('value="trivia"');
-    expect(script).toContain("show('recruiting-control',phase==='RECRUITING')");
-    expect(script).toContain("show('selection-control',phase==='GAME_SELECTION')");
-    expect(script).toContain("show('playing-control',phase==='PLAYING')");
-    expect(script).toContain("show('results-control',phase==='RESULTS')");
+    expect(script).toContain("show('recruiting-control',!paused&&phase==='RECRUITING')");
+    expect(script).toContain("show('selection-control',!paused&&phase==='GAME_SELECTION')");
+    expect(script).toContain("show('playing-control',!paused&&phase==='PLAYING')");
+    expect(script).toContain("show('results-control',!paused&&phase==='RESULTS')");
   });
 
   it('keeps emergency reset in the operator danger zone behind typed confirmation and a reason', () => {
@@ -254,12 +254,16 @@ describe('Arcade browser UI', () => {
   });
 
   it('keeps kiosk authorization out of navigation URLs and disables local station players', () => {
-    expect(stationClient).toContain('storeDisplayToken(supplied)');
+    expect(stationClient).toContain("fragment.has('displayToken')");
     expect(stationClient).toContain("fragment.delete('displayToken')");
+    expect(stationClient).toContain("history.replaceState(history.state, '', `${url.pathname}${url.search}${url.hash}`)");
+    expect(stationClient).not.toContain("fragment.get('displayToken')");
     expect(stationClient).not.toContain("url.searchParams.get('displayToken')");
     expect(stationClient).not.toContain("url.searchParams.set('displayToken'");
     expect(stationDisplay).not.toContain("homeUrl.searchParams.set('displayToken'");
     expect(homeScript).not.toContain("url.searchParams.set('displayToken'");
+    expect(fighter).not.toContain("params.get('hostToken')");
+    expect(fighter).toContain("pageUrl.searchParams.delete('hostToken')");
     expect(racerMain).toContain('isDisplay && !stationDisplay.active');
     expect(monsters).toContain('!isDisplay || stationDisplay.active');
     expect(fighter).toContain('if (stationDisplay.active) return');
@@ -274,19 +278,43 @@ describe('Arcade browser UI', () => {
     expect(fighter).toContain("phoneQr = '/brand/join-qr.png?v=2'");
   });
 
-  it('recovers missing and rejected display tokens without reusing a launch countdown', () => {
-    for (const id of ['displaySetupPanel','displayTokenInput','displaySetupSubmit']) expect(home).toContain(`id="${id}"`);
-    expect(home).toMatch(/id="displayTokenInput"[^>]*type="password"/);
+  it('directs missing and rejected displays to the secure operator flow without a credential form', () => {
+    for (const id of ['displaySetupPanel','displaySetupOperator']) expect(home).toContain(`id="${id}"`);
+    expect(home).toContain('Only the booth display may launch shared games.');
+    expect(home).toMatch(/id="displaySetupOperator" href="\/operator"/);
+    expect(home).not.toContain('displayTokenInput');
+    expect(home).not.toContain('type="password"');
+    expect(home).not.toMatch(/<form id="displaySetupPanel"/);
     expect(homeScript).toContain("showDisplaySetup(displayTokenRejected ? 'invalid' : 'missing')");
-    expect(homeScript).toContain('fetchPublicStation(candidate)');
-    expect(homeScript).toContain('storeDisplayToken(candidate)');
     expect(homeScript).toContain('rejectDisplayToken(displayToken)');
-    expect(homeScript).toContain('rejectDisplayToken(candidate)');
     expect(homeScript).toContain('displayToken = null');
     expect(homeScript).toContain('!displayToken && displayTokenWasRejected()');
+    expect(homeScript).not.toContain('configureDisplay');
+    expect(homeScript).not.toContain('storeDisplayToken');
     expect(homeScript).toContain("current.phase === 'LOCKED'");
     expect(homeScript).not.toContain("lockedCountdown.textContent = current?.phase === 'RESULTS' ? String(current.nextReadyCount) : '10'");
     expect(homeCss).toContain('.display-setup-panel');
+  });
+
+  it('installs booth access from the authenticated operator console, signs out, and replaces the same tab', () => {
+    expect(html).toContain('id="display-connect-panel"');
+    expect(html).toContain('id="connect-booth-display"');
+    expect(html).toContain('Connect this browser as booth display');
+    expect(html).toContain('prevent visitors from controlling them');
+    const flow = /async function connectBoothDisplay\(\):Promise<void>\{[\s\S]*?\n}/.exec(script)?.[0] ?? '';
+    expect(flow).toContain("'/api/admin/arcade/display/connect'");
+    expect(flow).toContain("'Content-Type':'application/json'");
+    expect(flow).toContain("body:'{}'");
+    expect(flow).toContain("keys.length!==1||keys[0]!=='displayToken'");
+    expect(flow).toContain('new TextEncoder().encode(token).byteLength<16');
+    expect(flow).toContain('storeDisplayToken(token)');
+    expect(flow).toContain("fetch('/auth/logout',{method:'POST',credentials:'include'})");
+    expect(flow).toContain("location.replace('/')");
+    expect(flow).toContain('rejectDisplayToken(installedToken)');
+    expect(flow.indexOf('storeDisplayToken(token)')).toBeLessThan(flow.indexOf("fetch('/auth/logout'"));
+    expect(flow.indexOf("fetch('/auth/logout'")).toBeLessThan(flow.indexOf("location.replace('/')"));
+    expect(flow).not.toContain('searchParams');
+    expect(flow).not.toContain('console.');
   });
 
   it('returns a launched display home after GET or readiness authorization is rejected', () => {
@@ -313,6 +341,10 @@ describe('Arcade browser UI', () => {
     expect(script).toContain('It asks for terms only when required and never asks for marketing consent');
     expect(script).toContain('termsAcknowledgementRequired');
     expect(script).toContain('Players enter through enabled SMS or WhatsApp');
+    expect(script).toContain('Pausing freezes the current event flow and stops its timers without removing players or coins');
+    expect(script).toContain("output.textContent='Paused'");
+    expect(script).toContain('The event is paused and this flow is frozen. Reset the event flow before reopening.');
+    expect(script).toContain("state.adminConfig?.arcade.mode!=='off'&&entry.status==='ADMITTED'");
   });
 
   it('localizes Portuguese browser registration and protects newer operator state', () => {

@@ -111,12 +111,8 @@ html[data-theme="light"] .brand-lockup img, html[data-theme="light"] .countdown-
 .display-setup-panel[hidden] { display:none; }
 .display-setup-panel h2 { margin:8px 0 0;font-size:clamp(34px,5vw,58px);line-height:.95; }
 .display-setup-panel p { margin:12px 0 0;color:var(--th-dim);font-size:16px;line-height:1.5; }
-.display-setup-panel label { color:var(--th-label);font-size:13px;font-weight:700; }
-.display-setup-panel input { width:100%;min-height:50px;padding:12px 14px;color:var(--th-text);background:var(--th-raised);border:1px solid var(--th-border);border-radius:10px;font:16px 'Twilio Sans Mono',monospace;outline:none; }
-.display-setup-panel input:focus { border-color:#2188EF;box-shadow:0 0 0 3px rgba(33,136,239,.2); }
-.display-setup-panel button { min-height:50px;padding:12px 16px;color:#fff;background:#EF223A;border:0;border-radius:10px;cursor:pointer; }
-.display-setup-panel button:hover { background:#DB132A; }
-.display-setup-panel button:disabled { opacity:.5;cursor:wait; }
+.display-setup-panel a { min-height:50px;padding:13px 16px;color:#fff;text-align:center;text-decoration:none;background:#EF223A;border-radius:10px;font-weight:700; }
+.display-setup-panel a:hover { background:#DB132A; }
 .persistent-join { position:fixed;z-index:20;right:clamp(16px,2vw,30px);bottom:clamp(16px,2vw,30px);display:flex;align-items:center;gap:14px;padding:12px 14px;border:1px solid var(--th-border);border-radius:16px;background:var(--th-card);box-shadow:0 16px 44px var(--th-panel-shadow); }
 .persistent-join[hidden] { display:none; }
 .persistent-join div { display:flex;flex-direction:column;gap:3px; }

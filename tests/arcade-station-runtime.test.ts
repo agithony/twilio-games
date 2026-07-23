@@ -3,7 +3,11 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DEFAULT_ARCADE_CONFIG, parseArcadeConfig } from '../shared/arcade-config';
-import { ArcadeEventHub, createArcadeStationUpdatedEvent } from '../server/arcade-events';
+import {
+  ArcadeEventHub,
+  createArcadeConfigUpdatedEvent,
+  createArcadeStationUpdatedEvent,
+} from '../server/arcade-events';
 import { ArcadeService } from '../server/arcade-service';
 import { ArcadeStateStore } from '../server/arcade-state-store';
 import { ArcadeStationRuntime, chooseStationGame } from '../server/arcade-station-runtime';
@@ -29,6 +33,7 @@ async function harness(configure?: (input: Record<string, any>) => void) {
   const config = parseArcadeConfig(input);
   const events = new ArcadeEventHub();
   let now = T0;
+  let enabled = true;
   let sequence = 0;
   let scheduled: { handle: NodeJS.Timeout; callback: () => void; delayMs: number } | null = null;
   const removedMatches: Array<{ game: string; roomCode: string }> = [];
@@ -51,6 +56,7 @@ async function harness(configure?: (input: Record<string, any>) => void) {
     events,
     stationId: () => 'expo',
     systemAuthorization: () => AUTHORIZATION,
+    enabled: () => enabled,
     config: () => config,
     clock: () => now,
     setTimer: (callback, delayMs) => {
@@ -71,6 +77,10 @@ async function harness(configure?: (input: Record<string, any>) => void) {
     service,
     makeRuntime,
     setTime: (value: number) => { now = value; },
+    setEnabled: (value: boolean) => {
+      enabled = value;
+      events.publish(createArcadeConfigUpdatedEvent(value ? 3 : 2));
+    },
     scheduled: () => scheduled,
     removedMatches,
     runtimeErrors,
@@ -154,6 +164,74 @@ describe('ArcadeStationRuntime', () => {
     expect((await h.service.getStation('expo'))?.station.phase).toBe('GAME_SELECTION');
     expect(h.scheduled()?.delayMs).toBe(20_000);
     await restarted.stop();
+  });
+
+  it('cancels deadlines and does not advance station phases while paused', async () => {
+    const h = await harness();
+    await h.service.identifyCoinOnly({ playerId: 'p1', idempotencyKey: 'pause-timer-identify' });
+    await h.service.insertStationCoin({
+      stationId: 'expo', playerId: 'p1', idempotencyKey: 'pause-timer-coin',
+    });
+    const runtime = h.makeRuntime();
+    await runtime.start();
+    expect(h.scheduled()?.delayMs).toBe(90_000);
+
+    h.setEnabled(false);
+    await runtime.flush();
+    expect(h.scheduled()).toBeNull();
+    h.setTime(T0 + 121_000);
+    h.setEnabled(false);
+    await runtime.flush();
+    expect((await h.service.getStation('expo'))?.station.phase).toBe('RECRUITING');
+    expect(h.scheduled()).toBeNull();
+
+    h.setEnabled(true);
+    await runtime.flush();
+    expect((await h.service.getStation('expo'))?.station.phase).toBe('LOCKED');
+    expect(h.scheduled()?.delayMs).toBe(9_000);
+    await runtime.stop();
+  });
+
+  it('does not start a ready launch while paused but still handles an explicit terminal event', async () => {
+    const h = await harness();
+    await h.service.identifyCoinOnly({ playerId: 'p1', idempotencyKey: 'pause-launch-identify' });
+    const coin = await h.service.insertStationCoin({
+      stationId: 'expo', playerId: 'p1', idempotencyKey: 'pause-launch-coin',
+    });
+    const selecting = await h.service.closeStationRecruiting({
+      stationId: 'expo', expectedRevision: coin.station.revision,
+      idempotencyKey: 'pause-launch-close', authorization: AUTHORIZATION,
+    });
+    const locked = await h.service.selectStationGame({
+      stationId: 'expo', expectedRevision: selecting.station.revision,
+      idempotencyKey: 'pause-launch-select', authorization: AUTHORIZATION,
+      game: 'racer', engineRoomCode: 'PAUSED-LAUNCH',
+    });
+    const pausedLaunch = await h.service.requestStationLaunch({
+      stationId: 'expo', expectedRevision: locked.station.revision,
+      idempotencyKey: 'pause-launch-request', authorization: AUTHORIZATION,
+    });
+    h.setEnabled(false);
+    const runtime = h.makeRuntime();
+    await runtime.start();
+    await runtime.flush();
+    expect((await h.service.getStation('expo'))?.station.phase).toBe('LAUNCHING');
+    expect((await h.service.getWalletStatus('p1'))).toMatchObject({ reservedBalance: 1, availableBalance: 1 });
+    await runtime.markDisplayReady({
+      matchId: pausedLaunch.match!.id,
+      launchGeneration: pausedLaunch.match!.launchGeneration,
+      expectedRevision: pausedLaunch.station.revision,
+      idempotencyKey: 'pause-launch-display-ready',
+    });
+    await runtime.markEngineStarted('racer', 'PAUSED-LAUNCH');
+    runtime.markParticipantConnected(pausedLaunch.match!.participantReadyEntryIds[0]!);
+    await runtime.flush();
+    expect((await h.service.getStation('expo'))?.station.phase).toBe('LAUNCHING');
+    expect(h.scheduled()).toBeNull();
+
+    await runtime.markEngineAbandoned('racer', 'PAUSED-LAUNCH');
+    expect((await h.service.getStation('expo'))?.station.phase).toBe('RECRUITING');
+    await runtime.stop();
   });
 
   it('does not wedge an overdue recruiting timer after a later coin updates station chronology', async () => {

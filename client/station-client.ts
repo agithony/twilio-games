@@ -92,6 +92,10 @@ export function storeDisplayToken(token: string): boolean {
     sessionStorage.removeItem(DISPLAY_TOKEN_REJECTED_KEY);
     return sessionStorage.getItem(DISPLAY_TOKEN_STORAGE_KEY) === token;
   } catch {
+    try {
+      sessionStorage.removeItem(DISPLAY_TOKEN_STORAGE_KEY);
+      sessionStorage.removeItem(DISPLAY_TOKEN_REJECTED_KEY);
+    } catch { /* Storage is unavailable; no stronger cleanup is possible. */ }
     return false;
   }
 }
@@ -129,13 +133,10 @@ export function readDisplayToken(): string | null {
 export function captureDisplayToken(): string | null {
   const url = new URL(location.href);
   const fragment = new URLSearchParams(url.hash.replace(/^#/, ''));
-  const supplied = fragment.get('displayToken');
-  if (supplied) {
-    const token = storeDisplayToken(supplied) ? supplied : null;
+  if (fragment.has('displayToken')) {
     fragment.delete('displayToken');
     url.hash = fragment.toString();
     history.replaceState(history.state, '', `${url.pathname}${url.search}${url.hash}`);
-    return token;
   }
   return readDisplayToken();
 }

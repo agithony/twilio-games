@@ -112,7 +112,7 @@ The deployed specification currently sets these variables:
 | `ANALYTICS_ALLOWED_EMAIL` | GitHub repository variable | Allows one exact verified Google email in addition to `@twilio.com` accounts |
 | `ARCADE_ADMIN_EMAILS` | GitHub repository variable | Comma-separated authenticated emails allowed to update Arcade runtime configuration; empty disables admin updates |
 | `ARCADE_SIGNING_SECRET` | Container App secret populated from the matching GitHub secret | Root key for signed player sessions and challenge claims; ignored while station mode is `off` |
-| `ARCADE_DISPLAY_TOKEN` | Container App secret populated from the matching GitHub secret | Pre-shared kiosk capability for station launch and display-ready acknowledgement; use at least 16 random characters |
+| `ARCADE_DISPLAY_TOKEN` | Container App secret populated from the matching GitHub secret | Server-held kiosk capability for station launch and display-ready acknowledgement; use at least 16 random characters |
 | `GAME_PHONE_NUMBER` | GitHub repository variable | Legacy fallback used only when an operator has not configured locale-specific voice numbers |
 | Runtime `channels.voiceNumbers` | Twilio Games operator settings | Public `en-US` and `pt-BR` voice numbers used by lobbies and call-now notices; editable without deployment |
 | `TWILIO_SMS_NUMBER` | GitHub repository variable | SMS-capable number used by the join chooser and outbound SMS transport |
@@ -126,7 +126,7 @@ The deployed specification currently sets these variables:
 | `OPENAI_API_KEY` | Container App secret populated from the matching GitHub secret | Enables the OpenAI host; a missing secret uses deterministic/scripted behavior |
 | `OPENAI_MODEL` | GitHub repository variable | OpenAI model; empty defaults to `gpt-4o-mini` |
 
-Open the booth display at `https://<app-fqdn>/#displayToken=<ARCADE_DISPLAY_TOKEN>`. The URL fragment is never sent to the server. The page immediately captures the token in same-tab `sessionStorage`, removes it from the address bar, and keeps it out of game/home URLs and the visitor QR. Query-string display tokens are intentionally unsupported.
+Provision the booth display from that browser: open `https://<app-fqdn>/operator`, sign in with an approved staff account, and select **Connect this browser as booth display**. The protected same-origin action installs display access in `sessionStorage`, signs the operator out, and returns to `/`. Staff never need to know the capability, and it is never placed in a URL, page, notice, or visitor QR. Repeat the action for independent browser sessions that do not inherit the connected tab's session storage.
 
 The server also supports `TWILIO_VALIDATE_SIGNATURES`, `VOICE_RELAY_TOKEN`, `FIGHTER_DISPLAY_TOKEN`, `MAPS_PATH`, `BUNDLED_MAPS_PATH`, `ARENA_PATH`, `BUNDLED_ARENA_PATH`, `FIGHTER_MAPS_PATH`, `BUNDLED_FIGHTER_MAPS_PATH`, and `FIGHTER_PREVIEW_DIR`. See [Infrastructure setup](./INFRA_SETUP.md#configuration-gaps-and-security-notes) before relying on additional overrides in Azure.
 
@@ -159,7 +159,7 @@ Replace `<base>` with `https://<app-fqdn>`.
 | Conversation Orchestrator callback | `<base>/tac/webhook` using signed HTTP POST |
 | Messaging delivery callback | `<base>/twilio/messaging/status` using HTTP POST; generated requests include signed outbox/attempt query IDs |
 
-The Fighter browser page is `/fighter.html`; `/fighter` is the Fighter WebSocket upgrade endpoint and is not an HTTP page. If `FIGHTER_DISPLAY_TOKEN` is wired into a standalone deployment, open `/fighter.html?room=4821#displayToken=<token>` so the credential remains in the URL fragment.
+The Fighter browser page is `/fighter.html`; `/fighter` is the Fighter WebSocket upgrade endpoint and is not an HTTP page. Browser URLs do not accept `hostToken` or display credentials. Station launches inherit the booth access installed from `/operator`; `FIGHTER_DISPLAY_TOKEN` remains only a server-side override for custom standalone integrations.
 
 WebSocket endpoints are `/game`, `/battle`, `/fighter`, and `/voice`. The same Node server also serves `/api/*`, `/assets/*`, `/fighter-previews/*`, `/brand/*`, and `/fonts/*`.
 

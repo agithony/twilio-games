@@ -2461,6 +2461,12 @@ export class ArcadeService {
     return this.publishStation(this.execute('DROP_STATION_ADMITTED_ENTRY', input.idempotencyKey, null, {
       stationId, readyEntryId, expectedRevision, reason, authorizedBy: principal,
     }, (state, config, at) => {
+      if (config.arcade.mode === 'off' && principal.kind === 'operator') {
+        throw new ArcadeServiceError(
+          'PAUSED_EVENT_RESET_REQUIRED',
+          'the paused event flow must be reset before removing a player',
+        );
+      }
       const aggregate = this.requireStationAggregate(state, stationId);
       const beforeMatch = aggregate.station.activeMatchId
         ? aggregate.matches[aggregate.station.activeMatchId]
@@ -2670,6 +2676,12 @@ export class ArcadeService {
       stationId, expectedRevision, reason: input.reason ?? null,
       occurredAt: input.occurredAt ?? null, authorizedBy: principal,
     }, (state, config, at) => {
+      if (config.arcade.mode === 'off' && principal.kind === 'operator') {
+        throw new ArcadeServiceError(
+          'PAUSED_EVENT_RESET_REQUIRED',
+          'the paused event flow must be reset before another game-control action',
+        );
+      }
       const occurredAt = stationOccurredAt(input.occurredAt, at);
       const aggregate = this.requireStationAggregate(state, stationId);
       const match = aggregate.matches[aggregate.station.activeMatchId!]!;
@@ -2837,6 +2849,12 @@ export class ArcadeService {
       resultSource: completion.resultSource ?? null,
     }, (state, config, at) => {
       if (!allowModeOff) this.requireOn(config);
+      if (allowModeOff && config.arcade.mode === 'off' && principal.kind === 'operator') {
+        throw new ArcadeServiceError(
+          'PAUSED_EVENT_RESET_REQUIRED',
+          'the paused event flow must be reset before another game-control action',
+        );
+      }
       const before = this.requireStationAggregate(state, stationId);
       const occurredAt = stationOccurredAt(input.occurredAt, at);
       const updated = reduce(

@@ -254,7 +254,8 @@ export class ArcadeStationRuntime {
     for (let transitions = 0; transitions < 16; transitions += 1) {
       const aggregate = await this.service.getStation(this.stationIdSource());
       if (!aggregate || this.stopped) return;
-      if (this.recoverOnStart) {
+      const enabled = this.enabled();
+      if (this.recoverOnStart && enabled) {
         this.recoverOnStart = false;
         if (aggregate.station.phase === 'LAUNCHING' || aggregate.station.phase === 'PLAYING') {
           try {
@@ -304,6 +305,7 @@ export class ArcadeStationRuntime {
           throw error;
         }
       }
+      if (!enabled) return;
       if (aggregate.station.phase === 'LAUNCHING' && activeMatch?.displayReadyAt
         && !terminalAction
         && !launchDeadlineElapsed(activeMatch, this.config(), this.clock())
@@ -326,7 +328,6 @@ export class ArcadeStationRuntime {
           throw error;
         }
       }
-      if (!this.enabled()) return;
       const scheduled = nextStationTransition(aggregate, this.config());
       if (!scheduled) return;
       const delay = scheduled.at - this.clock();

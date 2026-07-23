@@ -90,7 +90,7 @@ Open **Settings > Secrets and variables > Actions > Secrets** and configure:
 | `TWILIO_API_SECRET` | Yes | Twilio API key secret used by TAC and server-side REST clients |
 | `VOICE_RELAY_TOKEN` | Yes | Independent random token of at least 32 characters for Conversation Relay setup-frame authentication; do not reuse `TWILIO_AUTH_TOKEN` |
 | `ARCADE_SIGNING_SECRET` | Yes | Exactly 64 hexadecimal characters; derives separate signed player-session and challenge-token keys |
-| `ARCADE_DISPLAY_TOKEN` | Yes | Random pre-shared kiosk capability of at least 16 characters; required for display-ready and station game controls |
+| `ARCADE_DISPLAY_TOKEN` | Yes | Random server-held kiosk capability of at least 16 characters; required for display-ready and station game controls |
 | `EDITOR_TOKEN` | Strongly recommended for public deployments | Stored as Container App secret `editor-token`; protects disk-writing editor and garage APIs |
 | `GOOGLE_OAUTH_CLIENT_ID` | Required for analytics | Stored as Container App secret `google-oauth-client-id`; Google OAuth web client ID |
 | `GOOGLE_OAUTH_CLIENT_SECRET` | Required for analytics | Stored as Container App secret `google-oauth-client-secret`; Google OAuth web client secret |
@@ -258,7 +258,7 @@ Keep runtime mode `off` during provisioning. After item 1 passes, open the event
 8. Call the Portuguese number and confirm the request is accepted with `TWILIO_PT_AUTH_TOKEN` and uses `pt-BR` recognition/TTS.
 9. Complete Racer, Monsters, and Fighter once and confirm the operator sees authoritative results.
 10. If proactive messaging is enabled, confirm SMS delivery callbacks and one approved out-of-session WhatsApp template.
-11. Open the booth display with `#displayToken=<ARCADE_DISPLAY_TOKEN>`. Verify an absent or rejected token shows the visible setup form instead of a stuck countdown, then restart the Container App and confirm persisted event recovery, wallet balances, and Memory-linked messaging still work.
+11. With the event paused, open `/operator` in the booth display browser, sign in, and select **Connect this browser as booth display**. Confirm the operator is signed out and the same tab returns to `/`; no credential should appear in the URL. During a launch, verify an absent or rejected display session explains why only an operator may reconnect the booth and links to `/operator` instead of showing a secret field or a stuck countdown. Then restart the Container App and confirm persisted event recovery, wallet balances, and Memory-linked messaging still work.
 
 ## Persistent storage operations
 
@@ -270,7 +270,7 @@ Do not place image-owned assets or `assets/manifest.json` on the share without c
 
 ## Configuration gaps and security notes
 
-`FIGHTER_DISPLAY_TOKEN` remains available as a standalone override. The deployed server passes `ARCADE_DISPLAY_TOKEN` to Fighter, Racer, and Monsters, so station engine rooms share one validated kiosk capability.
+`FIGHTER_DISPLAY_TOKEN` remains available as a server-side standalone override for custom integrations, but browser URLs no longer accept display credentials. The deployed server passes `ARCADE_DISPLAY_TOKEN` to Fighter, Racer, and Monsters, so station engine rooms share the kiosk capability installed through the authenticated `/operator` action.
 
 `VOICE_RELAY_TOKEN` is wired as its own Container App secret and is mandatory in the deployment workflow. Rotate it independently from `TWILIO_AUTH_TOKEN`; the server places the current value in newly generated Conversation Relay setup parameters.
 

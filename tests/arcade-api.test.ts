@@ -290,6 +290,81 @@ describe('Arcade API', () => {
     expect(publicConfig.earning.challenges[0].url).toBeUndefined();
   });
 
+  it('connects an authenticated same-origin booth display without initializing mode-off player state', async () => {
+    const { baseUrl, playerRuntime } = await harness();
+    const endpoint = `${baseUrl}/api/admin/arcade/display/connect`;
+    const validHeaders = {
+      ...ADMIN_HEADER,
+      'Content-Type': 'application/json',
+      Origin: 'http://localhost',
+    };
+
+    const getResponse = await fetch(endpoint, { headers: ADMIN_HEADER });
+    expect(getResponse.status).toBe(405);
+    expect(getResponse.headers.get('allow')).toBe('POST');
+
+    const unauthorized = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: 'http://localhost' },
+      body: '{}',
+    });
+    expect(unauthorized.status).toBe(401);
+    expect(unauthorized.headers.get('access-control-allow-origin')).toBeNull();
+
+    for (const origin of [undefined, 'https://evil.example']) {
+      const headers: Record<string, string> = { ...ADMIN_HEADER, 'Content-Type': 'application/json' };
+      if (origin) headers.Origin = origin;
+      const response = await fetch(endpoint, { method: 'POST', headers, body: '{}' });
+      expect(response.status).toBe(403);
+    }
+
+    const wrongType = await fetch(endpoint, {
+      method: 'POST', headers: { ...ADMIN_HEADER, 'Content-Type': 'text/plain', Origin: 'http://localhost' }, body: '{}',
+    });
+    expect(wrongType.status).toBe(415);
+
+    for (const body of ['[]', '{"extra":true}', '{bad json', '']) {
+      const response = await fetch(endpoint, { method: 'POST', headers: validHeaders, body });
+      expect(response.status).toBe(400);
+    }
+
+    expect(playerRuntime.getStatus()).toMatchObject({ mode: 'off', initialized: false });
+    const connected = await fetch(endpoint, { method: 'POST', headers: validHeaders, body: '{}' });
+    expect(connected.status).toBe(200);
+    expect(connected.headers.get('cache-control')).toBe('no-store, private');
+    expect(connected.headers.get('access-control-allow-origin')).toBeNull();
+    expect(await connected.json()).toEqual({ displayToken: DISPLAY_TOKEN });
+    expect(playerRuntime.getStatus()).toMatchObject({ mode: 'off', initialized: false });
+
+    const adminConfig = await (await fetch(`${baseUrl}/api/admin/arcade/config`, { headers: ADMIN_HEADER })).text();
+    const publicConfig = await (await fetch(`${baseUrl}/api/arcade/config/public`)).text();
+    for (const config of [adminConfig, publicConfig]) {
+      expect(config).not.toContain(DISPLAY_TOKEN);
+      expect(config).not.toContain('displayToken');
+    }
+  });
+
+  it('returns a safe unavailable response when the configured display capability is under 16 bytes', async () => {
+    const { baseUrl, playerRuntime } = await harness({ displayToken: '123456789012345' });
+    const response = await fetch(`${baseUrl}/api/admin/arcade/display/connect`, {
+      method: 'POST',
+      headers: { ...ADMIN_HEADER, 'Content-Type': 'application/json', Origin: 'http://localhost' },
+      body: '{}',
+    });
+    expect(response.status).toBe(503);
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(response.headers.get('access-control-allow-origin')).toBeNull();
+    const body = await response.json() as Record<string, any>;
+    expect(body).toEqual({
+      error: {
+        code: 'ARCADE_DISPLAY_TOKEN_UNAVAILABLE',
+        message: 'Booth display connection is unavailable. Ask a deployment administrator to configure it.',
+      },
+    });
+    expect(JSON.stringify(body)).not.toContain('123456789012345');
+    expect(playerRuntime.getStatus()).toMatchObject({ mode: 'off', initialized: false });
+  });
+
   it('rejects active station config without complete Voice and configured coin-only messaging', async () => {
     const { baseUrl } = await harness({
       fallbackVoiceNumber: null,
@@ -413,6 +488,125 @@ describe('Arcade API', () => {
     expect(updated).toContain('data: {"type":"arcade_config_updated","version":2}');
     expect(updated).not.toContain('voice-docs');
     await reader.cancel();
+  });
+
+  it('pauses an active station without mutating it and requires reset before reopening', async () => {
+    const { baseUrl, store, playerRuntime } = await harness({ playerMode: 'coin_only' });
+    const resources = await playerRuntime.getActive();
+    await resources.service.identifyCoinOnly({
+      playerId: 'pause-player', destination: '+14155550199', idempotencyKey: 'pause-identify',
+    });
+    const coin = await resources.service.insertStationCoin({
+      stationId: 'ARCADE-01', playerId: 'pause-player', idempotencyKey: 'pause-coin',
+    });
+    const activeState = resources.store.snapshot();
+
+    const lockedCandidates: Array<readonly [string, Record<string, any>]> = [];
+    const activeModeChange = settings('lead_capture') as Record<string, any>;
+    lockedCandidates.push(['active-mode', activeModeChange]);
+    const cabinetChange = settings('coin_only') as Record<string, any>;
+    cabinetChange.arcade.cabinetId = 'ARCADE-02';
+    lockedCandidates.push(['cabinet', cabinetChange]);
+    const chargePolicyChange = settings('coin_only') as Record<string, any>;
+    chargePolicyChange.coins.chargePolicy = 'free';
+    chargePolicyChange.coins.startingBalance = 0;
+    lockedCandidates.push(['charge-policy', chargePolicyChange]);
+    const channelsChange = settings('coin_only') as Record<string, any>;
+    channelsChange.channels.voiceNumbers['en-US'] = '+14155550100';
+    channelsChange.channels.voiceNumbers['pt-BR'] = '+551155555555';
+    lockedCandidates.push(['channels', channelsChange]);
+    const stationChange = settings('coin_only') as Record<string, any>;
+    stationChange.station.qrRail = 'always';
+    lockedCandidates.push(['station', stationChange]);
+    for (const [name, candidate] of lockedCandidates) {
+      const response = await updateConfig(baseUrl, candidate as ArcadeConfigSettings, {
+        etag: '"arcade-config-2"', key: `active-${name}-change`,
+      });
+      expect(response.status, name).toBe(409);
+      expect(await response.json(), name).toMatchObject({ error: { code: 'ACTIVE_STATION_CONFIG_LOCKED' } });
+    }
+    expect(store.getSnapshot()).toMatchObject({ version: 2, arcade: { mode: 'coin_only' } });
+    expect(resources.store.snapshot()).toEqual(activeState);
+
+    const mixedPause = settings('off') as Record<string, any>;
+    mixedPause.station.timings.recruitingSeconds = 120;
+    const mixedResponse = await updateConfig(baseUrl, mixedPause as ArcadeConfigSettings, {
+      etag: '"arcade-config-2"', key: 'pause-with-policy-change',
+    });
+    expect(mixedResponse.status).toBe(409);
+    expect(await mixedResponse.json()).toMatchObject({
+      error: {
+        code: 'ACTIVE_STATION_CONFIG_LOCKED',
+        message: expect.stringContaining('Pause the event in a separate update'),
+      },
+    });
+    expect(store.getSnapshot()).toMatchObject({ version: 2, arcade: { mode: 'coin_only' } });
+    expect(resources.store.snapshot()).toEqual(activeState);
+
+    const pauseResponse = await updateConfig(baseUrl, settings('off'), {
+      etag: '"arcade-config-2"', key: 'pause-only',
+    });
+    expect(pauseResponse.status).toBe(200);
+    expect(await pauseResponse.json()).toMatchObject({ version: 3, arcade: { mode: 'off' } });
+    expect(resources.store.snapshot()).toEqual(activeState);
+    expect(await (await fetch(`${baseUrl}/api/arcade/station/public`)).json()).toMatchObject({
+      phase: 'ATTRACT', revision: 0, currentReadyCount: 0, roster: [], launch: null,
+    });
+
+    const pausedAction = await fetch(`${baseUrl}/api/admin/arcade/station/results/advance`, {
+      method: 'POST',
+      headers: {
+        ...ADMIN_HEADER,
+        Origin: 'http://localhost',
+        'Content-Type': 'application/json',
+        'If-Match': `"arcade-station-${coin.station.revision}"`,
+        'Idempotency-Key': 'paused-action-bypass',
+      },
+      body: JSON.stringify({ reason: 'must not bypass paused reset' }),
+    });
+    expect(pausedAction.status).toBe(409);
+    expect(await pausedAction.json()).toMatchObject({
+      error: { code: 'PAUSED_EVENT_RESET_REQUIRED' },
+    });
+    await expect(resources.service.advanceStationResults({
+      stationId: 'ARCADE-01',
+      expectedRevision: coin.station.revision,
+      idempotencyKey: 'paused-service-race',
+      authorization: resources.operatorAuthorization('operator@twilio.com'),
+    })).rejects.toMatchObject({ code: 'PAUSED_EVENT_RESET_REQUIRED' });
+
+    const reopenBlocked = await updateConfig(baseUrl, settings('coin_only'), {
+      etag: '"arcade-config-3"', key: 'reopen-before-reset',
+    });
+    expect(reopenBlocked.status).toBe(409);
+    expect(await reopenBlocked.json()).toMatchObject({
+      error: {
+        code: 'ACTIVE_STATION_CONFIG_LOCKED',
+        message: expect.stringContaining('reset the event flow before reopening'),
+      },
+    });
+    expect(store.getSnapshot()).toMatchObject({ version: 3, arcade: { mode: 'off' } });
+    expect(resources.store.snapshot()).toEqual(activeState);
+
+    const reset = await fetch(`${baseUrl}/api/admin/arcade/station/reset`, {
+      method: 'POST',
+      headers: {
+        ...ADMIN_HEADER,
+        Origin: 'http://localhost',
+        'Content-Type': 'application/json',
+        'If-Match': `"arcade-station-${coin.station.revision}"`,
+        'Idempotency-Key': 'pause-reset',
+      },
+      body: JSON.stringify({ reason: 'clear paused round before reopening' }),
+    });
+    expect(reset.status).toBe(200);
+    expect(await reset.json()).toMatchObject({ station: { phase: 'ATTRACT' }, round: null, match: null });
+
+    const reopened = await updateConfig(baseUrl, settings('coin_only'), {
+      etag: '"arcade-config-3"', key: 'reopen-after-reset',
+    });
+    expect(reopened.status).toBe(200);
+    expect(await reopened.json()).toMatchObject({ version: 4, arcade: { mode: 'coin_only' } });
   });
 
   it('closes active event streams during server shutdown', async () => {

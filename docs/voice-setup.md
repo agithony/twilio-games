@@ -92,7 +92,7 @@ For a deployed environment, configure the same `POST /voice/incoming` webhook ag
 | `VOICE_RELAY_TOKEN` | Required by production deployment | Independent token of at least 32 characters that authenticates the Conversation Relay `setup` frame. The generated TwiML passes it to Twilio automatically; do not reuse `TWILIO_AUTH_TOKEN`. |
 | `OPENAI_API_KEY` | No | Enables conversational menu help for Voice Racer and Voice Monsters. Deterministic selection and gameplay still work without it. |
 | `OPENAI_MODEL` | No | Overrides the OpenAI model when `OPENAI_API_KEY` is set. |
-| `FIGHTER_DISPLAY_TOKEN` | No | Requires the Voice Fighter display to provide `#displayToken=<token>` for host controls. |
+| `FIGHTER_DISPLAY_TOKEN` | No | Server-side standalone override for custom Fighter integrations. Browser URLs do not accept display credentials; station booth access is installed through the authenticated `/operator` action. |
 | `NODE_ENV` | No | Production mode enables production-only warnings and serving behavior. It does not control Twilio signature validation. |
 
 `EDITOR_TOKEN`, map paths, arena paths, and persistence paths affect editing and deployment but are not required to place a voice call.

@@ -20,7 +20,9 @@ describe('standalone and station display UX', () => {
     const refresh = /async function refresh\(\)[\s\S]*?\n}/.exec(home)?.[0] ?? '';
     expect(refresh.indexOf('if (standaloneMode)')).toBeLessThan(refresh.indexOf('fetchPublicStation(displayToken)'));
     expect(refresh).toMatch(/if \(standaloneMode\) \{[\s\S]*?return;/);
-    expect(fighter).toContain('stationDisplay.active ? stationDisplay.displayToken');
+    expect(fighter).toContain('stationDisplay.active ? stationDisplay.displayToken : null');
+    expect(fighter).not.toContain("params.get('hostToken')");
+    expect(fighter).toContain("pageUrl.searchParams.delete('hostToken')");
   });
 
   it('allows Racer and Monsters menus to scroll in a narrow viewport', () => {

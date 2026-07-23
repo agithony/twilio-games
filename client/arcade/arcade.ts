@@ -1,7 +1,7 @@
 import QRCode from 'qrcode';
 import { updateThemeToggleIcon } from '../icon-controls';
 import { locale as resolvedLocale } from '../i18n';
-import { effectivePublicVisitorBaseUrl } from '../station-client';
+import { effectivePublicVisitorBaseUrl, rejectDisplayToken, storeDisplayToken } from '../station-client';
 
 type ArcadeMode = 'off' | 'coin_only' | 'lead_capture';
 type PlayableGame = 'racer' | 'monsters' | 'fighter';
@@ -74,6 +74,7 @@ el<HTMLInputElement>('admin-challenges-enabled').addEventListener('change',()=>v
 el('cancel-admin-challenge').addEventListener('click',closeChallengeEditor);
 el<HTMLFormElement>('admin-challenge-form').addEventListener('submit',event=>void saveAdminChallenge(event));
 el('admin-logout').addEventListener('click', () => void switchAccount());
+el('connect-booth-display').addEventListener('click', () => void connectBoothDisplay());
 el('close-recruiting').addEventListener('click',()=>void stationAction('close'));
 el('select-station-game').addEventListener('click',()=>void stationAction('select',el<HTMLSelectElement>('station-game').value as PlayableGame));
 el('request-launch').addEventListener('click',()=>void stationAction('launch'));
@@ -481,6 +482,39 @@ async function checkAdmin():Promise<void>{
 
 async function switchAccount():Promise<void>{await fetch('/auth/logout',{method:'POST',credentials:'include'});location.href='/auth/google?returnTo=/operator';}
 
+async function connectBoothDisplay():Promise<void>{
+  const button=el<HTMLButtonElement>('connect-booth-display');
+  let installedToken:string|null=null;
+  button.disabled=true;button.textContent='Connecting display...';
+  try{
+    const payload=await api<unknown>('/api/admin/arcade/display/connect',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    const record=payload!==null&&typeof payload==='object'&&!Array.isArray(payload)?payload as Record<string,unknown>:null;
+    const token=record?.displayToken;
+    const keys=record?Object.keys(record):[];
+    if(keys.length!==1||keys[0]!=='displayToken'||typeof token!=='string'||token!==token.trim()||new TextEncoder().encode(token).byteLength<16){
+      throw new Error('The display connection response was invalid. Refresh and try again.');
+    }
+    installedToken=token;
+    if(!storeDisplayToken(token))throw new Error('This browser blocked display storage. Allow session storage for this site and try again.');
+    const logout=await fetch('/auth/logout',{method:'POST',credentials:'include'});
+    if(!logout.ok)throw new Error('Display access was not installed because operator sign-out failed. Retry the connection.');
+    location.replace('/');
+    installedToken=null;
+  }catch(error){
+    if(installedToken)rejectDisplayToken(installedToken);
+    const message=error instanceof ApiError&&error.status===401
+      ? 'Your operator session expired. Sign in again, then reconnect this browser.'
+      : error instanceof ApiError&&error.status===503
+        ? 'Booth display security is not configured. Ask a deployment administrator to configure it, then retry.'
+        : error instanceof ApiError
+          ? 'The display connection request failed. Refresh the operator console and try again.'
+          : error instanceof Error?error.message:'This browser could not be connected. Refresh and try again.';
+    setNotice(message,'error');
+  }finally{
+    button.disabled=false;button.textContent='Connect this browser as booth display';
+  }
+}
+
 async function saveMode(event:Event):Promise<void>{
   event.preventDefault();if(!state.adminConfig)return;
   const form=event.currentTarget as HTMLFormElement;
@@ -692,7 +726,9 @@ function renderRuntimeSummary():void{
     ? 'Lead capture on. Browser entry collects first and last name, work email, company, phone number, country or region, terms acknowledgement when required, and optional marketing consent. When enabled, messaging uses the sender phone and asks for first and last name, work email, company, and country or region. It asks for terms only when required and never asks for marketing consent.'
     : modeSelect.value==='coin_only'
       ? 'Lead capture off. Players enter through enabled SMS or WhatsApp. No registration details are collected; their messaging address and game activity are used to run the session.'
-      : 'Lead capture off. The event is paused, players cannot enter, and no new player information is collected.';
+      : state.operatorStation&&state.operatorStation.station.phase!=='ATTRACT'
+        ? 'Lead capture off. Pausing freezes the current event flow and stops its timers without removing players or coins. Use Reset event flow before reopening.'
+        : 'Lead capture off. The event is paused, players cannot enter, and no new player information is collected.';
   el('sms-status').textContent=capabilityStatus(sms,smsNumber);
   el('whatsapp-status').textContent=capabilityStatus(whatsapp,whatsappNumber);
   el('voice-number-status').textContent=voice
@@ -755,7 +791,7 @@ function applyOperatorStation(view:OperatorStationView|null,response:Response):v
   const etag=response.headers.get('ETag');
   if(!etag)throw new Error('Live event status is unavailable. Refresh and try again.');
   if(state.operatorStation&&(!view||view.station.revision<state.operatorStation.station.revision))return;
-  state.operatorStation=view;state.operatorStationEtag=etag;renderOperatorStation();
+  state.operatorStation=view;state.operatorStationEtag=etag;renderOperatorStation();renderRuntimeSummary();
 }
 
 async function stationAction(action:StationAction,game?:PlayableGame):Promise<void>{
@@ -878,7 +914,7 @@ function renderStationRoster(view:OperatorStationView|null):void{
     if(state.adminConfig?.coins.chargePolicy!=='free'&&entry.status!=='LEFT'){
       const grant=document.createElement('button');grant.type='button';grant.className='button quiet';grant.textContent='Add coins';grant.addEventListener('click',()=>void grantPlayerCoins(entry,grant));actions.append(grant);
     }
-    if(entry.status==='ADMITTED'&&!entry.connected&&['LOCKED','LAUNCHING'].includes(view?.station.phase??'')&&(view?.match?.participantReadyEntryIds.length??0)>1){
+    if(state.adminConfig?.arcade.mode!=='off'&&entry.status==='ADMITTED'&&!entry.connected&&['LOCKED','LAUNCHING'].includes(view?.station.phase??'')&&(view?.match?.participantReadyEntryIds.length??0)>1){
       const drop=document.createElement('button');drop.type='button';drop.className='button danger';drop.textContent='Remove no-show';drop.addEventListener('click',()=>void dropNoShow(entry));actions.append(drop);
     }
     item.append(name,status,time,actions);host.append(item);
@@ -910,14 +946,15 @@ async function grantPlayerCoins(entry:OperatorStationView['readyEntries'][number
 }
 
 function renderStationControls(phase:StationPhase):void{
-  show('recruiting-control',phase==='RECRUITING');show('selection-control',phase==='GAME_SELECTION');
-  show('locked-control',phase==='LOCKED');show('launch-failure-control',phase==='LOCKED'||phase==='LAUNCHING');
-  show('playing-control',phase==='PLAYING');show('results-control',phase==='RESULTS');
+  const paused=state.adminConfig?.arcade.mode==='off';
+  show('recruiting-control',!paused&&phase==='RECRUITING');show('selection-control',!paused&&phase==='GAME_SELECTION');
+  show('locked-control',!paused&&phase==='LOCKED');show('launch-failure-control',!paused&&(phase==='LOCKED'||phase==='LAUNCHING'));
+  show('playing-control',!paused&&phase==='PLAYING');show('results-control',!paused&&phase==='RESULTS');
   const actionable=phase!=='ATTRACT';show('station-reason-field',actionable);show('reset-control',actionable);
   const gameSelect=el<HTMLSelectElement>('station-game');
   for(const option of [...gameSelect.options])option.disabled=!state.adminConfig?.station.games[option.value as PlayableGame].enabled;
   if(gameSelect.selectedOptions[0]?.disabled)gameSelect.value=[...gameSelect.options].find(option=>!option.disabled)?.value??'';
-  el('station-control-help').textContent=phase==='ATTRACT'?'Waiting for players. Actions appear when the event begins.':phase==='LAUNCHING'?'The game is connecting to the big screen. Cancel only if it cannot start.':phase==='PLAYING'?'End the game here only if it cannot finish on its own.':'Only actions available right now are shown.';
+  el('station-control-help').textContent=paused&&actionable?'The event is paused and this flow is frozen. Reset the event flow before reopening.':phase==='ATTRACT'?'Waiting for players. Actions appear when the event begins.':phase==='LAUNCHING'?'The game is connecting to the big screen. Cancel only if it cannot start.':phase==='PLAYING'?'End the game here only if it cannot finish on its own.':'Only actions available right now are shown.';
 }
 
 function controlActionName(value:string):string{
@@ -939,6 +976,7 @@ function stationDeadline(view=state.operatorStation):string|null{
 
 function renderStationDeadline():void{
   const output=el('station-deadline'),deadline=stationDeadline();
+  if(state.adminConfig?.arcade.mode==='off'){output.textContent='Paused';output.removeAttribute('title');return;}
   if(!deadline){output.textContent='None';output.removeAttribute('title');return;}
   const seconds=Math.ceil((Date.parse(deadline)-Date.now())/1000);output.title=formatTimestamp(deadline);
   if(seconds<=0){output.textContent=`Elapsed · ${formatTimestamp(deadline)}`;return;}

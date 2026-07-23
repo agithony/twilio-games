@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { displayTokenWasRejected, effectivePublicVisitorBaseUrl, fetchPublicStation, readDisplayToken, rejectDisplayToken, stationJoinUrl, stationLaunchUrl, storeDisplayToken, voiceNumberForLocale } from '../client/station-client';
+import { captureDisplayToken, displayTokenWasRejected, effectivePublicVisitorBaseUrl, fetchPublicStation, readDisplayToken, rejectDisplayToken, stationJoinUrl, stationLaunchUrl, storeDisplayToken, voiceNumberForLocale } from '../client/station-client';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -35,7 +35,11 @@ describe('public visitor URLs', () => {
       currentReadyCount: 2, nextReadyCount: 0, roster: [], games: [],
       launch: { game: 'fighter', route: '/fighter.html', roomCode: 'ROOM', matchId: 'MATCH', generation: 3 },
     }, 'ARCADE-01', 'en-US', 'https://public.example/path');
-    expect(new URL(target!).searchParams.get('joinBaseUrl')).toBe('https://public.example');
+    const url = new URL(target!);
+    expect(url.searchParams.get('joinBaseUrl')).toBe('https://public.example');
+    expect(url.searchParams.has('displayToken')).toBe(false);
+    expect(url.searchParams.has('hostToken')).toBe(false);
+    expect(url.hash).toBe('');
   });
 });
 
@@ -47,8 +51,39 @@ describe('display token session storage', () => {
       getItem: (key:string) => values.get(key) ?? null,
       removeItem: (key:string) => values.delete(key),
     });
+    vi.stubGlobal('location', { href: 'https://games.example/' });
     expect(storeDisplayToken('display-secret')).toBe(true);
     expect(readDisplayToken()).toBe('display-secret');
+    expect(captureDisplayToken()).toBe('display-secret');
+  });
+
+  it('does not ingest display credentials from the page URL', () => {
+    const values = new Map<string,string>();
+    vi.stubGlobal('sessionStorage', {
+      setItem: (key:string,value:string) => values.set(key,value),
+      getItem: (key:string) => values.get(key) ?? null,
+      removeItem: (key:string) => values.delete(key),
+    });
+    vi.stubGlobal('location', { href: 'https://games.example/#displayToken=url-secret' });
+    const replaceState = vi.fn();
+    vi.stubGlobal('history', { state: null, replaceState });
+    expect(captureDisplayToken()).toBeNull();
+    expect(values.size).toBe(0);
+    expect(replaceState).toHaveBeenCalledWith(null, '', '/');
+  });
+
+  it('removes a partially stored token when storage setup fails', () => {
+    const values = new Map<string,string>();
+    vi.stubGlobal('sessionStorage', {
+      setItem: (key:string,value:string) => values.set(key,value),
+      getItem: (key:string) => values.get(key) ?? null,
+      removeItem: (key:string) => {
+        if (key.endsWith('-rejected')) throw new Error('partial storage failure');
+        values.delete(key);
+      },
+    });
+    expect(storeDisplayToken('partial-secret')).toBe(false);
+    expect([...values.values()]).not.toContain('partial-secret');
   });
 
   it('fails safely when session storage is unavailable', () => {

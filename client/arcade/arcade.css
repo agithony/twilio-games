@@ -100,6 +100,8 @@ input,select{width:100%;color:var(--th-text);background:var(--th-input);border:1
 .operator-page .operations-heading{margin-bottom:22px;padding-bottom:18px;border-bottom:1px solid var(--th-card-border)}
 .operator-page .admin-grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:20px;align-items:start}
 .operator-page .panel{box-shadow:none}
+.operator-page .display-connect-panel{grid-column:1/-1;order:0;display:flex;align-items:center;justify-content:space-between;gap:24px;border-left:5px solid var(--red)}
+.operator-page .display-connect-panel>div{max-width:850px}.operator-page .display-connect-panel .button{flex:0 0 auto}.operator-page .display-connect-panel p:not(.eyebrow){margin-top:8px}
 .operator-page .station-panel{grid-column:1/-1;order:1;padding:30px;border-top:0}
 .operator-page .settings-panel{grid-column:1/-1;order:2;padding:30px}
 .operator-page .messaging-panel{grid-column:span 7;order:3;border-top:0}
@@ -175,7 +177,8 @@ input,select{width:100%;color:var(--th-text);background:var(--th-input);border:1
   .player-page #off-panel{order:0}.player-page #registration-panel,.player-page #player-panel{order:1}.player-page #queue-panel{order:2}.player-page #challenge-panel{order:3}
   .operator-page .shell{width:min(100% - 24px,760px)}
   .operator-page .admin-grid{grid-template-columns:1fr}
-  .operator-page .station-panel,.operator-page .settings-panel,.operator-page .messaging-panel,.operator-page .qr-operator-panel,.operator-page .challenge-admin-panel{grid-column:1}
+  .operator-page .display-connect-panel,.operator-page .station-panel,.operator-page .settings-panel,.operator-page .messaging-panel,.operator-page .qr-operator-panel,.operator-page .challenge-admin-panel{grid-column:1}
+  .operator-page .display-connect-panel{align-items:stretch;flex-direction:column}
   .operator-page .settings-layout{grid-template-columns:1fr}
   .operator-page .settings-section,.operator-page .advanced-settings{grid-column:1}
   .operator-page .settings-fields.three-up{grid-template-columns:1fr 1fr}

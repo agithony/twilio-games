@@ -66,6 +66,7 @@ const REGISTRATION_BODY_LIMIT = 8 * 1024;
 const QUEUE_BODY_LIMIT = 4 * 1024;
 const CHALLENGE_BODY_LIMIT = 8 * 1024;
 const STATION_BODY_LIMIT = 4 * 1024;
+const DISPLAY_CONNECT_BODY_LIMIT = 2 * 1024;
 const DEFAULT_MESSAGING_ADDRESS_LIMIT = 30;
 const DEFAULT_MESSAGING_ADDRESS_WINDOW_MS = 10 * 60_000;
 const DEFAULT_MESSAGING_PROCESS_LIMIT = 600;
@@ -639,6 +640,25 @@ export class ArcadeApi {
         return;
       }
 
+      if (pathname === '/api/admin/arcade/display/connect') {
+        this.requireAdmin(request);
+        this.requireMethod(request, ['POST']);
+        this.requireSameOrigin(request);
+        requireJsonContentType(request);
+        requireExactObject(await readJson(request, DISPLAY_CONNECT_BODY_LIMIT), [], []);
+        if (this.displayToken.length < 16) {
+          throw new ArcadeHttpError(
+            503,
+            'ARCADE_DISPLAY_TOKEN_UNAVAILABLE',
+            'Booth display connection is unavailable. Ask a deployment administrator to configure it.',
+          );
+        }
+        sendJson(response, 200, { displayToken: this.displayToken.toString('utf8') }, {
+          'Cache-Control': 'no-store, private',
+        });
+        return;
+      }
+
       if (pathname === '/api/admin/arcade/config') {
         const principal = this.requireAdmin(request);
         if (request.method === 'GET') {
@@ -667,19 +687,20 @@ export class ArcadeApi {
               updatedBy: current.updatedBy,
             });
             this.validateStationAdmissionConfig(requested);
-            const changesActivePolicy = requested.arcade.mode !== current.arcade.mode
-              || requested.arcade.cabinetId !== current.arcade.cabinetId
+            const changesMode = requested.arcade.mode !== current.arcade.mode;
+            const pausesActiveMode = current.arcade.mode !== 'off' && requested.arcade.mode === 'off';
+            const changesLockedStationPolicy = requested.arcade.cabinetId !== current.arcade.cabinetId
               || requested.coins.chargePolicy !== current.coins.chargePolicy
               || JSON.stringify(requested.channels) !== JSON.stringify(current.channels)
               || JSON.stringify(requested.station) !== JSON.stringify(current.station);
-            if (changesActivePolicy && state) {
-              if (Object.values(state.stations).some(station => station.phase !== 'ATTRACT')) {
-                throw new ArcadeHttpError(
-                  409,
-                  'ACTIVE_STATION_CONFIG_LOCKED',
-                  'station policy cannot change during an active round',
-                );
-              }
+            const hasActiveStation = state
+              && Object.values(state.stations).some(station => station.phase !== 'ATTRACT');
+            if (hasActiveStation && (changesLockedStationPolicy || (changesMode && !pausesActiveMode))) {
+              throw new ArcadeHttpError(
+                409,
+                'ACTIVE_STATION_CONFIG_LOCKED',
+                'Pause the event in a separate update, then reset the event flow before reopening or changing its policy',
+              );
             }
             return this.configStore.update({
               expectedVersion,
@@ -691,6 +712,9 @@ export class ArcadeApi {
           const config = this.playerRuntime
             ? await (await this.playerRuntime.getStateStoreForCleanup()).runExclusive(update)
             : await update();
+          if (this.configStore.getSnapshot().arcade.mode === 'off') {
+            await this.playerRuntime?.getInitializedResources()?.station.flush();
+          }
           sendJson(response, 200, config, {
             'Cache-Control': 'no-store',
             ETag: configEtag(config.version),
@@ -1443,6 +1467,13 @@ export class ArcadeApi {
       request.headers['idempotency-key'], 'Idempotency-Key', PLAYER_IDEMPOTENCY_KEY_LIMIT,
     );
     const body = requireExactObject(await readJson(request, STATION_BODY_LIMIT), ['reason'], []);
+    if (this.configStore.getSnapshot().arcade.mode === 'off') {
+      throw new ArcadeHttpError(
+        409,
+        'PAUSED_EVENT_RESET_REQUIRED',
+        'The event is paused. Reset the event flow before removing a player.',
+      );
+    }
     const resources = await this.requirePlayerRuntime().getForCleanup();
     await resources.station.dropAdmittedEntry({
       readyEntryId,
@@ -1480,6 +1511,13 @@ export class ArcadeApi {
       [],
     );
     const reason = operatorReason(body.reason);
+    if (this.configStore.getSnapshot().arcade.mode === 'off' && action !== 'reset') {
+      throw new ArcadeHttpError(
+        409,
+        'PAUSED_EVENT_RESET_REQUIRED',
+        'The event is paused. Reset the event flow before taking another game-control action.',
+      );
+    }
     const runtime = this.requirePlayerRuntime();
     const cleanup = action === 'complete' || action === 'advance' || action === 'fail' || action === 'reset';
     const resources = cleanup ? await runtime.getForCleanup() : await this.getActivePlayerResources();
@@ -2121,6 +2159,8 @@ function playerServiceError(serviceCode: string): { status: number; code: string
       return { status: 409, code: serviceCode, message: 'idempotency key was reused for another request' };
     case 'MODE_DISABLED':
       return { status: 409, code: 'ARCADE_MODE_DISABLED', message: 'station mode does not allow this operation' };
+    case 'PAUSED_EVENT_RESET_REQUIRED':
+      return { status: 409, code: serviceCode, message: 'The event is paused. Reset the event flow before taking another game-control action.' };
     case 'UNSUPPORTED_CHARGE_POLICY':
     case 'QUEUE_DISABLED':
       return { status: 503, code: serviceCode, message: 'Twilio Games operation is unavailable' };
