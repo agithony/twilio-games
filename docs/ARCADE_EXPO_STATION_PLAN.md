@@ -120,9 +120,9 @@ At selection time, cards show capacity impact:
 ```text
 5 ready
 
-Voice Racer     4 play now, 1 remains first next
-Voice Monsters  2 play now, 3 remain next
-Voice Fighter   2 play now, 3 remain next
+Voice Racer     Playing this round: 4 · Waiting for next game: 1
+Voice Monsters  Playing this round: 2 · Waiting for next game: 3
+Voice Fighter   Playing this round: 2 · Waiting for next game: 3
 ```
 
 Selecting a game atomically divides the pool:

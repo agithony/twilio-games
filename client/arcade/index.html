@@ -25,7 +25,7 @@
       <div class="top-actions">
         <span id="mode-badge" class="badge neutral">Loading</span>
         <a id="view-link" class="button secondary" href="/operator">Operator view</a>
-        <button id="refresh" class="button quiet" type="button">Refresh</button>
+        <button id="refresh" class="button quiet icon-button" type="button" title="Refresh page data" aria-label="Refresh page data"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7"></path><path d="M20 4v7h-7"></path></svg></button>
         <button id="theme-toggle" class="button quiet icon-button" type="button" title="Light theme" aria-label="Light theme"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.66 6.34l1.41-1.41"></path></svg></button>
       </div>
     </header>
@@ -128,13 +128,19 @@
     <section id="operations" class="operations" hidden>
       <div class="operations-heading">
         <div><p class="eyebrow">Event operations</p><h2>Game control</h2></div>
-        <a id="admin-login" class="button secondary" href="/auth/google?returnTo=/operator">Sign in with Google</a>
-        <span id="admin-user" hidden></span>
-        <button id="admin-logout" class="button quiet" type="button" hidden>Switch account</button>
+        <div class="operator-identity">
+          <span id="admin-user" hidden></span>
+          <button id="admin-logout" class="button secondary" type="button" hidden>Switch account</button>
+        </div>
       </div>
 
-      <div id="admin-locked" class="panel compact">
-        Sign in with your approved staff account to manage the event.
+      <div id="admin-locked" class="panel compact auth-gate">
+        <div class="auth-gate-copy">
+          <p class="eyebrow">Staff access</p>
+          <h3>Manage the live event</h3>
+          <p>Use an approved Google account to control games, settings, players, and the booth display.</p>
+        </div>
+        <a id="admin-login" class="google-signin" href="/auth/google?returnTo=/operator"><span class="google-mark" aria-hidden="true">G</span><span id="admin-login-label">Sign in with Google</span></a>
       </div>
 
       <div id="admin-console" class="admin-grid" hidden>

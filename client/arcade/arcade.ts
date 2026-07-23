@@ -168,7 +168,7 @@ function localizePlayerPage():void{
   document.querySelector<HTMLElement>('.brand')!.setAttribute('aria-label','Início do Twilio Games');
   document.querySelector('.brand span')!.textContent='TWILIO GAMES';
   el<HTMLAnchorElement>('view-link').textContent='Visão do operador';
-  el('refresh').textContent='Atualizar';
+  const refresh=el<HTMLButtonElement>('refresh');refresh.title='Atualizar dados';refresh.setAttribute('aria-label','Atualizar dados');
   document.querySelector<HTMLElement>('#registration-panel .eyebrow')!.textContent='Primeiro passo';
   document.querySelector<HTMLElement>('#registration-panel h2')!.textContent='Conte quem vai jogar';
   setLabel('firstName','Nome');setLabel('lastName','Sobrenome');setLabel('workEmail','E-mail profissional');
@@ -458,7 +458,7 @@ async function checkAdmin():Promise<void>{
   try{adminConfig=await api<AdminConfig>('/api/admin/arcade/config');if(state.adminConfig&&adminConfig.version<state.adminConfig.version)adminConfig=state.adminConfig;if(modeFormDirty&&state.adminConfig&&adminConfig){if(adminConfig.version>state.adminConfig.version)setNotice('New event settings are available. Save or discard your draft to load them.','error');adminConfig=state.adminConfig;}if(!state.adminEmail&&adminConfig)state.adminEmail='Local development operator';}catch{/* Not station-authorized. */}
   state.adminConfig=adminConfig;
   const authorized=Boolean(state.adminConfig); show('admin-console',authorized);show('admin-locked',!authorized);show('admin-login',!authorized);show('admin-user',Boolean(state.adminEmail));show('admin-logout',Boolean(state.adminEmail&&state.adminEmail!=='Local development operator'));
-  el<HTMLAnchorElement>('admin-login').textContent=state.adminEmail?'Use another Google account':'Sign in with Google';
+  el('admin-login-label').textContent=state.adminEmail?'Use another Google account':'Sign in with Google';
   el('admin-user').textContent=authorized?`Signed in as ${state.adminEmail}`:`${state.adminEmail??''} is not a Twilio Games operator`;
   if(!state.adminConfig){stopOperatorUpdates();return;}
   if(previousVersion===state.adminConfig.version)return;

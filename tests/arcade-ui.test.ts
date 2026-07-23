@@ -65,6 +65,9 @@ describe('Arcade browser UI', () => {
     expect(homeScript).toContain('Ready players: text the number shown or game name.');
     expect(homeScript).not.toContain('Ready players: text 1, 2, 3');
     expect(homeScript).toContain('If time runs out or votes tie, the station chooses automatically.');
+    expect(homeScript).toContain('Playing this round: {count}');
+    expect(homeScript).toContain('Waiting for next game: {count}');
+    expect(homeScript).not.toContain("'{count} keep priority'");
     expect(homeScript).toContain('No navegador, escolham na página do jogador.');
     for (const video of ['vr-demo.mp4','vm-demo.mp4','vf-demo.mp4']) expect(homeScript).toContain(video);
     expect(homeScript).toContain("document.createElement('article')");
@@ -171,6 +174,18 @@ describe('Arcade browser UI', () => {
     expect(home).toMatch(/id="themeToggle"[^>]*>[\s\S]*?<svg/);
     expect(join).toMatch(/id="themeToggle"[^>]*>[\s\S]*?<svg/);
     expect(html).toContain('class="button quiet icon-button"');
+    expect(html).toMatch(/id="refresh"[^>]*icon-button[^>]*aria-label="Refresh page data"[^>]*>\s*<svg/);
+    expect(html).toContain('id="admin-login-label"');
+    expect(html).toContain('class="google-signin"');
+    expect(html.indexOf('id="admin-locked"')).toBeLessThan(html.indexOf('id="admin-login"'));
+    expect(script).toContain("el('admin-login-label').textContent");
+    expect(css).toContain('.auth-gate{display:grid');
+    expect(css).toContain('.google-signin{min-height:52px');
+    expect(css).toContain('white-space:normal');
+    expect(script).toContain("refresh.setAttribute('aria-label','Atualizar dados')");
+    expect(script).not.toContain("el('refresh').textContent='Atualizar'");
+    expect(css).toMatch(/@media\(max-width:560px\)[\s\S]*?\.top-actions\{width:100%;justify-content:flex-start}/);
+    expect(css).toContain('.top-actions #view-link{flex:1 1 auto');
     expect(iconControls).toContain('updateThemeToggleIcon');
     expect(musicToggle).not.toContain("className = 'music-toggle-label'");
     expect(musicToggle).toContain("btn.setAttribute('aria-label', label)");
