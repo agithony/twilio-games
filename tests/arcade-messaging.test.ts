@@ -174,6 +174,37 @@ describe('Arcade messaging commands', () => {
     expect(h.store.snapshot().wallets[prose.playerId!]?.reservations.every(item => item.status === 'RELEASED')).toBe(true);
   });
 
+  it('returns personalized MORE links on SMS and WhatsApp and grants the configured reward after confirmation', async () => {
+    const h = await harness('coin_only', 'per_player', value => {
+      value.registration.termsAcknowledgementRequired = false;
+      value.coins.startingBalance = 1;
+      value.earning.challenges = [{
+        id: 'voice-docs', title: 'Voice docs', message: 'Explore the Voice docs to earn two more coins.',
+        url: 'https://www.twilio.com/docs/voice', rewardCoins: 2, enabled: true,
+        maxClaimsPerPlayer: 1, displayOrder: 0, startsAt: null, endsAt: null,
+      }];
+    });
+    await message(h.service, 'MORE-JOIN', 'JOIN');
+    await message(h.service, 'MORE-NAME', 'Ada');
+
+    const sms = await message(h.service, 'MORE-SMS', 'MORE');
+    const whatsapp = await message(h.service, 'MORE-WA', 'MORE', '+14155550199', 'whatsapp');
+    for (const result of [sms, whatsapp]) {
+      expect(result.command).toBe('MORE');
+      expect(result.reply).toContain('Explore the Voice docs to earn two more coins.');
+      expect(result.reply).toContain('Claim +2: http://localhost/challenge/?locale=en-US#');
+    }
+    expect(await message(h.service, 'MORE-SMS', 'MORE')).toEqual(sms);
+
+    const link = /Claim \+2: (\S+)/.exec(sms.reply)?.[1];
+    expect(link).toBeTruthy();
+    const token = decodeURIComponent(new URL(link!).hash.slice(1));
+    const claimed = await h.service.claimChallengeFromLink(token);
+    expect(claimed).toMatchObject({ rewardCoins: 2, availableBalance: 3 });
+    expect(await h.service.claimChallengeFromLink(token)).toEqual(claimed);
+    expect((await message(h.service, 'MORE-NONE', 'MORE')).reply).toContain('No coin challenges are available');
+  });
+
   it('prompts legacy unnamed coin-only players before their next ready entry', async () => {
     const h = await harness('coin_only');
     const joined = await message(h.service, 'legacy-JOIN', 'JOIN');

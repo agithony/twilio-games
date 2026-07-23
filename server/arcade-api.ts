@@ -715,6 +715,11 @@ export class ArcadeApi {
         return;
       }
 
+      if (pathname === '/api/arcade/challenges/redeem') {
+        await this.handleChallengeLinkClaim(request, response);
+        return;
+      }
+
       const challengeRoute = parseChallengeRoute(pathname);
       if (challengeRoute) {
         if (challengeRoute.action === 'token') {
@@ -1199,6 +1204,34 @@ export class ArcadeApi {
       availableBalance: result.availableBalance,
       destinationUrl: result.destinationUrl,
     }, { 'Cache-Control': 'no-store' });
+  }
+
+  private async handleChallengeLinkClaim(
+    request: http.IncomingMessage,
+    response: http.ServerResponse,
+  ): Promise<void> {
+    this.requireMethod(request, ['POST']);
+    this.requireSameOrigin(request);
+    requireJsonContentType(request);
+    const body = requireExactObject(await readJson(request, CHALLENGE_BODY_LIMIT), ['token'], []);
+    const token = String(body.token ?? '');
+    const forwarded = request.headers['x-forwarded-for'];
+    const forwardedValue = Array.isArray(forwarded) ? forwarded.at(-1) : forwarded;
+    const clientAddress = forwardedValue?.split(',').at(-1)?.trim().slice(0, 128)
+      || request.socket.remoteAddress || 'unknown';
+    this.enforceRate(`challenge-link-address:${clientAddress}`, 30, 60_000);
+    this.enforceRate(`challenge-link-token:${createHash('sha256').update(token).digest('hex')}`, 10, 60_000);
+    this.enforceProcessRate('challenge-link-process', 600, 60_000);
+    const resources = await this.getActivePlayerResources();
+    const result = await resources.service.claimChallengeFromLink(token);
+    sendJson(response, 200, {
+      destinationUrl: result.destinationUrl,
+      availableBalance: result.availableBalance,
+      rewardCoins: result.rewardCoins,
+    }, {
+      'Cache-Control': 'no-store, private',
+      'Referrer-Policy': 'no-referrer',
+    });
   }
 
   private async handleJoinQueue(

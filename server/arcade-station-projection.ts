@@ -214,11 +214,23 @@ export function projectOperatorStation(
 ): OperatorStationProjection {
   const activeRound = aggregate.station.activeRoundId ? aggregate.rounds[aggregate.station.activeRoundId] : undefined;
   const round = activeRound ? withoutGameChoiceIdentities(activeRound) : null;
+  const resetReadyEntryIds = new Set(Object.values(state.idempotencyRecords)
+    .filter(record => record.operation === 'RESET_TEST_PLAYER')
+    .map(record => (record.result as { resetReadyEntryId?: unknown } | null)?.resetReadyEntryId)
+    .filter((id): id is string => typeof id === 'string'));
+  const isResetHistory = (entry: StationReadyEntry): boolean => {
+    const player = state.players[entry.playerId];
+    return resetReadyEntryIds.has(entry.id) || Boolean(['COMPLETED', 'LEFT'].includes(entry.status)
+      && entry.playerId.startsWith('reset-player:')
+      && player && player.lead === null && player.preferredLocale === null
+      && player.conversationProfileId === null && player.crmLeadId === null
+      && player.trustedDestination === null && !player.marketingConsent);
+  };
   return {
     station: aggregate.station,
     round,
     match: aggregate.station.activeMatchId ? aggregate.matches[aggregate.station.activeMatchId] ?? null : null,
-    readyEntries: Object.values(aggregate.readyEntries).sort(compareReady).map((entry, index) => ({
+    readyEntries: Object.values(aggregate.readyEntries).filter(entry => !isResetHistory(entry)).sort(compareReady).map((entry, index) => ({
       id: entry.id,
       roundId: entry.roundId,
       displayName: displayName(state, entry.playerId, index),

@@ -1,4 +1,4 @@
-export const ARCADE_CONFIG_SCHEMA_VERSION = 3 as const;
+export const ARCADE_CONFIG_SCHEMA_VERSION = 4 as const;
 
 export type ArcadeMode = 'off' | 'coin_only' | 'lead_capture';
 export type ArcadeGame = 'racer' | 'monsters' | 'fighter' | 'trivia';
@@ -106,6 +106,7 @@ export type CoinSettings = {
 export type EarningChallenge = {
   readonly id: string;
   readonly title: string;
+  readonly message: string | null;
   readonly url: string;
   readonly rewardCoins: number;
   readonly enabled: boolean;
@@ -638,7 +639,7 @@ function parseCoins(value: unknown): CoinSettings {
 function parseChallenge(value: unknown, index: number): EarningChallenge {
   const path = `$.earning.challenges[${index}]`;
   const object = exactObject(value, [
-    'id', 'title', 'url', 'rewardCoins', 'enabled', 'maxClaimsPerPlayer',
+    'id', 'title', 'message', 'url', 'rewardCoins', 'enabled', 'maxClaimsPerPlayer',
     'displayOrder', 'startsAt', 'endsAt',
   ], path);
   const id = safeStringAt(object.id, `${path}.id`, MAX_IDENTIFIER_LENGTH);
@@ -666,6 +667,9 @@ function parseChallenge(value: unknown, index: number): EarningChallenge {
   return {
     id,
     title: safeStringAt(object.title, `${path}.title`, MAX_CHALLENGE_TITLE_LENGTH),
+    message: object.message === null
+      ? null
+      : safeStringAt(object.message, `${path}.message`, 300),
     url: parsedUrl.href,
     rewardCoins: integerAt(object.rewardCoins, 1, MAX_COIN_AMOUNT, `${path}.rewardCoins`),
     enabled: booleanAt(object.enabled, `${path}.enabled`),
@@ -804,7 +808,6 @@ function parsePostGame(value: unknown): PostGameSettings {
     for (const field of [
       'includeScore',
       'includeLeaderboard',
-      'includeChallenges',
       'includeRematchLink',
       'includeAchievement',
       'includeIntelligenceTip',
@@ -911,6 +914,7 @@ export function projectPublicArcadeConfig(input: unknown): PublicArcadeConfig {
   const challenges = config.earning.challenges.map(challenge => ({
     id: challenge.id,
     title: challenge.title,
+    message: challenge.message,
     rewardCoins: challenge.rewardCoins,
     enabled: challenge.enabled,
     maxClaimsPerPlayer: challenge.maxClaimsPerPlayer,
@@ -1067,7 +1071,7 @@ const DEFAULT_CONFIG_INPUT = {
     includeScore: false,
     includeLeaderboard: false,
     includeCoinBalance: true,
-    includeChallenges: false,
+    includeChallenges: true,
     includeRematchLink: false,
     includeAchievement: false,
     includeIntelligenceTip: false,

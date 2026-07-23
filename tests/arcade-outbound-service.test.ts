@@ -53,14 +53,20 @@ async function harness() {
 function stationConfig(mode: 'off' | 'coin_only'): ArcadeConfigSnapshot {
   const value = JSON.parse(JSON.stringify(DEFAULT_ARCADE_CONFIG)) as Record<string, any>;
   value.arcade.mode = mode;
-  value.coins.startingBalance = 2;
+  value.coins.startingBalance = 1;
   value.channels.voiceNumbers = {
     'en-US': '+14155550100',
     'pt-BR': '+551155555555',
   };
   value.channels.whatsapp = true;
-  value.postGame.enabled = true;
-  value.postGame.channels = ['sms', 'whatsapp'];
+  value.postGame.enabled = false;
+  value.postGame.channels = [];
+  value.postGame.includeChallenges = true;
+  value.earning.challenges = [{
+    id: 'voice-docs', title: 'Voice docs', message: 'Visit the Voice docs to earn another coin.',
+    url: 'https://www.twilio.com/docs/voice', rewardCoins: 1, enabled: true,
+    maxClaimsPerPlayer: 1, displayOrder: 0, startsAt: null, endsAt: null,
+  }];
   return parseArcadeConfig(value);
 }
 
@@ -147,8 +153,12 @@ describe('Arcade station outbound outbox', () => {
     const resultNotice = Object.values(h.store.snapshot().outboundNotifications)
       .find(item => item.kind === 'STATION_RESULTS' && item.locale === 'en-US')!;
     expect(resultNotice.body).toContain('Your Voice Fighter match is complete');
-    expect(resultNotice.body).toContain('Available balance: 1');
-    expect(resultNotice.templateVariables).toEqual({ '1': 'Voice Fighter', '2': '1' });
+    expect(resultNotice.body).not.toContain('Available balance');
+    expect(resultNotice.body).toContain('Reply MORE for challenge links');
+    expect(resultNotice.templateVariables).toEqual({ '1': 'Voice Fighter' });
+    expect(Object.values(h.store.snapshot().outboundNotifications)
+      .filter(item => item.kind === 'STATION_RESULTS' && item.channel === 'whatsapp')
+      .every(item => item.templateContentSid === null)).toBe(true);
     await h.service.advanceStationResults({
       stationId: 'ARCADE-01', expectedRevision: results.station.revision,
       idempotencyKey: 'advance', authorization: AUTHORIZATION,

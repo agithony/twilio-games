@@ -71,6 +71,10 @@ import {
 } from './arcade-state-store';
 import {
   ARCADE_CHALLENGE_TOKEN_MAX_BYTES,
+  ARCADE_CHALLENGE_TOKEN_MAX_TTL_SECONDS,
+  ARCADE_CHALLENGE_TOKEN_VERSION,
+  authenticateArcadeChallengeToken,
+  signArcadeChallengeToken,
   verifyArcadeChallengeToken,
   type ArcadeChallengeTokenPayload,
   type ArcadeChallengeTokenSecret,
@@ -87,6 +91,7 @@ export interface ArcadeServiceOptions {
   readonly clock: ArcadeClock;
   readonly idGenerator: ArcadeIdGenerator;
   readonly challengeTokenSecret: ArcadeChallengeTokenSecret;
+  readonly publicBaseUrl?: string;
   readonly operatorAuthorizer?: ArcadeOperatorAuthorizer;
   readonly stationUpdated?: (revision: number) => void;
   readonly stationNotifications?: ArcadeStationNotificationOptions;
@@ -173,6 +178,7 @@ export interface ArcadeQueueStatus {
 export interface ArcadeChallengeStatus {
   readonly id: string;
   readonly title: string;
+  readonly message: string | null;
   readonly rewardCoins: number;
   readonly displayOrder: number;
   readonly claimCount: number;
@@ -560,6 +566,14 @@ function isRetiredPlayer(state: ArcadeState, playerId: string): boolean {
   ));
 }
 
+function isRetiredProfile(state: ArcadeState, profileId: string): boolean {
+  const hash = createHash('sha256').update(`retired-profile:${profileId}`).digest('hex');
+  return Object.values(state.idempotencyRecords).some(record => (
+    record.operation === 'RESET_TEST_PLAYER'
+    && (record.result as { retiredProfileHash?: unknown } | null)?.retiredProfileHash === hash
+  ));
+}
+
 function requireReason(value: unknown): string {
   return requireIdentifier(value, 'reason', MAX_REASON_LENGTH).trim();
 }
@@ -688,25 +702,26 @@ type MessagingCopyKey = 'wrongStation' | 'joinFirst' | 'joined' | 'help' | 'stat
   | 'joinedFree' | 'helpFree' | 'statusFree' | 'finishRegistrationFree'
   | 'registeredFree' | 'leftFree' | 'poolFullFree' | 'readyFree' | 'continueInBrowser'
   | 'coinScreen' | 'readyFreeScreen' | 'notReadyFree' | 'capacity' | 'gameChoice' | 'gameChoiceInvalid'
-  | 'gameChoiceUnavailable' | 'gameChoiceClosed' | 'alreadyReadyVote' | 'named' | 'namedFree';
+  | 'gameChoiceUnavailable' | 'gameChoiceClosed' | 'alreadyReadyVote' | 'moreNone' | 'morePage'
+  | 'named' | 'namedFree';
 
 const MESSAGING_COPY: Record<'en-US' | 'pt-BR', Record<MessagingCopyKey, string>> = {
   'en-US': {
     wrongStation: 'That station code is stale. Scan the QR again or reply JOIN.',
     joinFirst: 'Reply JOIN to start',
-    joined: 'You are in Twilio Games with {balance} coins.\nReply COIN when you are ready at the screen. HELP lists commands.',
-    help: 'Commands:\nCOIN or 🪙 to get ready\nSTATUS for your place and balance\nLEAVE to exit\nHELP for this list\nDuring game selection, reply with a game name or number.',
-    status: 'Balance: {balance} coins.\nStation status: {status}.\n{next}',
+    joined: 'You are in Twilio Games with {balance} coins.\n\nReply COIN when you are ready at the screen.\nHELP lists commands.',
+    help: 'Commands:\nCOIN or 🪙 to get ready\nMORE for coin challenge links\nSTATUS for your place and balance\nLEAVE to exit\nHELP for this list\n\nDuring game selection, reply with a game name or number.',
+    status: 'Balance: {balance} coins.\nStation status: {status}.\n\n{next}',
     finishRegistration: 'Finish the quick intro first, then reply COIN.',
     notReady: 'You are not currently in the ready pool. Reply COIN when you are ready at the screen.',
-    registered: 'Registration complete. You have {balance} coins.\nReply COIN when you are at the screen.',
+    registered: 'Registration complete!\n\nYou have {balance} coins.\n\nReply COIN when you are at the screen.',
     cannotLeave: 'Your match is locked or playing. Ask the booth operator for help.',
     left: 'You left the ready pool.\nYour held coin is available again.\nReply COIN when you are ready to join again.',
     alreadyReady: 'You are already ready.\nWatch for game selection, then reply with the game name or number.\nReply STATUS for your place.',
-    noCoins: 'You do not have an available coin. Complete a challenge or ask the booth operator.',
+    noCoins: 'You do not have an available coin. Reply MORE for coin challenge links or ask the booth operator.',
     poolFull: 'The ready pool is full right now. Try COIN again after the next game starts.',
     coinUnavailable: 'Coin insertion is not available under the current station policy.',
-    coin: 'Coin inserted. You are position {position}. Balance available: {balance}.\nWhen game voting opens, reply with: {choices}.\nStay near the screen; we will text assignment and call updates.',
+    coin: 'Coin inserted.\n\nYou are position {position}.\n\nBalance available: {balance}.\n\nWhen game voting opens, reply with: {choices}.\n\nStay near the screen; we will text assignment and call updates.',
     coinScreen: 'Coin inserted. You are position {position}. Balance available: {balance}.\nWhen game voting opens, reply with: {choices}.\nWatch the screen for assignment and call instructions, and keep this number handy.',
     joinedFree: 'You are in Twilio Games.\nReply READY when you are at the screen. HELP lists commands.',
     helpFree: 'Commands:\nREADY or 🪙 to join the ready pool\nSTATUS for your place\nLEAVE to exit\nHELP for this list\nDuring game selection, reply with a game name or number.',
@@ -725,25 +740,27 @@ const MESSAGING_COPY: Record<'en-US' | 'pt-BR', Record<MessagingCopyKey, string>
     gameChoiceUnavailable: 'Game selection opens after recruiting for players who are ready.\nWhen the screen asks you to choose, reply with one of: {choices}.',
     gameChoiceClosed: 'Game selection is closed.\nWatch the screen for the chosen game and your next instruction.',
     alreadyReadyVote: 'You are already ready. Vote now by replying with: {choices}.\nReply STATUS for your place.',
+    moreNone: 'No coin challenges are available right now. Ask the booth operator for help.',
+    morePage: 'More challenges are available. Reply MORE {page} for the next link.',
     named: 'Thanks, {name}. You have {balance} coins.\nReply COIN when you are ready at the screen.',
     namedFree: 'Thanks, {name}.\nReply READY when you are at the screen.',
   },
   'pt-BR': {
     wrongStation: 'Esse codigo de estacao expirou. Escaneie o QR novamente ou responda ENTRAR.',
     joinFirst: 'Responda ENTRAR para comecar',
-    joined: 'Você entrou no Twilio Games com {balance} moedas.\nResponda MOEDA quando estiver na tela. AJUDA mostra os comandos.',
-    help: 'Comandos:\nMOEDA ou 🪙 para ficar pronto\nSTATUS para posicao e saldo\nSAIR para sair\nAJUDA para esta lista\nDurante a selecao de jogo, responda com o nome ou numero do jogo.',
-    status: 'Saldo: {balance} moedas.\nStatus na estacao: {status}.\n{next}',
+    joined: 'Você entrou no Twilio Games com {balance} moedas.\n\nResponda MOEDA quando estiver na tela.\nAJUDA mostra os comandos.',
+    help: 'Comandos:\nMOEDA ou 🪙 para ficar pronto\nMAIS para links de desafios\nSTATUS para posicao e saldo\nSAIR para sair\nAJUDA para esta lista\n\nDurante a selecao de jogo, responda com o nome ou numero do jogo.',
+    status: 'Saldo: {balance} moedas.\nStatus na estacao: {status}.\n\n{next}',
     finishRegistration: 'Termine a apresentação rápida e depois responda MOEDA.',
     notReady: 'Voce nao esta na fila de jogadores prontos. Responda MOEDA quando estiver pronto na tela.',
-    registered: 'Cadastro concluído. Você tem {balance} moedas.\nResponda MOEDA quando estiver na tela.',
+    registered: 'Cadastro concluído.\n\nVocê tem {balance} moedas.\n\nResponda MOEDA quando estiver na tela.',
     cannotLeave: 'Sua partida está bloqueada ou em andamento. Fale com a equipe do estande.',
     left: 'Voce saiu da fila.\nSua moeda reservada esta disponivel novamente.\nResponda MOEDA quando quiser entrar de novo.',
     alreadyReady: 'Voce ja esta pronto.\nAguarde a selecao de jogo e responda com o nome ou numero do jogo.\nResponda STATUS para ver sua posicao.',
-    noCoins: 'Você não tem uma moeda disponível. Conclua um desafio ou fale com a equipe.',
+    noCoins: 'Você não tem uma moeda disponível. Responda MAIS para receber links de desafios ou fale com a equipe.',
     poolFull: 'A fila está cheia agora. Tente MOEDA novamente quando a próxima partida começar.',
     coinUnavailable: 'A inserção de moeda não está disponível na política atual da estação.',
-    coin: 'Moeda inserida. Voce esta na posicao {position}. Saldo disponivel: {balance}.\nQuando a votacao abrir, responda com: {choices}.\nFique perto da tela; enviaremos atualizacoes de selecao e chamada.',
+    coin: 'Moeda inserida.\n\nVoce esta na posicao {position}.\n\nSaldo disponivel: {balance}.\n\nQuando a votacao abrir, responda com: {choices}.\n\nFique perto da tela; enviaremos atualizacoes de selecao e chamada.',
     coinScreen: 'Moeda inserida. Voce esta na posicao {position}. Saldo disponivel: {balance}.\nQuando a votacao abrir, responda com: {choices}.\nAcompanhe a tela para selecao e chamada e mantenha este numero por perto.',
     joinedFree: 'Você entrou no Twilio Games.\nResponda PRONTO quando estiver na tela. AJUDA mostra os comandos.',
     helpFree: 'Comandos:\nPRONTO ou 🪙 para entrar na fila\nSTATUS para ver sua posicao\nSAIR para sair\nAJUDA para esta lista\nDurante a selecao de jogo, responda com o nome ou numero do jogo.',
@@ -762,6 +779,8 @@ const MESSAGING_COPY: Record<'en-US' | 'pt-BR', Record<MessagingCopyKey, string>
     gameChoiceUnavailable: 'A escolha do jogo abre depois do recrutamento para quem esta pronto.\nQuando a tela pedir sua escolha, responda com uma destas opcoes: {choices}.',
     gameChoiceClosed: 'A escolha do jogo ja terminou.\nAcompanhe a tela para ver o jogo escolhido e a proxima instrucao.',
     alreadyReadyVote: 'Voce ja esta pronto. Vote agora respondendo com: {choices}.\nResponda STATUS para ver sua posicao.',
+    moreNone: 'Nenhum desafio de moedas esta disponivel agora. Fale com a equipe do estande.',
+    morePage: 'Ha mais desafios disponiveis. Responda MAIS {page} para receber o proximo link.',
     named: 'Obrigado, {name}. Voce tem {balance} moedas.\nResponda MOEDA quando estiver pronto na tela.',
     namedFree: 'Obrigado, {name}.\nResponda PRONTO quando estiver na tela.',
   },
@@ -823,7 +842,12 @@ function messagingGameChoiceOptions(config: ArcadeConfigSnapshot, locale: string
     .join(', ');
 }
 
-function messagingCommand(value: string): 'COIN' | 'READY' | 'STATUS' | 'LEAVE' | 'HELP' | 'TEXT' {
+function messagingMorePage(value: string): number | null {
+  const match = /^(?:MORE|MAIS)(?:\s+([1-9][0-9]{0,2}))?$/.exec(value);
+  return match ? Number(match[1] ?? 1) : null;
+}
+
+function messagingCommand(value: string): 'COIN' | 'READY' | 'STATUS' | 'LEAVE' | 'HELP' | 'MORE' | 'TEXT' {
   if (value === 'COIN' || value === 'MOEDA') return 'COIN';
   const emoji = value.replace(/[\uFE0E\uFE0F]/gu, '');
   if (/^(?:🪙|💰|💵|💴|💶|💷|💸)+$/u.test(emoji)) return 'COIN';
@@ -831,6 +855,7 @@ function messagingCommand(value: string): 'COIN' | 'READY' | 'STATUS' | 'LEAVE' 
   if (value === 'STATUS' || value === 'ESTADO') return 'STATUS';
   if (value === 'LEAVE' || value === 'SAIR') return 'LEAVE';
   if (value === 'HELP' || value === 'AJUDA') return 'HELP';
+  if (messagingMorePage(value) !== null) return 'MORE';
   return 'TEXT';
 }
 
@@ -1059,6 +1084,7 @@ function stationNotificationContent(input: {
   overflowOrdinal: number | null;
   callNumber: string | null;
   balance: number | null;
+  offerChallenges: boolean;
   rank: number | null;
   won: boolean | null;
 }): { body: string; templateVariables: Readonly<Record<string, string>> } {
@@ -1077,10 +1103,11 @@ function stationNotificationContent(input: {
     }
     if (input.kind === 'STATION_RESULTS') {
       const balance = input.balance === null ? '' : `\nSaldo disponível: ${input.balance}.`;
+      const challenges = input.offerChallenges ? '\nSeu saldo acabou. Responda MAIS para receber links de desafios e ganhar mais moedas.' : '';
       const result = input.rank === null ? '\nOs resultados estão na tela.'
         : input.won ? '\nVocê venceu!' : `\nVocê terminou em ${input.rank}º lugar.`;
       return {
-        body: `Sua partida de ${game} terminou.${result}${balance}`,
+        body: `Sua partida de ${game} terminou.${result}${balance}${challenges}`,
         templateVariables: { '1': game, ...(input.balance === null ? {} : { '2': String(input.balance) }) },
       };
     }
@@ -1097,14 +1124,28 @@ function stationNotificationContent(input: {
   }
   if (input.kind === 'STATION_RESULTS') {
     const balance = input.balance === null ? '' : `\nAvailable balance: ${input.balance}.`;
+    const challenges = input.offerChallenges ? '\nYou used your last coin. Reply MORE for challenge links and earn more coins.' : '';
     const result = input.rank === null ? '\nResults are on the screen.'
       : input.won ? '\nYou won!' : `\nYou finished in place ${input.rank}.`;
     return {
-      body: `Your ${game} match is complete.${result}${balance}`,
+      body: `Your ${game} match is complete.${result}${balance}${challenges}`,
       templateVariables: { '1': game, ...(input.balance === null ? {} : { '2': String(input.balance) }) },
     };
   }
   return { body: "You're promoted for the next game.\nStay near the screen and wait for selection.", templateVariables: {} };
+}
+
+function availableEarningChallenges(config: ArcadeConfigSnapshot, wallet: WalletState, at: string) {
+  if (!config.earning.enabled || config.coins.chargePolicy === 'free') return [];
+  const now = Date.parse(at);
+  return config.earning.challenges
+    .filter(challenge => challenge.enabled
+      && (challenge.startsAt === null || Date.parse(challenge.startsAt) <= now)
+      && (challenge.endsAt === null || now < Date.parse(challenge.endsAt))
+      && wallet.challengeClaims.filter(claim => claim.challengeId === challenge.id).length
+        < challenge.maxClaimsPerPlayer)
+    .slice()
+    .sort((left, right) => left.displayOrder - right.displayOrder || left.id.localeCompare(right.id));
 }
 
 export class ArcadeService {
@@ -1113,6 +1154,7 @@ export class ArcadeService {
   private readonly clock: ArcadeClock;
   private readonly idGenerator: ArcadeIdGenerator;
   private readonly challengeTokenSecret: Buffer;
+  private readonly publicBaseUrl: string;
   private readonly operatorAuthorizer: ArcadeOperatorAuthorizer;
   private readonly stationUpdated?: (revision: number) => void;
   private readonly stationNotifications?: ArcadeStationNotificationOptions;
@@ -1151,6 +1193,7 @@ export class ArcadeService {
       this.clock = clock;
       this.idGenerator = idGenerator;
       this.challengeTokenSecret = copyChallengeTokenSecret(challengeTokenSecret);
+      this.publicBaseUrl = 'http://localhost';
       this.operatorAuthorizer = operatorAuthorizer ?? (() => null);
       this.stationUpdated = undefined;
       this.stationNotifications = undefined;
@@ -1161,6 +1204,8 @@ export class ArcadeService {
       this.clock = optionsOrStore.clock;
       this.idGenerator = optionsOrStore.idGenerator;
       this.challengeTokenSecret = copyChallengeTokenSecret(optionsOrStore.challengeTokenSecret);
+      try { this.publicBaseUrl = new URL(optionsOrStore.publicBaseUrl ?? 'http://localhost').origin; }
+      catch { throw new ArcadeServiceError('INVALID_DEPENDENCY', 'publicBaseUrl must be an absolute URL'); }
       this.operatorAuthorizer = optionsOrStore.operatorAuthorizer ?? (() => null);
       this.stationUpdated = optionsOrStore.stationUpdated;
       this.stationNotifications = optionsOrStore.stationNotifications;
@@ -1364,6 +1409,7 @@ export class ArcadeService {
         return Object.freeze({
           id: challenge.id,
           title: challenge.title,
+          message: challenge.message,
           rewardCoins: challenge.rewardCoins,
           displayOrder: challenge.displayOrder,
           claimCount,
@@ -1578,6 +1624,31 @@ export class ArcadeService {
 
   claimChallengeReward(input: ClaimArcadeChallengeInput): Promise<ChallengeClaimResult> {
     return this.claimChallenge(input);
+  }
+
+  async claimChallengeFromLink(token: string): Promise<ChallengeClaimResult> {
+    if (typeof token !== 'string' || !token || Buffer.byteLength(token, 'utf8') > ARCADE_CHALLENGE_TOKEN_MAX_BYTES) {
+      throw new ArcadeServiceError('INVALID_CHALLENGE_TOKEN', 'a bounded signed challenge token is required');
+    }
+    let payload: ArcadeChallengeTokenPayload;
+    try {
+      payload = authenticateArcadeChallengeToken(token, this.challengeTokenSecret, {
+        audience: this.config().arcade.cabinetId,
+        now: Date.parse(this.now()) / 1000,
+      });
+    } catch (error) {
+      throw new ArcadeServiceError(
+        'INVALID_CHALLENGE_TOKEN',
+        error instanceof Error ? error.message : 'challenge token verification failed',
+      );
+    }
+    return this.claimChallenge({
+      playerId: payload.player,
+      challengeId: payload.challenge,
+      token,
+      idempotencyKey: `challenge-link:${createHash('sha256').update(token).digest('hex')}`,
+      requestMetadata: { source: 'messaging-link' },
+    });
   }
 
   async joinQueue(input: JoinArcadeQueueInput): Promise<QueueEntryResult> {
@@ -1958,8 +2029,11 @@ export class ArcadeService {
         const linked = Object.values(state.channelAddresses).find(candidate => (
           candidate.normalizedAddress === normalizedAddress
         ));
-        const profilePlayers = conversationProfileId
-          ? Object.values(state.players).filter(candidate => candidate.conversationProfileId === conversationProfileId)
+        const activeProfileId = conversationProfileId && !isRetiredProfile(state, conversationProfileId)
+          ? conversationProfileId
+          : null;
+        const profilePlayers = activeProfileId
+          ? Object.values(state.players).filter(candidate => candidate.conversationProfileId === activeProfileId)
           : [];
         if (profilePlayers.length > 1) {
           throw new ArcadeServiceError('CONVERSATION_PROFILE_CONFLICT', 'Conversation Memory profile is linked to multiple players');
@@ -2033,7 +2107,7 @@ export class ArcadeService {
           playerId = this.id('channel-player');
           state.players[playerId] = {
             id: playerId, createdAt: at, updatedAt: at, lead: null,
-            preferredLocale: locale, conversationProfileId, crmLeadId: null,
+            preferredLocale: locale, conversationProfileId: activeProfileId, crmLeadId: null,
             termsAcceptedAt: null, marketingConsent: false, trustedDestination: providerAddress,
           };
           state.wallets[playerId] = createWallet(playerId, at);
@@ -2047,15 +2121,15 @@ export class ArcadeService {
           state.channelAddresses[address.id] = address;
         }
         let player = own(state.players, playerId)!;
-        if (conversationProfileId && player.conversationProfileId
-          && player.conversationProfileId !== conversationProfileId) {
+        if (activeProfileId && player.conversationProfileId
+          && player.conversationProfileId !== activeProfileId) {
           throw new ArcadeServiceError(
             'CONVERSATION_PROFILE_CONFLICT',
             'messaging identity is linked to another Conversation Memory profile',
           );
         }
-        if (conversationProfileId && player.conversationProfileId !== conversationProfileId) {
-          player = { ...player, conversationProfileId, updatedAt: at };
+        if (activeProfileId && player.conversationProfileId !== activeProfileId) {
+          player = { ...player, conversationProfileId: activeProfileId, updatedAt: at };
           state.players[playerId] = player;
         }
         if (player.trustedDestination !== providerAddress) {
@@ -2189,7 +2263,7 @@ export class ArcadeService {
                 phoneNumber: normalized.phoneNumber, countryCode: normalized.countryCode,
               },
               preferredLocale: normalized.preferredLocale,
-              conversationProfileId: conversationProfileId ?? own(state.players, playerId)?.conversationProfileId ?? null,
+              conversationProfileId: activeProfileId ?? own(state.players, playerId)?.conversationProfileId ?? null,
               crmLeadId: null,
               termsAcceptedAt: config.registration.termsAcknowledgementRequired
                 ? at
@@ -2203,12 +2277,28 @@ export class ArcadeService {
           return finish('REGISTER', advanced.reply);
         }
 
-        if ((['COIN', 'READY', 'STATUS', 'LEAVE'].includes(command) || gameChoice !== null)
+        if ((['COIN', 'READY', 'STATUS', 'LEAVE', 'MORE'].includes(command) || gameChoice !== null)
           && state.messagingDrafts[playerId]?.stationId !== stationId) {
           return finish(command, messagingCopy(locale, 'joinFirst'));
         }
 
         if (command === 'HELP') return finish(command, messagingCopy(locale, freePlay ? 'helpFree' : 'help'));
+        if (command === 'MORE') {
+          const wallet = this.requireWallet(state, playerId);
+          const available = availableEarningChallenges(config, wallet, at);
+          const page = messagingMorePage(normalizedCommand) ?? 1;
+          const challenge = available[page - 1];
+          if (!challenge) return finish(command, messagingCopy(locale, 'moreNone'));
+          const portuguese = normalizeMessagingLocale(locale) === 'pt-BR';
+          const custom = challenge.message ?? (portuguese
+            ? `Visite ${challenge.title} para ganhar ${challenge.rewardCoins} moeda${challenge.rewardCoins === 1 ? '' : 's'}.`
+            : `Visit ${challenge.title} to earn ${challenge.rewardCoins} coin${challenge.rewardCoins === 1 ? '' : 's'}.`);
+          const link = this.challengeClaimLink(playerId, challenge.id, config.arcade.cabinetId, at, normalizeMessagingLocale(locale));
+          const next = page < available.length
+            ? `\n\n${messagingCopy(locale, 'morePage', { page: page + 1 })}`
+            : '';
+          return finish(command, `${custom}\n\nClaim +${challenge.rewardCoins}: ${link}${next}`);
+        }
         const entry = Object.values(state.stationReadyEntries)
           .find(candidate => candidate.playerId === playerId && !['COMPLETED', 'LEFT'].includes(candidate.status));
         const aggregate = entry ? this.stationAggregate(state, entry.stationId) : this.stationAggregate(state, stationId);
@@ -2786,6 +2876,7 @@ export class ArcadeService {
       return {
         reset: true as const,
         stationRevision: updated.station.revision,
+        resetReadyEntryId: readyEntryId,
         retiredPlayerHash: retiredPlayerHash(player.id),
         retiredProfileHash: player.conversationProfileId
           ? createHash('sha256').update(`retired-profile:${player.conversationProfileId}`).digest('hex')
@@ -3289,6 +3380,23 @@ export class ArcadeService {
     return parseArcadeConfig(value);
   }
 
+  private challengeClaimLink(playerId: string, challengeId: string, audience: string, at: string, locale: 'en-US' | 'pt-BR'): string {
+    const issuedAt = Math.floor(Date.parse(at) / 1000);
+    const token = signArcadeChallengeToken({
+      v: ARCADE_CHALLENGE_TOKEN_VERSION,
+      player: playerId,
+      challenge: challengeId,
+      audience,
+      jti: this.id('challenge-link'),
+      issuedAt,
+      expiry: issuedAt + ARCADE_CHALLENGE_TOKEN_MAX_TTL_SECONDS,
+    }, this.challengeTokenSecret);
+    const link = new URL('/challenge/', this.publicBaseUrl);
+    link.searchParams.set('locale', locale);
+    link.hash = token;
+    return link.toString();
+  }
+
   private canStartNewMutations(): boolean {
     try {
       return this.newMutationsAllowed();
@@ -3350,15 +3458,19 @@ export class ArcadeService {
     const address = binding ? own(state.channelAddresses, binding.channelAddressId) : undefined;
     if (!binding || !address || address.playerId !== entry.playerId || !config.channels[address.channel]
       || !this.notificationsEnabled(address.channel)) return;
-    if (kind === 'STATION_RESULTS'
-      && (!config.postGame.enabled || !config.postGame.channels.includes(address.channel))) return;
-
     const locale = normalizeMessagingLocale(address.preferredLocale);
     const callNumber = this.notificationCallNumber(config, locale);
     if (kind === 'STATION_CALL_NOW' && (!config.channels.voice || callNumber === null)) return;
     const wallet = own(state.wallets, entry.playerId);
-    const balance = kind === 'STATION_RESULTS' && config.postGame.includeCoinBalance && wallet
-      ? availableBalance(wallet)
+    const actualBalance = kind === 'STATION_RESULTS' && wallet ? availableBalance(wallet) : null;
+    const standardResultsDelivery = kind === 'STATION_RESULTS' && config.postGame.enabled
+      && config.postGame.channels.includes(address.channel);
+    const offerChallenges = kind === 'STATION_RESULTS' && config.postGame.includeChallenges
+      && actualBalance === 0 && wallet !== undefined
+      && availableEarningChallenges(config, wallet, at).length > 0;
+    if (kind === 'STATION_RESULTS' && !standardResultsDelivery && !offerChallenges) return;
+    const balance = standardResultsDelivery && config.postGame.includeCoinBalance
+      ? actualBalance
       : null;
     const content = stationNotificationContent({
       kind,
@@ -3367,12 +3479,13 @@ export class ArcadeService {
       overflowOrdinal: entry.overflowOrdinal,
       callNumber,
       balance,
+      offerChallenges,
       rank: match.result?.participants.find(result => result.readyEntryId === entry.id)?.rank ?? null,
       won: match.result?.participants.find(result => result.readyEntryId === entry.id)?.won ?? null,
     });
     const id = stationNotificationId(kind, match.id, entry.id);
     if (own(state.outboundNotifications, id)) return;
-    const templateContentSid = address.channel === 'whatsapp'
+    const templateContentSid = address.channel === 'whatsapp' && !offerChallenges
       ? this.notificationContentSid(kind, locale)
       : null;
     const record: ArcadeOutboundNotificationRecord = {

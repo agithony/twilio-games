@@ -14,10 +14,10 @@ interface DeploymentConfig { publicBaseUrl?:string;phoneNumber?:string;voiceNumb
 interface PlayerStatus { registered:boolean; firstName:string|null; preferredLocale:string|null; }
 interface WalletStatus { ledgerBalance:number; reservedBalance:number; availableBalance:number; updatedAt:string; }
 interface StationView { phase:string;revision:number;deadline:string|null;ready:{status:string;position:number|null;reservation:{amount:number;status:string}|null;gameChoice:PlayableGame|null}|null;availableBalance:number;callNumber:string|null; }
-interface Challenge { id:string;title:string;rewardCoins:number;displayOrder:number;claimCount:number;maxClaimsPerPlayer:number;available:boolean;startsAt:string|null;endsAt:string|null; }
-interface AdminChallenge { id:string;title:string;url:string;rewardCoins:number;enabled:boolean;maxClaimsPerPlayer:number;displayOrder:number;startsAt:string|null;endsAt:string|null; }
+interface Challenge { id:string;title:string;message:string|null;rewardCoins:number;displayOrder:number;claimCount:number;maxClaimsPerPlayer:number;available:boolean;startsAt:string|null;endsAt:string|null; }
+interface AdminChallenge { id:string;title:string;message:string|null;url:string;rewardCoins:number;enabled:boolean;maxClaimsPerPlayer:number;displayOrder:number;startsAt:string|null;endsAt:string|null; }
 interface GameChoiceResponse { gameChoice:PlayableGame; }
-interface AdminConfig extends Record<string,unknown> { version:number;updatedAt:string;updatedBy:string;schemaVersion:number;arcade:{mode:ArcadeMode;cabinetId:string};station:{timings:{recruitingSeconds:number;hardDeadlineSeconds:number;selectionSeconds:number;lockedSeconds:number;launchTimeoutSeconds:number;resultsSeconds:number;postGameRecruitingSeconds:number};games:Record<PlayableGame,{enabled:boolean}>;automaticSelection:{policy:'best_fit_rotation'|'round_robin'|'fixed_priority';order:PlayableGame[]};qrRail:'auto'|'always'|'hidden'};coins:{startingBalance:number;chargePolicy:ChargePolicy};channels:{voice:boolean;sms:boolean;whatsapp:boolean;voiceNumbers:Record<'en-US'|'pt-BR',string|null>};earning:{enabled:boolean;challenges:AdminChallenge[]};postGame:{enabled:boolean;channels:Array<'sms'|'whatsapp'>;includeCoinBalance:boolean}; }
+interface AdminConfig extends Record<string,unknown> { version:number;updatedAt:string;updatedBy:string;schemaVersion:number;arcade:{mode:ArcadeMode;cabinetId:string};station:{timings:{recruitingSeconds:number;hardDeadlineSeconds:number;selectionSeconds:number;lockedSeconds:number;launchTimeoutSeconds:number;resultsSeconds:number;postGameRecruitingSeconds:number};games:Record<PlayableGame,{enabled:boolean}>;automaticSelection:{policy:'best_fit_rotation'|'round_robin'|'fixed_priority';order:PlayableGame[]};qrRail:'auto'|'always'|'hidden'};coins:{startingBalance:number;chargePolicy:ChargePolicy};channels:{voice:boolean;sms:boolean;whatsapp:boolean;voiceNumbers:Record<'en-US'|'pt-BR',string|null>};earning:{enabled:boolean;challenges:AdminChallenge[]};postGame:{enabled:boolean;channels:Array<'sms'|'whatsapp'>;includeCoinBalance:boolean;includeChallenges:boolean}; }
 interface OperatorStationView {
   station:{phase:StationPhase;revision:number;updatedAt:string;activeRoundId:string|null;nextRoundId:string|null;activeGame:PlayableGame|null;activeMatchId:string|null};
   round:{phase:string;firstCoinAt:string;recruitingEndsAt:string|null;hardEndsAt:string|null;selectionEndsAt:string|null;lockedEndsAt:string|null;resultsAt:string|null;selectedGame:PlayableGame|null}|null;
@@ -381,7 +381,7 @@ async function refreshChallenges(): Promise<void> {
       const item = document.createElement('div'); item.className = 'list-item';
       const copy = document.createElement('div');
       const title = document.createElement('h4'); title.textContent = challenge.title;
-      const detail = document.createElement('p'); detail.textContent = playerText(
+      const detail = document.createElement('p'); detail.textContent = challenge.message ?? playerText(
         `Earn ${challenge.rewardCoins} coin${challenge.rewardCoins === 1 ? '' : 's'}`,
         `Ganhe ${challenge.rewardCoins} moeda${challenge.rewardCoins === 1 ? '' : 's'}`,
       );
@@ -549,6 +549,11 @@ async function checkAdmin(forceConfigRender=false):Promise<void>{
   applyPriorityOrder(state.adminConfig.station.automaticSelection.order);
   el<HTMLSelectElement>('admin-qr-rail').value=state.adminConfig.station.qrRail;
   el<HTMLInputElement>('admin-challenges-enabled').checked=state.adminConfig.earning.enabled;
+  el<HTMLInputElement>('admin-post-game-enabled').checked=state.adminConfig.postGame.enabled;
+  el<HTMLInputElement>('admin-post-game-balance').checked=state.adminConfig.postGame.includeCoinBalance;
+  el<HTMLInputElement>('admin-post-game-challenges').checked=state.adminConfig.postGame.includeChallenges;
+  el<HTMLInputElement>('admin-post-game-sms').checked=state.adminConfig.postGame.channels.includes('sms');
+  el<HTMLInputElement>('admin-post-game-whatsapp').checked=state.adminConfig.postGame.channels.includes('whatsapp');
   const timing=state.adminConfig.station.timings;
   el<HTMLInputElement>('admin-timing-recruiting').value=String(timing.recruitingSeconds);el<HTMLInputElement>('admin-timing-hard').value=String(timing.hardDeadlineSeconds);el<HTMLInputElement>('admin-timing-selection').value=String(timing.selectionSeconds);el<HTMLInputElement>('admin-timing-locked').value=String(timing.lockedSeconds);el<HTMLInputElement>('admin-timing-launch').value=String(timing.launchTimeoutSeconds);el<HTMLInputElement>('admin-timing-results').value=String(timing.resultsSeconds);el<HTMLInputElement>('admin-timing-postgame').value=String(timing.postGameRecruitingSeconds);
   closeChallengeEditor();renderAdminChallenges();renderChargePolicy();renderPrioritySettings();renderRuntimeSummary();setModeFormDirty(false);
@@ -625,6 +630,14 @@ async function saveMode(event:Event):Promise<void>{
   if(selectionPolicy==='fixed_priority'&&!validOrder){setNotice('Choose each game once in the priority order.','error');return;}
   const order=validOrder?selectedOrder:config.station.automaticSelection.order;
   station.automaticSelection.policy=selectionPolicy;station.automaticSelection.order=order;station.qrRail=el<HTMLSelectElement>('admin-qr-rail').value as AdminConfig['station']['qrRail'];
+  const postGame=settings.postGame as AdminConfig['postGame'];
+  postGame.enabled=el<HTMLInputElement>('admin-post-game-enabled').checked;
+  postGame.includeCoinBalance=el<HTMLInputElement>('admin-post-game-balance').checked;
+  postGame.includeChallenges=el<HTMLInputElement>('admin-post-game-challenges').checked;
+  postGame.channels=(['sms','whatsapp'] as const).filter(channel=>el<HTMLInputElement>(`admin-post-game-${channel}`).checked);
+  if(postGame.enabled&&!postGame.channels.length){setNotice('Choose Text message or WhatsApp for result messages.','error');return;}
+  if(postGame.channels.includes('sms')&&!el<HTMLInputElement>('admin-sms').checked){setNotice('Turn on Text message before using it for result messages.','error');return;}
+  if(postGame.channels.includes('whatsapp')&&!el<HTMLInputElement>('admin-whatsapp').checked){setNotice('Turn on WhatsApp before using it for result messages.','error');return;}
   station.timings={recruitingSeconds:numberField('admin-timing-recruiting'),hardDeadlineSeconds:numberField('admin-timing-hard'),selectionSeconds:numberField('admin-timing-selection'),lockedSeconds:numberField('admin-timing-locked'),launchTimeoutSeconds:numberField('admin-timing-launch'),resultsSeconds:numberField('admin-timing-results'),postGameRecruitingSeconds:numberField('admin-timing-postgame')};
   if(config.arcade.mode==='off'&&selectedMode!=='off'&&state.operatorStation&&state.operatorStation.station.phase!=='ATTRACT'){
     await queueOpenAfterReset(version,settings,selectedMode);return;
@@ -709,6 +722,7 @@ function openChallengeEditor(challenge?:AdminChallenge):void{
   el('admin-challenge-form-title').textContent=challenge?'Edit challenge':'Add challenge';
   el<HTMLInputElement>('admin-challenge-id').value=challenge?.id??'';
   el<HTMLInputElement>('admin-challenge-title').value=challenge?.title??'';
+  el<HTMLInputElement>('admin-challenge-message').value=challenge?.message??'';
   el<HTMLInputElement>('admin-challenge-url').value=challenge?.url??'';
   el<HTMLInputElement>('admin-challenge-reward').value=String(challenge?.rewardCoins??1);
   el<HTMLInputElement>('admin-challenge-claims').value=String(challenge?.maxClaimsPerPlayer??1);
@@ -726,7 +740,7 @@ function closeChallengeEditor():void{
 async function saveAdminChallenge(event:Event):Promise<void>{
   event.preventDefault();const form=event.currentTarget as HTMLFormElement,config=state.adminConfig;if(!config)return;
   if(!form.reportValidity())return;
-  const id=el<HTMLInputElement>('admin-challenge-id').value.trim(),title=el<HTMLInputElement>('admin-challenge-title').value.trim(),url=el<HTMLInputElement>('admin-challenge-url').value.trim();
+  const id=el<HTMLInputElement>('admin-challenge-id').value.trim(),title=el<HTMLInputElement>('admin-challenge-title').value.trim(),message=el<HTMLInputElement>('admin-challenge-message').value.trim(),url=el<HTMLInputElement>('admin-challenge-url').value.trim();
   if(!/^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/.test(id)||['constructor','prototype','__proto__'].includes(id)){setNotice('Use lowercase letters, numbers, and hyphens for the short ID.','error');return;}
   if(!title){setNotice('Add a title for the challenge.','error');return;}
   let destination:URL;
@@ -742,7 +756,7 @@ async function saveAdminChallenge(event:Event):Promise<void>{
   const challenges=[...config.earning.challenges],editingIndex=editingChallengeId===null?-1:challenges.findIndex(challenge=>challenge.id===editingChallengeId);
   if(editingChallengeId!==null&&editingIndex<0){closeChallengeEditor();setNotice('That challenge changed in another operator session. Review the latest list.','error');return;}
   if(challenges.some((challenge,index)=>challenge.id===id&&index!==editingIndex)){setNotice(`Challenge ID ${id} is already configured.`,'error');return;}
-  const challenge:AdminChallenge={id,title,url:destination.href,rewardCoins,enabled:el<HTMLInputElement>('admin-challenge-enabled').checked,maxClaimsPerPlayer,displayOrder,startsAt,endsAt};
+  const challenge:AdminChallenge={id,title,message:message||null,url:destination.href,rewardCoins,enabled:el<HTMLInputElement>('admin-challenge-enabled').checked,maxClaimsPerPlayer,displayOrder,startsAt,endsAt};
   if(editingIndex<0)challenges.push(challenge);else challenges[editingIndex]=challenge;
   await saveChallengeSettings(challenges,editingIndex<0?'Challenge added.':'Challenge updated.',form);
 }
@@ -778,6 +792,7 @@ async function saveChallengeSettings(challenges:AdminChallenge[],successMessage:
   const {schemaVersion:_s,version,updatedAt:_a,updatedBy:_b,...rawSettings}=config,settings=structuredClone(rawSettings);
   (settings.earning as AdminConfig['earning']).challenges=challenges;
   (settings.earning as AdminConfig['earning']).enabled=el<HTMLInputElement>('admin-challenges-enabled').checked;
+  if(challenges.length>0)(settings.postGame as AdminConfig['postGame']).includeChallenges=true;
   setChallengeBusy(true);
   try{await updateConfig(version,settings);closeChallengeEditor();setNotice(successMessage,'success');await refreshAll();}
   catch(error){
@@ -849,8 +864,8 @@ function renderRuntimeSummary():void{
     : 'Off';
   const postGame=state.adminConfig?.postGame;
   el('post-game-status').textContent=!postGame?.enabled
-    ? 'Off'
-    : `${postGame.channels.map(channel=>channel==='sms'?'Text': 'WhatsApp').join(' + ')}${postGame.includeCoinBalance?' with coin balance':''}`;
+    ? postGame?.includeChallenges?'Zero-balance challenge prompts':'Off'
+    : `${postGame.channels.map(channel=>channel==='sms'?'Text': 'WhatsApp').join(' + ')}${postGame.includeCoinBalance?' with coin balance':''}${postGame.includeChallenges?' + coin challenges':''}`;
   renderOperatorOverview();
 }
 
@@ -1134,7 +1149,7 @@ function renderStationRoster(view:OperatorStationView|null):void{
       const drop=document.createElement('button');drop.type='button';drop.className='button danger';drop.textContent='Remove no-show';drop.addEventListener('click',()=>void dropNoShow(entry));actions.append(drop);
     }
     if(state.adminConfig?.arcade.mode!=='off'&&!entry.connected&&['READY','OVERFLOW','COMPLETED'].includes(entry.status)){
-      const reset=document.createElement('button');reset.type='button';reset.className='button danger';reset.textContent='Reset test player';reset.addEventListener('click',()=>void resetTestPlayer(entry,reset));actions.append(reset);
+      const reset=document.createElement('button');reset.type='button';reset.className='button danger';reset.textContent=resetPlayerLabel();reset.addEventListener('click',()=>void resetTestPlayer(entry,reset));actions.append(reset);
     }
     item.append(name,status,time,actions);host.append(item);
   }
@@ -1166,17 +1181,20 @@ async function grantPlayerCoins(entry:OperatorStationView['readyEntries'][number
 
 async function resetTestPlayer(entry:OperatorStationView['readyEntries'][number],button:HTMLButtonElement):Promise<void>{
   if(!state.operatorStationEtag)return;
-  const response=await requestOperatorReason('Reset test player',`Make ${entry.displayName}'s next JOIN behave like a completely new player. Their name, phone link, coins, and Conversation Memory profile will be cleared.`);
+  const paid=state.adminConfig?.coins.chargePolicy!=='free';
+  const response=await requestOperatorReason(resetPlayerLabel(),`Make ${entry.displayName}'s next JOIN behave like a completely new player. Their name, phone link, ${paid?'coins, ':''}and Conversation Memory profile will be cleared.${paid?' After they finish JOIN setup again, the new wallet receives the active configured starting balance.':''}`);
   if(!response||!window.confirm(`Reset ${entry.displayName}? This cannot be undone.`))return;
   button.disabled=true;button.textContent='Resetting...';
   try{
     const result=await request<OperatorStationView>(`/api/admin/arcade/station/ready/${encodeURIComponent(entry.id)}/reset-test-player`,{
       method:'POST',headers:{'Content-Type':'application/json','If-Match':state.operatorStationEtag,'Idempotency-Key':crypto.randomUUID()},body:JSON.stringify({reason:response.reason}),
     });
-    applyOperatorStation(result.payload,result.response);setNotice(`${entry.displayName} was reset. Their next JOIN will start with the name question and a new wallet.`,'success');
+    applyOperatorStation(result.payload,result.response);setNotice(`${entry.displayName} was reset and removed from this roster. Their next completed JOIN setup creates a new ${paid?'wallet with the configured starting balance':'player profile'}.`,'success');
   }catch(error){if(error instanceof ApiError&&error.status===412)await refreshOperatorStation().catch(()=>undefined);showError(error);}
-  finally{button.disabled=false;button.textContent='Reset test player';}
+  finally{button.disabled=false;button.textContent=resetPlayerLabel();}
 }
+
+function resetPlayerLabel():string{return state.adminConfig?.coins.chargePolicy==='free'?'Reset test player':'Reset player + coins';}
 
 function renderStationControls(phase:StationPhase):void{
   const paused=state.adminConfig?.arcade.mode==='off';

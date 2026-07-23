@@ -1976,6 +1976,7 @@ export class HttpServer {
     else if (rel === '/player' || rel === '/player/') file = 'arcade/index.html';
     else if (rel === '/operator' || rel === '/operator/') file = 'arcade/index.html';
     else if (rel === '/join' || rel === '/join/') file = 'join/index.html';
+    else if (rel === '/challenge' || rel === '/challenge/') file = 'challenge/index.html';
     else file = rel.replace(/^\/+/, '');
     const full = path.join(this.clientDir, file);
     try {
@@ -1985,7 +1986,12 @@ export class HttpServer {
     // serveAsset's immutable cache. Other static files (brand/fonts) get a short cache.
     const isHtml = file.endsWith('.html');
     const cache = isHtml ? 'no-cache' : 'public, max-age=3600';
-    await this.sendFile(full, res, req, { 'Cache-Control': cache });
+    await this.sendFile(full, res, req, file === 'challenge/index.html' ? {
+      'Cache-Control': 'no-store',
+      'Content-Security-Policy': "default-src 'self'; img-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; form-action 'self'",
+      'Referrer-Policy': 'no-referrer',
+      'X-Robots-Tag': 'noindex, nofollow',
+    } : { 'Cache-Control': cache });
   }
 
   async start(): Promise<number> {

@@ -404,6 +404,21 @@
                     </div>
                   </section>
 
+                  <section class="settings-section settings-games">
+                    <div class="settings-section-heading"><span>04</span><div><h4>After each game</h4><p>Send results and help players with no coins find reward challenges.</p></div></div>
+                    <fieldset class="choice-grid">
+                      <legend class="sr-only">Post-game messages</legend>
+                      <label class="choice-card"><input id="admin-post-game-enabled" type="checkbox" /><span><b>Send result messages</b><small>Uses the player's SMS or WhatsApp channel</small></span></label>
+                      <label class="choice-card"><input id="admin-post-game-balance" type="checkbox" /><span><b>Include coin balance</b><small>Shows what remains after the game</small></span></label>
+                      <label class="choice-card"><input id="admin-post-game-challenges" type="checkbox" /><span><b>Offer coin challenges</b><small>At zero coins, asks players to reply MORE or MAIS</small></span></label>
+                    </fieldset>
+                    <fieldset class="channel-toggles">
+                      <legend class="sr-only">Result message channels</legend>
+                      <label class="check"><input id="admin-post-game-sms" type="checkbox" /> Text message</label>
+                      <label class="check"><input id="admin-post-game-whatsapp" type="checkbox" /> WhatsApp</label>
+                    </fieldset>
+                  </section>
+
                   <details class="advanced-settings">
                     <summary>Timing</summary>
                     <p>Adjust only when the event schedule or room flow requires it.</p>
@@ -442,6 +457,7 @@
                   </div>
                   <label>Short ID<input id="admin-challenge-id" required maxlength="64" pattern="[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?" placeholder="product-tour" /></label>
                   <label>Title<input id="admin-challenge-title" required maxlength="200" placeholder="Explore product resources" /></label>
+                  <label class="wide">Message to players<input id="admin-challenge-message" maxlength="300" placeholder="Visit the Voice demo to earn another coin." /><small>Shown in the browser and in MORE/MAIS messaging replies.</small></label>
                   <label class="challenge-url-field">Link players will open<input id="admin-challenge-url" required type="url" maxlength="2048" placeholder="https://www.example.com/products" /></label>
                   <label>Reward coins<input id="admin-challenge-reward" required type="number" min="1" max="100" step="1" value="1" /></label>
                   <label>Uses per player<input id="admin-challenge-claims" required type="number" min="1" max="100" step="1" value="1" /></label>

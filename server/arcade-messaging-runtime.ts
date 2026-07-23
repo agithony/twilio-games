@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { ArcadeConfigSnapshot } from '../shared/arcade-config';
+import { availableBalance } from '../shared/arcade-domain';
 import {
   ARCADE_CONFIG_UPDATED_EVENT,
   ARCADE_STATION_UPDATED_EVENT,
@@ -632,9 +633,20 @@ function notificationSuppressionReason(
   if (!address || address.playerId !== notification.playerId || !config.channels[notification.channel]) {
     return 'CHANNEL_DISABLED';
   }
-  if (notification.kind === 'STATION_RESULTS'
-    && (!config.postGame.enabled || !config.postGame.channels.includes(notification.channel))) {
-    return 'CHANNEL_DISABLED';
+  if (notification.kind === 'STATION_RESULTS') {
+    const standardResults = config.postGame.enabled && config.postGame.channels.includes(notification.channel);
+    const wallet = state.wallets[notification.playerId];
+    const now = Date.now();
+    const challengeResults = config.postGame.includeChallenges && config.earning.enabled
+      && config.coins.chargePolicy !== 'free' && wallet && availableBalance(wallet) === 0
+      && config.earning.challenges.some(challenge => challenge.enabled
+        && (challenge.startsAt === null || Date.parse(challenge.startsAt) <= now)
+        && (challenge.endsAt === null || now < Date.parse(challenge.endsAt))
+        && wallet.challengeClaims.filter(claim => claim.challengeId === challenge.id).length
+          < challenge.maxClaimsPerPlayer);
+    const hasChallengePrompt = /Reply MORE|Responda MAIS/.test(notification.body);
+    if (hasChallengePrompt && !challengeResults) return 'RESULTS_OBSOLETE';
+    if (!standardResults && !challengeResults) return 'CHANNEL_DISABLED';
   }
   const station = state.stations[notification.stationId];
   const match = state.stationMatches[notification.matchId];

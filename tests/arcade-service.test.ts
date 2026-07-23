@@ -79,6 +79,7 @@ function arcadeConfig(
   input.earning.challenges = [{
     id: 'voice-docs',
     title: 'Read the Voice docs',
+    message: 'Read the Voice docs to earn another coin.',
     url: 'https://www.twilio.com/docs/voice',
     rewardCoins: overrides.rewardCoins ?? 1,
     enabled: true,
@@ -215,6 +216,7 @@ describe('ArcadeService durable journey', () => {
     expect(before).toEqual([{
       id: 'voice-docs',
       title: 'Read the Voice docs',
+      message: 'Read the Voice docs to earn another coin.',
       rewardCoins: 1,
       displayOrder: 0,
       claimCount: 0,

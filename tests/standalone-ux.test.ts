@@ -46,4 +46,15 @@ describe('standalone and station display UX', () => {
     expect(home).toContain("document.getElementById('persistentJoinQr')");
     expect(stationDisplay).toContain("setRailVisible(railMode !== 'hidden')");
   });
+
+  it('requires explicit confirmation before a messaging challenge link grants coins', () => {
+    const html = readClient('challenge/index.html');
+    const script = readClient('challenge/challenge.ts');
+    expect(html).toContain('Claim coins and continue');
+    expect(script).toContain("history.replaceState(history.state, '', `${location.pathname}${location.search}`)");
+    expect(script).toContain("button.addEventListener('click'");
+    expect(script).toContain("fetch('/api/arcade/challenges/redeem'");
+    expect(script).not.toMatch(/dispatchEvent|button\.click\(|form\.submit\(/);
+    expect(script.indexOf('history.replaceState')).toBeLessThan(script.indexOf("fetch('/api/arcade/challenges/redeem'"));
+  });
 });

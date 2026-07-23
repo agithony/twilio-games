@@ -91,6 +91,21 @@ function schema2Config(version = 2): any {
   return config;
 }
 
+function schema3Config(version = 2): any {
+  const config = JSON.parse(JSON.stringify(createDefaultArcadeConfig()));
+  config.schemaVersion = 3;
+  config.version = version;
+  config.updatedAt = '2026-07-19T14:00:00.000Z';
+  config.updatedBy = 'schema3@example.com';
+  config.postGame.includeChallenges = false;
+  config.earning.challenges = [{
+    id: 'voice-docs', title: 'Voice docs', url: 'https://www.twilio.com/docs/voice',
+    rewardCoins: 1, enabled: true, maxClaimsPerPlayer: 1, displayOrder: 0,
+    startsAt: null, endsAt: null,
+  }];
+  return config;
+}
+
 function updateRequest(
   idempotencyKey: string,
   expectedVersion = 1,
@@ -296,6 +311,27 @@ describe('ArcadeConfigStore loading and persistence', () => {
     const next = await store.update(updateRequest('schema-2-to-3-write', 2, 'off'));
     expect(next).toMatchObject({ schemaVersion: ARCADE_CONFIG_SCHEMA_VERSION, version: 3 });
     expect(await new ArcadeConfigStore(directory).load()).toEqual(next);
+  });
+
+  it('loads schema 3 challenge records losslessly and adds nullable custom messages', async () => {
+    const directory = await temporaryDirectory();
+    const store = new ArcadeConfigStore(directory);
+    const oldConfig = schema3Config();
+    const oldRecord = legacyAuditRecord(oldConfig);
+    const cacheBytes = `${JSON.stringify(oldConfig, null, 2)}\n`;
+    const auditBytes = `${JSON.stringify(oldRecord)}\n`;
+    await writeFile(store.cachePath, cacheBytes, 'utf8');
+    await writeFile(store.auditPath, auditBytes, 'utf8');
+
+    const migrated = await store.load();
+    expect(migrated).toMatchObject({
+      schemaVersion: ARCADE_CONFIG_SCHEMA_VERSION,
+      earning: { challenges: [{ id: 'voice-docs', message: null }] },
+      postGame: { includeChallenges: false },
+    });
+    expect(await readFile(store.cachePath, 'utf8')).toBe(cacheBytes);
+    expect(await readFile(store.auditPath, 'utf8')).toBe(auditBytes);
+    expect(store.getStatus().degraded).toBe(false);
   });
 
   it('rejects a tampered v1 audit record using its original schema 1 hash shape', async () => {

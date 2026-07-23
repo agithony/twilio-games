@@ -4,6 +4,7 @@ import {
   ARCADE_CHALLENGE_TOKEN_MAX_BYTES,
   ARCADE_CHALLENGE_TOKEN_MAX_TTL_SECONDS,
   ArcadeChallengeTokenError,
+  authenticateArcadeChallengeToken,
   signArcadeChallengeToken,
   verifyArcadeChallengeToken,
   type ArcadeChallengeTokenPayload,
@@ -27,6 +28,16 @@ describe('Arcade challenge tokens', () => {
       challenge: 'voice-docs', player: 'trusted-player-1', audience: 'ARCADE-01', now: 1_700_000_000,
     })).toEqual(payload);
     expect(token).toMatch(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
+  });
+
+  it('authenticates a messaging-link token by audience without a browser session', () => {
+    const token = signArcadeChallengeToken(payload, SECRET);
+    expect(authenticateArcadeChallengeToken(token, SECRET, {
+      audience: payload.audience, now: payload.issuedAt,
+    })).toEqual(payload);
+    expect(() => authenticateArcadeChallengeToken(token, SECRET, {
+      audience: 'OTHER', now: payload.issuedAt,
+    })).toThrow(ArcadeChallengeTokenError);
   });
 
   it('rejects payload and signature tampering', () => {

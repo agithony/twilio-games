@@ -33,6 +33,7 @@ function settings(mode: 'off' | 'coin_only' | 'lead_capture' = 'off'): ArcadeCon
   copy.earning.challenges = [{
     id: 'voice-docs',
     title: 'Read the Voice docs',
+    message: 'Read the Voice docs to earn another coin.',
     url: 'https://www.twilio.com/docs/voice',
     rewardCoins: 1,
     enabled: true,
@@ -1760,6 +1761,7 @@ describe('Arcade API', () => {
     expect(listBody.challenges).toEqual([{
       id: 'voice-docs',
       title: 'Read the Voice docs',
+      message: 'Read the Voice docs to earn another coin.',
       rewardCoins: 1,
       displayOrder: 0,
       claimCount: 0,
@@ -1815,6 +1817,39 @@ describe('Arcade API', () => {
       headers: { Cookie: cookie },
     });
     expect(after.status).toBe(401);
+  });
+
+  it('claims a messaging challenge link without a browser player cookie', async () => {
+    const { baseUrl, api, playerRuntime } = await harness({ playerMode: 'coin_only' });
+    const send = (providerMessageId: string, body: string) => api.processMessagingWebhook({
+      from: '+14155550188', body, providerMessageId,
+    });
+    await send('SM-LINK-JOIN', 'JOIN');
+    await send('SM-LINK-NAME', 'Ada');
+    await send('SM-LINK-TERMS', 'YES');
+    const more = await send('SM-LINK-MORE', 'MORE');
+    const link = /Claim \+1: (\S+)/.exec(more ?? '')?.[1];
+    expect(link).toContain('/challenge/?locale=en-US#');
+    const token = decodeURIComponent(new URL(link!).hash.slice(1));
+    const endpoint = `${baseUrl}/api/arcade/challenges/redeem`;
+
+    expect((await fetch(endpoint)).status).toBe(405);
+    expect((await fetch(endpoint, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }),
+    })).status).toBe(403);
+    const claim = () => fetch(endpoint, {
+      method: 'POST',
+      headers: { Origin: 'http://localhost', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+    });
+    const first = await claim();
+    expect(first.status).toBe(200);
+    expect(await first.json()).toEqual({
+      destinationUrl: 'https://www.twilio.com/docs/voice', availableBalance: 2, rewardCoins: 1,
+    });
+    expect((await claim()).status).toBe(200);
+    const state = (await playerRuntime.getActive()).store.snapshot();
+    expect(Object.values(state.wallets).flatMap(wallet => wallet.challengeClaims)).toHaveLength(1);
   });
 
   it('lets authenticated operators advance and release a player queue journey with audit reasons', async () => {

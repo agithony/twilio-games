@@ -313,6 +313,7 @@ describe('Arcade browser UI', () => {
     expect(html.indexOf('id="admin-console"')).toBeLessThan(html.indexOf('id="admin-challenge-panel"'));
     for (const id of [
       'add-admin-challenge', 'admin-challenge-id', 'admin-challenge-title', 'admin-challenge-url',
+      'admin-challenge-message',
       'admin-challenge-reward', 'admin-challenge-claims', 'admin-challenge-enabled',
       'admin-challenge-order', 'admin-challenge-starts', 'admin-challenge-ends',
       'cancel-admin-challenge',
@@ -320,12 +321,23 @@ describe('Arcade browser UI', () => {
     expect(html).toMatch(/id="admin-challenge-url"[^>]*type="url"/);
     expect(script).toContain('renderAdminChallenges()');
     expect(script).toContain('(settings.earning as AdminConfig[\'earning\']).challenges=challenges');
+    expect(script).toContain('message:message||null');
+    expect(script).toContain("if(challenges.length>0)(settings.postGame as AdminConfig['postGame']).includeChallenges=true");
     expect(script).toContain("method:'PATCH'");
     expect(script).toContain("'If-Match':`\"arcade-config-${version}\"`");
     expect(script).toContain('Challenge settings changed in another operator session.');
     expect(script).toContain("destination.protocol!=='https:'");
     expect(script).not.toMatch(/seedChallenge|voice-docs|Voice Docs/i);
     expect(css).toContain('.challenge-admin-panel{grid-column:1/-1}');
+  });
+
+  it('configures zero-balance result messages and challenge discovery', () => {
+    for (const id of [
+      'admin-post-game-enabled', 'admin-post-game-balance', 'admin-post-game-challenges',
+      'admin-post-game-sms', 'admin-post-game-whatsapp',
+    ]) expect(html).toContain(`id="${id}"`);
+    expect(script).toContain("postGame.includeChallenges=el<HTMLInputElement>('admin-post-game-challenges').checked");
+    expect(html).toContain('asks players to reply MORE or MAIS');
   });
 
   it('reports only the implemented post-game delivery capability', () => {
@@ -354,8 +366,8 @@ describe('Arcade browser UI', () => {
 
   it('offers a destructive fresh-start reset only for safe test-player states', () => {
     expect(script).toContain("['READY','OVERFLOW','COMPLETED'].includes(entry.status)");
-    expect(script).toContain("reset.textContent='Reset test player'");
-    expect(script).toContain("requestOperatorReason('Reset test player'");
+    expect(script).toContain('reset.textContent=resetPlayerLabel()');
+    expect(script).toContain('requestOperatorReason(resetPlayerLabel()');
     expect(script).toContain('/reset-test-player`');
     expect(script).toContain("'If-Match':state.operatorStationEtag");
     expect(script).toContain("window.confirm(`Reset ${entry.displayName}? This cannot be undone.`)");

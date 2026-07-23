@@ -28,6 +28,8 @@ export interface ArcadeChallengeTokenVerification {
   readonly now?: number | Date;
 }
 
+export type ArcadeChallengeTokenAuthentication = Pick<ArcadeChallengeTokenVerification, 'audience' | 'now'>;
+
 export class ArcadeChallengeTokenError extends Error {
   constructor(readonly code: string, message: string) {
     super(message);
@@ -129,6 +131,22 @@ export function verifyArcadeChallengeToken(
   secretInput: ArcadeChallengeTokenSecret,
   verification: ArcadeChallengeTokenVerification,
 ): ArcadeChallengeTokenPayload {
+  const payload = authenticateArcadeChallengeToken(token, secretInput, verification);
+  const expectedChallenge = requireIdentifier(verification.challenge, 'expected challenge');
+  if (payload.challenge !== expectedChallenge) {
+    throw new ArcadeChallengeTokenError('WRONG_CHALLENGE', 'challenge token is for a different challenge');
+  }
+  if (payload.player !== requireIdentifier(verification.player, 'expected player')) {
+    throw new ArcadeChallengeTokenError('WRONG_PLAYER', 'challenge token is for a different player');
+  }
+  return payload;
+}
+
+export function authenticateArcadeChallengeToken(
+  token: string,
+  secretInput: ArcadeChallengeTokenSecret,
+  verification: ArcadeChallengeTokenAuthentication,
+): ArcadeChallengeTokenPayload {
   const secret = secretBuffer(secretInput);
   if (typeof token !== 'string' || token.length === 0) {
     throw new ArcadeChallengeTokenError('MALFORMED_TOKEN', 'challenge token must be a non-empty string');
@@ -156,13 +174,6 @@ export function verifyArcadeChallengeToken(
     throw new ArcadeChallengeTokenError('INVALID_PAYLOAD', 'challenge token payload is not valid JSON');
   }
   const payload = validatePayload(decoded);
-  const expectedChallenge = requireIdentifier(verification.challenge, 'expected challenge');
-  if (payload.challenge !== expectedChallenge) {
-    throw new ArcadeChallengeTokenError('WRONG_CHALLENGE', 'challenge token is for a different challenge');
-  }
-  if (payload.player !== requireIdentifier(verification.player, 'expected player')) {
-    throw new ArcadeChallengeTokenError('WRONG_PLAYER', 'challenge token is for a different player');
-  }
   if (payload.audience !== requireIdentifier(verification.audience, 'expected audience')) {
     throw new ArcadeChallengeTokenError('WRONG_AUDIENCE', 'challenge token is for a different audience');
   }
@@ -192,5 +203,9 @@ export class ArcadeChallengeTokenService {
 
   verify(token: string, verification: Omit<ArcadeChallengeTokenVerification, 'now'>): ArcadeChallengeTokenPayload {
     return verifyArcadeChallengeToken(token, this.secret, { ...verification, now: this.now() });
+  }
+
+  authenticate(token: string, verification: Omit<ArcadeChallengeTokenAuthentication, 'now'>): ArcadeChallengeTokenPayload {
+    return authenticateArcadeChallengeToken(token, this.secret, { ...verification, now: this.now() });
   }
 }

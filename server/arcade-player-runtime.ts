@@ -285,6 +285,7 @@ export class ArcadePlayerRuntime {
       clock: () => Date.now(),
       idGenerator: kind => `${kind}:${randomUUID()}`,
       challengeTokenSecret: challengeSecret,
+      publicBaseUrl: this.publicBaseUrl,
       operatorAuthorizer: authorization => {
         const value = authorization as { marker?: unknown; subject?: unknown; kind?: unknown } | null;
         return value?.marker === operatorMarker && typeof value.subject === 'string'

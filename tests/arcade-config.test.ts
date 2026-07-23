@@ -78,7 +78,7 @@ describe('Twilio Games runtime configuration', () => {
       includeScore: false,
       includeLeaderboard: false,
       includeCoinBalance: true,
-      includeChallenges: false,
+      includeChallenges: true,
       includeRematchLink: false,
       includeAchievement: false,
       includeIntelligenceTip: false,
@@ -275,6 +275,7 @@ describe('Twilio Games runtime configuration', () => {
     candidate.earning.challenges = [{
       id: 'voice-docs',
       title: '  Voice docs  ',
+      message: '  Visit the Voice docs to earn a coin.  ',
       url: '  https://www.twilio.com/docs/voice  ',
       rewardCoins: 1,
       enabled: true,
@@ -288,6 +289,7 @@ describe('Twilio Games runtime configuration', () => {
     expect(parsed.arcade.displayName).toBe('Café Arcade');
     expect(parsed.earning.challenges[0]).toMatchObject({
       title: 'Voice docs',
+      message: 'Visit the Voice docs to earn a coin.',
       url: 'https://www.twilio.com/docs/voice',
       startsAt: '2026-07-20T05:00:00.000Z',
       endsAt: '2026-07-20T06:00:00.000Z',
@@ -316,7 +318,7 @@ describe('Twilio Games runtime configuration', () => {
 
     const challenge = rawConfig();
     challenge.earning.challenges = [{
-      id: 'docs', title: 'Docs', url: 'https://twilio.com', rewardCoins: 1, enabled: true,
+      id: 'docs', title: 'Docs', message: null, url: 'https://twilio.com', rewardCoins: 1, enabled: true,
       maxClaimsPerPlayer: 1, displayOrder: 1, startsAt: null, endsAt: null, proof: 'none',
     }];
     expectInvalid(challenge);
@@ -350,7 +352,7 @@ describe('Twilio Games runtime configuration', () => {
   it('accepts a complete valid challenge and rejects duplicate IDs', () => {
     const candidate = rawConfig();
     const challenge = {
-      id: 'voice-docs', title: 'Explore Voice', url: 'https://www.twilio.com/docs/voice',
+      id: 'voice-docs', title: 'Explore Voice', message: null, url: 'https://www.twilio.com/docs/voice',
       rewardCoins: 2, enabled: true, maxClaimsPerPlayer: 1, displayOrder: 1,
       startsAt: null, endsAt: null,
     };
@@ -358,6 +360,23 @@ describe('Twilio Games runtime configuration', () => {
     expect(parseArcadeConfig(candidate).earning.challenges[0]).toMatchObject(challenge);
     candidate.earning.challenges.push({ ...challenge, title: 'Duplicate' });
     expectInvalid(candidate);
+  });
+
+  it('normalizes optional challenge messages and bounds personalized copy', () => {
+    const candidate = rawConfig();
+    const challenge = {
+      id: 'voice-docs', title: 'Explore Voice', message: '  Visit Voice docs for a coin.  ',
+      url: 'https://www.twilio.com/docs/voice', rewardCoins: 1, enabled: true,
+      maxClaimsPerPlayer: 1, displayOrder: 1, startsAt: null, endsAt: null,
+    };
+    candidate.earning.challenges = [challenge];
+    expect(parseArcadeConfig(candidate).earning.challenges[0]?.message).toBe('Visit Voice docs for a coin.');
+    candidate.earning.challenges[0].message = 'x'.repeat(301);
+    expectInvalid(candidate);
+    candidate.earning.challenges[0].message = '';
+    expectInvalid(candidate);
+    candidate.earning.challenges[0].message = null;
+    expect(parseArcadeConfig(candidate).earning.challenges[0]?.message).toBeNull();
   });
 
   it.each([
@@ -369,7 +388,7 @@ describe('Twilio Games runtime configuration', () => {
   ])('rejects unsafe challenge ID %s', id => {
     const candidate = rawConfig();
     candidate.earning.challenges = [{
-      id, title: 'Docs', url: 'https://twilio.com', rewardCoins: 1, enabled: true,
+      id, title: 'Docs', message: null, url: 'https://twilio.com', rewardCoins: 1, enabled: true,
       maxClaimsPerPlayer: 1, displayOrder: 1, startsAt: null, endsAt: null,
     }];
     expectInvalid(candidate);
@@ -383,7 +402,7 @@ describe('Twilio Games runtime configuration', () => {
   ])('rejects unsafe challenge URL %s', url => {
     const candidate = rawConfig();
     candidate.earning.challenges = [{
-      id: 'docs', title: 'Docs', url, rewardCoins: 1, enabled: true,
+      id: 'docs', title: 'Docs', message: null, url, rewardCoins: 1, enabled: true,
       maxClaimsPerPlayer: 1, displayOrder: 1, startsAt: null, endsAt: null,
     }];
     expectInvalid(candidate);
@@ -393,6 +412,7 @@ describe('Twilio Games runtime configuration', () => {
     const candidate = rawConfig();
     candidate.earning.challenges = [{
       id: 'docs', title: 'Docs',
+      message: null,
       url: ' https://WWW.TWILIO.COM:443/products/../docs/voice?q=hello world#start ',
       rewardCoins: 1, enabled: true, maxClaimsPerPlayer: 1, displayOrder: 1,
       startsAt: null, endsAt: null,
@@ -419,7 +439,7 @@ describe('Twilio Games runtime configuration', () => {
   ])('rejects loopback, private, or local challenge destination %s', url => {
     const candidate = rawConfig();
     candidate.earning.challenges = [{
-      id: 'docs', title: 'Docs', url, rewardCoins: 1, enabled: true,
+      id: 'docs', title: 'Docs', message: null, url, rewardCoins: 1, enabled: true,
       maxClaimsPerPlayer: 1, displayOrder: 1, startsAt: null, endsAt: null,
     }];
     expectInvalid(candidate);
@@ -434,7 +454,7 @@ describe('Twilio Games runtime configuration', () => {
   ])('rejects invalid challenge schedule %s to %s', (startsAt, endsAt) => {
     const candidate = rawConfig();
     candidate.earning.challenges = [{
-      id: 'docs', title: 'Docs', url: 'https://twilio.com', rewardCoins: 1, enabled: true,
+      id: 'docs', title: 'Docs', message: null, url: 'https://twilio.com', rewardCoins: 1, enabled: true,
       maxClaimsPerPlayer: 1, displayOrder: 1, startsAt, endsAt,
     }];
     expectInvalid(candidate);
@@ -485,7 +505,7 @@ describe('Twilio Games runtime configuration', () => {
     atLimit.coins.startingBalance = 100;
     atLimit.earning.defaultRewardCoins = 100;
     atLimit.earning.challenges = [{
-      id: 'docs', title: 'Docs', url: 'https://www.twilio.com/docs', rewardCoins: 100,
+      id: 'docs', title: 'Docs', message: null, url: 'https://www.twilio.com/docs', rewardCoins: 100,
       enabled: true, maxClaimsPerPlayer: 100, displayOrder: 1, startsAt: null, endsAt: null,
     }];
     atLimit.queue.maximumWaitingPlayers = 5_000;
@@ -500,13 +520,13 @@ describe('Twilio Games runtime configuration', () => {
       (candidate: any) => { candidate.queue.maximumWaitingPlayers = 5_001; },
       (candidate: any) => {
         candidate.earning.challenges = [{
-          id: 'docs', title: 'Docs', url: 'https://www.twilio.com/docs', rewardCoins: 101,
+          id: 'docs', title: 'Docs', message: null, url: 'https://www.twilio.com/docs', rewardCoins: 101,
           enabled: true, maxClaimsPerPlayer: 1, displayOrder: 1, startsAt: null, endsAt: null,
         }];
       },
       (candidate: any) => {
         candidate.earning.challenges = [{
-          id: 'docs', title: 'Docs', url: 'https://www.twilio.com/docs', rewardCoins: 1,
+          id: 'docs', title: 'Docs', message: null, url: 'https://www.twilio.com/docs', rewardCoins: 1,
           enabled: true, maxClaimsPerPlayer: 101, displayOrder: 1, startsAt: null, endsAt: null,
         }];
       },
@@ -520,7 +540,7 @@ describe('Twilio Games runtime configuration', () => {
   it('bounds challenge count, post-game channels, identifiers, and display text', () => {
     const challenges = rawConfig();
     challenges.earning.challenges = Array.from({ length: 101 }, (_, index) => ({
-      id: `challenge-${index}`, title: `Challenge ${index}`, url: 'https://www.twilio.com/docs',
+      id: `challenge-${index}`, title: `Challenge ${index}`, message: null, url: 'https://www.twilio.com/docs',
       rewardCoins: 1, enabled: true, maxClaimsPerPlayer: 1, displayOrder: index,
       startsAt: null, endsAt: null,
     }));
@@ -536,14 +556,14 @@ describe('Twilio Games runtime configuration', () => {
 
     const title = rawConfig();
     title.earning.challenges = [{
-      id: 'docs', title: 'a'.repeat(201), url: 'https://www.twilio.com/docs', rewardCoins: 1,
+      id: 'docs', title: 'a'.repeat(201), message: null, url: 'https://www.twilio.com/docs', rewardCoins: 1,
       enabled: true, maxClaimsPerPlayer: 1, displayOrder: 1, startsAt: null, endsAt: null,
     }];
     expectInvalid(title);
 
     const challengeId = rawConfig();
     challengeId.earning.challenges = [{
-      id: 'a'.repeat(65), title: 'Docs', url: 'https://www.twilio.com/docs', rewardCoins: 1,
+      id: 'a'.repeat(65), title: 'Docs', message: null, url: 'https://www.twilio.com/docs', rewardCoins: 1,
       enabled: true, maxClaimsPerPlayer: 1, displayOrder: 1, startsAt: null, endsAt: null,
     }];
     expectInvalid(challengeId);
@@ -579,16 +599,17 @@ describe('Twilio Games runtime configuration', () => {
     const supported = rawConfig();
     supported.postGame.enabled = true;
     supported.postGame.channels = ['sms'];
+    supported.postGame.includeChallenges = true;
     expect(parseArcadeConfig(supported).postGame).toMatchObject({
       enabled: true,
       channels: ['sms'],
       includeCoinBalance: true,
+      includeChallenges: true,
     });
 
     for (const field of [
       'includeScore',
       'includeLeaderboard',
-      'includeChallenges',
       'includeRematchLink',
       'includeAchievement',
       'includeIntelligenceTip',
@@ -664,7 +685,7 @@ describe('Twilio Games runtime configuration', () => {
   it('projects a frozen public config without server identity or direct challenge destinations', () => {
     const candidate = rawConfig();
     candidate.earning.challenges = [{
-      id: 'docs', title: 'Docs', url: 'https://twilio.com/docs', rewardCoins: 1, enabled: true,
+      id: 'docs', title: 'Docs', message: 'Read the docs for another coin.', url: 'https://twilio.com/docs', rewardCoins: 1, enabled: true,
       maxClaimsPerPlayer: 1, displayOrder: 1, startsAt: null, endsAt: null,
     }];
     const projected = projectPublicArcadeConfig(candidate);
@@ -674,6 +695,7 @@ describe('Twilio Games runtime configuration', () => {
     expect(projected).not.toHaveProperty('updatedAt');
     expect(projected).not.toHaveProperty('updatedBy');
     expect(projected.earning.challenges[0]).not.toHaveProperty('url');
+    expect(projected.earning.challenges[0]?.message).toBe('Read the docs for another coin.');
     expect(Object.isFrozen(projected.earning.challenges[0])).toBe(true);
     expect(Object.isFrozen(projected.station.games)).toBe(true);
     candidate.earning.challenges[0].title = 'Changed';

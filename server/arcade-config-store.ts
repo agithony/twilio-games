@@ -33,6 +33,7 @@ const DIRECTORY_MODE = 0o700;
 const GENESIS_HASH = '0'.repeat(64);
 const LEGACY_CONFIG_SCHEMA_VERSION = 1;
 const STATION_CONFIG_SCHEMA_VERSION = 2;
+const CHALLENGE_MESSAGE_CONFIG_SCHEMA_VERSION = 3;
 const LEGACY_CONFIG_KEYS = [
   'schemaVersion', 'version', 'updatedAt', 'updatedBy',
   'arcade', 'registration', 'coins', 'earning', 'queue', 'channels', 'postGame', 'intelligence',
@@ -749,11 +750,20 @@ function parseStoredConfig(input: unknown): ParsedStoredConfig {
     throw new Error('stored config must be an object');
   }
   const object = decoded as Record<string, unknown>;
+  if (object.schemaVersion === CHALLENGE_MESSAGE_CONFIG_SCHEMA_VERSION) {
+    const snapshot = parseArcadeConfig({
+      ...object,
+      schemaVersion: 4,
+      earning: addChallengeMessages(object.earning),
+    });
+    return { snapshot, hashConfig: decoded };
+  }
   if (object.schemaVersion === STATION_CONFIG_SCHEMA_VERSION) {
     const legacyChannels = object.channels as Record<string, unknown>;
     const snapshot = parseArcadeConfig({
       ...object,
-      schemaVersion: 3,
+      schemaVersion: 4,
+      earning: addChallengeMessages(object.earning),
       channels: {
         ...legacyChannels,
         voiceNumbers: { 'en-US': null, 'pt-BR': null },
@@ -815,7 +825,7 @@ function parseStoredConfig(input: unknown): ParsedStoredConfig {
     ? { ...legacyPostGame, enabled: false }
     : object.postGame;
   const snapshot = parseArcadeConfig({
-    schemaVersion: 3,
+    schemaVersion: 4,
     version: object.version,
     updatedAt: object.updatedAt,
     updatedBy: object.updatedBy,
@@ -823,7 +833,7 @@ function parseStoredConfig(input: unknown): ParsedStoredConfig {
     station,
     registration: object.registration,
     coins: migratedCoins,
-    earning: object.earning,
+    earning: addChallengeMessages(object.earning),
     queue: object.queue,
     channels: {
       ...(object.channels as Record<string, unknown>),
@@ -838,6 +848,21 @@ function parseStoredConfig(input: unknown): ParsedStoredConfig {
     hashConfig: decoded,
   };
 }
+
+function addChallengeMessages(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const earning = value as Record<string, unknown>;
+  if (!Array.isArray(earning.challenges)) return value;
+  return {
+    ...earning,
+    challenges: earning.challenges.map(challenge => (
+      challenge && typeof challenge === 'object' && !Array.isArray(challenge)
+        ? { ...(challenge as Record<string, unknown>), message: null }
+        : challenge
+    )),
+  };
+}
+
 
 function parseExpectedVersion(value: number): number {
   if (!Number.isSafeInteger(value) || value < 1) {

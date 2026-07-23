@@ -70,6 +70,7 @@ export default defineConfig(({ mode }) => {
           analytics: resolve(__dirname, 'analytics/index.html'),    // private activation analytics (/analytics)
           arcade: resolve(__dirname, 'arcade/index.html'),          // Twilio Games player and operator pages
           join: resolve(__dirname, 'join/index.html'),              // localized SMS / WhatsApp chooser
+          challenge: resolve(__dirname, 'challenge/index.html'),    // scanner-safe messaging reward claim
         },
       },
     },

@@ -9,7 +9,7 @@ import {
   type ArcadeConfigSnapshot,
 } from '../shared/arcade-config';
 import { ArcadeService } from '../server/arcade-service';
-import { projectPublicStation } from '../server/arcade-station-projection';
+import { projectOperatorStation, projectPublicStation } from '../server/arcade-station-projection';
 import { ArcadeStateStore } from '../server/arcade-state-store';
 
 const directories: string[] = [];
@@ -185,6 +185,8 @@ describe('ArcadeService station journey', () => {
     expect(new Set(Object.values(state.channelAddresses).map(address => address.normalizedAddress)).size)
       .toBe(Object.keys(state.channelAddresses).length);
     expect(state.stationControlEvents.filter(event => event.action === 'RESET_TEST_PLAYER')).toHaveLength(1);
+    expect(projectOperatorStation(state, (await h.service.getStation('expo'))!).readyEntries)
+      .not.toEqual(expect.arrayContaining([expect.objectContaining({ id: inserted.readyEntry.id })]));
 
     h.advance();
     const providerMessageId = `SM${'a'.repeat(32)}`;
@@ -202,7 +204,17 @@ describe('ArcadeService station journey', () => {
     expect(joined.reply).toContain('first name');
     expect(joined.playerId).not.toBe('p1');
     expect(joined.playerId).not.toBe(tombstoneId);
+    expect(h.store.snapshot().players[joined.playerId!]?.conversationProfileId).toBeNull();
     expect(await h.service.getWalletStatus(joined.playerId!)).toMatchObject({ availableBalance: 0 });
+    const send = (providerMessageId: string, body: string) => h.service.processInboundStationMessage({
+      channel: 'sms', normalizedAddress: '+14155550199', providerAddress: '+14155550199',
+      providerMessageId, body, stationId: 'expo', preferredLocale: 'en-US',
+      conversationProfileId: 'mem-profile-1',
+      idempotencyKey: `provider:${createHash('sha256').update(providerMessageId).digest('hex')}`,
+    });
+    expect((await send(`SM${'b'.repeat(32)}`, 'Ada')).reply).toContain('Reply YES');
+    await send(`SM${'c'.repeat(32)}`, 'YES');
+    expect(await h.service.getWalletStatus(joined.playerId!)).toMatchObject({ availableBalance: 2 });
   });
 
   it('records enabled game choices by trusted player identity and replays idempotently', async () => {

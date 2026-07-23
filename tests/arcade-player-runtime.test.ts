@@ -145,7 +145,7 @@ describe('ArcadePlayerRuntime', () => {
     await h.runtime.start();
     const enabled = settings('lead_capture') as Record<string, any>;
     enabled.earning.challenges = [{
-      id: 'voice-docs', title: 'Read the Voice docs', url: 'https://www.twilio.com/docs/voice',
+      id: 'voice-docs', title: 'Read the Voice docs', message: null, url: 'https://www.twilio.com/docs/voice',
       rewardCoins: 1, enabled: true, maxClaimsPerPlayer: 1, displayOrder: 0,
       startsAt: null, endsAt: null,
     }];
