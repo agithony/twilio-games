@@ -22,6 +22,8 @@ export interface BattleHostContext {
   whoseTurn: 'me' | 'foe' | null;   // whose action the battle is waiting on
   moves: string[];                  // the caller's 4 move names (during battle)
   winnerName: string | null;        // set at results
+  nameLocked?: boolean;
+  stationManaged?: boolean;
   // Actions (return a short spoken confirmation, or null if they couldn't act):
   setName(name: string): string | null;
   selectMonster(name: string): string | null;   // fuzzy-match a monster name → pick it
@@ -146,7 +148,9 @@ export async function battleHostTurn(
   llm: LlmClient, ctx: BattleHostContext, history: LlmTurn[], locale: SupportedLocale = DEFAULT_LOCALE,
 ): Promise<string | null> {
   if (!llm.enabled) return null;
-  const reply = await llm.respond(buildBattleSystemPrompt(ctx, locale), history, BATTLE_HOST_TOOLS);
+  const tools=BATTLE_HOST_TOOLS.filter(tool=>!(ctx.nameLocked&&tool.name==='set_name')
+    && !(ctx.stationManaged&&ctx.phase==='results'&&tool.name==='advance'));
+  const reply = await llm.respond(buildBattleSystemPrompt(ctx, locale), history, tools);
   const confirmations = reply.toolCalls.map(tc => runBattleTool(ctx, tc)).filter((s): s is string => !!s);
   // A committed battle action immediately emits authoritative move/guard/item/taunt events, which the
   // commentator narrates. Do not also speak the model's acknowledgement for the same action.
@@ -166,10 +170,10 @@ function runBattleTool(ctx: BattleHostContext, tc: ToolCall): string | null {
   const argName = typeof tc.args.name === 'string' ? tc.args.name : '';
   const argAction = typeof tc.args.action === 'string' ? tc.args.action : '';
   switch (tc.name) {
-    case 'set_name':        return argName ? ctx.setName(argName) : null;
+    case 'set_name':        return !ctx.nameLocked&&argName ? ctx.setName(argName) : null;
     case 'select_monster':  return ctx.phase === 'monster_select' && argName ? ctx.selectMonster(argName) : null;
     case 'choose_action':   return ctx.phase === 'battle' && argAction ? ctx.chooseAction(argAction) : null;
-    case 'advance':         return ctx.advance();
+    case 'advance':         return ctx.stationManaged&&ctx.phase==='results'?null:ctx.advance();
     default:                return null;
   }
 }

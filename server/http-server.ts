@@ -1,6 +1,7 @@
 import http from 'http';
 import path from 'node:path';
 import zlib from 'node:zlib';
+import { randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { readFile, writeFile, readdir, rename, mkdir, stat } from 'node:fs/promises';
 import { WebSocketServer, WebSocket } from 'ws';
@@ -531,14 +532,14 @@ export class HttpServer {
         // DETERMINISTIC fast-path: in car/map select, if the caller CLEARLY picked one (a number or a
         // strong name match, not a question), act on it immediately — no LLM round-trip, and it works
         // even with the LLM disabled. This is what makes "two" / "the second one" reliably select.
-        const direct = this.directSelection(room, playerId, utterance, locale);
+        const direct = this.directSelection(room, playerId, utterance, locale,stationManaged);
         if (direct) return direct;
         // Portuguese gameplay is fully deterministic. Keep optional free-form LLM replies disabled
         // until a model-level locale guarantee exists, so an English response can never reach pt-BR TTS.
         if (locale === 'pt-BR') return null;
         if (!this.llm.enabled) return null;
         history.push({ role: 'user', content: utterance });
-        const reply = await hostTurn(this.llm, this.hostContext(room, playerId, locale), history, locale);
+        const reply = await hostTurn(this.llm, this.hostContext(room, playerId, locale, stationManaged), history, locale);
         if (reply) history.push({ role: 'assistant', content: reply });
         // Bound history so a long call doesn't grow unbounded (keep the last ~12 turns).
         if (history.length > 12) history.splice(0, history.length - 12);
@@ -557,6 +558,9 @@ export class HttpServer {
     let relayCallSid = '';
     let stationCallSid = '';
     let stationReadyEntryId = '';
+    let stationFirstName: string | null = null;
+    let stationManaged = false;
+    const stationConnectionId = randomUUID();
     let socketClosed = false;
     this.voiceSockets.set(ws, () => route === 'battle' ? battle?.boundRoom ?? null
       : route === 'fighter' ? fighter?.boundRoomCode ?? null
@@ -581,11 +585,17 @@ export class HttpServer {
       if (route === null) route = this.pickVoiceGame(raw);
       if (route === 'battle') {
         if (!battle) battle = this.makeBattleSession(say);
+        battle.setAuthoritativeName(stationFirstName);
+        battle.setStationManaged(stationManaged);
         battle.handleMessage(raw);
       } else if (route === 'fighter') {
         if (!fighter) fighter = this.makeFighterSession(say);
+        fighter.setAuthoritativeName(stationFirstName);
+        fighter.setStationManaged(stationManaged);
         fighter.handleMessage(raw);
       } else {
+        adapter.setAuthoritativeName(stationFirstName);
+        adapter.setStationManaged(stationManaged);
         adapter.handleMessage(raw);
       }
       try {
@@ -596,7 +606,7 @@ export class HttpServer {
           const bound = route === 'battle' ? battle?.boundPlayerId
             : route === 'fighter' ? fighter?.boundPlayerId : adapter.boundPlayerId;
           if (bound && readyEntryId) {
-              this.arcadeApi?.stationVoiceParticipantConnected(String(setup.callSid ?? ''), readyEntryId, bound);
+              this.arcadeApi?.stationVoiceParticipantConnected(String(setup.callSid ?? ''), readyEntryId, bound, stationConnectionId);
           }
           if (route === 'racer' && bound && adapter.boundRoomCode) {
             this.rememberRacerVoiceCall(relayCallSid, adapter.boundRoomCode, bound, adapter);
@@ -616,22 +626,28 @@ export class HttpServer {
             : null;
         } catch { /* The existing frame parser handles malformed input. */ }
         const readyEntryId = String(setup?.customParameters?.readyEntryId ?? '');
+        if (setup && !readyEntryId && this.arcadeApi?.requiresStationVoiceAssignment()) {
+          ws.close(1008, 'station assignment required');
+          return;
+        }
         if (readyEntryId) {
-          const valid = await this.arcadeApi?.validateStationVoiceSetup({
+          const identity = await this.arcadeApi?.resolveStationVoiceSetup({
             callSid: String(setup?.callSid ?? ''),
             readyEntryId,
             matchId: String(setup?.customParameters?.matchId ?? ''),
             launchGeneration: Number(setup?.customParameters?.launchGeneration),
             game: String(setup?.customParameters?.game ?? ''),
             roomCode: String(setup?.customParameters?.roomCode ?? ''),
-          }) ?? false;
-          if (!valid) {
+          }) ?? null;
+          if (!identity) {
             ws.close(1008, 'stale station assignment');
             return;
           }
           if (socketClosed) return;
           stationCallSid = String(setup?.callSid ?? '');
           stationReadyEntryId = readyEntryId;
+          stationFirstName = identity.firstName;
+          stationManaged = true;
         }
         processFrame(raw);
       }).catch(() => ws.close(1011, 'voice setup failed'));
@@ -641,12 +657,13 @@ export class HttpServer {
       this.voiceSockets.delete(ws);
       console.log('[CR] voice WebSocket closed');
       if (stationCallSid && stationReadyEntryId) {
-        this.arcadeApi?.stationVoiceParticipantDisconnected(stationCallSid, stationReadyEntryId);
+        this.arcadeApi?.stationVoiceParticipantDisconnected(stationCallSid, stationReadyEntryId, stationConnectionId);
       }
       if (battle) battle.handleClose();
       else if (fighter) fighter.handleClose();
       else if (adapter.boundRoomCode && adapter.boundPlayerId && relayCallSid) {
-        this.scheduleRacerVoiceLeave(
+        const preserve=stationManaged&&['results','finished'].includes(this.game.findRoom(adapter.boundRoomCode)?.phase??'');
+        if(!preserve)this.scheduleRacerVoiceLeave(
           adapter.boundRoomCode, adapter.boundPlayerId, relayCallSid, adapter,
         );
         adapter.handleClose(true);
@@ -835,7 +852,9 @@ export class HttpServer {
     if (binding.leaveTimer) clearTimeout(binding.leaveTimer);
     if (binding.activeAdapter) binding.activeAdapter.handleClose(true);
     this.racerVoiceCallBindings.delete(sid);
-    this.game.voiceLeave(binding.code, binding.playerId);
+    const preserve=this.arcadeApi?.isStationEngineRoom(binding.code)
+      &&['results','finished'].includes(this.game.findRoom(binding.code)?.phase??'');
+    if(!preserve)this.game.voiceLeave(binding.code, binding.playerId);
   }
   private unregisterFighterVoiceSession(session: FighterVoiceSession): void {
     for (const [code, set] of this.fighterVoice) if (set.delete(session) && set.size === 0) this.fighterVoice.delete(code);
@@ -871,7 +890,10 @@ export class HttpServer {
     const sid = callSid.trim(), binding = this.fighterVoiceCallBindings.get(sid); if (!binding) return;
     if (binding.leaveTimer) clearTimeout(binding.leaveTimer);
     if (binding.activeSession) { this.unregisterFighterVoiceSession(binding.activeSession); binding.activeSession.handleReplaced(); }
-    this.fighterVoiceCallBindings.delete(sid); this.fighter.voiceLeave(binding.code, binding.playerId);
+    this.fighterVoiceCallBindings.delete(sid);
+    const preserve=this.arcadeApi?.isStationEngineRoom(binding.code)
+      &&['victory','results'].includes(this.fighter.findRoom(binding.code)?.phase??'');
+    if(!preserve)this.fighter.voiceLeave(binding.code, binding.playerId);
   }
 
   /** Build a Voice Monsters call session wired to the live BattleServer + the battle LLM host. The
@@ -908,10 +930,10 @@ export class HttpServer {
       advance: (code: string) => this.battle.voiceAdvance(code),
       setTimer: (fn: () => void, ms: number) => { setTimeout(fn, ms); },
       snapshot: (code: string, id: string, locale?: SupportedLocale) => this.battleVoiceSnapshot(code, id, locale),
-      converse: async (code: string, id: string, utterance: string, isCurrent: () => boolean, locale: SupportedLocale) => {
+      converse: async (code: string, id: string, utterance: string, isCurrent: () => boolean, locale: SupportedLocale,nameLocked:boolean,stationManaged:boolean,authoritativeName:string|null) => {
         if (locale === 'pt-BR') return null;
         if (!this.llm.enabled) return null;
-        const ctx = this.battleHostContext(code, id, isCurrent, locale);
+        const ctx = this.battleHostContext(code, id, isCurrent, locale,nameLocked,stationManaged,authoritativeName);
         if (!ctx) return null;
         history.push({ role: 'user', content: utterance });
         const reply = await battleHostTurn(this.llm, ctx, history, locale);
@@ -1000,7 +1022,9 @@ export class HttpServer {
       binding.activeSession.handleReplaced();
     }
     this.battleVoiceCallBindings.delete(sid);
-    this.battle.voiceLeave(binding.code, binding.playerId);
+    const preserve=this.arcadeApi?.isStationEngineRoom(binding.code)
+      &&this.battle.findRoom(binding.code)?.phase==='results';
+    if(!preserve)this.battle.voiceLeave(binding.code, binding.playerId);
   }
 
   private battleRoomHasPlayer(code: string, playerId: string): boolean {
@@ -1012,7 +1036,7 @@ export class HttpServer {
    *  CLEARLY picked one (a number or strong name, not a question), do it now + return the confirmation.
    *  Returns null when it's not a clear pick (a question, chit-chat, or wrong phase) → the LLM handles
    *  it. Makes numeric/name picks reliable regardless of the model, and works with the LLM disabled. */
-  private directSelection(room: Room, playerId: string, utterance: string, locale: SupportedLocale = DEFAULT_LOCALE): string | null {
+  private directSelection(room: Room, playerId: string, utterance: string, locale: SupportedLocale = DEFAULT_LOCALE,nameLocked=false): string | null {
     const text = createTranslator(locale, RACER_MESSAGES);
     const controls = text('voice.controlsIntro');
     const carChoices = this.roomConfigCache.carNames.map(name => localizedCarAliases(name).join(' '));
@@ -1026,7 +1050,7 @@ export class HttpServer {
     // the LOBBY, while they still have the auto placeholder name, treat a name-like reply as their name
     // + confirm and guide forward. Without this, giving your name relied entirely on the LLM (dead air
     // if it's off/slow). Only in the lobby — in car_select a car pick must win over a name guess.
-    if (room.phase === 'lobby') {
+    if (!nameLocked&&room.phase === 'lobby') {
       const me = room.lobbyPlayers().find(p => p.playerId === playerId);
       const hasRealName = me && !/^(Racer|Piloto)(\s|$)/.test(me.name);
       if (!hasRealName && !isRacerAdvanceWord(utterance, locale)) {
@@ -1086,7 +1110,7 @@ export class HttpServer {
   /** Build the AI host's view of a live room for one caller: what it can see + the actions it can take
    *  (pick a car/map by fuzzy name, start the race). Actions delegate to the same Room methods + the
    *  game-server broadcast, so a voice-driven pick shows up on the screen exactly like a texted one. */
-  private hostContext(room: Room, playerId: string, locale: SupportedLocale = DEFAULT_LOCALE): HostContext {
+  private hostContext(room: Room, playerId: string, locale: SupportedLocale = DEFAULT_LOCALE,nameLocked=false): HostContext {
     const text = createTranslator(locale, RACER_MESSAGES);
     const controls = text('voice.controlsIntro');
     const canonicalCars = this.roomConfigCache.carNames;
@@ -1100,7 +1124,7 @@ export class HttpServer {
     // A caller starts with an auto placeholder name ("Racer 1234" from their number). Treat that as
     // "no real name yet" so the host asks for one and displays what they actually say.
     const rawName = me?.name ?? '';
-    const realName = /^(Racer|Piloto)(\s|$)/.test(rawName) ? null : rawName || null;
+    const realName = !nameLocked&&/^(Racer|Piloto)(\s|$)/.test(rawName) ? null : rawName || null;
     const board = this.leaderboardSummaryForMap(room.selectedMap, room.results());
     const myResult = room.results().find(r => r.playerId === playerId) ?? null;
     return {
@@ -1111,12 +1135,15 @@ export class HttpServer {
       myPlace: myResult?.place ?? null,
       myFinishTime: myResult && myResult.finished && myResult.finishT > 0 ? myResult.finishT : null,
       racerCount: room.playerCount,
+      nameLocked,
+      stationManaged:nameLocked,
       raceStandings: room.results().map(r => ({ name: r.name, place: r.place, time: r.finished && r.finishT > 0 ? r.finishT : null, finished: r.finished })),
       leaderboardTop: board.top,
       allTimeTop: board.topNames,
       allTimeBest: board.bestName !== null && board.bestTime !== null
         ? { name: board.bestName, time: board.bestTime } : null,
       setName: (name) => {
+        if(nameLocked)return null;
         const clean = name.trim().slice(0, 20);
         if (!clean) return null;
         this.game.voiceSetName(room.code, playerId, clean);
@@ -1249,19 +1276,22 @@ export class HttpServer {
 
   /** Build the battle LLM host's context for one caller (delegating actions to the BattleServer). */
   private battleHostContext(code: string, playerId: string, isCurrent: () => boolean = () => true,
-    locale: SupportedLocale = DEFAULT_LOCALE): BattleHostContext | null {
+    locale: SupportedLocale = DEFAULT_LOCALE,nameLocked=false,stationManaged=false,authoritativeName:string|null=null): BattleHostContext | null {
     const room = this.battle.findRoom(code);
     if (!room) return null;
     const s = this.battleVoiceSnapshot(code, playerId, locale);
     if (!s) return null;
     const text = createTranslator(locale, MONSTERS_MESSAGES);
     return {
-      phase: s.phase, monsters: s.monsterNames, myName: s.myName,
+      phase: s.phase, monsters: s.monsterNames, myName: authoritativeName??s.myName,
       myMonster: s.myMonsterName, foeMonster: s.foeMonsterName,
       myHp: s.myHp, myMaxHp: s.myMaxHp, foeHp: s.foeHp, foeMaxHp: s.foeMaxHp,
       myPotions: s.myPotions, whoseTurn: s.whoseTurn, moves: s.myMoves.map(m => m.name),
       winnerName: s.winnerName,
+      nameLocked,
+      stationManaged,
       setName: (name) => {
+        if(nameLocked)return null;
         if (!isCurrent() || (room.phase !== 'lobby' && room.phase !== 'monster_select')) return null;
         const c = name.trim().slice(0, 20); if (!c) return null;
         this.battle.voiceSetName(code, playerId, c); return text('voice.niceMeet', { name: c });

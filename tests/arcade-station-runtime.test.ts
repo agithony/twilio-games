@@ -139,9 +139,15 @@ describe('ArcadeStationRuntime', () => {
     await runtime.markEngineCompleted('racer', activeMatch.engineRoomCode);
     await runtime.flush();
     expect((await h.service.getStation('expo'))?.station.phase).toBe('RESULTS');
-    expect(h.scheduled()?.delayMs).toBe(10_000);
+    expect(h.scheduled()).toBeNull();
     h.setTime(T0 + 144_000);
-    h.fire();
+    await runtime.flush();
+    const results = await h.service.getStation('expo');
+    expect(results?.station.phase).toBe('RESULTS');
+    await h.service.advanceStationResults({
+      stationId: 'expo', expectedRevision: results!.station.revision,
+      idempotencyKey: 'operator-close-results', authorization: AUTHORIZATION,
+    });
     await runtime.flush();
     expect((await h.service.getStation('expo'))?.station.phase).toBe('ATTRACT');
     await runtime.stop();
@@ -523,7 +529,7 @@ describe('ArcadeStationRuntime', () => {
     expect((await h.service.getWalletStatus('p1'))).toMatchObject({
       reservedBalance: 0, availableBalance: 2,
     });
-    expect(h.scheduled()?.delayMs).toBe(10_000);
+    expect(h.scheduled()).toBeNull();
     await restarted.stop();
   });
 

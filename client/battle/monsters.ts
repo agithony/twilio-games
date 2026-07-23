@@ -536,7 +536,7 @@ function monsterSelectHtml(): string {
 
 function resultsHtml(): string {
   const w = state?.result?.winnerName ?? text('results.nobody');
-  const action = !state?.canRematch
+  const action = !state?.canRematch || stationDisplay.active
     ? `<div class="vm-dim">${text('results.announcing')}</div>`
     : isDisplay || joinedHere
       ? `<button class="vm-btn" data-act="advance">${text('results.rematch')}</button>`
@@ -584,7 +584,8 @@ addEventListener('keydown', (e) => {
     handleMenuKey(e.key);
   } else if ((e.key === 'p' || e.key === 'P') && isDisplay && state?.phase !== 'battle') {
     toggleSelfPlaying();
-  } else if (e.key === 'Enter' && isDisplay && state?.phase !== 'battle' && (state?.phase !== 'results' || state.canRematch)) {
+  } else if (e.key === 'Enter' && isDisplay && state?.phase !== 'battle'
+    && (state?.phase !== 'results' || (state.canRematch && !stationDisplay.active))) {
     conn.advance();
   }
 });

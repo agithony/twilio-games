@@ -103,6 +103,11 @@ const arcadeApi = new ArcadeApi({
   displayToken: process.env.ARCADE_DISPLAY_TOKEN,
   fallbackVoiceNumber: process.env.GAME_PHONE_NUMBER,
   messagingCapabilities: { sms: smsNumber !== null, whatsapp: whatsappNumber !== null },
+  messagingProfileNameReady: identity => {
+    void arcadeTacGateway?.syncProfileName(identity).catch(error => {
+      console.error('[TAC] Conversation Memory name sync failed:', error instanceof Error ? error.message : String(error));
+    });
+  },
   authorizeAdmin: request => {
     if (arcadeDevAdmin && isLoopbackAddress(request.socket.remoteAddress)
       && request.headers['x-arcade-dev-admin'] === 'true') {
@@ -121,6 +126,12 @@ arcadeTacGateway?.setMessageHandler(async input => {
       from: author,
       conversationProfileId: input.profileId,
     });
+    const identity = await arcadeApi.messagingMemoryIdentity(author);
+    if (identity) {
+      void arcadeTacGateway.syncProfileName(identity).catch(error => {
+        console.error('[TAC] Conversation Memory name sync failed:', error instanceof Error ? error.message : String(error));
+      });
+    }
   }
   // The signed provider webhook owns deterministic state and the immediate player reply. TAC only
   // enriches Conversation Memory identity, so either webhook order is safe and never sends twice.

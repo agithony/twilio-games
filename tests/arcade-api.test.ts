@@ -1011,6 +1011,9 @@ describe('Arcade API', () => {
     expect(await api.attachMessagingProfile({
       from: '+14155550199', conversationProfileId: 'mem_profile_fallback',
     })).toBe(true);
+    expect(await api.messagingMemoryIdentity('+14155550199')).toEqual({
+      profileId:'mem_profile_fallback',firstName:'Ada',locale:'en-US',phoneNumber:'+14155550199',
+    });
 
     const state = (await playerRuntime.getActive()).store.snapshot();
     expect(Object.keys(state.inboundMessages)).toHaveLength(5);
@@ -1289,10 +1292,14 @@ describe('Arcade API', () => {
       authorization: resources.operatorAuthorization('test@twilio.com'),
     });
 
-    const routed = await api.stationVoiceRoute('+14155550199');
+    const routed = await api.stationVoiceRoute('+14155550199', 'CA-known-name');
     expect(routed).toMatchObject({ admitted: true });
     expect(resources.store.snapshot().stationReadyEntries[routed!.readyEntryId!]?.playerId)
       .toBe(firstPlayerId);
+    expect(await api.resolveStationVoiceSetup({
+      callSid:'CA-known-name',readyEntryId:routed!.readyEntryId!,matchId:routed!.matchId,
+      launchGeneration:routed!.launchGeneration,game:routed!.game,roomCode:routed!.roomCode,
+    })).toEqual({ firstName: REGISTRATION.lead.firstName });
 
   });
 

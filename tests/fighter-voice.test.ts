@@ -6,6 +6,12 @@ import { FIGHTER_INTRO_SECONDS } from '../shared/fighter-protocol';
 import type { FighterCommand, FighterEvent } from '../shared/fighter-world';
 
 describe('fighter voice session', () => {
+  it('uses an authoritative station name without asking for it again', () => {
+    const game=voiceGame();const ada=game.connect('CA-known','VOICE',undefined,'Ada');
+    expect(game.room.state().players[0]?.name).toBe('Ada');
+    expect(ada.spoken.join(' ').toLowerCase()).not.toContain('what is your name');
+  });
+
   it('drives the complete solo journey through intro, combat, victory, and rematch', () => {
     const game = voiceGame();
     const ada = game.connect('CA1', ' voice ');
@@ -256,13 +262,13 @@ function voiceGame() {
     };
   };
 
-  const connect = (callSid: string, roomCode = 'VOICE', commandLocale?: string) => {
+  const connect = (callSid: string, roomCode = 'VOICE', commandLocale?: string, authoritativeName?: string) => {
     const spoken: string[] = [];
     let playerId = '';
     const session = new FighterVoiceSession({
       say: text => spoken.push(text),
-      join: () => {
-        const joined = room.addPlayer('Caller');
+      join: (_code,name) => {
+        const joined = room.addPlayer(name);
         if ('error' in joined) return null;
         playerId = joined.playerId; stateChanged(); return { playerId, resumed: false };
       },
@@ -277,6 +283,7 @@ function voiceGame() {
       },
       snapshot: (_code, id) => snapshot(id),
     });
+    session.setAuthoritativeName(authoritativeName??null);
     sessions.push(session);
     session.handleMessage(JSON.stringify({ type: 'setup', callSid, customParameters: { roomCode, ...(commandLocale ? { commandLocale } : {}) } }));
     return {

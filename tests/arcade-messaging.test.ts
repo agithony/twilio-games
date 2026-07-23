@@ -113,6 +113,7 @@ describe('Arcade messaging commands', () => {
     expect(whatsapp.playerId).toBe(joined.playerId);
     const coin = await message(h.service, 'SM007', 'COIN');
     expect(coin.reply).toContain('position 1');
+    expect(coin.reply.split('\n')).toHaveLength(3);
     expect(coin.reply).toContain('Watch the screen');
     expect(coin.reply).not.toContain('we will text');
     expect(await message(h.service, 'SM007', 'COIN')).toEqual(coin);
@@ -295,7 +296,7 @@ describe('Arcade messaging commands', () => {
     expect(h.store.snapshot().wallets[joined.playerId!]?.reservations).toEqual([]);
     expect(Object.values(h.store.snapshot().stationReadyEntries)[0]?.reservationId).toBeNull();
     expect((await message(h.service, 'SM305', 'STATUS')).reply)
-      .toBe('Station status: READY. Watch for game selection, then reply with the game name or number.');
+      .toBe('Station status: READY.\nWatch for game selection, then reply with the game name or number.');
   });
 
   it('requires a fresh JOIN after the cabinet changes', async () => {
@@ -438,12 +439,12 @@ describe('Arcade messaging commands', () => {
     h.setNow(deadline);
     const exact = await message(h.service, 'SM-CLOSED-EXACT', 'RACER', englishFrom);
     expect(exact.reply).toBe(
-      'Game selection is closed. Watch the screen for the chosen game and your next instruction.',
+      'Game selection is closed.\nWatch the screen for the chosen game and your next instruction.',
     );
     h.setNow(deadline + 1);
     const late = await message(h.service, 'SM-CLOSED-LATE', '2', portugueseFrom);
     expect(late.reply).toBe(
-      'A escolha do jogo ja terminou. Acompanhe a tela para ver o jogo escolhido e a proxima instrucao.',
+      'A escolha do jogo ja terminou.\nAcompanhe a tela para ver o jogo escolhido e a proxima instrucao.',
     );
     expect(h.store.snapshot().stations['ARCADE-01']?.revision).toBe(selecting.station.revision);
     expect(h.store.snapshot().inboundMessages[providerKey('SM-CLOSED-EXACT', englishFrom)]?.reply)

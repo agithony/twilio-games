@@ -57,7 +57,7 @@ export interface BattleVoiceDeps {
   setTimer(fn: () => void, ms: number): void;
   snapshot(code: string, playerId: string, locale?: SupportedLocale): BattleVoiceSnapshot | null;
   /** Conversational LLM turn (host brain). Returns what to say, or null → scripted fallback / silence. */
-  converse(code: string, playerId: string, utterance: string, isCurrent: () => boolean, locale: SupportedLocale): Promise<string | null>;
+  converse(code: string, playerId: string, utterance: string, isCurrent: () => boolean, locale: SupportedLocale,nameLocked:boolean,stationManaged:boolean,authoritativeName:string|null): Promise<string | null>;
 }
 
 const GREETING_KEYS = [
@@ -76,9 +76,16 @@ export class BattleVoiceSession {
   private lastPhase: BattleVoiceSnapshot['phase'] | null = null;
   private lastCanRematch = false;
   private commandLocale: SupportedLocale = DEFAULT_LOCALE;
+  private authoritativeName: string | null = null;
+  private stationManaged=false;
   private text: (key: MonstersMessageKey, values?: MessageValues) => string = createTranslator(DEFAULT_LOCALE, MONSTERS_MESSAGES);
 
   constructor(private deps: BattleVoiceDeps) {}
+
+  setAuthoritativeName(name: string | null): void {
+    this.authoritativeName = name?.trim().slice(0, 50) || null;
+  }
+  setStationManaged(active:boolean):void{this.stationManaged=active;}
 
   get boundRoom(): string | null { return this.code; }
   get boundPlayer(): string | null { return this.playerId; }
@@ -97,12 +104,13 @@ export class BattleVoiceSession {
           this.deps.leave(this.code, this.playerId, this.callSid ?? '');
           this.code = null; this.playerId = null; this.callSid = null;
         }
-        const joined = this.deps.join(code, playerName(msg.from, this.commandLocale), msg.callSid);
+        const joined = this.deps.join(code, this.authoritativeName ?? playerName(msg.from, this.commandLocale), msg.callSid);
         if (!joined) { this.deps.say(this.text('voice.roomUnavailable')); return; }
         this.code = code; this.playerId = joined.playerId; this.callSid = msg.callSid;
         if (joined.resumed) this.speakResumeCue();
         else {
-          const snap = this.deps.snapshot(code, joined.playerId, this.commandLocale);
+          const current = this.deps.snapshot(code, joined.playerId, this.commandLocale);
+          const snap = current&&this.authoritativeName?{...current,myName:this.authoritativeName}:current;
           this.lastPhase = snap?.phase ?? null;
           this.lastCanRematch = snap?.canRematch ?? false;
           if (snap?.phase === 'battle' && !snap.myMonsterId) {
@@ -112,7 +120,7 @@ export class BattleVoiceSession {
             this.deps.say(this.text('voice.lateResults'));
             this.deps.say(snap.myName ? this.text('voice.welcomeRematchNamed', { name: snap.myName }) : this.text('voice.askName'));
           } else {
-            for (const key of GREETING_KEYS) this.deps.say(this.text(key));
+            for (const key of this.authoritativeName ? GREETING_KEYS.slice(0, -1) : GREETING_KEYS) this.deps.say(this.text(key));
           }
         }
         break;
@@ -140,10 +148,11 @@ export class BattleVoiceSession {
     // utterance is dropped (not spoken over/after a fresh deterministic pick/action). converse() bumps
     // it again for the LLM path; bumping here covers the deterministic early-returns too.
     this.turnEpoch++;
-    const snap = this.deps.snapshot(this.code!, this.playerId!, this.commandLocale);
+    const current = this.deps.snapshot(this.code!, this.playerId!, this.commandLocale);
+    const snap = current&&this.authoritativeName?{...current,myName:this.authoritativeName}:current;
     if (!snap) { void this.converse(text); return; }
     if (isBattleHelpRequest(text, this.commandLocale)) {
-      const key = snap.phase === 'lobby' ? 'voice.helpLobby'
+      const key = snap.phase === 'lobby' ? this.authoritativeName ? 'voice.helpLobbyNamed' : 'voice.helpLobby'
         : snap.phase === 'monster_select' ? 'voice.helpSelect'
           : snap.phase === 'results' ? 'voice.helpResults' : 'voice.howTo';
       this.deps.say(this.text(key));
@@ -156,6 +165,9 @@ export class BattleVoiceSession {
     if (snap.phase === 'results' && (!snap.canRematch || this.draining || this.evQ.length > 0) && isAdvanceWord(text, this.commandLocale)) {
       this.deps.say(this.text('voice.holdFinal'));
       return;
+    }
+    if(snap.phase==='results'&&this.stationManaged&&isAdvanceWord(text,this.commandLocale)){
+      this.deps.say(this.text('voice.waitOperator'));return;
     }
 
     // NAME CAPTURE: the first thing we ask in the lobby. On the monster-picking screen, however, a
@@ -255,7 +267,7 @@ export class BattleVoiceSession {
   /** Fire the conversational host; speak its reply unless the caller has spoken again since (epoch). */
   private converse(text: string): void {
     const epoch = ++this.turnEpoch;
-    void this.deps.converse(this.code!, this.playerId!, text, () => epoch === this.turnEpoch && !this.isPresentingResults(), this.commandLocale)
+    void this.deps.converse(this.code!, this.playerId!, text, () => epoch === this.turnEpoch && !this.isPresentingResults(), this.commandLocale,this.authoritativeName!==null,this.stationManaged,this.authoritativeName)
       .then(reply => { if (reply && epoch === this.turnEpoch) this.deps.say(reply); })
       .catch(() => { /* LLM failure → stay quiet, never break the call */ });
   }
@@ -440,7 +452,9 @@ export class BattleVoiceSession {
 
   handleClose(): void {
     this.turnEpoch++;
-    if (this.code && this.playerId) this.deps.leave(this.code, this.playerId, this.callSid ?? '');
+    const preserve=this.stationManaged&&this.code&&this.playerId
+      &&this.deps.snapshot(this.code,this.playerId,this.commandLocale)?.phase==='results';
+    if (this.code && this.playerId&&!preserve) this.deps.leave(this.code, this.playerId, this.callSid ?? '');
     this.code = null; this.playerId = null; this.callSid = null;
   }
 

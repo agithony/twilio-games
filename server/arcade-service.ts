@@ -640,74 +640,74 @@ const MESSAGING_COPY: Record<'en-US' | 'pt-BR', Record<MessagingCopyKey, string>
   'en-US': {
     wrongStation: 'That station code is stale. Scan the QR again or reply JOIN.',
     joinFirst: 'Reply JOIN to start',
-    joined: 'You are in Twilio Games with {balance} coins. Reply COIN when you are ready at the screen. HELP lists commands.',
-    help: 'Commands: COIN to get ready, STATUS for your place and balance, LEAVE to exit, HELP for this list. During game selection, reply with a game name or number.',
-    status: 'Balance: {balance} coins. Station status: {status}. {next}',
+    joined: 'You are in Twilio Games with {balance} coins.\nReply COIN when you are ready at the screen. HELP lists commands.',
+    help: 'Commands:\nCOIN to get ready\nSTATUS for your place and balance\nLEAVE to exit\nHELP for this list\nDuring game selection, reply with a game name or number.',
+    status: 'Balance: {balance} coins.\nStation status: {status}.\n{next}',
     finishRegistration: 'Finish the quick intro first, then reply COIN.',
     notReady: 'You are not currently in the ready pool. Reply COIN when you are ready at the screen.',
-    registered: 'Registration complete. You have {balance} coins. Reply COIN when you are at the screen.',
+    registered: 'Registration complete. You have {balance} coins.\nReply COIN when you are at the screen.',
     cannotLeave: 'Your match is locked or playing. Ask the booth operator for help.',
-    left: 'You left the ready pool. Your held coin is available again. Reply COIN when you are ready to join again.',
-    alreadyReady: 'You are already ready. Watch for game selection, then reply with the game name or number. Reply STATUS for your place.',
+    left: 'You left the ready pool.\nYour held coin is available again.\nReply COIN when you are ready to join again.',
+    alreadyReady: 'You are already ready.\nWatch for game selection, then reply with the game name or number.\nReply STATUS for your place.',
     noCoins: 'You do not have an available coin. Complete a challenge or ask the booth operator.',
     poolFull: 'The ready pool is full right now. Try COIN again after the next game starts.',
     coinUnavailable: 'Coin insertion is not available under the current station policy.',
-    coin: 'Coin inserted. You are position {position}. Balance available: {balance}. Watch for game selection, then reply with the game name or number. Stay near the screen; we will text assignment and call updates.',
-    coinScreen: 'Coin inserted. You are position {position}. Balance available: {balance}. Watch for game selection, then reply with the game name or number. Watch the screen for assignment and call instructions, and keep this number handy.',
-    joinedFree: 'You are in Twilio Games. Reply READY when you are at the screen. HELP lists commands.',
-    helpFree: 'Commands: READY to join the ready pool, STATUS for your place, LEAVE to exit, HELP for this list. During game selection, reply with a game name or number.',
-    statusFree: 'Station status: {status}. {next}',
+    coin: 'Coin inserted. You are position {position}. Balance available: {balance}.\nWatch for game selection, then reply with the game name or number.\nStay near the screen; we will text assignment and call updates.',
+    coinScreen: 'Coin inserted. You are position {position}. Balance available: {balance}.\nWatch for game selection, then reply with the game name or number.\nWatch the screen for assignment and call instructions, and keep this number handy.',
+    joinedFree: 'You are in Twilio Games.\nReply READY when you are at the screen. HELP lists commands.',
+    helpFree: 'Commands:\nREADY to join the ready pool\nSTATUS for your place\nLEAVE to exit\nHELP for this list\nDuring game selection, reply with a game name or number.',
+    statusFree: 'Station status: {status}.\n{next}',
     finishRegistrationFree: 'Finish the quick intro first, then reply READY.',
-    registeredFree: 'Registration complete. Reply READY when you are at the screen.',
-    leftFree: 'You left the ready pool. Reply READY when you want to join again.',
+    registeredFree: 'Registration complete.\nReply READY when you are at the screen.',
+    leftFree: 'You left the ready pool.\nReply READY when you want to join again.',
     poolFullFree: 'The ready pool is full right now. Try READY again after the next game starts.',
-    readyFree: 'You are ready in position {position}. Watch for game selection, then reply with the game name or number. Stay near the screen; we will text assignment and call updates.',
-    readyFreeScreen: 'You are ready in position {position}. Watch for game selection, then reply with the game name or number. Watch the screen for assignment and call instructions, and keep this number handy.',
+    readyFree: 'You are ready in position {position}.\nWatch for game selection, then reply with the game name or number.\nStay near the screen; we will text assignment and call updates.',
+    readyFreeScreen: 'You are ready in position {position}.\nWatch for game selection, then reply with the game name or number.\nWatch the screen for assignment and call instructions, and keep this number handy.',
     notReadyFree: 'You are not currently in the ready pool. Reply READY when you are at the screen.',
     continueInBrowser: 'This phone is already registered in a browser. Continue in that browser session to join the ready pool; a separate messaging player was not created.',
     capacity: 'Twilio Games messaging is temporarily at capacity. Please try again later.',
-    gameChoice: 'Choice saved: {game}. Valid choices: {choices}. Reply with a game name or number to change it.',
-    gameChoiceInvalid: 'That is not a valid game choice. Reply with one of: {choices}.',
-    gameChoiceUnavailable: 'Game selection opens after recruiting for players who are ready. When the screen asks you to choose, reply with one of: {choices}.',
-    gameChoiceClosed: 'Game selection is closed. Watch the screen for the chosen game and your next instruction.',
-    named: 'Thanks, {name}. You have {balance} coins. Reply COIN when you are ready at the screen.',
-    namedFree: 'Thanks, {name}. Reply READY when you are at the screen.',
+    gameChoice: 'Choice saved: {game}.\nValid choices: {choices}.\nReply with a game name or number to change it.',
+    gameChoiceInvalid: 'That is not a valid game choice.\nReply with one of: {choices}.',
+    gameChoiceUnavailable: 'Game selection opens after recruiting for players who are ready.\nWhen the screen asks you to choose, reply with one of: {choices}.',
+    gameChoiceClosed: 'Game selection is closed.\nWatch the screen for the chosen game and your next instruction.',
+    named: 'Thanks, {name}. You have {balance} coins.\nReply COIN when you are ready at the screen.',
+    namedFree: 'Thanks, {name}.\nReply READY when you are at the screen.',
   },
   'pt-BR': {
     wrongStation: 'Esse codigo de estacao expirou. Escaneie o QR novamente ou responda ENTRAR.',
     joinFirst: 'Responda ENTRAR para comecar',
-    joined: 'Você entrou no Twilio Games com {balance} moedas. Responda MOEDA quando estiver na tela. AJUDA mostra os comandos.',
-    help: 'Comandos: MOEDA para ficar pronto, STATUS para posicao e saldo, SAIR para sair, AJUDA para esta lista. Durante a selecao de jogo, responda com o nome ou numero do jogo.',
-    status: 'Saldo: {balance} moedas. Status na estacao: {status}. {next}',
+    joined: 'Você entrou no Twilio Games com {balance} moedas.\nResponda MOEDA quando estiver na tela. AJUDA mostra os comandos.',
+    help: 'Comandos:\nMOEDA para ficar pronto\nSTATUS para posicao e saldo\nSAIR para sair\nAJUDA para esta lista\nDurante a selecao de jogo, responda com o nome ou numero do jogo.',
+    status: 'Saldo: {balance} moedas.\nStatus na estacao: {status}.\n{next}',
     finishRegistration: 'Termine a apresentação rápida e depois responda MOEDA.',
     notReady: 'Voce nao esta na fila de jogadores prontos. Responda MOEDA quando estiver pronto na tela.',
-    registered: 'Cadastro concluído. Você tem {balance} moedas. Responda MOEDA quando estiver na tela.',
+    registered: 'Cadastro concluído. Você tem {balance} moedas.\nResponda MOEDA quando estiver na tela.',
     cannotLeave: 'Sua partida está bloqueada ou em andamento. Fale com a equipe do estande.',
-    left: 'Voce saiu da fila. Sua moeda reservada esta disponivel novamente. Responda MOEDA quando quiser entrar de novo.',
-    alreadyReady: 'Voce ja esta pronto. Aguarde a selecao de jogo e responda com o nome ou numero do jogo. Responda STATUS para ver sua posicao.',
+    left: 'Voce saiu da fila.\nSua moeda reservada esta disponivel novamente.\nResponda MOEDA quando quiser entrar de novo.',
+    alreadyReady: 'Voce ja esta pronto.\nAguarde a selecao de jogo e responda com o nome ou numero do jogo.\nResponda STATUS para ver sua posicao.',
     noCoins: 'Você não tem uma moeda disponível. Conclua um desafio ou fale com a equipe.',
     poolFull: 'A fila está cheia agora. Tente MOEDA novamente quando a próxima partida começar.',
     coinUnavailable: 'A inserção de moeda não está disponível na política atual da estação.',
-    coin: 'Moeda inserida. Voce esta na posicao {position}. Saldo disponivel: {balance}. Aguarde a selecao de jogo e responda com o nome ou numero do jogo. Fique perto da tela; enviaremos atualizacoes de selecao e chamada.',
-    coinScreen: 'Moeda inserida. Voce esta na posicao {position}. Saldo disponivel: {balance}. Aguarde a selecao de jogo e responda com o nome ou numero do jogo. Acompanhe a tela para selecao e chamada e mantenha este numero por perto.',
-    joinedFree: 'Você entrou no Twilio Games. Responda PRONTO quando estiver na tela. AJUDA mostra os comandos.',
-    helpFree: 'Comandos: PRONTO para entrar na fila, STATUS para ver sua posicao, SAIR para sair, AJUDA para esta lista. Durante a selecao de jogo, responda com o nome ou numero do jogo.',
-    statusFree: 'Status na estacao: {status}. {next}',
+    coin: 'Moeda inserida. Voce esta na posicao {position}. Saldo disponivel: {balance}.\nAguarde a selecao de jogo e responda com o nome ou numero do jogo.\nFique perto da tela; enviaremos atualizacoes de selecao e chamada.',
+    coinScreen: 'Moeda inserida. Voce esta na posicao {position}. Saldo disponivel: {balance}.\nAguarde a selecao de jogo e responda com o nome ou numero do jogo.\nAcompanhe a tela para selecao e chamada e mantenha este numero por perto.',
+    joinedFree: 'Você entrou no Twilio Games.\nResponda PRONTO quando estiver na tela. AJUDA mostra os comandos.',
+    helpFree: 'Comandos:\nPRONTO para entrar na fila\nSTATUS para ver sua posicao\nSAIR para sair\nAJUDA para esta lista\nDurante a selecao de jogo, responda com o nome ou numero do jogo.',
+    statusFree: 'Status na estacao: {status}.\n{next}',
     finishRegistrationFree: 'Termine a apresentação rápida e depois responda PRONTO.',
-    registeredFree: 'Cadastro concluído. Responda PRONTO quando estiver na tela.',
-    leftFree: 'Voce saiu da fila de jogadores prontos. Responda PRONTO quando quiser entrar de novo.',
+    registeredFree: 'Cadastro concluído.\nResponda PRONTO quando estiver na tela.',
+    leftFree: 'Voce saiu da fila de jogadores prontos.\nResponda PRONTO quando quiser entrar de novo.',
     poolFullFree: 'A fila está cheia agora. Tente PRONTO novamente quando a próxima partida começar.',
-    readyFree: 'Voce esta pronto na posicao {position}. Aguarde a selecao de jogo e responda com o nome ou numero do jogo. Fique perto da tela; enviaremos atualizacoes de selecao e chamada.',
-    readyFreeScreen: 'Voce esta pronto na posicao {position}. Aguarde a selecao de jogo e responda com o nome ou numero do jogo. Acompanhe a tela para selecao e chamada e mantenha este numero por perto.',
+    readyFree: 'Voce esta pronto na posicao {position}.\nAguarde a selecao de jogo e responda com o nome ou numero do jogo.\nFique perto da tela; enviaremos atualizacoes de selecao e chamada.',
+    readyFreeScreen: 'Voce esta pronto na posicao {position}.\nAguarde a selecao de jogo e responda com o nome ou numero do jogo.\nAcompanhe a tela para selecao e chamada e mantenha este numero por perto.',
     notReadyFree: 'Voce nao esta na fila de jogadores prontos. Responda PRONTO quando estiver na tela.',
     continueInBrowser: 'Este telefone já está cadastrado em um navegador. Continue nessa sessão do navegador para entrar na fila; nenhum jogador separado foi criado por mensagem.',
     capacity: 'As mensagens do Twilio Games estão temporariamente no limite. Tente novamente mais tarde.',
-    gameChoice: 'Escolha salva: {game}. Opcoes validas: {choices}. Responda com o nome ou numero do jogo para mudar.',
-    gameChoiceInvalid: 'Essa escolha de jogo nao e valida. Responda com uma destas opcoes: {choices}.',
-    gameChoiceUnavailable: 'A escolha do jogo abre depois do recrutamento para quem esta pronto. Quando a tela pedir sua escolha, responda com uma destas opcoes: {choices}.',
-    gameChoiceClosed: 'A escolha do jogo ja terminou. Acompanhe a tela para ver o jogo escolhido e a proxima instrucao.',
-    named: 'Obrigado, {name}. Voce tem {balance} moedas. Responda MOEDA quando estiver pronto na tela.',
-    namedFree: 'Obrigado, {name}. Responda PRONTO quando estiver na tela.',
+    gameChoice: 'Escolha salva: {game}.\nOpcoes validas: {choices}.\nResponda com o nome ou numero do jogo para mudar.',
+    gameChoiceInvalid: 'Essa escolha de jogo nao e valida.\nResponda com uma destas opcoes: {choices}.',
+    gameChoiceUnavailable: 'A escolha do jogo abre depois do recrutamento para quem esta pronto.\nQuando a tela pedir sua escolha, responda com uma destas opcoes: {choices}.',
+    gameChoiceClosed: 'A escolha do jogo ja terminou.\nAcompanhe a tela para ver o jogo escolhido e a proxima instrucao.',
+    named: 'Obrigado, {name}. Voce tem {balance} moedas.\nResponda MOEDA quando estiver pronto na tela.',
+    namedFree: 'Obrigado, {name}.\nResponda PRONTO quando estiver na tela.',
   },
 };
 
@@ -842,7 +842,7 @@ function advanceMessagingDraft(
 }
 
 function validMessagingText(value: string, maximum: number): boolean {
-  return value.length > 0 && value.length <= maximum && !/[\u0000-\u001f\u007f]/.test(value);
+  return value.length > 0 && value.length <= maximum && !/[\u0000-\u001f\u007f\u2028\u2029]/.test(value);
 }
 
 function stationReadyPosition(aggregate: ArcadeStationAggregate, readyEntryId: string): number {
@@ -1009,44 +1009,44 @@ function stationNotificationContent(input: {
   const callNumber = input.callNumber ?? (input.locale === 'pt-BR' ? 'o número exibido na tela' : 'the number on screen');
   if (input.locale === 'pt-BR') {
     if (input.kind === 'STATION_ADMITTED') {
-      return { body: `Você entrou na próxima partida de ${game}. Fique perto da tela.`, templateVariables: { '1': game } };
+      return { body: `Você entrou na próxima partida de ${game}.\nFique perto da tela.`, templateVariables: { '1': game } };
     }
     if (input.kind === 'STATION_OVERFLOW') {
-      return { body: `Esta partida está cheia. Sua moeda continua reservada e você é o número ${position} para o próximo jogo.`, templateVariables: { '1': position } };
+      return { body: `Esta partida está cheia.\nSua moeda continua reservada e você é o número ${position} para o próximo jogo.`, templateVariables: { '1': position } };
     }
     if (input.kind === 'STATION_CALL_NOW') {
       return { body: `Ligue agora para ${callNumber} para entrar em ${game}.`, templateVariables: { '1': callNumber, '2': game } };
     }
     if (input.kind === 'STATION_RESULTS') {
-      const balance = input.balance === null ? '' : ` Saldo disponível: ${input.balance}.`;
-      const result = input.rank === null ? ' Os resultados estão na tela.'
-        : input.won ? ' Você venceu!' : ` Você terminou em ${input.rank}º lugar.`;
+      const balance = input.balance === null ? '' : `\nSaldo disponível: ${input.balance}.`;
+      const result = input.rank === null ? '\nOs resultados estão na tela.'
+        : input.won ? '\nVocê venceu!' : `\nVocê terminou em ${input.rank}º lugar.`;
       return {
         body: `Sua partida de ${game} terminou.${result}${balance}`,
         templateVariables: { '1': game, ...(input.balance === null ? {} : { '2': String(input.balance) }) },
       };
     }
-    return { body: 'Você foi promovido para o próximo jogo. Fique perto da tela e aguarde a seleção.', templateVariables: {} };
+    return { body: 'Você foi promovido para o próximo jogo.\nFique perto da tela e aguarde a seleção.', templateVariables: {} };
   }
   if (input.kind === 'STATION_ADMITTED') {
-    return { body: `You're admitted to the next ${game} match. Stay near the screen.`, templateVariables: { '1': game } };
+    return { body: `You're admitted to the next ${game} match.\nStay near the screen.`, templateVariables: { '1': game } };
   }
   if (input.kind === 'STATION_OVERFLOW') {
-    return { body: `This match is full. Your coin is still held and you are number ${position} for the next game.`, templateVariables: { '1': position } };
+    return { body: `This match is full.\nYour coin is still held and you are number ${position} for the next game.`, templateVariables: { '1': position } };
   }
   if (input.kind === 'STATION_CALL_NOW') {
     return { body: `Call ${callNumber} now to join ${game}.`, templateVariables: { '1': callNumber, '2': game } };
   }
   if (input.kind === 'STATION_RESULTS') {
-    const balance = input.balance === null ? '' : ` Available balance: ${input.balance}.`;
-    const result = input.rank === null ? ' Results are on the screen.'
-      : input.won ? ' You won!' : ` You finished in place ${input.rank}.`;
+    const balance = input.balance === null ? '' : `\nAvailable balance: ${input.balance}.`;
+    const result = input.rank === null ? '\nResults are on the screen.'
+      : input.won ? '\nYou won!' : `\nYou finished in place ${input.rank}.`;
     return {
       body: `Your ${game} match is complete.${result}${balance}`,
       templateVariables: { '1': game, ...(input.balance === null ? {} : { '2': String(input.balance) }) },
     };
   }
-  return { body: "You're promoted for the next game. Stay near the screen and wait for selection.", templateVariables: {} };
+  return { body: "You're promoted for the next game.\nStay near the screen and wait for selection.", templateVariables: {} };
 }
 
 export class ArcadeService {

@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { twimlGatherRoomCode, twimlConnectRelay, twimlSayAndHangup } from '../server/twiml';
+import { twimlGatherRoomCode, twimlConnectRelay, twimlMessage, twimlSayAndHangup } from '../server/twiml';
+
+describe('twimlMessage',()=>{
+  it('preserves plain-text line breaks while escaping XML',()=>{
+    expect(twimlMessage('Line one\nLine two & safe')).toContain('<Message>Line one\nLine two &amp; safe</Message>');
+  });
+});
 
 describe('twimlSayAndHangup', () => {
   it('escapes spoken text and applies the requested locale', () => {

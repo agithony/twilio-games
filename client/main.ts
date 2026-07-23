@@ -134,7 +134,7 @@ function paintGauge(snap: import('../shared/types').WorldSnapshot | null): void 
 lobbyEl.style.display = 'none';   // legacy overlay retired; the Screens overlay handles pre/post-race
 // SSB-style front-end (lobby → car grid → map select → results). Host actions go back to the server.
 const screens = new Screens(document.getElementById('app')!, {
-  onAdvance: () => { conn.advance(); },
+  onAdvance: () => { if (!stationDisplay.active || flowPhase !== 'results') conn.advance(); },
   onBack: () => conn.back(),
 }, locale);
 
@@ -155,7 +155,7 @@ let lastLobbyPlayerCount = 0;     // Track player count to detect new joins
 let displayIsPlaying = false;
 // Current pre-race phase + map choices, tracked from server messages so number-key input knows
 // whether a typed digit means "pick car N" or "pick map N".
-let flowPhase: 'lobby' | 'car_select' | 'map_select' | 'other' = 'lobby';
+let flowPhase: 'lobby' | 'car_select' | 'map_select' | 'results' | 'other' = 'lobby';
 let flowMaps: string[] = [];
 let typedDigits = '';
 let typedPhase: 'car_select' | 'map_select' | null = null;   // the phase when accumulation STARTED
@@ -295,7 +295,7 @@ conn.onSelectState((m) => {
 let lastBoard: { map: string | null; entries: GlobalEntry[] } | null = null;
 conn.onResults((m) => {
   stationEngineStateReady = true; maybeMarkStationReady();
-  raceLive = false; flowPhase = 'other'; const epoch = ++flowEpoch; big.textContent = '';
+  raceLive = false; flowPhase = 'results'; const epoch = ++flowEpoch; big.textContent = '';
   getMusicManager().switchContext('leaderboard');
   startAttract();
   // Render with the cached board if it's for THIS map (so a repeat broadcast doesn't strip it back to
@@ -506,7 +506,7 @@ function boot() {
   });
   addEventListener('pagehide', stopVoiceNumberUpdates, { once: true });
   void fetch('/api/arcade/config/public').then(r => r.ok ? r.json() : null).then(async cfg => {
-    if (!cfg || cfg.arcade?.mode === 'off' || typeof cfg.arcade?.cabinetId !== 'string') return;
+    if (!cfg || stationDisplay.active || cfg.arcade?.mode === 'off' || typeof cfg.arcade?.cabinetId !== 'string') return;
     const qr = await QRCode.toDataURL(stationJoinUrl(cfg.arcade.cabinetId, locale), {
       width: 520, margin: 1, color: { dark: '#000D25', light: '#FFFFFF' }, errorCorrectionLevel: 'M',
     });

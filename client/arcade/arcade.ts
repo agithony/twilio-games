@@ -1160,7 +1160,6 @@ function stationDeadline(view=state.operatorStation):string|null{
   if(view.station.phase==='GAME_SELECTION')return view.round.selectionEndsAt;
   if(view.station.phase==='LOCKED')return view.round.lockedEndsAt;
   if(view.station.phase==='LAUNCHING'&&view.match?.launchRequestedAt)return new Date(Date.parse(view.match.launchRequestedAt)+(state.adminConfig?.station.timings.launchTimeoutSeconds??120)*1000).toISOString();
-  if(view.station.phase==='RESULTS'&&view.round.resultsAt)return new Date(Date.parse(view.round.resultsAt)+(state.adminConfig?.station.timings.resultsSeconds??10)*1000).toISOString();
   return null;
 }
 

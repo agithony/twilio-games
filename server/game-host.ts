@@ -19,6 +19,8 @@ export interface HostContext {
   myPlace: number | null;         // during/after a race, the caller's place
   myFinishTime?: number | null;   // results screen: caller's finish time in seconds (null/0 = DNF/unknown)
   racerCount: number;
+  nameLocked?: boolean;
+  stationManaged?: boolean;
   // ── results-screen extras (for the post-race recap) ──
   raceStandings?: { name: string; place: number; time: number | null; finished: boolean }[];   // current race results
   leaderboardTop?: { name: string; time: number }[];    // current track's historical best times
@@ -135,7 +137,9 @@ export async function hostTurn(
   llm: LlmClient, ctx: HostContext, history: LlmTurn[], locale: SupportedLocale = DEFAULT_LOCALE,
 ): Promise<string | null> {
   if (!llm.enabled) return null;
-  const reply = await llm.respond(buildSystemPrompt(ctx, locale), history, HOST_TOOLS);
+  const tools=HOST_TOOLS.filter(tool=>!(ctx.nameLocked&&tool.name==='set_name')
+    && !(ctx.stationManaged&&['results','finished'].includes(ctx.phase)&&tool.name==='start_race'));
+  const reply = await llm.respond(buildSystemPrompt(ctx, locale), history, tools);
   // Execute the tool calls (side effects: pick car/map, set name, start) — we still run them for
   // their game effect even if we don't speak their confirmation.
   const confirmations = reply.toolCalls.map(tc => runTool(ctx, tc)).filter((s): s is string => !!s);
@@ -157,10 +161,10 @@ export async function hostTurn(
 function runTool(ctx: HostContext, tc: ToolCall): string | null {
   const argName = typeof tc.args.name === 'string' ? tc.args.name : '';
   switch (tc.name) {
-    case 'set_name':   return argName ? ctx.setName(argName) : null;
+    case 'set_name':   return !ctx.nameLocked&&argName ? ctx.setName(argName) : null;
     case 'select_car': return ctx.phase === 'car_select' ? ctx.selectCarByName(argName) : null;
     case 'select_map': return ctx.phase === 'map_select' ? ctx.selectMapByName(argName) : null;
-    case 'start_race': return ctx.startRace();
+    case 'start_race': return ctx.stationManaged&&['results','finished'].includes(ctx.phase)?null:ctx.startRace();
     default:           return null;
   }
 }

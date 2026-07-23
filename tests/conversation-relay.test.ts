@@ -174,6 +174,24 @@ describe('ConversationRelayAdapter', () => {
     expect(a.boundPlayerId).toBe('p1');
   });
 
+  it('uses an authoritative station name without asking for it again', () => {
+    const said: string[] = [];const names: string[] = [];
+    const room = {
+      addPlayer: (name:string) => { names.push(name);return { playerId:'p1',lane:0 }; },
+      applyIntent: () => undefined,removePlayer: () => undefined,
+    };
+    const adapter = new ConversationRelayAdapter({ findOrCreateRoom: () => room,say:text=>said.push(text),phaseOf:()=> 'lobby' });
+    adapter.setAuthoritativeName('Ada');
+    adapter.handleMessage(JSON.stringify({ type:'setup',callSid:'CA-known',from:'+15551234567',customParameters:{roomCode:'4821'} }));
+    expect(names).toEqual(['Ada']);
+    expect(said.join(' ').toLowerCase()).not.toContain('your name');
+    said.length=0;
+    adapter.handleMessage(JSON.stringify({type:'prompt',voicePrompt:'help',last:true}));
+    expect(said.join(' ').toLowerCase()).not.toContain('your name');
+    adapter.handleMessage(JSON.stringify({type:'prompt',voicePrompt:'call me Mallory',last:true}));
+    expect(names).toEqual(['Ada']);
+  });
+
   it('speaks only numeric countdown + short go events to the caller', () => {
     const room = fakeRoom(); const said: string[] = [];
     const a = new ConversationRelayAdapter({ findOrCreateRoom: () => room, say: (t) => said.push(t) });

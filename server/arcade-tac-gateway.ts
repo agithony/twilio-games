@@ -7,6 +7,7 @@ export interface ArcadeTacClient {
   readonly memory: MemoryClient;
   setMessageHandler?(handler: ArcadeTacMessageHandler): void;
   processWebhook?(payload: unknown, idempotencyToken?: string): Promise<void>;
+  syncProfileName?(input: { profileId: string; phoneNumber: string; firstName: string; locale: 'en-US' | 'pt-BR' }): Promise<void>;
   shutdown(): void;
 }
 
@@ -153,6 +154,11 @@ export class ArcadeTacGateway {
     }
   }
 
+  async syncProfileName(input: { profileId: string; phoneNumber: string; firstName: string; locale: 'en-US' | 'pt-BR' }): Promise<void> {
+    if(!this.client?.syncProfileName)throw new Error('Conversation Memory profile sync is unavailable');
+    await this.client.syncProfileName(input);
+  }
+
   private reconcile(): Promise<void> {
     if (this.stopped) return Promise.resolve();
     // ConfigStore publishes synchronously after replacing its snapshot, so mode-off is observed
@@ -230,6 +236,8 @@ async function createDefaultTacClient(): Promise<ArcadeTacClient> {
   tac.registerChannel(sms);
   if (whatsappChannel) tac.registerChannel(whatsappChannel);
   let handler: ArcadeTacMessageHandler | null = null;
+  const syncedProfileNames=new Map<string,string>();
+  const profileNameSyncs=new Map<string,{fingerprint:string;task:Promise<void>}>();
   const inFlight = new Set<Promise<void>>();
   const callbackFailures: unknown[] = [];
   tac.onMessageReady(async ({
@@ -318,6 +326,25 @@ async function createDefaultTacClient(): Promise<ArcadeTacClient> {
   return {
     memory,
     setMessageHandler: next => { handler = next; },
+    syncProfileName: async input => {
+      const fingerprint=JSON.stringify([input.firstName,input.locale]);
+      if(syncedProfileNames.get(input.profileId)===fingerprint)return;
+      const pending=profileNameSyncs.get(input.profileId);
+      if(pending?.fingerprint===fingerprint){await pending.task;return;}
+      const prior=pending?.task??Promise.resolve();
+      const task=prior.catch(()=>undefined).then(async()=>{
+        if(syncedProfileNames.get(input.profileId)===fingerprint)return;
+        await memory.createObservation(
+          input.profileId,JSON.stringify({firstName:input.firstName,locale:input.locale}),
+          'twilio-games-player-profile',
+        );
+        syncedProfileNames.set(input.profileId,fingerprint);
+      }).finally(()=>{
+        if(profileNameSyncs.get(input.profileId)?.task===task)profileNameSyncs.delete(input.profileId);
+      });
+      profileNameSyncs.set(input.profileId,{fingerprint,task});
+      await task;
+    },
     processWebhook: (payload, _idempotencyToken) => {
       const run = webhookQueue.then(
         () => processWebhook(payload),

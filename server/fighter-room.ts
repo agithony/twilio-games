@@ -38,7 +38,7 @@ export class FighterRoom {
     this.players = this.players.filter((player) => player.playerId !== id);
     this.voiceCommands.delete(id);
     if (!this.players.length) { this.phase = 'lobby'; this.world = null; this.selectedMap = null; this.aiFighterId = null; }
-    else if (this.phase === 'loading' || this.phase === 'intro' || this.phase === 'fight' || this.phase === 'countdown' || this.phase === 'victory' || this.phase === 'results') {
+    else if (this.phase === 'loading' || this.phase === 'intro' || this.phase === 'fight' || this.phase === 'countdown' || this.phase === 'victory') {
       this.phase = 'fighter_select'; this.world = null; this.selectedMap = null; this.aiFighterId = null;
     }
   }

@@ -395,7 +395,6 @@ export class ArcadeStationRuntime {
       if (match) this.onMatchRemoved?.(match.game, match.engineRoomCode);
       return result;
     }
-    if (transition.phase === 'RESULTS') return this.service.advanceStationResults(common);
     return Promise.reject(new Error(`unsupported scheduled station phase ${transition.phase}`));
   }
 
@@ -567,10 +566,6 @@ function nextStationTransition(
     const match = aggregate.station.activeMatchId ? aggregate.matches[aggregate.station.activeMatchId] : undefined;
     timestamp = match?.launchRequestedAt
       ? new Date(Date.parse(match.launchRequestedAt) + config.station.timings.launchTimeoutSeconds * 1000).toISOString()
-      : null;
-  } else if (aggregate.station.phase === 'RESULTS') {
-    timestamp = round.resultsAt
-      ? new Date(Date.parse(round.resultsAt) + config.station.timings.resultsSeconds * 1000).toISOString()
       : null;
   }
   if (!timestamp) return null;

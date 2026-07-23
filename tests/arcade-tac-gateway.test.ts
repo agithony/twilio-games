@@ -192,6 +192,7 @@ describe('ArcadeTacGateway', () => {
     const processed: Array<{ payload: unknown; token?: string }> = [];
     let installedHandler = false;
     let failWebhook = false;
+    const syncedNames: string[] = [];
     const client: ArcadeTacClient = {
       memory: {} as MemoryClient,
       setMessageHandler: () => { installedHandler = true; },
@@ -199,6 +200,7 @@ describe('ArcadeTacGateway', () => {
         if (failWebhook) throw new Error('temporary Orchestrator failure');
         processed.push({ payload, ...(token ? { token } : {}) });
       },
+      syncProfileName: async input => { syncedNames.push(input.firstName); },
       shutdown: () => undefined,
     };
     const gateway = new ArcadeTacGateway({ configStore: store, events, createClient: async () => client });
@@ -214,6 +216,8 @@ describe('ArcadeTacGateway', () => {
 
     expect(installedHandler).toBe(true);
     expect(gateway.ownsMessaging()).toBe(true);
+    await gateway.syncProfileName({profileId:'mem_profile_1',phoneNumber:'+14155550199',firstName:'Ada',locale:'en-US'});
+    expect(syncedNames).toEqual(['Ada']);
     await gateway.processWebhook({ eventType: 'COMMUNICATION_CREATED' }, 'token-1');
     expect(processed).toEqual([{
       payload: { eventType: 'COMMUNICATION_CREATED' }, token: 'token-1',

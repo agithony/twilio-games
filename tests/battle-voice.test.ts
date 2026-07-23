@@ -99,6 +99,15 @@ describe('BattleVoiceSession', () => {
     expect(said.length).toBeGreaterThan(0);   // greeting spoken
   });
 
+  it('uses an authoritative station name without asking for it again', () => {
+    const {deps,log,said}=fakeDeps({snapshot:()=>battleSnap({phase:'lobby',myName:'Ada'})});
+    const session=new BattleVoiceSession(deps);session.setAuthoritativeName('Ada');session.handleMessage(setup());
+    expect(log).toContain('join 4821 Ada');
+    expect(said.join(' ').toLowerCase()).not.toContain('your name');
+    session.handleMessage(prompt('call me Mallory'));
+    expect(log).not.toContain('name Mallory');
+  });
+
   it('ignores a repeated setup frame on the same live session', () => {
     const { deps, log, said } = fakeDeps();
     const s = new BattleVoiceSession(deps);

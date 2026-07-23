@@ -90,6 +90,9 @@ export interface ArcadeApiOptions {
   readonly displayToken?: string;
   readonly fallbackVoiceNumber?: string;
   readonly messagingCapabilities?: Readonly<{ sms: boolean; whatsapp: boolean }>;
+  readonly messagingProfileNameReady?: (identity: {
+    profileId: string; firstName: string; locale: 'en-US' | 'pt-BR'; phoneNumber: string;
+  }) => void;
   readonly inboundMessagingRateLimits?: Readonly<{
     addressLimit?: number;
     addressWindowMs?: number;
@@ -126,6 +129,7 @@ export class ArcadeApi {
   private readonly displayToken: Buffer;
   private readonly fallbackVoiceNumber: string | null;
   private readonly messagingCapabilities: Readonly<{ sms: boolean; whatsapp: boolean }>;
+  private readonly messagingProfileNameReady?: ArcadeApiOptions['messagingProfileNameReady'];
   private readonly inboundMessagingRateLimits: Readonly<{
     addressLimit: number;
     addressWindowMs: number;
@@ -137,6 +141,7 @@ export class ArcadeApi {
   private readonly messagingProfilesByAddress = new Map<string, string>();
   private unsubscribeStationCache: (() => void) | null = null;
   private readonly stationVoiceCalls = new Map<string, { callSid: string; readyEntryId: string }>();
+  private readonly stationVoiceConnections = new Map<string, string>();
   private abortStationEngine: ((game: 'racer' | 'monsters' | 'fighter', roomCode: string) => void) | null = null;
   private started = false;
   private stopped = false;
@@ -151,6 +156,7 @@ export class ArcadeApi {
     this.tacStatus = options.tacStatus;
     this.tacRequired = options.tacRequired === true;
     this.playerRuntime = options.playerRuntime;
+    this.messagingProfileNameReady = options.messagingProfileNameReady;
     this.now = options.now ?? Date.now;
     this.displayToken = Buffer.from(options.displayToken?.trim() ?? '', 'utf8');
     const fallbackVoiceNumber = options.fallbackVoiceNumber?.trim() ?? '';
@@ -345,6 +351,8 @@ export class ArcadeApi {
         this.messagingProfilesByAddress.delete(normalizedAddress);
       }
     }
+    const memoryIdentity = await this.messagingMemoryIdentity(providerAddress);
+    if (memoryIdentity) this.messagingProfileNameReady?.(memoryIdentity);
     return result.reply;
   }
 
@@ -379,6 +387,34 @@ export class ArcadeApi {
     });
     if (attached) this.messagingProfilesByAddress.set(normalizedAddress, profileId);
     return attached;
+  }
+
+  async messagingMemoryIdentity(from: string): Promise<{
+    profileId: string;
+    firstName: string;
+    locale: 'en-US' | 'pt-BR';
+    phoneNumber: string;
+  } | null> {
+    if (!this.playerRuntime) return null;
+    const normalizedAddress = from.trim().replace(/^whatsapp:/i, '');
+    const state = await (await this.playerRuntime.getStateStoreForCleanup()).read();
+    const channel = from.trim().toLowerCase().startsWith('whatsapp:') ? 'whatsapp' : 'sms';
+    const addresses = Object.values(state.channelAddresses).filter(candidate => (
+      candidate.normalizedAddress === normalizedAddress
+    ));
+    const address = addresses.find(candidate => candidate.channel === channel) ?? addresses[0];
+    const player = address ? state.players[address.playerId] : undefined;
+    const draft = address ? state.messagingDrafts[address.playerId] : undefined;
+    const firstName = player?.lead?.firstName.trim()
+      || (draft?.step === 'COMPLETE' ? draft.firstName?.trim() : '')
+      || '';
+    if (!player?.conversationProfileId || !firstName) return null;
+    return {
+      profileId: player.conversationProfileId,
+      firstName: firstName.slice(0, 50),
+      locale: address!.preferredLocale === 'pt-BR' ? 'pt-BR' : 'en-US',
+      phoneNumber: normalizedAddress,
+    };
   }
 
   async processMessagingStatusCallback(input: {
@@ -461,8 +497,19 @@ export class ArcadeApi {
     game: string;
     roomCode: string;
   }): Promise<boolean> {
+    return (await this.resolveStationVoiceSetup(input)) !== null;
+  }
+
+  async resolveStationVoiceSetup(input: {
+    callSid: string;
+    readyEntryId: string;
+    matchId: string;
+    launchGeneration: number;
+    game: string;
+    roomCode: string;
+  }): Promise<{ firstName: string | null } | null> {
     if (!input.callSid || !input.readyEntryId || !input.matchId
-      || !Number.isSafeInteger(input.launchGeneration) || input.launchGeneration < 1) return false;
+      || !Number.isSafeInteger(input.launchGeneration) || input.launchGeneration < 1) return null;
     try {
       const resources = await this.requirePlayerRuntime().getForCleanup();
       const state = await resources.store.read();
@@ -471,7 +518,7 @@ export class ArcadeApi {
       const match = station?.activeMatchId ? state.stationMatches[station.activeMatchId] : undefined;
       const entry = state.stationReadyEntries[input.readyEntryId];
       const activeCall = entry ? this.stationVoiceCalls.get(entry.playerId) : undefined;
-      return config.arcade.mode !== 'off'
+      const valid = config.arcade.mode !== 'off'
         && Boolean(station && ['LAUNCHING', 'PLAYING'].includes(station.phase))
         && match?.id === input.matchId
         && match.launchGeneration === input.launchGeneration
@@ -481,26 +528,35 @@ export class ArcadeApi {
         && entry?.status !== 'LEFT'
         && activeCall?.callSid === input.callSid
         && activeCall.readyEntryId === input.readyEntryId;
+      if (!valid || !entry) return null;
+      const firstName = state.players[entry.playerId]?.lead?.firstName.trim()
+        || (state.messagingDrafts[entry.playerId]?.step === 'COMPLETE'
+          ? state.messagingDrafts[entry.playerId]?.firstName?.trim()
+          : '')
+        || null;
+      return { firstName: firstName ? firstName.slice(0, 20) : null };
     } catch {
-      return false;
+      return null;
     }
   }
 
-  stationVoiceParticipantConnected(callSid: string, readyEntryId: string, enginePlayerId: string): void {
+  stationVoiceParticipantConnected(callSid: string, readyEntryId: string, enginePlayerId: string, connectionId: string): void {
     const active = [...this.stationVoiceCalls.values()].find(call => (
       call.callSid === callSid && call.readyEntryId === readyEntryId
     ));
     if (!active) return;
+    this.stationVoiceConnections.set(readyEntryId, connectionId);
     void this.playerRuntime?.getForCleanup().then(resources => {
       resources.station.markParticipantConnected(readyEntryId, enginePlayerId);
     }).catch(() => undefined);
   }
 
-  stationVoiceParticipantDisconnected(callSid: string, readyEntryId: string): void {
+  stationVoiceParticipantDisconnected(callSid: string, readyEntryId: string, connectionId: string): void {
     const active = [...this.stationVoiceCalls.values()].find(call => (
       call.callSid === callSid && call.readyEntryId === readyEntryId
     ));
-    if (!active) return;
+    if (!active || this.stationVoiceConnections.get(readyEntryId) !== connectionId) return;
+    this.stationVoiceConnections.delete(readyEntryId);
     void this.playerRuntime?.getForCleanup().then(resources => {
       resources.station.markParticipantDisconnected(readyEntryId);
     }).catch(() => undefined);
@@ -516,6 +572,7 @@ export class ArcadeApi {
     for (const [playerId, activeCall] of this.stationVoiceCalls) {
       if (activeCall.callSid === callSid) {
         this.stationVoiceCalls.delete(playerId);
+        this.stationVoiceConnections.delete(activeCall.readyEntryId);
         void this.playerRuntime?.getForCleanup().then(resources => (
           resources.station.markParticipantDisconnected(activeCall.readyEntryId)
         )).catch(() => undefined);
@@ -1592,7 +1649,7 @@ export class ArcadeApi {
       await resources.service.resetStation(common);
       await resources.station.flush();
     }
-    if (activeMatch && ['complete', 'fail', 'reset'].includes(action)) {
+    if (activeMatch && ['complete', 'advance', 'fail', 'reset'].includes(action)) {
       this.abortLiveStationEngine(activeMatch.game, activeMatch.engineRoomCode);
       await this.refreshStationRoomCache();
     }

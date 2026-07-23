@@ -803,7 +803,7 @@ addEventListener('keydown', event => {
   const key = event.key.toLowerCase(), command = keyCommands[key]; let handled = false;
   if (state?.phase === 'fight' && command) { connection.command(command); handled = true; }
   else if (key === 'p') { toggleLocalPlayer(); handled = true; }
-  else if (key === 'enter' && isHost) { connection.advance(); handled = true; }
+  else if (key === 'enter' && isHost && (state?.phase !== 'results' || !stationDisplay.active)) { connection.advance(); handled = true; }
   else if (key === 'backspace' && isHost) { connection.back(); handled = true; }
   else if (/^\d$/.test(key) && (state?.phase === 'fighter_select' || state?.phase === 'map_select')) { handleNumericSelection(key); handled = true; }
   if (handled) event.preventDefault();
@@ -828,7 +828,7 @@ addEventListener('resize', () => {
   camera.aspect = size.width / size.height; updateCameraProjection(); renderer.setSize(size.width, size.height);
   if (mapModel && customMapStatic) captureMapBackdrop();
 });
-rematch.addEventListener('click', () => connection.advance());
+rematch.addEventListener('click', () => { if (!stationDisplay.active) connection.advance(); });
 for (const link of document.querySelectorAll<HTMLAnchorElement>('.game-home, #result a[href="/"]')) {
   link.addEventListener('click', event => {
     if (stationDisplay.active) return;

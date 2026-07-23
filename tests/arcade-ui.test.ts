@@ -223,6 +223,7 @@ describe('Arcade browser UI', () => {
     expect(script).toContain('renderRuntimeSummary');
     expect(script).toContain("voiceNumbers={'en-US':voiceEn||null,'pt-BR':voicePt||null}");
     expect(racerMain).toContain('stationJoinUrl(cfg.arcade.cabinetId, locale)');
+    expect(racerMain).toContain('stationDisplay.active || cfg.arcade?.mode === \'off\'');
     expect(racerScreens).toContain('screen.lobby.coinQrCaption');
   });
 

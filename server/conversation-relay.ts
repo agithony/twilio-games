@@ -94,7 +94,14 @@ export class ConversationRelayAdapter {
   // (caller interrupted or spoke again), the stale reply is DROPPED instead of spoken over them.
   private turnEpoch = 0;
   private commandLocale: SupportedLocale = DEFAULT_LOCALE;
+  private authoritativeName: string | null = null;
+  private stationManaged=false;
   constructor(private deps: AdapterDeps) {}
+
+  setAuthoritativeName(name: string | null): void {
+    this.authoritativeName = name?.trim().slice(0, 50) || null;
+  }
+  setStationManaged(active:boolean):void{this.stationManaged=active;}
 
   /** The caller's bound player id (null until setup binds them) — for event targeting. */
   get boundPlayerId(): string | null { return this.playerId; }
@@ -162,7 +169,7 @@ export class ConversationRelayAdapter {
         const room = this.deps.findOrCreateRoom(code);
         if (!room) { console.log(`[CR] room ${code} not found → unbound`); return; }
         const res = this.deps.resumePlayer?.(msg.callSid, code)
-          ?? room.addPlayer(playerName(msg.from, this.commandLocale));
+          ?? room.addPlayer(this.authoritativeName ?? playerName(msg.from, this.commandLocale));
         if ('error' in res) {
           console.log(`[CR] addPlayer rejected: ${res.error} → unbound (caller cannot drive)`);
           this.deps.say?.(createTranslator(this.commandLocale, RACER_MESSAGES)('voice.roomFull'));
@@ -173,17 +180,22 @@ export class ConversationRelayAdapter {
         // Register for this room's game events + greet the caller. Send each greeting SENTENCE as its
         // own utterance so Relay TTS pauses naturally between them (one long string read run-on).
         this.deps.register?.(code, this);
-        for (const line of greetingLines(this.commandLocale)) this.deps.say?.(line);
+        const greetings = greetingLines(this.commandLocale);
+        for (const line of this.authoritativeName ? greetings.slice(0, -1) : greetings) this.deps.say?.(line);
         break;
       }
       case 'prompt': {
+        if(msg.last&&this.stationManaged&&this.roomCode&&['results','finished'].includes(this.deps.phaseOf?.(this.roomCode)??'')){
+          this.firedIntents=[];this.deps.say?.(createTranslator(this.commandLocale,RACER_MESSAGES)('voice.waitOperator'));break;
+        }
         if (msg.last && isHelpRequest(msg.voicePrompt, this.commandLocale)) {
           this.firedIntents = [];
           const phase = this.roomCode ? this.deps.phaseOf?.(this.roomCode) : null;
           const key = phase === 'car_select' ? 'voice.helpCar'
             : phase === 'map_select' ? 'voice.helpMap'
               : phase === 'results' || phase === 'finished' ? 'voice.helpResults'
-                : phase === 'racing' || phase === 'countdown' ? 'voice.help' : 'voice.helpLobby';
+                : phase === 'racing' || phase === 'countdown' ? 'voice.help'
+                  : this.authoritativeName ? 'voice.helpLobbyNamed' : 'voice.helpLobby';
           this.deps.say?.(createTranslator(this.commandLocale, RACER_MESSAGES)(key));
           break;
         }
