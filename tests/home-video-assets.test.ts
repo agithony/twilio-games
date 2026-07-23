@@ -29,8 +29,8 @@ describe('home preview media and standalone catalog', () => {
     expect(boxes.indexOf('moov')).toBeLessThan(boxes.indexOf('mdat'));
   });
 
-  it('uses exact ConversationRelay product copy in fallback and both locales', () => {
-    const english = 'Powered by Twilio ConversationRelay. Your voice is the controller.';
+  it('uses exact Conversation Relay product copy in fallback and both locales', () => {
+    const english = 'Powered by Twilio Conversation Relay. Your voice is the controller.';
     const portuguese = 'Com tecnologia Twilio ConversationRelay. Sua voz é o controle.';
     expect(html).toContain(`<p id="standaloneDescription">${english}</p>`);
     expect(home).toContain(`standaloneDescription: '${english}'`);

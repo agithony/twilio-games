@@ -10,7 +10,7 @@ const EN_US = {
   'player.default': 'Player',
   'lobby.waitingChallengers': 'Waiting for challengers…',
   'lobby.chooseMonster': 'Choose your monster ▶',
-  'lobby.anyoneCanJoin': 'Anyone can join.',
+  'lobby.anyoneCanJoin': '2 players max',
   'lobby.waitingHost': 'Waiting for the host to start…',
   'lobby.phoneUnset': 'set GAME_PHONE_NUMBER',
   'lobby.qrAlt': 'Scan to call and join',
