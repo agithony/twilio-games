@@ -1263,7 +1263,8 @@ export class HttpServer {
         canStartBattle,
         canRematch: room.canRematch,
         foeName: null, foeMonsterName: null, foeMonsterType: null, myHp: null, myMaxHp: null, foeHp: null, foeMaxHp: null,
-        myPotions: 2, turn: null, activeSide: null, activeMenu: 'root', whoseTurn: null, myMoves: [], winnerName: res?.winnerName ?? null,
+        myPotions: 2, myGuarding: false, myTaunted: false, foeGuarding: false, foeTaunted: false,
+        turn: null, activeSide: null, activeMenu: 'root', whoseTurn: null, myMoves: [], winnerName: res?.winnerName ?? null,
       };
     }
     const me = side === 'a' ? snap.a : snap.b;
@@ -1280,6 +1281,8 @@ export class HttpServer {
       foeMonsterType: foe.type,
       myHp: me.hp, myMaxHp: me.maxHp, foeHp: foe.hp, foeMaxHp: foe.maxHp,
       myPotions: side === 'a' ? snap.potions.a : snap.potions.b,
+      myGuarding: me.guarding, myTaunted: me.taunted,
+      foeGuarding: foe.guarding, foeTaunted: foe.taunted,
       turn: snap.turn,
       activeSide,
       activeMenu: room.activeMenu(),
@@ -1301,7 +1304,9 @@ export class HttpServer {
       phase: s.phase, monsters: s.monsterNames, myName: authoritativeName??s.myName,
       myMonster: s.myMonsterName, foeMonster: s.foeMonsterName,
       myHp: s.myHp, myMaxHp: s.myMaxHp, foeHp: s.foeHp, foeMaxHp: s.foeMaxHp,
-      myPotions: s.myPotions, whoseTurn: s.whoseTurn, moves: s.myMoves.map(m => m.name),
+      myPotions: s.myPotions, myGuarding: s.myGuarding, myTaunted: s.myTaunted,
+      foeGuarding: s.foeGuarding, foeTaunted: s.foeTaunted,
+      whoseTurn: s.whoseTurn, moves: s.myMoves.map(m => m.name),
       winnerName: s.winnerName,
       nameLocked,
       stationManaged,

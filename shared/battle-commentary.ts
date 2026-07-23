@@ -61,6 +61,11 @@ export function commentaryForBattleEvent(
     case 'guard':
       return line(GUARD, { who: monsterName(locale, ev.monsterName) });
 
+    case 'block':
+      return createTranslator(locale, MONSTERS_MESSAGES)('battle.eventBlock', {
+        monster: monsterName(locale, ev.monsterName),
+      });
+
     case 'item':
       return line(ITEM, {
         who: name(ev.by),

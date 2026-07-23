@@ -13,6 +13,7 @@ export function dwellForEvent(ev: BattleEvent): number {
     case 'damage':        return ev.crit ? 2200 : 1650;   // the hit + HP drop registers
     case 'effectiveness': return 2100;                    // "It's super effective!" lands
     case 'guard':         return 1600;
+    case 'block':         return 1700;
     case 'item':          return 1700;
     case 'taunt':         return 1800;
     case 'heal':          return 1100;

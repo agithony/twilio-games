@@ -113,6 +113,7 @@ describe('Arcade messaging commands', () => {
     expect(whatsapp.playerId).toBe(joined.playerId);
     const coin = await message(h.service, 'SM007', 'COIN');
     expect(coin.reply).toContain('position 1');
+    expect(coin.reply).toContain('When game voting opens, reply with: 1 = Voice Racer, 2 = Voice Monsters, 3 = Voice Fighter');
     expect(coin.reply.split('\n')).toHaveLength(3);
     expect(coin.reply).toContain('Watch the screen');
     expect(coin.reply).not.toContain('we will text');
@@ -151,6 +152,26 @@ describe('Arcade messaging commands', () => {
       expect(state.players[joined.playerId!]?.lead).toBeNull();
       expect(state.messagingDrafts[joined.playerId!]?.firstName).toBe('Ada');
     }
+  });
+
+  it('accepts standalone coin and money emojis as COIN on SMS and WhatsApp', async () => {
+    const h = await harness('coin_only', 'per_player', value => {
+      value.registration.termsAcknowledgementRequired = false;
+      value.coins.startingBalance = 20;
+    });
+    await message(h.service, 'EMOJI-JOIN', 'JOIN');
+    await message(h.service, 'EMOJI-NAME', 'Ada');
+    const emojis = ['🪙', '🪙️', '💰', '💵', '💴', '💶', '💷', '💸'];
+    for (const [index, emoji] of emojis.entries()) {
+      const channel = index % 2 === 0 ? 'sms' : 'whatsapp';
+      const result = await message(h.service, `EMOJI-COIN-${index}`, emoji, '+14155550199', channel);
+      expect(result.command).toBe('COIN');
+      expect(result.reply).toContain('When game voting opens');
+      await message(h.service, `EMOJI-LEAVE-${index}`, 'LEAVE', '+14155550199', channel);
+    }
+    const prose = await message(h.service, 'EMOJI-PROSE', 'here is a 🪙');
+    expect(prose.command).toBe('TEXT');
+    expect(h.store.snapshot().wallets[prose.playerId!]?.reservations.every(item => item.status === 'RELEASED')).toBe(true);
   });
 
   it('prompts legacy unnamed coin-only players before their next ready entry', async () => {
@@ -399,12 +420,15 @@ describe('Arcade messaging commands', () => {
     await message(h.service, 'SM-CHOICE-002B', 'YES');
     expect((await message(h.service, 'SM-CHOICE-003', 'RACER')).reply)
       .toContain('Game selection opens after recruiting');
-    await message(h.service, 'SM-CHOICE-004', 'COIN');
+    const coin = await message(h.service, 'SM-CHOICE-004', 'COIN');
+    expect(coin.reply).toContain('When game voting opens, reply with: 1 = Voice Racer, 2 = Voice Monsters, 3 = Voice Fighter');
     const recruiting = await h.service.getStation('ARCADE-01');
     await h.service.closeStationRecruiting({
       stationId: 'ARCADE-01', expectedRevision: recruiting!.station.revision,
       idempotencyKey: 'message-choice-close', authorization: h.operatorAuthorization,
     });
+    const votePrompt = await message(h.service, 'SM-CHOICE-004B', 'COIN');
+    expect(votePrompt.reply).toContain('Vote now by replying with: 1 = Voice Racer, 2 = Voice Monsters, 3 = Voice Fighter');
     const first = await message(h.service, 'SM-CHOICE-005', '1');
     expect(first.reply).toContain('Choice saved: Voice Racer');
     expect(first.reply).toContain('1 = Voice Racer, 2 = Voice Monsters, 3 = Voice Fighter');

@@ -97,7 +97,7 @@ export function createStationDisplay(): StationDisplay {
       if (engineReady && sameLaunch && latest.station.phase === 'LAUNCHING' && !acknowledged) {
         await acknowledge(latest.etag, matchId, generation, displayToken);
         acknowledged = true;
-      } else if (!sameLaunch || !['LAUNCHING', 'PLAYING', 'RESULTS'].includes(latest.station.phase)) {
+      } else if (!sameLaunch || !['LAUNCHING', 'PLAYING'].includes(latest.station.phase)) {
         location.replace(homeUrl.toString());
       }
     } catch (cause) {

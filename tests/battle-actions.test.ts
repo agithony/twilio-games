@@ -1,6 +1,5 @@
-// The four turn ACTIONS beyond attacking: FIGHT (a move), GUARD (brace — halve the next hit + a small
-// heal), ITEM (Potion — heal, limited per battle), TAUNT (rattle the foe → its attack is less
-// accurate this turn). Pure sim, fully testable.
+// The four turn actions beyond attacking: GUARD blocks at least half, Potion restores full health,
+// and TAUNT makes the foe's next attack almost always miss. Pure sim, fully testable.
 import { describe, it, expect } from 'vitest';
 import { BattleWorld } from '../shared/battle-world';
 
@@ -40,8 +39,26 @@ describe('turn actions: FIGHT / GUARD / ITEM / TAUNT', () => {
     const aHit = hitOnB(plain);
     const guardHit = hitOnB(guarded);
     expect(guardHit).toBeLessThan(aHit);
-    expect(guardHit).toBeLessThanOrEqual(Math.ceil(aHit / 2) + 1);   // ~half
+    expect(guardHit).toBeLessThanOrEqual(Math.floor(aHit / 2));
     expect(dmgGuarded).toBeGreaterThanOrEqual(0);
+  });
+
+  it('GUARD sometimes blocks the entire landed attack', () => {
+    let landed = 0, fullBlocks = 0, partialBlocks = 0;
+    for (let seed = 1; seed <= 300; seed++) {
+      const guarded = newBattle('embertail', 'shellback', seed);
+      aFightsBActs(guarded, 2, () => guarded.chooseAction('b', { kind: 'guard' }));
+      const events = guarded.drainEvents();
+      const blocked = events.some(event => event.kind === 'block' && event.on === 'b');
+      const damage = events.find(event => event.kind === 'damage' && event.on === 'b');
+      if (!blocked && (!damage || damage.kind !== 'damage')) continue;
+      landed++;
+      if (blocked) fullBlocks++;
+      else partialBlocks++;
+    }
+    expect(landed).toBeGreaterThan(250);
+    expect(fullBlocks).toBeGreaterThan(40);
+    expect(partialBlocks).toBeGreaterThan(100);
   });
 
   it('GUARD also heals a little (so bracing is not a wasted turn)', () => {
@@ -77,12 +94,13 @@ describe('turn actions: FIGHT / GUARD / ITEM / TAUNT', () => {
     w.chooseAction('b', { kind: 'item', item: 'potion' });
     const evs = w.drainEvents();
     expect(evs.some(e => e.kind === 'item' && e.by === 'b')).toBe(true);
-    expect(evs.some(e => e.kind === 'heal' && e.on === 'b')).toBe(true);
+    const heal = evs.find(e => e.kind === 'heal' && e.on === 'b');
+    expect(heal?.kind === 'heal' ? heal.amount : 0)
+      .toBe(before.b.maxHp - lowHp);
     expect(w.snapshot().potions.b).toBe(1);            // consumed one
   });
 
-  it('TAUNT emits an event and makes the taunted foe miss MORE often', () => {
-    // Across many seeds: when B taunts A, A's (strong) attack should whiff more than when B just fights.
+  it('TAUNT emits an event and makes the taunted foe almost always miss', () => {
     const missRate = (bTaunts: boolean) => {
       let swings = 0, misses = 0;
       for (let seed = 1; seed <= 300; seed++) {
@@ -101,6 +119,38 @@ describe('turn actions: FIGHT / GUARD / ITEM / TAUNT', () => {
     w0.chooseAction('a', { kind: 'fight', moveId: w0.snapshot().a.moves[0]!.id });
     w0.chooseAction('b', { kind: 'taunt' });
     expect(w0.drainEvents().some(e => e.kind === 'taunt' && e.by === 'b')).toBe(true);
-    expect(missRate(true)).toBeGreaterThan(missRate(false));   // taunt → foe whiffs more
+    expect(missRate(true)).toBeGreaterThan(0.9);
+    expect(missRate(true)).toBeLessThan(0.99);
+    expect(missRate(false)).toBeLessThan(0.35);
+  });
+
+  it('TAUNT persists until the next attack in the live sequential flow', () => {
+    let misses = 0;
+    for (let seed = 1; seed <= 200; seed++) {
+      const w = newBattle('shellback', 'psyclone', seed);
+      expect(w.takeAction('b', { kind: 'taunt' })).toBe(true);
+      w.drainEvents();
+      expect(w.takeAction('a', { kind: 'fight', moveId: w.snapshot().a.moves[3]!.id })).toBe(true);
+      if (w.drainEvents().some(event => event.kind === 'miss' && event.by === 'a')) misses++;
+    }
+    expect(misses).toBeGreaterThan(180);
+  });
+
+  it('paired GUARD and TAUNT remain active until an attack consumes them', () => {
+    const guarded = newBattle('embertail', 'shellback', 77);
+    guarded.chooseAction('a', { kind: 'item', item: 'potion' });
+    guarded.chooseAction('b', { kind: 'guard' });
+    expect(guarded.snapshot().b.guarding).toBe(true);
+    guarded.chooseAction('a', { kind: 'fight', moveId: guarded.snapshot().a.moves[2]!.id });
+    guarded.chooseAction('b', { kind: 'item', item: 'potion' });
+    expect(guarded.snapshot().b.guarding).toBe(false);
+
+    const taunted = newBattle('shellback', 'psyclone', 78);
+    taunted.chooseAction('a', { kind: 'guard' });
+    taunted.chooseAction('b', { kind: 'taunt' });
+    expect(taunted.snapshot().a.taunted).toBe(true);
+    taunted.chooseAction('a', { kind: 'fight', moveId: taunted.snapshot().a.moves[3]!.id });
+    taunted.chooseAction('b', { kind: 'guard' });
+    expect(taunted.snapshot().a.taunted).toBe(false);
   });
 });

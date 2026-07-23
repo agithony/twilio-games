@@ -57,8 +57,9 @@ describe('commentaryForBattleEvent', () => {
     expect(line.toLowerCase()).toMatch(/miss|whiff|dodge/);
   });
 
-  it('guard / item / taunt each get an informative line', () => {
+  it('guard / full block / item / taunt each get an informative line', () => {
     expect(commentaryForBattleEvent({ kind: 'guard', by: 'a', monsterName: 'Sparkmouse' }, ctx(), 0)!.toLowerCase()).toMatch(/brace|guard|defen/);
+    expect(commentaryForBattleEvent({ kind: 'block', on: 'a', monsterName: 'Sparkmouse' }, ctx(), 0)!.toLowerCase()).toContain('blocked');
     expect(commentaryForBattleEvent({ kind: 'item', by: 'a', item: 'potion', itemName: 'Potion' }, ctx(), 0)!.toLowerCase()).toMatch(/potion|heal|restore/);
     expect(commentaryForBattleEvent({ kind: 'taunt', by: 'a', monsterName: 'Sparkmouse', targetName: 'Galecoil' }, ctx(), 0)!.toLowerCase()).toMatch(/taunt|rattle|mind|aim|shaken/);
   });

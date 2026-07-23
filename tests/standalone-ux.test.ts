@@ -41,7 +41,8 @@ describe('standalone and station display UX', () => {
     const home = readClient('home.ts');
     const stationDisplay = readClient('station-display.ts');
     expect(html).toContain('id="persistentJoinQr"');
-    expect(home).toContain("station.phase==='ATTRACT'||station.phase==='RECRUITING'");
+    expect(home).toContain("station.phase==='ATTRACT'||station.phase==='RECRUITING'||station.phase==='RESULTS'");
+    expect(home).toContain("station.phase === 'RESULTS' ? station.nextReadyCount : station.currentReadyCount");
     expect(home).toContain("document.getElementById('persistentJoinQr')");
     expect(stationDisplay).toContain("setRailVisible(railMode !== 'hidden')");
   });

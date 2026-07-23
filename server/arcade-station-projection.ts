@@ -112,6 +112,13 @@ export function projectPublicStation(
   const overflowNextCount = match
     ? match.overflowReadyEntryIds.filter(id => aggregate.readyEntries[id]?.status === 'OVERFLOW').length
     : 0;
+  const overflowNext = match
+    ? match.overflowReadyEntryIds.map(id => aggregate.readyEntries[id])
+      .filter((entry): entry is StationReadyEntry => entry?.status === 'OVERFLOW')
+    : [];
+  const visibleRoster = aggregate.station.phase === 'RESULTS'
+    ? [...next, ...overflowNext].sort(compareReady)
+    : current;
   const launchDefinition = match
     ? PLAYABLE_ARCADE_GAMES.find(game => game.id === match.game)
     : undefined;
@@ -126,7 +133,7 @@ export function projectPublicStation(
     deadline: stationDeadline(aggregate),
     currentReadyCount: current.length,
     nextReadyCount: next.length + overflowNextCount,
-    roster: current.map((entry, index) => ({
+    roster: visibleRoster.map((entry, index) => ({
       position: index + 1,
       displayName: displayName(state, entry.playerId, index),
       status: entry.status,

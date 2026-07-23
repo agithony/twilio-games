@@ -16,14 +16,12 @@ export type BattlePhase = 'choosing' | 'resolving' | 'finished';
 const CRIT_CHANCE = 1 / 16;
 const CRIT_MULT = 1.5;
 
-// Non-attack actions. GUARD: halve the next hit + a small heal (bracing isn't a wasted turn). ITEM
-// (Potion): heal a chunk, limited per battle. TAUNT: rattle the foe so its attack is less accurate
-// this turn. Tuned to stay under the no-one-shot / no-stall balance the pacing tests pin.
-const GUARD_DAMAGE_MULT = 0.5;      // incoming hit halved while braced
+// Non-attack actions are deliberately strong enough to compete with spending a turn attacking.
 const GUARD_HEAL_FRAC = 0.08;       // + a small self-heal
-const POTION_HEAL_FRAC = 0.33;      // a Potion restores a third of max HP
+const GUARD_FULL_BLOCK_CHANCE = 0.25;
+const POTION_HEAL_FRAC = 1;         // a Potion restores the monster to full HP
 const POTIONS_PER_BATTLE = 2;
-const TAUNT_ACCURACY_PENALTY = 0.25;   // taunted attacker's hit chance drops by this (absolute)
+const TAUNTED_HIT_CHANCE = 0.05;    // taunt makes the foe's next damaging attack almost always miss
 
 export interface Combatant { id: string; name: string; monsterId: string; }
 
@@ -34,6 +32,8 @@ export interface CombatantState {
   hp: number; maxHp: number;
   moves: Move[];
   fainted: boolean;
+  guarding: boolean;
+  taunted: boolean;
 }
 
 export interface BattleSnapshot {
@@ -55,6 +55,7 @@ export type BattleEvent =
   | { kind: 'move_used'; by: Side; moveId: string; moveName: string }
   | { kind: 'miss'; by: Side; moveName: string }
   | { kind: 'damage'; on: Side; amount: number; hpLeft: number; crit: boolean }
+  | { kind: 'block'; on: Side; monsterName: string }
   | { kind: 'effectiveness'; on: Side; multiplier: number; label: string }
   | { kind: 'guard'; by: Side; monsterName: string }               // braced: next hit halved
   | { kind: 'item'; by: Side; item: ItemId; itemName: string }     // used a bag item (Potion)
@@ -182,8 +183,6 @@ export class BattleWorld {
 
     // PRE-PASS: apply the non-attack actions (guard/item/taunt) in commit order, BEFORE any swing, so
     // a guard is up when the attack lands and a taunt is felt this same turn.
-    this.a.guarding = false; this.b.guarding = false;
-    this.a.tauntedBy = false; this.b.tauntedBy = false;
     for (const f of order) this.applyPreAction(f, f === this.a ? this.b : this.a);
 
     // ATTACK PASS: only FIGHT actions swing (in the same commit order); a faint ends it immediately.
@@ -195,7 +194,7 @@ export class BattleWorld {
     }
 
     // clear per-turn state for the next turn (incl. commit stamps, so next turn's order is fresh)
-    for (const f of [this.a, this.b]) { f.action = null; f.committedAt = null; f.guarding = false; f.tauntedBy = false; }
+    for (const f of [this.a, this.b]) { f.action = null; f.committedAt = null; }
     this._turn++;
 
     this._phase = this._winner ? 'finished' : 'choosing';
@@ -269,7 +268,7 @@ export class BattleWorld {
     // ACCURACY: a high-power move can MISS (weak moves always land) — the risk/reward that gives a
     // weaker move a reason to exist. A TAUNT on the attacker lowers its accuracy this turn. Roll BEFORE
     // damage so a miss short-circuits cleanly + keeps the rng stream stable per swing.
-    const acc = moveAccuracy(move.power) - (attacker.tauntedBy ? TAUNT_ACCURACY_PENALTY : 0);
+    const acc = attacker.tauntedBy ? TAUNTED_HIT_CHANCE : moveAccuracy(move.power);
     if (this.rng.next() > acc) {
       this.events.push({ kind: 'miss', by: this.sideOf(attacker), moveName: move.name });
       attacker.tauntedBy = false;
@@ -277,12 +276,16 @@ export class BattleWorld {
     }
 
     const mult = typeMultiplier(move.type, defender.mon.type);
-    const { amount, crit } = this.damage(attacker.mon, defender.mon, move, mult, defender.guarding);
+    const { amount, crit, blocked } = this.damage(attacker.mon, defender.mon, move, mult, defender.guarding);
     defender.hp = Math.max(0, defender.hp - amount);
     if (defender.guarding) defender.guarding = false;
     attacker.tauntedBy = false;
 
     const onSide = this.sideOf(defender);
+    if (blocked) {
+      this.events.push({ kind: 'block', on: onSide, monsterName: defender.mon.name });
+      return;
+    }
     this.events.push({ kind: 'damage', on: onSide, amount, hpLeft: defender.hp, crit });
     const label = effectivenessLabel(mult);
     if (label) this.events.push({ kind: 'effectiveness', on: onSide, multiplier: mult, label });
@@ -298,7 +301,7 @@ export class BattleWorld {
    *   - STAB 1.5, so playing to your type matters,
    *   - a HARD CAP at HALF the defender's max HP per hit → one-shots are impossible (≥2 hits always),
    *     yet a strong super-effective combo can close a battle in 2 — lethal, not grindy. */
-  private damage(atkMon: Monster, defMon: Monster, move: Move, typeMult: number, guarded = false): { amount: number; crit: boolean } {
+  private damage(atkMon: Monster, defMon: Monster, move: Move, typeMult: number, guarded = false): { amount: number; crit: boolean; blocked: boolean } {
     const stab = move.type === atkMon.type ? 1.5 : 1;
     const ratio = Math.min(1.7, Math.max(0.5, atkMon.attack / defMon.defense));   // bounded
     const base = move.power * ratio * 0.26 + 4;        // tuned (roster sim): punchy 2–3-hit battles
@@ -306,10 +309,13 @@ export class BattleWorld {
     // CRIT: a RARE roll multiplies the hit — applied BEFORE the cap, so a crit pushes toward the
     // half-HP ceiling but still can NEVER one-shot. Returns the flag so the UI/commentator can react.
     const crit = this.rng.next() < CRIT_CHANCE;
-    const guard = guarded ? GUARD_DAMAGE_MULT : 1;     // a braced defender takes half
-    const raw = base * stab * typeMult * variance * (crit ? CRIT_MULT : 1) * guard;
+    const raw = base * stab * typeMult * variance * (crit ? CRIT_MULT : 1);
     const cap = Math.ceil(defMon.maxHp * 0.5);         // never > half a bar → one-shots impossible (even crits)
-    return { amount: Math.max(1, Math.min(cap, Math.round(raw))), crit };
+    const normalAmount = Math.max(1, Math.min(cap, Math.round(raw)));
+    if (!guarded) return { amount: normalAmount, crit, blocked: false };
+    const fullyBlocked = this.rng.next() < GUARD_FULL_BLOCK_CHANCE;
+    const amount = fullyBlocked ? 0 : Math.floor(normalAmount * 0.5);
+    return { amount, crit: crit && amount > 0, blocked: amount === 0 };
   }
 
   private faint(f: Fighter): void {
@@ -333,6 +339,8 @@ export class BattleWorld {
       hp: f.hp, maxHp: f.mon.maxHp,
       moves: f.mon.moves.map(m => ({ ...m })),
       fainted: f.hp <= 0,
+      guarding: f.guarding,
+      taunted: f.tauntedBy,
     });
     return {
       phase: this._phase, turn: this._turn,

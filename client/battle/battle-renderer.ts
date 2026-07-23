@@ -195,6 +195,9 @@ export class BattleRenderer {
       this.flash[ev.on] = 1; this.resHp.hit(ev.on, ev.hpLeft);
       this.attackFx.impact(this.lastMoveType, ev.on);   // impact burst themed by the move that just landed
       if (ev.crit) this.shake = 1;   // extra punch on a critical hit
+    } else if (ev.kind === 'block') {
+      this.flash[ev.on] = 0.4;
+      this.attackFx.impact(this.lastMoveType, ev.on);
     } else if (ev.kind === 'heal') {
       this.resHp.hit(ev.on, ev.hpLeft);   // guard/potion heal → the bar rises to the new HP mid-resolution
     } else if (ev.kind === 'faint') {

@@ -34,6 +34,8 @@ export interface BattleVoiceSnapshot {
   myHp: number | null; myMaxHp: number | null;
   foeHp: number | null; foeMaxHp: number | null;
   myPotions: number;
+  myGuarding?: boolean; myTaunted?: boolean;
+  foeGuarding?: boolean; foeTaunted?: boolean;
   turn: number | null;
   activeSide: 'a' | 'b' | null;
   activeMenu: 'root' | 'fight';

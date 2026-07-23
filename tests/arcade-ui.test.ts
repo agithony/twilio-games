@@ -374,6 +374,8 @@ describe('Arcade browser UI', () => {
     expect(stationClient).not.toContain("url.searchParams.get('displayToken')");
     expect(stationClient).not.toContain("url.searchParams.set('displayToken'");
     expect(stationDisplay).not.toContain("homeUrl.searchParams.set('displayToken'");
+    expect(stationDisplay).toContain("!['LAUNCHING', 'PLAYING'].includes(latest.station.phase)");
+    expect(stationDisplay).not.toContain("['LAUNCHING', 'PLAYING', 'RESULTS']");
     expect(homeScript).not.toContain("url.searchParams.set('displayToken'");
     expect(fighter).not.toContain("params.get('hostToken')");
     expect(fighter).toContain("pageUrl.searchParams.delete('hostToken')");
@@ -408,6 +410,8 @@ describe('Arcade browser UI', () => {
     expect(homeScript).not.toContain('storeDisplayToken');
     expect(homeScript).toContain("current.phase === 'LOCKED'");
     expect(homeScript).not.toContain("lockedCountdown.textContent = current?.phase === 'RESULTS' ? String(current.nextReadyCount) : '10'");
+    expect(homeScript).toMatch(/station\.phase === 'RESULTS'[\s\S]*?show\('recruiting'\)/);
+    expect(homeScript).not.toContain('lockedGame.textContent = copy.gameComplete');
     expect(homeCss).toContain('.display-setup-panel');
   });
 

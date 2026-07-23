@@ -19,6 +19,8 @@ export interface BattleHostContext {
   myHp: number | null; myMaxHp: number | null;
   foeHp: number | null; foeMaxHp: number | null;
   myPotions: number;                // Potions the caller has left (for the ITEM action)
+  myGuarding?: boolean; myTaunted?: boolean;
+  foeGuarding?: boolean; foeTaunted?: boolean;
   whoseTurn: 'me' | 'foe' | null;   // whose action the battle is waiting on
   moves: string[];                  // the caller's 4 move names (during battle)
   winnerName: string | null;        // set at results
@@ -57,8 +59,8 @@ export function buildBattleSystemPrompt(ctx: BattleHostContext, locale: Supporte
     'Everything is BY VOICE — the caller never types. You collect their name, then their monster, by talking, then commentate the fight and take their turn actions when they call them.',
     '',
     locale === 'pt-BR'
-      ? 'COMO JOGAR: as batalhas são por turnos. Na sua vez, diga "lutar" e o nome ou número de um golpe para atacar, "defender" para reduzir o próximo dano, "item" ou "poção" para recuperar vida, ou "provocar" para atrapalhar o próximo ataque do rival.'
-      : 'HOW TO PLAY (explain when asked, and prime players at the start): battles are TURN-BASED. The game prompts one monster at a time. On your turn choose one of four actions — say "FIGHT" then a move name (or a number 1-4) to attack; "GUARD" to brace (halves the next hit + heals a little); "ITEM" to use a Potion (heals a third of your health, two per battle); "TAUNT" to rattle the foe so its next attack is likelier to miss. If it is the other monster\'s turn, tell the caller to wait.',
+      ? 'COMO JOGAR: as batalhas são por turnos. Na sua vez, diga "lutar" e o nome ou número de um golpe para atacar, "defender" para bloquear pelo menos metade do próximo dano com chance de bloquear tudo, "item" ou "poção" para recuperar toda a vida, ou "provocar" para fazer o próximo ataque do rival quase sempre errar.'
+      : 'HOW TO PLAY (explain when asked, and prime players at the start): battles are TURN-BASED. The game prompts one monster at a time. On your turn choose one of four actions — say "FIGHT" then a move name (or a number 1-4) to attack; "GUARD" to block at least half the next hit, sometimes all of it, and heal a little; "ITEM" to use a Potion (restores full health, two per battle); "TAUNT" to make the foe\'s next attack almost always miss. If it is the other monster\'s turn, tell the caller to wait.',
     'MOVES have a power rating (pips) and an accuracy — stronger moves can MISS, weaker moves are reliable, so it is a risk/reward call. Attacks can land a rare CRITICAL HIT for big bonus damage.',
     '',
     // ── Type-chart knowledge so it can answer matchup questions intelligently ──
@@ -70,6 +72,9 @@ export function buildBattleSystemPrompt(ctx: BattleHostContext, locale: Supporte
     locale === 'pt-BR'
       ? `ESTADO ATUAL: tela=${SCREEN_LABEL_PT[ctx.phase]}; nome=${ctx.myName ?? 'AINDA NÃO INFORMADO'}${ctx.myMonster ? `; monstro=${ctx.myMonster}` : ''}${ctx.foeMonster ? `; rival=${ctx.foeMonster}` : ''}.`
       : `CURRENT STATE: screen is ${SCREEN_LABEL[ctx.phase]}; caller name=${ctx.myName ?? 'NOT SET YET'}${ctx.myMonster ? `; their monster=${ctx.myMonster}` : ''}${ctx.foeMonster ? `; opponent=${ctx.foeMonster}` : ''}.`,
+    ctx.phase === 'battle'
+      ? `PENDING EFFECTS: caller guard=${ctx.myGuarding ? 'active' : 'off'}, caller taunted=${ctx.myTaunted ? 'yes' : 'no'}, foe guard=${ctx.foeGuarding ? 'active' : 'off'}, foe taunted=${ctx.foeTaunted ? 'yes' : 'no'}.`
+      : '',
     'The big screen SHOWS the same screen you are on. Refer to what is on their screen; do not talk about a step they are not on yet.',
     // Tool calls happen SILENTLY via the function-calling API — the tool NAMES are NOT words. Your
     // spoken reply must be plain, natural English ONLY.

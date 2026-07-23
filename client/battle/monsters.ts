@@ -251,13 +251,16 @@ function paintBattle(): void {
   let status = '';
   const sideForMenu = mySide(state) ?? state.activeSide ?? 'a';
   if (state.snapshot) {
-    const myMon = (sideForMenu === 'b' ? state.snapshot.b : state.snapshot.a).monsterName;
+    const combatant = sideForMenu === 'b' ? state.snapshot.b : state.snapshot.a;
+    const myMon = combatant.monsterName;
     if (uiPhase === 'awaiting-input') status = menuLevel === 'fight'
       ? text('status.moves', { monster: myMon })
       : text('status.whatWillDo', { monster: myMon });
     else if (uiPhase === 'command-locked') status = `${lockedMoveName ? lockedMoveName + ' ' : ''}${text('status.waitingFor', { opponent: opponentName(state) })}`;
     else if (state.snapshot.phase === 'choosing' && state.activeSide) status = text('status.choosing', { monster: actorName(state.activeSide) });
     else if (uiPhase === 'finished') status = state.result ? text('status.wins', { winner: state.result.winnerName }) : '';
+    const effects = [combatant.guarding ? text('status.guarding') : '', combatant.taunted ? text('status.taunted') : ''].filter(Boolean);
+    if (effects.length) status = `${status}${status ? ' · ' : ''}${effects.join(' · ')}`;
   }
   // The foe's type → the renderer shows move pips as effectiveness vs THIS opponent.
   const foeType = state.snapshot ? (sideForMenu === 'b' ? state.snapshot.a.type : state.snapshot.b.type) : null;
@@ -313,6 +316,8 @@ function drainNext(): void {
     getSoundEffectsManager().playAttack(moveType);
   } else if (ev.kind === 'guard') {
     getSoundEffectsManager().playGuard();
+  } else if (ev.kind === 'block') {
+    getSoundEffectsManager().playGuard();
   } else if (ev.kind === 'item') {
     getSoundEffectsManager().playItem();
   } else if (ev.kind === 'taunt') {
@@ -354,6 +359,7 @@ function bannerFor(ev: BattleEvent): string | null {
     case 'move_used': return text('battle.eventMove', { monster: actorName(ev.by), move: localizedMoveName(locale, ev.moveId) });
     case 'miss': return text('battle.eventMiss');
     case 'guard': return text('battle.eventGuard', { monster: localizedMonsterName(locale, ev.monsterName) });
+    case 'block': return text('battle.eventBlock', { monster: localizedMonsterName(locale, ev.monsterName) });
     case 'item': return text('battle.eventItem', { monster: actorName(ev.by), item: text('content.potion') });
     case 'taunt': return text('battle.eventTaunt', { monster: localizedMonsterName(locale, ev.monsterName), target: localizedMonsterName(locale, ev.targetName) });
     case 'heal': return null;   // the HP bar rising tells the story; no separate banner

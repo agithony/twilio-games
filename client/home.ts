@@ -23,7 +23,7 @@ import {
 const copy = locale === 'pt-BR' ? {
   pageTitle: 'Twilio Games', tagline: 'Uma tela. Seu telefone. Sua voz.',
   connecting: 'Conectando', recruiting: 'Recrutando agora', waiting: 'Aguardando a primeira moeda',
-  ready: 'jogadores prontos', timer: 'Próximo jogo em {time}', reconnecting: 'Reconectando', live: 'Estação ao vivo',
+  ready: 'jogadores prontos', readyNext: '{count} prontos para o próximo jogo', timer: 'Próximo jogo em {time}', reconnecting: 'Reconectando', live: 'Estação ao vivo',
   attractEyebrow: 'Twilio Games', phaseTitle: 'Sua voz é o controle.',
   phaseDescription: 'Escaneie, entre e responda MOEDA quando estiver pronto na tela.',
   joinEyebrow: 'Entre pelo seu telefone', joinTitle: 'Escaneie para jogar',
@@ -58,7 +58,7 @@ const copy = locale === 'pt-BR' ? {
 } : {
   pageTitle: 'Twilio Games', tagline: 'One screen. Your phone. Your voice.',
   connecting: 'Connecting', recruiting: 'Now recruiting', waiting: 'Waiting for first coin',
-  ready: 'players ready', timer: 'Next game in {time}', reconnecting: 'Reconnecting', live: 'Station live',
+  ready: 'players ready', readyNext: '{count} ready for the next game', timer: 'Next game in {time}', reconnecting: 'Reconnecting', live: 'Station live',
   attractEyebrow: 'Twilio Games', phaseTitle: 'Your voice is the controller.',
   phaseDescription: 'Scan, join, and reply COIN when you are ready at the screen.',
   joinEyebrow: 'Join from your phone', joinTitle: 'Scan to play',
@@ -228,16 +228,16 @@ function render(station: PublicStation): void {
   clearDisplaySetup();
   connection.textContent = copy.live;
   connection.classList.add('live');
-  readyCount.textContent = String(station.currentReadyCount);
+  readyCount.textContent = String(station.phase === 'RESULTS' ? station.nextReadyCount : station.currentReadyCount);
   document.getElementById('readyLabel')!.textContent = copy.ready;
   readyRoster.replaceChildren(...station.roster.slice(0, 8).map(player => {
     const chip = document.createElement('span');
     chip.textContent = `${player.position}. ${player.displayName}`;
     return chip;
   }));
-  phaseEyebrow.textContent = station.phase === 'ATTRACT' ? copy.attractEyebrow : copy.recruiting;
+  phaseEyebrow.textContent = station.phase === 'ATTRACT' || station.phase === 'RESULTS' ? copy.attractEyebrow : copy.recruiting;
   const persistentJoin=document.getElementById('persistentJoin')!;
-  persistentJoin.hidden=standaloneMode||qrRailMode==='hidden'||station.phase==='ATTRACT'||station.phase==='RECRUITING';
+  persistentJoin.hidden=standaloneMode||qrRailMode==='hidden'||station.phase==='ATTRACT'||station.phase==='RECRUITING'||station.phase==='RESULTS';
 
   if (standaloneMode) {
     renderStandaloneLauncher();
@@ -255,10 +255,7 @@ function render(station: PublicStation): void {
     document.getElementById('countdownDescription')!.textContent = copy.countdownDescription;
     lockedGame.textContent = station.activeGame ? gameTitle(locale, station.activeGame) : copy.nextGame;
   } else if (station.phase === 'RESULTS') {
-    show('countdown');
-    lockedGame.textContent = copy.gameComplete;
-    lockedCountdown.textContent = String(station.nextReadyCount);
-    document.getElementById('countdownDescription')!.textContent = copy.playersNext;
+    show('recruiting');
   } else if (station.phase === 'LAUNCHING' || station.phase === 'PLAYING') {
     if (!displayToken || displayTokenRejected || !station.launch) {
       showDisplaySetup(displayTokenRejected ? 'invalid' : 'missing');
@@ -276,14 +273,16 @@ function updateTimers(): void {
   if (!current) return;
   const seconds = current.deadline ? Math.ceil(Math.max(0, Date.parse(current.deadline) - Date.now()) / 1000) : null;
   const formatted = seconds === null ? '--:--' : `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
-  if (current.phase === 'RECRUITING' || current.phase === 'ATTRACT') {
+  if (current.phase === 'RESULTS') {
+    phaseTimer.textContent = current.nextReadyCount > 0
+      ? format(copy.readyNext, { count: current.nextReadyCount })
+      : copy.waiting;
+  } else if (current.phase === 'RECRUITING' || current.phase === 'ATTRACT') {
     phaseTimer.textContent = seconds === null ? copy.waiting : copy.timer.replace('{time}', formatted);
   } else if (current.phase === 'GAME_SELECTION') {
     selectionTimer.textContent = formatted;
   } else if (current.phase === 'LOCKED') {
     lockedCountdown.textContent = seconds === null ? '--' : String(seconds);
-  } else if (current.phase === 'RESULTS') {
-    lockedCountdown.textContent = String(current.nextReadyCount);
   }
 }
 

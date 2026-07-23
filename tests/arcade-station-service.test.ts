@@ -9,6 +9,7 @@ import {
   type ArcadeConfigSnapshot,
 } from '../shared/arcade-config';
 import { ArcadeService } from '../server/arcade-service';
+import { projectPublicStation } from '../server/arcade-station-projection';
 import { ArcadeStateStore } from '../server/arcade-state-store';
 
 const directories: string[] = [];
@@ -399,6 +400,15 @@ describe('ArcadeService station journey', () => {
     const results = await h.service.completeStationMatch({
       ...CONTROL,
       stationId: 'expo', expectedRevision: playing.station.revision, idempotencyKey: 'complete',
+    });
+    const resultState = h.store.snapshot();
+    const resultAggregate = await h.service.getStation('expo');
+    const publicResults = projectPublicStation(
+      resultState, resultAggregate!, false, new Set(['racer', 'monsters', 'fighter'] as const),
+    );
+    expect(publicResults).toMatchObject({
+      phase: 'RESULTS', nextReadyCount: 1,
+      roster: [expect.objectContaining({ status: 'OVERFLOW' })],
     });
     h.setConfig(stationConfig({ version: 2 }));
     h.advance();
