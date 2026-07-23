@@ -78,8 +78,7 @@ html[data-theme="light"] .brand-lockup img, html[data-theme="light"] .countdown-
 .standalone-future { min-height:74px;display:grid;grid-template-columns:minmax(100px,auto) minmax(0,1fr);align-items:stretch;gap:clamp(10px,1.5vw,18px);padding-top:clamp(9px,1.2vh,14px);border-top:1px solid var(--th-border); }
 .standalone-future>.eyebrow { align-self:center;padding-right:clamp(8px,1vw,16px);color:var(--th-dim); }
 .standalone-future-cards { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:clamp(8px,1vw,14px); }
-.standalone-future-game { position:relative;min-height:74px;display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;gap:13px;overflow:hidden;padding:10px clamp(12px,1.4vw,20px);border:1px dashed var(--th-border);border-radius:14px;color:var(--th-label);background:color-mix(in srgb,var(--th-raised) 64%,transparent); }
-.future-game-number { color:var(--th-muted);font:800 clamp(24px,2.5vw,38px)/1 'Twilio Sans Display',sans-serif;opacity:.55; }
+.standalone-future-game { position:relative;min-height:74px;display:grid;align-items:center;overflow:hidden;padding:10px clamp(12px,1.4vw,20px);border:1px dashed var(--th-border);border-radius:14px;color:var(--th-label);background:color-mix(in srgb,var(--th-raised) 64%,transparent); }
 .standalone-future-game h2 { margin:0;color:var(--th-label);font-size:clamp(16px,1.5vw,22px);line-height:1; }
 .standalone-future-game p { margin:4px 0 0;color:var(--th-dim);font-size:clamp(10px,.85vw,12px);line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
 .standalone-mode .magic-hat { display:none; }
@@ -216,7 +215,7 @@ html[data-theme="light"] .brand-lockup img, html[data-theme="light"] .countdown-
   .standalone-future { grid-template-columns:1fr;gap:6px; }
   .standalone-future>.eyebrow { padding-right:0; }
   .standalone-future-cards { gap:7px; }
-  .standalone-future-game { grid-template-columns:auto minmax(0,1fr);padding:8px 10px; }
+  .standalone-future-game { padding:8px 10px; }
   .standalone-future-game p { display:none; }
   .persistent-join { right:10px;bottom:10px;padding:8px;gap:8px; }
   .persistent-join div { display:none; }

@@ -46,6 +46,7 @@ describe('home preview media and standalone catalog', () => {
       '<h2 id="voiceKaraokeTitle">Voice Karaoke</h2>',
     ]);
     expect(future).toContain('Coming soon');
+    expect(future).not.toMatch(/future-game-number|>0[12]</);
     expect(future).not.toMatch(/<(?:a|button|input|select|textarea)\b|\bhref=|\btabindex=|\bdata-game=/i);
     expect(html.indexOf('id="standaloneGames"')).toBeLessThan(html.indexOf('class="standalone-future"'));
   });

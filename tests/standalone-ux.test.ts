@@ -23,6 +23,8 @@ describe('standalone and station display UX', () => {
     expect(fighter).toContain('stationDisplay.active ? stationDisplay.displayToken : null');
     expect(fighter).not.toContain("params.get('hostToken')");
     expect(fighter).toContain("pageUrl.searchParams.delete('hostToken')");
+    expect(fighter).not.toContain("t('lobby.room', { room: roomCode })");
+    expect(fighter).toContain('connection.spectate(roomCode');
   });
 
   it('allows Racer and Monsters menus to scroll in a narrow viewport', () => {

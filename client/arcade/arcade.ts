@@ -7,6 +7,7 @@ type ArcadeMode = 'off' | 'coin_only' | 'lead_capture';
 type PlayableGame = 'racer' | 'monsters' | 'fighter';
 type ChargePolicy = 'per_player' | 'per_match' | 'host_sponsors' | 'free';
 type StationPhase = 'ATTRACT' | 'RECRUITING' | 'GAME_SELECTION' | 'LOCKED' | 'LAUNCHING' | 'PLAYING' | 'RESULTS';
+type OperatorTab = 'operator-overview' | 'live-event' | 'messages' | 'setup';
 
 interface PublicConfig { version:number;arcade:{mode:ArcadeMode;cabinetId:string};registration:{termsAcknowledgementRequired:boolean};coins:{startingBalance:number;chargePolicy:ChargePolicy};channels:{voice:boolean;sms:boolean;whatsapp:boolean;voiceNumbers:Record<'en-US'|'pt-BR',string|null>};station:{games:Record<PlayableGame,{enabled:boolean}>};earning:{enabled:boolean}; }
 interface DeploymentConfig { publicBaseUrl?:string;phoneNumber?:string;voiceNumbers?:Partial<Record<'en-US'|'pt-BR',string|null>>;smsNumber?:string;whatsappNumber?:string; }
@@ -44,6 +45,7 @@ const state: {
 
 const notice = el('notice'), modeBadge = el('mode-badge'), heroBalance = el('hero-balance');
 const operatorView = location.pathname === '/operator' || location.pathname === '/operator/';
+const OPERATOR_TABS:readonly OperatorTab[]=['operator-overview','live-event','messages','setup'];
 const playerPortuguese = !operatorView && resolvedLocale === 'pt-BR';
 const playerText = (english:string,portuguese:string):string => playerPortuguese ? portuguese : english;
 let operatorEvents:EventSource|null=null;
@@ -55,8 +57,12 @@ let playerRefreshTimer:number|null=null;
 let playerRefreshGeneration=0;
 let editingChallengeId:string|null=null;
 let modeFormDirty=false;
+let pendingOpenSettings:{version:number;settings:Record<string,unknown>;mode:Exclude<ArcadeMode,'off'>}|null=null;
+let stationActionSaving=false;
+let stationResetIdempotencyKey:string|null=null;
+let stationResetEtag:string|null=null;
 let gameChoiceSaving=false;
-el('refresh').addEventListener('click', () => void refreshAll());
+el('refresh').addEventListener('click', () => void refreshAll(true));
 el('theme-toggle').addEventListener('click', toggleTheme);
 el<HTMLFormElement>('registration-form').addEventListener('submit', event => void register(event));
 el<HTMLFormElement>('join-form').addEventListener('submit', event => void joinQueue(event));
@@ -64,6 +70,7 @@ el('queue-leave').addEventListener('click', () => void leaveCurrentAdmission());
 for(const button of document.querySelectorAll<HTMLButtonElement>('[data-game-choice]'))button.addEventListener('click',()=>void chooseGame(button.dataset.gameChoice as PlayableGame));
 el<HTMLFormElement>('mode-form').addEventListener('submit', event => void saveMode(event));
 el<HTMLFormElement>('mode-form').addEventListener('input',()=>setModeFormDirty(true));
+el<HTMLFormElement>('mode-form').addEventListener('change',()=>setModeFormDirty(true));
 el('discard-mode-changes').addEventListener('click',()=>void discardModeChanges());
 el<HTMLFormElement>('station-controls').addEventListener('submit', event => event.preventDefault());
 el<HTMLSelectElement>('admin-charge-policy').addEventListener('change', renderChargePolicy);
@@ -81,10 +88,12 @@ el('request-launch').addEventListener('click',()=>void stationAction('launch'));
 el('fail-launch').addEventListener('click',()=>void stationAction('fail'));
 el('emergency-complete').addEventListener('click',()=>void stationAction('complete'));
 el('advance-results').addEventListener('click',()=>void stationAction('advance'));
-el('open-station-reset').addEventListener('click',openStationReset);
-el('cancel-station-reset').addEventListener('click',()=>el<HTMLDialogElement>('station-reset-dialog').close());
+el('open-station-reset').addEventListener('click',()=>openStationReset());
+el('cancel-station-reset').addEventListener('click',cancelStationReset);
 el<HTMLInputElement>('station-reset-confirmation').addEventListener('input',renderResetConfirmation);
 el<HTMLFormElement>('station-reset-form').addEventListener('submit',event=>{event.preventDefault();void stationAction('reset');});
+el<HTMLDialogElement>('station-reset-dialog').addEventListener('cancel',event=>{event.preventDefault();cancelStationReset();});
+el('review-preserved-flow').addEventListener('click',()=>activateOperatorTab('live-event',true,true));
 el('admin-mode').addEventListener('change',renderRuntimeSummary);
 el('admin-sms').addEventListener('change',renderRuntimeSummary);
 el('admin-whatsapp').addEventListener('change',renderRuntimeSummary);
@@ -96,11 +105,12 @@ window.setInterval(renderStationDeadline,1000);
 window.addEventListener('beforeunload',event=>{if(modeFormDirty){event.preventDefault();event.returnValue='';}});
 applyTheme();
 configureView();
+initializeOperatorTabs();
 localizePlayerPage();
 void refreshAll();
 
-async function refreshAll(): Promise<void> {
-  setNotice(operatorView?'Refreshing event data...':playerText('Checking your game status...','Verificando seu jogo...'));
+async function refreshAll(showProgress=!operatorView): Promise<boolean> {
+  if(showProgress)setNotice(operatorView?'Refreshing event data...':playerText('Checking your game status...','Verificando seu jogo...'));
   try {
     await refreshPublicConfig();
     if(operatorView)await refreshDeploymentConfig();
@@ -109,20 +119,21 @@ async function refreshAll(): Promise<void> {
     if(operatorView){
       await checkAdmin();show('operations',true);show('dashboard',false);
       if(state.adminConfig){await Promise.all([refreshOperatorStation(),refreshOperatorStatus()]);startOperatorUpdates();}
-      setNotice(currentConfig.arcade.mode==='off'?'The event is paused. Open Settings when you are ready to start.':'Live event data is up to date.','success');return;
+      if(showProgress)setNotice('Event data refreshed.','success');return true;
     }
     show('operations',false);show('dashboard',true);
-    if(currentConfig.arcade.mode==='coin_only'&&redirectNoLeadPlayer())return;
+    if(currentConfig.arcade.mode==='coin_only'&&redirectNoLeadPlayer())return true;
     if (currentConfig.arcade.mode === 'off') {
       state.player = null; state.wallet = null; state.station = null;
       renderPlayer();startPlayerUpdates();setNotice('');
-      return;
+      return true;
     }
     await ensureSession();
     await refreshPlayer();
     startPlayerUpdates();
     setNotice(playerText('You are up to date.','Tudo pronto.'), 'success');
-  } catch (error) { showError(error); }
+    return true;
+  } catch (error) { showError(error);return false; }
 }
 
 async function refreshPublicConfig():Promise<void>{
@@ -150,6 +161,60 @@ function configureView():void{
   document.body.classList.add(operatorView?'operator-page':'player-page');
   if(operatorView){document.documentElement.lang='en-US';link.href='/player';link.textContent='Open player page';document.querySelector<HTMLElement>('.hero .eyebrow')!.textContent='Event operations';el('hero-title').textContent='Operator console';el('hero-lede').textContent='Monitor the live event, help players, and manage setup.';show('balance-hero',false);show('off-panel',false);}
   else{link.href='/operator';link.textContent='Staff sign in';}
+}
+
+function initializeOperatorTabs():void{
+  if(!operatorView)return;
+  for(const [index,id] of OPERATOR_TABS.entries()){
+    const tab=document.querySelector<HTMLButtonElement>(`[data-operator-tab="${id}"]`)!;
+    tab.addEventListener('click',()=>activateOperatorTab(id));
+    tab.addEventListener('keydown',event=>{
+      let next=index;
+      if(event.key==='ArrowRight')next=(index+1)%OPERATOR_TABS.length;
+      else if(event.key==='ArrowLeft')next=(index-1+OPERATOR_TABS.length)%OPERATOR_TABS.length;
+      else if(event.key==='Home')next=0;
+      else if(event.key==='End')next=OPERATOR_TABS.length-1;
+      else return;
+      event.preventDefault();
+      const nextId=OPERATOR_TABS[next]!;
+      activateOperatorTab(nextId);
+      document.querySelector<HTMLButtonElement>(`[data-operator-tab="${nextId}"]`)!.focus();
+    });
+  }
+  for(const link of document.querySelectorAll<HTMLAnchorElement>('[data-operator-target]')){
+    link.addEventListener('click',event=>{
+      event.preventDefault();
+      const target=link.dataset.operatorTarget as OperatorTab;
+      if(OPERATOR_TABS.includes(target))activateOperatorTab(target,true,true);
+    });
+  }
+  window.addEventListener('popstate',()=>activateOperatorTab(operatorTabFromHash(),false));
+  window.addEventListener('hashchange',()=>activateOperatorTab(operatorTabFromHash(),false));
+  activateOperatorTab(operatorTabFromHash(),false);
+}
+
+function operatorTabFromHash():OperatorTab{
+  const target=location.hash.slice(1) as OperatorTab;
+  return OPERATOR_TABS.includes(target)?target:'operator-overview';
+}
+
+function activateOperatorTab(target:OperatorTab,updateHistory=true,focusPanel=false):void{
+  if(!operatorView)return;
+  for(const id of OPERATOR_TABS){
+    const active=id===target;
+    const tab=document.querySelector<HTMLButtonElement>(`[data-operator-tab="${id}"]`)!;
+    tab.setAttribute('aria-selected',String(active));tab.tabIndex=active?0:-1;
+    el(id).hidden=!active;
+  }
+  if(updateHistory&&location.hash!==`#${target}`)history.pushState(null,'',`#${target}`);
+  const selected=document.querySelector<HTMLButtonElement>(`[data-operator-tab="${target}"]`)!;
+  selected.scrollIntoView({block:'nearest',inline:'nearest'});
+  if(focusPanel)el(target).focus({preventScroll:true});
+}
+
+function focusOperatorTab(target:OperatorTab):void{
+  activateOperatorTab(target);
+  document.querySelector<HTMLButtonElement>(`[data-operator-tab="${target}"]`)!.focus();
 }
 
 function redirectNoLeadPlayer():boolean{
@@ -485,7 +550,7 @@ async function switchAccount():Promise<void>{await fetch('/auth/logout',{method:
 async function connectBoothDisplay():Promise<void>{
   const button=el<HTMLButtonElement>('connect-booth-display');
   let installedToken:string|null=null;
-  button.disabled=true;button.textContent='Connecting display...';
+  button.disabled=true;button.textContent='Connecting this tab...';
   try{
     const payload=await api<unknown>('/api/admin/arcade/display/connect',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
     const record=payload!==null&&typeof payload==='object'&&!Array.isArray(payload)?payload as Record<string,unknown>:null;
@@ -503,7 +568,7 @@ async function connectBoothDisplay():Promise<void>{
   }catch(error){
     if(installedToken)rejectDisplayToken(installedToken);
     const message=error instanceof ApiError&&error.status===401
-      ? 'Your operator session expired. Sign in again, then reconnect this browser.'
+      ? 'Your operator session expired. Sign in again, then reconnect this tab.'
       : error instanceof ApiError&&error.status===503
         ? 'Booth display security is not configured. Ask a deployment administrator to configure it, then retry.'
         : error instanceof ApiError
@@ -511,7 +576,7 @@ async function connectBoothDisplay():Promise<void>{
           : error instanceof Error?error.message:'This browser could not be connected. Refresh and try again.';
     setNotice(message,'error');
   }finally{
-    button.disabled=false;button.textContent='Connect this browser as booth display';
+    button.disabled=false;button.textContent='Connect this tab as booth display';
   }
 }
 
@@ -552,11 +617,36 @@ async function saveMode(event:Event):Promise<void>{
   const order=validOrder?selectedOrder:config.station.automaticSelection.order;
   station.automaticSelection.policy=selectionPolicy;station.automaticSelection.order=order;station.qrRail=el<HTMLSelectElement>('admin-qr-rail').value as AdminConfig['station']['qrRail'];
   station.timings={recruitingSeconds:numberField('admin-timing-recruiting'),hardDeadlineSeconds:numberField('admin-timing-hard'),selectionSeconds:numberField('admin-timing-selection'),lockedSeconds:numberField('admin-timing-locked'),launchTimeoutSeconds:numberField('admin-timing-launch'),resultsSeconds:numberField('admin-timing-results'),postGameRecruitingSeconds:numberField('admin-timing-postgame')};
+  if(config.arcade.mode==='off'&&selectedMode!=='off'&&state.operatorStation&&state.operatorStation.station.phase!=='ATTRACT'){
+    await queueOpenAfterReset(version,settings,selectedMode);return;
+  }
   setBusy(form,true);
-  try{await updateConfig(version,settings);setModeFormDirty(false);setNotice('Settings saved.','success');await refreshAll();}catch(error){if(error instanceof ApiError&&error.status===412){setModeFormDirty(false);await refreshOperatorConfiguration();setNotice('Someone else saved changes first. The latest settings are now loaded; review them before saving again.','error');}else showError(error);}finally{setBusy(form,false);}
+  try{
+    await updateConfig(version,settings);setModeFormDirty(false);
+    if(!await refreshAll(false)){setNotice('Settings were saved, but the console could not reload them. Refresh before making another change.','error');return;}
+    if(state.adminConfig?.arcade.mode!==selectedMode)throw new Error('The saved event status could not be confirmed. Refresh before trying again.');
+    setNotice(selectedMode==='off'?'Settings saved. The event is paused.':'Settings saved. The event is open.','success');
+  }catch(error){
+    if(error instanceof ApiError&&error.status===412){setModeFormDirty(false);await refreshOperatorConfiguration();setNotice('Someone else saved changes first. The latest settings are now loaded; review them before saving again.','error');}
+    else if(error instanceof ApiError&&error.code==='ACTIVE_STATION_CONFIG_LOCKED'){
+      if(config.arcade.mode==='off'&&selectedMode!=='off')await queueOpenAfterReset(version,settings,selectedMode);
+      else setNotice(config.arcade.mode==='off'?'A paused event flow is still preserved. Reset it from Live event before changing these settings; no settings were changed.':'The live event is using these settings. Pause the event before changing them; no settings were changed.','error');
+    }
+    else showError(error);
+  }finally{setBusy(form,false);}
 }
 
-async function discardModeChanges():Promise<void>{setModeFormDirty(false);await refreshOperatorConfiguration(true);setNotice('Unsaved event setting changes were discarded.','success');}
+async function discardModeChanges():Promise<void>{pendingOpenSettings=null;setModeFormDirty(false);await refreshOperatorConfiguration(true);setNotice('Unsaved event setting changes were discarded.','success');}
+
+async function queueOpenAfterReset(version:number,settings:Record<string,unknown>,mode:Exclude<ArcadeMode,'off'>):Promise<void>{
+  if(!state.operatorStation||state.operatorStation.station.phase==='ATTRACT')await refreshOperatorStation().catch(()=>undefined);
+  if(!state.operatorStation||state.operatorStation.station.phase==='ATTRACT'||!state.operatorStationEtag){
+    setNotice('The saved event flow changed. Refresh the console, review the live event, and try opening again.','error');return;
+  }
+  pendingOpenSettings={version,settings,mode};
+  activateOperatorTab('live-event');openStationReset(true);
+  setNotice('Confirm the reset to clear the paused flow and save the Open settings.');
+}
 
 function setModeFormDirty(dirty:boolean):void{
   modeFormDirty=dirty;
@@ -727,6 +817,7 @@ function renderRuntimeSummary():void{
   const entryReady=modeSelect.value==='lead_capture'||remoteReady;
   const status=modeSelect.value==='off'?'Paused':voice&&voiceReady&&gamesReady&&entryReady?'Ready to open':'Needs setup';
   el('runtime-summary').textContent=status;
+  el('settings-open-blocker').hidden=!(state.adminConfig?.arcade.mode==='off'&&modeSelect.value!=='off'&&state.operatorStation&&state.operatorStation.station.phase!=='ATTRACT');
   el('voice-number-fields').hidden=!voice;
   el('lead-capture-summary').textContent=modeSelect.value==='lead_capture'
     ? 'Lead capture is on for browser and messaging entry.'
@@ -836,6 +927,7 @@ function applyOperatorStation(view:OperatorStationView|null,response:Response):v
 }
 
 async function stationAction(action:StationAction,game?:PlayableGame):Promise<void>{
+  if(stationActionSaving)return;
   const resetting=action==='reset';
   const reasonInput=el<HTMLInputElement>(resetting?'station-reset-reason':'station-reason'),reason=reasonInput.value.trim();
   if(!reason){reasonInput.focus();setNotice('Add a short reason before continuing.','error');return;}
@@ -843,32 +935,89 @@ async function stationAction(action:StationAction,game?:PlayableGame):Promise<vo
   if(resetting&&el<HTMLInputElement>('station-reset-confirmation').value!==STATION_RESET_CONFIRMATION){el<HTMLInputElement>('station-reset-confirmation').focus();setNotice(`Type ${STATION_RESET_CONFIRMATION} exactly to continue.`,'error');return;}
   if(action==='select'&&!['racer','monsters','fighter'].includes(game??'')){setNotice('Select an enabled playable game.','error');return;}
   if(!state.operatorStationEtag){setNotice('Refresh the event before taking action.','error');return;}
+  stationActionSaving=true;
   const form=el<HTMLFormElement>(resetting?'station-reset-form':'station-controls');setBusy(form,true);
   try{
+    if(resetting&&pendingOpenSettings){
+      const latest=await api<AdminConfig>('/api/admin/arcade/config');
+      if(latest.version!==pendingOpenSettings.version){
+        pendingOpenSettings=null;stationResetIdempotencyKey=null;stationResetEtag=null;el<HTMLDialogElement>('station-reset-dialog').close();setStationResetCopy(false);setModeFormDirty(false);
+        try{await refreshOperatorConfiguration(true);}catch{setModeFormDirty(true);focusOperatorTab('setup');setNotice('Settings changed before reset confirmation, and the console could not reload them. The event flow was not reset; refresh before trying again.','error');return;}
+        focusOperatorTab('setup');setNotice('Settings changed before the reset was confirmed. The event flow was not reset; review the latest settings and try again.','error');return;
+      }
+    }
     const body=action==='select'?{game,reason}:{reason};
     const {payload,response}=await request<OperatorStationView>(stationRoutes[action],{
-      method:'POST',headers:{'Content-Type':'application/json','If-Match':state.operatorStationEtag,'Idempotency-Key':crypto.randomUUID()},body:JSON.stringify(body),
+      method:'POST',headers:{'Content-Type':'application/json','If-Match':resetting?(stationResetEtag??=state.operatorStationEtag):state.operatorStationEtag,'Idempotency-Key':resetting?(stationResetIdempotencyKey??=crypto.randomUUID()):crypto.randomUUID()},body:JSON.stringify(body),
     });
     applyOperatorStation(payload,response);reasonInput.value='';
-    if(resetting){el<HTMLFormElement>('station-reset-form').reset();renderResetConfirmation();el<HTMLDialogElement>('station-reset-dialog').close();}
-    setNotice(stationActionName(action), 'success');
+    if(resetting){
+      const openSettings=pendingOpenSettings;pendingOpenSettings=null;
+      stationResetIdempotencyKey=null;stationResetEtag=null;el<HTMLFormElement>('station-reset-form').reset();renderResetConfirmation();el<HTMLDialogElement>('station-reset-dialog').close();setStationResetCopy(false);
+      if(openSettings){await saveOpenAfterReset(openSettings);return;}
+    }
+    setNotice(stationActionName(action),'success');
   }catch(error){
     if(error instanceof ApiError&&error.status===412){
       try{await refreshOperatorStation();}catch{/* Keep the conflict message as the actionable notice. */}
+      if(resetting&&state.operatorStation?.station.phase==='ATTRACT'){
+        const openSettings=pendingOpenSettings;pendingOpenSettings=null;stationResetIdempotencyKey=null;stationResetEtag=null;
+        el<HTMLFormElement>('station-reset-form').reset();el<HTMLDialogElement>('station-reset-dialog').close();setStationResetCopy(false);
+        if(openSettings){await saveOpenAfterReset(openSettings);return;}
+        setNotice('Event flow reset.','success');return;
+      }
+      if(resetting){stationResetIdempotencyKey=crypto.randomUUID();stationResetEtag=state.operatorStationEtag;}
       setNotice('The event changed before this action finished. The latest status is loaded; review it and try again.','error');
     }else showError(error);
-  }finally{setBusy(form,false);if(resetting)renderResetConfirmation();}
+  }finally{stationActionSaving=false;setBusy(form,false);if(resetting)renderResetConfirmation();}
 }
 
 function stationActionName(action:StationAction):string{
   return ({close:'Joining ended.',select:'Next game confirmed.',launch:'Game start requested.',fail:'Game start cancelled.',complete:'Game ended.',advance:'Results closed and the event moved forward.',reset:'Event flow reset.'} as Record<StationAction,string>)[action];
 }
 
-function openStationReset():void{
+function openStationReset(forOpening=false):void{
   if(state.operatorStation?.station.phase==='ATTRACT'||!state.operatorStationEtag)return;
+  stationResetIdempotencyKey=crypto.randomUUID();
+  stationResetEtag=state.operatorStationEtag;
+  setStationResetCopy(forOpening);
   el<HTMLFormElement>('station-reset-form').reset();renderResetConfirmation();
   el<HTMLDialogElement>('station-reset-dialog').showModal();
   el<HTMLInputElement>('station-reset-reason').focus();
+}
+
+function cancelStationReset():void{
+  if(stationActionSaving)return;
+  const wasOpening=pendingOpenSettings!==null;pendingOpenSettings=null;
+  stationResetIdempotencyKey=null;
+  stationResetEtag=null;
+  const dialog=el<HTMLDialogElement>('station-reset-dialog');if(dialog.open)dialog.close();
+  setStationResetCopy(false);
+  if(wasOpening){focusOperatorTab('setup');setNotice('The event remains paused. No settings were changed.');}
+}
+
+function setStationResetCopy(forOpening:boolean):void{
+  el('station-reset-title').textContent=forOpening?'Reset the flow and open the event?':'Reset the event flow?';
+  el('station-reset-warning').textContent=forOpening
+    ? 'The paused flow cannot be resumed as a new event. Resetting removes everyone from the line, returns any coins in use, and then saves your Open settings. This cannot be undone.'
+    : 'This ends the current game, removes everyone from the line, and returns any coins in use. This cannot be undone.';
+  el<HTMLButtonElement>('confirm-station-reset').textContent=forOpening?'Reset flow and open event':'Reset event';
+}
+
+async function saveOpenAfterReset(openSettings:NonNullable<typeof pendingOpenSettings>):Promise<void>{
+  let saved=false;
+  try{
+    await updateConfig(openSettings.version,openSettings.settings);saved=true;setModeFormDirty(false);
+    if(!await refreshAll(false)){focusOperatorTab('setup');setNotice('The event flow was reset and the Open settings were saved, but the console could not reload them. Refresh before making another change.','error');return;}
+    focusOperatorTab('setup');
+    if(state.adminConfig?.arcade.mode!==openSettings.mode)throw new Error('The Open status could not be confirmed after resetting the event flow.');
+    setNotice('Event flow reset and Open settings saved. The event is now open.','success');
+  }catch(error){
+    focusOperatorTab('setup');
+    if(error instanceof ApiError&&error.status===412){setModeFormDirty(false);await refreshOperatorConfiguration(true);setNotice('The event flow was reset, but settings changed in another operator session. Review the latest settings before opening.','error');return;}
+    const detail=error instanceof ApiError?error.message:error instanceof Error?error.message:'Unknown error';
+    setNotice(saved?`The event flow was reset and the Open settings were saved, but the result could not be confirmed. Refresh before making another change. ${detail}`:`The event flow was reset, but the Open settings were not saved. Review the draft and save again. ${detail}`,'error');
+  }
 }
 
 function renderResetConfirmation():void{
@@ -1122,7 +1271,7 @@ async function post<T=unknown>(path:string,body:unknown):Promise<T>{return api<T
 async function request<T=unknown>(path:string,init:RequestInit={}):Promise<{payload:T;response:Response}>{const headers=new Headers(init.headers);if(['localhost','127.0.0.1'].includes(location.hostname))headers.set('X-Arcade-Dev-Admin','true');const response=await fetch(path,{credentials:'include',...init,headers});const payload=await response.json().catch(()=>({}));if(!response.ok){const error=(payload as {error?:{code?:string;message?:string}}).error;throw new ApiError(response.status,error?.code??'REQUEST_FAILED',error?.message??`Request failed (${response.status})`);}return{payload:payload as T,response};}
 async function api<T=unknown>(path:string,init:RequestInit={}):Promise<T>{return(await request<T>(path,init)).payload;}
 async function maybe<T>(path:string):Promise<T|null>{try{return await api<T>(path);}catch(error){if(error instanceof ApiError&&[401,409].includes(error.status))return null;throw error;}}
-function setNotice(message:string,kind:'success'|'error'|''=''):void{notice.textContent=message;notice.className=`notice ${kind}`.trim();notice.setAttribute('role',kind==='error'?'alert':'status');notice.setAttribute('aria-live',kind==='error'?'assertive':'polite');}
+function setNotice(message:string,kind:'success'|'error'|''=''):void{notice.className=`notice ${kind}`.trim();notice.setAttribute('role',kind==='error'?'alert':'status');notice.setAttribute('aria-live',kind==='error'?'assertive':'polite');notice.setAttribute('aria-atomic','true');notice.textContent=message;}
 function showError(error:unknown):void{const playerErrors:Record<string,[string,string]>={INSUFFICIENT_COINS:['Earn another coin before joining.','Ganhe outra moeda antes de entrar.'],READY_POOL_FULL:['The line is full right now. Try again soon.','A fila está cheia agora. Tente novamente em breve.']};const safe=error instanceof ApiError?playerErrors[error.code]:undefined;const message=!operatorView
   ? safe?playerText(safe[0],safe[1]):playerPortuguese?'Não foi possível concluir. Tente novamente ou fale com o anfitrião.':'That did not work. Try again or ask the host for help.'
   : error instanceof ApiError?error.message:error instanceof Error?error.message:String(error);setNotice(message,'error');}

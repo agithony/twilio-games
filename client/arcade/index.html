@@ -43,7 +43,7 @@
       </article>
     </section>
 
-    <p id="notice" class="notice" role="status">Checking game status...</p>
+    <p id="notice" class="notice" role="status" aria-live="polite" aria-atomic="true"></p>
 
     <main id="dashboard" class="dashboard">
       <section class="column">
@@ -143,27 +143,27 @@
       </div>
 
       <div id="admin-console" class="admin-grid" hidden>
-        <nav id="operator-nav" class="operator-nav" aria-label="Operator sections">
-          <a href="#operator-overview">Overview</a>
-          <a href="#live-event">Live event</a>
-          <a href="#messages">Messages</a>
-          <a href="#setup">Setup</a>
+        <nav id="operator-nav" class="operator-nav" role="tablist" aria-label="Operator sections">
+          <button id="operator-tab-overview" type="button" role="tab" aria-selected="true" aria-controls="operator-overview" data-operator-tab="operator-overview">Overview</button>
+          <button id="operator-tab-live-event" type="button" role="tab" aria-selected="false" aria-controls="live-event" data-operator-tab="live-event" tabindex="-1">Live event</button>
+          <button id="operator-tab-messages" type="button" role="tab" aria-selected="false" aria-controls="messages" data-operator-tab="messages" tabindex="-1">Messages</button>
+          <button id="operator-tab-setup" type="button" role="tab" aria-selected="false" aria-controls="setup" data-operator-tab="setup" tabindex="-1">Setup</button>
         </nav>
 
-        <section id="operator-overview" class="operator-section overview-section" aria-labelledby="operator-overview-heading">
+        <section id="operator-overview" class="operator-section overview-section" role="tabpanel" aria-labelledby="operator-tab-overview" tabindex="0">
           <div class="operator-section-heading">
             <div><p class="eyebrow">At a glance</p><h2 id="operator-overview-heading">Overview</h2></div>
             <p>Current event health from the live console.</p>
           </div>
           <div class="overview-grid">
-            <a id="overview-event-card" class="overview-card" href="#setup"><span>Event</span><strong id="overview-event">Loading</strong><small id="overview-event-detail">Checking settings</small></a>
-            <a id="overview-game-card" class="overview-card" href="#live-event"><span>Live game</span><strong id="overview-game">Loading</strong><small id="overview-game-detail">Checking station</small></a>
-            <a id="overview-players-card" class="overview-card" href="#live-event"><span>Players</span><strong id="overview-players">0</strong><small id="overview-players-detail">In the current flow</small></a>
-            <a id="overview-messaging-card" class="overview-card" href="#messages"><span>Messaging</span><strong id="overview-messaging">Loading</strong><small id="overview-messaging-detail">Checking delivery</small></a>
+            <a id="overview-event-card" class="overview-card" href="#setup" data-operator-target="setup"><span>Event</span><strong id="overview-event">Loading</strong><small id="overview-event-detail">Checking settings</small></a>
+            <a id="overview-game-card" class="overview-card" href="#live-event" data-operator-target="live-event"><span>Live game</span><strong id="overview-game">Loading</strong><small id="overview-game-detail">Checking station</small></a>
+            <a id="overview-players-card" class="overview-card" href="#live-event" data-operator-target="live-event"><span>Players</span><strong id="overview-players">0</strong><small id="overview-players-detail">In the current flow</small></a>
+            <a id="overview-messaging-card" class="overview-card" href="#messages" data-operator-target="messages"><span>Messaging</span><strong id="overview-messaging">Loading</strong><small id="overview-messaging-detail">Checking delivery</small></a>
           </div>
         </section>
 
-        <section id="live-event" class="operator-section" aria-labelledby="station-phase">
+        <section id="live-event" class="operator-section" role="tabpanel" aria-labelledby="operator-tab-live-event" tabindex="0" hidden>
           <article id="station-panel" class="panel station-panel">
             <div class="panel-heading station-heading">
               <div>
@@ -284,7 +284,7 @@
           </article>
         </section>
 
-        <section id="messages" class="operator-section" aria-labelledby="messages-heading">
+        <section id="messages" class="operator-section" role="tabpanel" aria-labelledby="operator-tab-messages" tabindex="0" hidden>
           <article id="messaging-panel" class="panel messaging-panel">
             <div class="panel-heading">
               <div><p class="eyebrow">Player messaging</p><h2 id="messages-heading">Messages and delivery</h2></div>
@@ -326,7 +326,7 @@
           </article>
         </section>
 
-        <section id="setup" class="operator-section setup-section" aria-labelledby="setup-heading">
+        <section id="setup" class="operator-section setup-section" role="tabpanel" aria-labelledby="operator-tab-setup" tabindex="0" hidden>
           <div class="operator-section-heading">
             <div><p class="eyebrow">Configuration</p><h2 id="setup-heading">Setup</h2></div>
             <p>Adjust the event, rewards, player entry, and booth display.</p>
@@ -351,6 +351,11 @@
                           <summary>Information collected</summary>
                           <p id="lead-capture-fields"></p>
                         </details>
+                      </div>
+                      <div id="settings-open-blocker" class="settings-open-blocker" hidden>
+                        <b>A paused game flow is still preserved.</b>
+                        <span>Saving an Open status will ask you to reset that flow before the event starts.</span>
+                        <button id="review-preserved-flow" class="button secondary" type="button">Review live event</button>
                       </div>
                     </div>
                   </section>
@@ -461,9 +466,9 @@
               <div class="setup-details-body display-connect-body">
                 <div>
                   <h3>Connect the big screen</h3>
-                  <p>Only the booth display may launch shared games. Connect this browser to prevent visitors from controlling them.</p>
+                  <p>This turns the current tab into the booth display for this browser session, signs you out of the operator console, and opens the game screen. Only that display may launch shared games.</p>
                 </div>
-                <button id="connect-booth-display" class="button primary" type="button">Connect this browser as booth display</button>
+                <button id="connect-booth-display" class="button primary" type="button">Connect this tab as booth display</button>
               </div>
             </details>
           </div>

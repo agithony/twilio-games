@@ -68,7 +68,8 @@ describe('Arcade client completeness', () => {
   it('derives operator overview cards from existing config, station, and messaging state', () => {
     for (const id of [
       'operator-overview', 'overview-event', 'overview-game', 'overview-players', 'overview-messaging',
-      'live-event', 'messages', 'setup', 'settings-savebar', 'voice-number-fields',
+      'operator-tab-overview', 'operator-tab-live-event', 'operator-tab-messages', 'operator-tab-setup',
+      'live-event', 'messages', 'setup', 'settings-savebar', 'settings-open-blocker', 'voice-number-fields',
     ]) expect(arcadeHtml).toContain(`id="${id}"`);
     const overview = /function renderOperatorOverview\(\):void\{[\s\S]*?\n}/.exec(arcade)?.[0] ?? '';
     expect(overview).toContain('state.adminConfig');
@@ -76,6 +77,7 @@ describe('Arcade client completeness', () => {
     expect(overview).toContain('state.adminStatus?.messaging');
     expect(overview).not.toMatch(/\b(?:api|request|fetch|post)\s*[<(]/);
     expect(arcade).toContain("addEventListener('input',()=>setModeFormDirty(true))");
+    expect(arcade).toContain("addEventListener('change',()=>setModeFormDirty(true))");
     expect(arcade).toContain("el('settings-savebar').hidden=!dirty");
     expect(arcade).toContain("el('voice-number-fields').hidden=!voice");
   });

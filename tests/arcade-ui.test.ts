@@ -121,6 +121,10 @@ describe('Arcade browser UI', () => {
     expect(script).toContain("show('reset-control',actionable)");
     expect(script).toContain("state.operatorStation?.station.phase==='ATTRACT'");
     expect(script).toContain("stationAction('reset')");
+    expect(script).toContain('if(stationActionSaving)return');
+    expect(script).toContain('stationResetIdempotencyKey??=crypto.randomUUID()');
+    expect(script).toContain('stationResetEtag??=state.operatorStationEtag');
+    expect(script).toMatch(/function cancelStationReset\(\):void\{\s*if\(stationActionSaving\)return;/);
     expect(css).toContain('.reset-danger-zone{');
     expect(css).toContain('.reset-dialog::backdrop{');
   });
@@ -229,7 +233,12 @@ describe('Arcade browser UI', () => {
       ['Live event', 'live-event'],
       ['Messages', 'messages'],
       ['Setup', 'setup'],
-    ]) expect(consoleMarkup).toContain(`<a href="#${target}">${label}</a>`);
+    ]) expect(consoleMarkup).toMatch(new RegExp(`<button[^>]+role="tab"[^>]+aria-controls="${target}"[^>]*>${label}</button>`));
+    expect(consoleMarkup).toContain('role="tablist"');
+    expect(consoleMarkup.match(/role="tabpanel"/g)).toHaveLength(4);
+    expect(consoleMarkup.match(/role="tab"/g)).toHaveLength(4);
+    expect(consoleMarkup).toMatch(/id="operator-overview"[^>]*role="tabpanel"(?![^>]*hidden)/);
+    for (const id of ['live-event','messages','setup']) expect(consoleMarkup).toMatch(new RegExp(`id="${id}"[^>]*role="tabpanel"[^>]*hidden`));
     const sectionPositions = ['operator-overview', 'live-event', 'messages', 'setup'].map(id => consoleMarkup.indexOf(`id="${id}"`));
     expect(sectionPositions).toEqual([...sectionPositions].sort((left, right) => left - right));
     for (const label of ['Event', 'Live game', 'Players', 'Messaging']) {
@@ -242,11 +251,21 @@ describe('Arcade browser UI', () => {
     expect(script).toMatch(/function renderRuntimeSummary\([\s\S]*?renderOperatorOverview\(\);\s*}/);
     expect(script).toMatch(/function renderOperatorStation\([\s\S]*?renderOperatorOverview\(\);\s*}/);
     expect(script).toMatch(/function renderMessagingStatus\([\s\S]*?renderOperatorOverview\(\);/);
+    expect(script).toContain('function initializeOperatorTabs():void');
+    expect(script).toContain("event.key==='ArrowRight'");
+    expect(script).toContain("event.key==='ArrowLeft'");
+    expect(script).toContain("event.key==='Home'");
+    expect(script).toContain("event.key==='End'");
+    expect(script).toContain("window.addEventListener('popstate'");
+    expect(script).toContain("window.addEventListener('hashchange'");
+    expect(script).toContain("tab.setAttribute('aria-selected',String(active))");
+    expect(script.indexOf('const OPERATOR_TABS')).toBeLessThan(script.indexOf('initializeOperatorTabs();'));
     expect(css).toContain('.operator-page .shell{width:min(1200px');
     expect(css).toContain('.operator-nav{position:sticky');
     expect(css).toContain('.operator-page .notice{position:static');
     expect(css).toContain('overflow-x:auto');
-    expect(css).toContain('.operator-section{scroll-margin-top:');
+    expect(css).toContain('.operator-nav button[aria-selected="true"]');
+    expect(css).toContain('.operator-section:focus-visible');
     expect(css).toContain('.overview-grid{display:grid;grid-template-columns:repeat(4');
     expect(css).toContain('@media(max-width:999px){.operator-page .overview-grid{grid-template-columns:repeat(2');
     expect(css).toContain('.operator-page .overview-grid{grid-template-columns:1fr}');
@@ -381,8 +400,9 @@ describe('Arcade browser UI', () => {
   it('installs booth access from the authenticated operator console, signs out, and replaces the same tab', () => {
     expect(html).toContain('id="display-connect-panel"');
     expect(html).toContain('id="connect-booth-display"');
-    expect(html).toContain('Connect this browser as booth display');
-    expect(html).toContain('prevent visitors from controlling them');
+    expect(html).toContain('Connect this tab as booth display');
+    expect(html).toContain('current tab into the booth display for this browser session');
+    expect(html).toContain('signs you out of the operator console');
     const flow = /async function connectBoothDisplay\(\):Promise<void>\{[\s\S]*?\n}/.exec(script)?.[0] ?? '';
     expect(flow).toContain("'/api/admin/arcade/display/connect'");
     expect(flow).toContain("'Content-Type':'application/json'");
@@ -428,6 +448,17 @@ describe('Arcade browser UI', () => {
     expect(script).toContain("output.textContent='Paused'");
     expect(script).toContain('The event is paused and this flow is frozen. Reset the event flow before reopening.');
     expect(script).toContain("state.adminConfig?.arcade.mode!=='off'&&entry.status==='ADMITTED'");
+    expect(html).toContain('id="settings-open-blocker"');
+    expect(html).toContain('Saving an Open status will ask you to reset that flow');
+    expect(script).toContain("error.code==='ACTIVE_STATION_CONFIG_LOCKED'");
+    expect(script).toContain("config.arcade.mode==='off'&&selectedMode!=='off'");
+    expect(script).toContain('await queueOpenAfterReset(version,settings,selectedMode)');
+    expect(script).toContain('await saveOpenAfterReset(openSettings)');
+    expect(script).toContain("setNotice('Event flow reset and Open settings saved. The event is now open.'");
+    expect(script).toContain('The live event is using these settings. Pause the event before changing them');
+    expect(script).toContain('A paused event flow is still preserved. Reset it from Live event before changing these settings');
+    expect(script).toContain('Settings were saved, but the console could not reload them.');
+    expect(script).toContain("refreshAll(false)");
   });
 
   it('localizes Portuguese browser registration and protects newer operator state', () => {
