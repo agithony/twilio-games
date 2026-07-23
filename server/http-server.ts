@@ -1578,12 +1578,6 @@ export class HttpServer {
       const from = (params['From'] ?? '').trim();
       const smsBody = params['Body'] ?? '';
       const messageSid = params['MessageSid'] ?? '';
-      if (this.arcadeTacGateway?.ownsMessaging()) {
-        // Conversation Orchestrator captures this provider message and invokes /tac/webhook. TAC owns
-        // the response so the same inbound interaction can never receive both TwiML and TAC replies.
-        res.writeHead(200, { 'Content-Type': 'text/xml' }).end(twimlEmpty());
-        return;
-      }
       // Media (MMS) isn't supported — reply politely without invoking the state machine.
       if ((parseInt(params['NumMedia'] ?? '0', 10) || 0) > 0) {
         res.writeHead(200, { 'Content-Type': 'text/xml' }).end(

@@ -249,7 +249,8 @@ function compareReady(left: StationReadyEntry, right: StationReadyEntry): number
 }
 
 function displayName(state: ArcadeState, playerId: string, index: number): string {
-  const name = state.players[playerId]?.lead?.firstName.trim();
+  const name = state.players[playerId]?.lead?.firstName.trim()
+    || state.messagingDrafts[playerId]?.firstName?.trim();
   return name ? name.slice(0, 50) : `PLAYER ${index + 1}`;
 }
 

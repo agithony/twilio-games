@@ -9,6 +9,7 @@ import { ArcadeEventHub } from '../server/arcade-events';
 import {
   ArcadeTacGateway,
   recalledMemoryLocale,
+  resolveTacProviderMessageId,
   type ArcadeTacClient,
   type ArcadeTacMessage,
 } from '../server/arcade-tac-gateway';
@@ -47,6 +48,19 @@ async function waitFor(predicate: () => boolean): Promise<void> {
 }
 
 describe('ArcadeTacGateway', () => {
+  it('requires a communication-specific provider identity for every inbound message', () => {
+    const sid = `SM${'a'.repeat(32)}`;
+    expect(resolveTacProviderMessageId({ channelId: sid, message: 'COIN' })).toBe(sid);
+    expect(resolveTacProviderMessageId({ lastCommunicationId: 'communication-2', message: 'COIN' }))
+      .toBe('communication-2');
+    const memory = {
+      communications: [{ id: 'communication-memory', content: { text: 'COIN' } }],
+    } as unknown as ArcadeTacMessage['memory'];
+    expect(resolveTacProviderMessageId({ memory, message: 'COIN' })).toBe('communication-memory');
+    expect(() => resolveTacProviderMessageId({ channelId: 'stable-conversation-id', message: 'COIN' }))
+      .toThrow('missing a unique provider communication ID');
+  });
+
   it('uses the newest locale-bearing Conversation Memory command', () => {
     const memory = (texts: readonly string[]) => ({
       communications: texts.map(text => ({ content: { text } })),

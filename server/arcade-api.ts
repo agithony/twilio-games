@@ -134,6 +134,7 @@ export class ArcadeApi {
   }>;
   private readonly streams = new Set<EventStream>();
   private readonly stationRoomCodes = new Set<string>();
+  private readonly messagingProfilesByAddress = new Map<string, string>();
   private unsubscribeStationCache: (() => void) | null = null;
   private readonly stationVoiceCalls = new Map<string, { callSid: string; readyEntryId: string }>();
   private abortStationEngine: ((game: 'racer' | 'monsters' | 'fighter', roomCode: string) => void) | null = null;
@@ -261,6 +262,7 @@ export class ArcadeApi {
     const providerAddress = input.from.trim();
     const channel = providerAddress.toLowerCase().startsWith('whatsapp:') ? 'whatsapp' : 'sms';
     const normalizedAddress = providerAddress.replace(/^whatsapp:/i, '');
+    const conversationProfileId = input.conversationProfileId?.trim() || null;
     if (!/^\+[1-9][0-9]{7,14}$/.test(normalizedAddress)
       || !input.providerMessageId || input.providerMessageId.length > 256) {
       throw new ArcadeHttpError(400, 'INVALID_PROVIDER_MESSAGE', 'messaging provider identity is invalid');
@@ -279,7 +281,7 @@ export class ArcadeApi {
         const requestFingerprint = createHash('sha256').update(JSON.stringify({
           body: input.body.trim(), channel,
           ...(input.conversationId ? { conversationId: input.conversationId } : {}),
-          ...(input.conversationProfileId ? { conversationProfileId: input.conversationProfileId } : {}),
+          ...(conversationProfileId ? { conversationProfileId } : {}),
           normalizedAddress, providerAddress, providerMessageId: input.providerMessageId,
         })).digest('hex');
         if (receipt.requestFingerprint !== requestFingerprint) {
@@ -287,6 +289,8 @@ export class ArcadeApi {
             body: input.body.trim(), channel, normalizedAddress, providerAddress,
             providerMessageId: input.providerMessageId,
           })).digest('hex');
+          if (!input.conversationProfileId && !input.conversationId
+            && receipt.requestFingerprint === fallbackFingerprint) return receipt.reply;
           if ((!input.conversationProfileId && !input.conversationId)
             || receipt.requestFingerprint !== fallbackFingerprint) {
             throw new ArcadeHttpError(409, 'IDEMPOTENCY_CONFLICT', 'provider message ID was reused');
@@ -330,10 +334,51 @@ export class ArcadeApi {
       stationId: config.arcade.cabinetId,
       preferredLocale: language,
       idempotencyKey: key,
-      conversationProfileId: input.conversationProfileId,
+      conversationProfileId,
       conversationId: input.conversationId,
     });
+    const pendingProfile = this.messagingProfilesByAddress.get(normalizedAddress);
+    if (pendingProfile && pendingProfile !== conversationProfileId) {
+      try {
+        await this.attachMessagingProfile({ from: providerAddress, conversationProfileId: pendingProfile });
+      } catch {
+        this.messagingProfilesByAddress.delete(normalizedAddress);
+      }
+    }
     return result.reply;
+  }
+
+  async attachMessagingProfile(input: { from: string; conversationProfileId: string }): Promise<boolean> {
+    const normalizedAddress = input.from.trim().replace(/^whatsapp:/i, '');
+    const profileId = input.conversationProfileId.trim();
+    if (!/^\+[1-9][0-9]{7,14}$/.test(normalizedAddress)
+      || !/^[A-Za-z0-9][A-Za-z0-9:._-]{0,255}$/.test(profileId)
+      || !this.playerRuntime) return false;
+    const store = await this.playerRuntime.getStateStoreForCleanup();
+    const attached = await store.transaction(state => {
+      const playerIds = new Set(Object.values(state.channelAddresses)
+        .filter(address => address.normalizedAddress === normalizedAddress)
+        .map(address => address.playerId));
+      if (playerIds.size === 0) return true;
+      if (playerIds.size !== 1) {
+        throw new ArcadeHttpError(409, 'CONVERSATION_PROFILE_CONFLICT', 'messaging address identifies multiple players');
+      }
+      const playerId = [...playerIds][0]!;
+      const player = state.players[playerId];
+      if (!player) return false;
+      if (player.conversationProfileId && player.conversationProfileId !== profileId) {
+        throw new ArcadeHttpError(409, 'CONVERSATION_PROFILE_CONFLICT', 'messaging identity is linked to another Conversation Memory profile');
+      }
+      const profileOwner = Object.values(state.players).find(candidate => (
+        candidate.id !== playerId && candidate.conversationProfileId === profileId
+      ));
+      if (profileOwner) return false;
+      if (player.conversationProfileId === profileId) return true;
+      state.players[playerId] = { ...player, conversationProfileId: profileId, updatedAt: new Date(this.now()).toISOString() };
+      return true;
+    });
+    if (attached) this.messagingProfilesByAddress.set(normalizedAddress, profileId);
+    return attached;
   }
 
   async processMessagingStatusCallback(input: {
@@ -1257,10 +1302,12 @@ export class ArcadeApi {
     const messagingLinked = Object.values(identityState.channelAddresses)
       .some(address => address.playerId === playerId);
     if (this.configStore.getSnapshot().arcade.mode === 'coin_only') {
-      if (!messagingLinked || identityState.messagingDrafts[playerId]?.stationId !== stationId) {
+      const draft = identityState.messagingDrafts[playerId];
+      if (!messagingLinked || draft?.stationId !== stationId
+        || draft.step !== 'COMPLETE' || !draft.firstName?.trim()) {
         throw new ArcadeHttpError(
           409, 'MESSAGING_IDENTITY_REQUIRED',
-          'join through SMS or WhatsApp before entering the ready pool',
+          'finish joining through SMS or WhatsApp before entering the ready pool',
         );
       }
     }

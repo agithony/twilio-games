@@ -169,8 +169,7 @@ properties:
           # Mode-off production calls receive paused TwiML instead of standalone Conversation Relay.
           - name: ARCADE_STANDALONE_VOICE_ENABLED
             value: "false"
-          # TAC owns active-event SMS and WhatsApp responses through Conversation Orchestrator while
-          # the deterministic game state machine remains authoritative inside the TAC callback.
+          # Direct signed webhooks own SMS/WhatsApp game commands; TAC enriches Conversation Memory.
           - name: ARCADE_TAC_ENABLED
             value: "true"
           # ElevenLabs voiceId for Conversation Relay talk-back (greeting/countdown/result to callers).

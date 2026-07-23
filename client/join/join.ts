@@ -30,9 +30,9 @@ function localizePage(): void {
   document.getElementById('terms-copy')!.textContent = 'Ao continuar, você concorda em participar desta experiência e permite que o Twilio Games use as informações fornecidas para operar sua sessão. O acompanhamento de marketing exige consentimento separado.';
 }
 
-function channelLink(label: string, detail: string, href: string, primary = false): HTMLAnchorElement {
+function channelLink(label: string, detail: string, href: string): HTMLAnchorElement {
   const link = document.createElement('a');
-  link.className = `channel${primary ? ' primary' : ''}`;
+  link.className = 'channel';
   link.href = href;
   link.innerHTML = `<div><strong>${label}</strong><span>${detail}</span></div><b aria-hidden="true">-></b>`;
   return link;
@@ -91,7 +91,7 @@ async function initialize(): Promise<void> {
       available.push(channelLink(
         portuguese ? 'Entrar com SMS' : 'Join with SMS',
         guidance.channelDetail,
-        `sms:${smsNumber}?body=${encodeURIComponent(command)}`, available.length === 0,
+        `sms:${smsNumber}?body=${encodeURIComponent(command)}`,
       ));
     }
     if (whatsapp) {
@@ -100,7 +100,6 @@ async function initialize(): Promise<void> {
         portuguese ? 'Entrar com WhatsApp' : 'Join with WhatsApp',
         guidance.channelDetail,
         `https://wa.me/${digits}?text=${encodeURIComponent(command)}`,
-        available.length === 0,
       ));
     }
     if (mode === 'lead_capture') {
@@ -108,7 +107,6 @@ async function initialize(): Promise<void> {
         portuguese ? 'Continuar no navegador' : 'Continue in browser',
         guidance.browserDetail,
         browserRegistrationUrl,
-        available.length === 0,
       ));
     }
     if (!available.length) {

@@ -17,29 +17,24 @@ export interface JoinGuidance {
 }
 
 export function buildJoinGuidance(input: JoinGuidanceInput): JoinGuidance {
-  const { portuguese, mode, sms, whatsapp, termsRequired, freePlay } = input;
+  const { portuguese, mode, sms, whatsapp } = input;
   const command = portuguese ? 'ENTRAR' : 'JOIN';
   const messaging = sms || whatsapp;
   const channel = sms && whatsapp ? 'SMS ou WhatsApp' : sms ? 'SMS' : whatsapp ? 'WhatsApp' : '';
   const englishChannel = sms && whatsapp ? 'SMS or WhatsApp' : sms ? 'SMS' : whatsapp ? 'WhatsApp' : '';
-  const readyCommand = portuguese ? freePlay ? 'PRONTO' : 'MOEDA' : freePlay ? 'READY' : 'COIN';
   let intro: string;
   if (mode === 'lead_capture') {
     intro = messaging
       ? portuguese
-        ? `Cadastre-se no navegador ou envie ${command} por ${channel}. Cada resposta da mensagem diz exatamente o que responder.`
-        : `Register in your browser or send ${command} by ${englishChannel}. Every messaging reply tells you exactly what to answer.`
+        ? `Cadastre-se no navegador ou envie ${command} por ${channel}.`
+        : `Register in your browser or send ${command} by ${englishChannel}.`
       : portuguese
-        ? 'Cadastre-se no navegador para entrar. Nenhum aplicativo de mensagens é necessário.'
-        : 'Register in your browser to join. No messaging app is needed.';
-  } else if (termsRequired) {
-    intro = portuguese
-      ? `Envie ${command} por ${channel}. As respostas orientam você, incluindo SIM para os termos e ${readyCommand} na tela.`
-      : `Send ${command} by ${englishChannel}. Replies guide you, including YES for terms and ${readyCommand} at the screen.`;
+        ? 'Cadastre-se no navegador para entrar.'
+        : 'Register in your browser to join.';
   } else {
     intro = portuguese
-      ? `Envie ${command} por ${channel}. Depois, responda ${readyCommand} quando solicitado na tela.`
-      : `Send ${command} by ${englishChannel}. Then reply ${readyCommand} when prompted at the screen.`;
+      ? `Envie ${command} por ${channel}.`
+      : `Send ${command} by ${englishChannel}.`;
   }
   return {
     command,

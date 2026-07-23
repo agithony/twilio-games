@@ -656,7 +656,7 @@ describe('Arcade API', () => {
       };
       state.messagingDrafts[stationPlayerId] = {
         playerId: stationPlayerId, stationId: 'ARCADE-01', step: 'COMPLETE',
-        firstName: null, lastName: null, workEmail: null, companyName: null, countryCode: null,
+        firstName: 'Ada', lastName: null, workEmail: null, companyName: null, countryCode: null,
         createdAt: '2026-07-20T10:00:00.000Z', updatedAt: '2026-07-20T10:00:00.000Z',
       };
     });
@@ -998,19 +998,30 @@ describe('Arcade API', () => {
 
     const joined = await send('SM-ARCADE-1', 'JOIN ARCADE-01 LANG en-US');
     expect(joined.status).toBe(200);
-    expect(await joined.text()).toContain('Reply YES');
-    expect(await (await send('SM-ARCADE-2', 'YES')).text()).toContain('Reply COIN');
-    expect(await (await send('SM-ARCADE-3', 'COIN')).text()).toContain('Coin inserted');
-    expect(await (await send('SM-ARCADE-4', 'STATUS')).text()).toContain('Station status: READY');
-    expect(await (await send('SM-ARCADE-1', 'JOIN ARCADE-01 LANG en-US')).text()).toContain('Reply YES');
+    expect(await joined.text()).toContain('first name');
+    expect(await (await send('SM-ARCADE-2', 'Ada')).text()).toContain('Reply YES');
+    expect(await (await send('SM-ARCADE-3', 'YES')).text()).toContain('Thanks, Ada');
+    expect(await (await send('SM-ARCADE-4', 'COIN')).text()).toContain('Coin inserted');
+    expect(await (await send('SM-ARCADE-5', 'STATUS')).text()).toContain('Station status: READY');
+    expect(await (await send('SM-ARCADE-1', 'JOIN ARCADE-01 LANG en-US')).text()).toContain('first name');
     expect(await api.processMessagingWebhook({
       from: '+14155550199', body: 'JOIN ARCADE-01 LANG en-US', providerMessageId: 'SM-ARCADE-1',
       conversationProfileId: 'mem_profile_fallback', conversationId: 'conv_fallback',
     })).toBeNull();
+    expect(await api.attachMessagingProfile({
+      from: '+14155550199', conversationProfileId: 'mem_profile_fallback',
+    })).toBe(true);
 
     const state = (await playerRuntime.getActive()).store.snapshot();
-    expect(Object.keys(state.inboundMessages)).toHaveLength(4);
+    expect(Object.keys(state.inboundMessages)).toHaveLength(5);
     expect(Object.values(state.stationReadyEntries)).toHaveLength(1);
+    expect(state.players[Object.keys(state.players)[0]!]?.lead).toBeNull();
+    expect(Object.values(state.messagingDrafts)[0]?.firstName).toBe('Ada');
+    expect(Object.values(state.players)[0]?.conversationProfileId).toBe('mem_profile_fallback');
+    expect(await (await fetch(`${baseUrl}/api/arcade/station/public`)).json()).toMatchObject({
+      phase: 'RECRUITING', currentReadyCount: 1,
+      roster: [{ displayName: 'Ada' }],
+    });
     const resources = await playerRuntime.getActive();
     const adminStatus = await fetch(`${baseUrl}/api/admin/arcade/status`, { headers: ADMIN_HEADER });
     expect(await adminStatus.json()).toMatchObject({
@@ -1030,11 +1041,11 @@ describe('Arcade API', () => {
     expect(await api.processMessagingWebhook({
       from: '+5511999999999', body: 'ENTRAR', providerMessageId: 'SM-API-ENTRAR',
       recalledLocale: 'en-US',
-    })).toContain('Responda SIM');
+    })).toContain('primeiro nome');
     expect(await api.processMessagingWebhook({
       from: '+14155550222', body: 'ENTRAR ARCADE-01 LANG en-US', providerMessageId: 'SM-API-LANG',
       recalledLocale: 'pt-BR',
-    })).toContain('Reply YES');
+    })).toContain('first name');
     const remembered = await api.processMessagingWebhook({
       from: '+14155550200', body: 'JOIN ARCADE-01 LANG pt-BR', providerMessageId: 'comm-memory-replay',
       conversationProfileId: 'mem_profile_replay', conversationId: 'conv_replay',
@@ -1078,7 +1089,7 @@ describe('Arcade API', () => {
       from: '+14155550101', body: 'JOIN ARCADE-01', providerMessageId: 'SM-RATE-001',
     };
     const firstReply = await api.processMessagingWebhook(first);
-    expect(firstReply).toContain('Reply YES');
+    expect(firstReply).toContain('first name');
     expect(await api.processMessagingWebhook(first)).toBe(firstReply);
     expect(await api.processMessagingWebhook({
       ...first, providerMessageId: 'SM-RATE-002', body: 'STATUS',
@@ -1086,7 +1097,7 @@ describe('Arcade API', () => {
 
     expect(await api.processMessagingWebhook({
       from: '+14155550102', body: 'JOIN ARCADE-01', providerMessageId: 'SM-RATE-003',
-    })).toContain('Reply YES');
+    })).toContain('first name');
     expect(await api.processMessagingWebhook({
       from: '+14155550103', body: 'JOIN ARCADE-01', providerMessageId: 'SM-RATE-004',
     })).toContain('Too many messages');
@@ -1095,6 +1106,35 @@ describe('Arcade API', () => {
     const state = (await playerRuntime.getActive()).store.snapshot();
     expect(Object.keys(state.players)).toHaveLength(2);
     expect(Object.keys(state.inboundMessages)).toHaveLength(2);
+  });
+
+  it('keeps TAC profile enrichment non-destructive in either webhook order', async () => {
+    const { api, playerRuntime } = await harness({ playerMode: 'coin_only' });
+    expect(await api.attachMessagingProfile({
+      from: '+14155550401', conversationProfileId: 'mem_profile_converged',
+    })).toBe(true);
+    const first = await api.processMessagingWebhook({
+      from: '+14155550401', body: 'JOIN', providerMessageId: 'SM-PROFILE-FIRST',
+    });
+    expect(first).toContain('first name');
+    let state = (await playerRuntime.getActive()).store.snapshot();
+    const owner = Object.values(state.players)[0]!;
+    expect(owner.conversationProfileId).toBe('mem_profile_converged');
+
+    expect(await api.processMessagingWebhook({
+      from: '+14155550402', body: 'JOIN', providerMessageId: 'SM-PROFILE-SECOND',
+    })).toContain('first name');
+    expect(Object.keys((await playerRuntime.getActive()).store.snapshot().players)).toHaveLength(2);
+    expect(await api.attachMessagingProfile({
+      from: '+14155550402', conversationProfileId: 'mem_profile_converged',
+    })).toBe(false);
+    state = (await playerRuntime.getActive()).store.snapshot();
+    expect(Object.keys(state.players)).toHaveLength(2);
+    expect(Object.values(state.channelAddresses).map(address => address.playerId))
+      .toHaveLength(2);
+    expect(await api.processMessagingWebhook({
+      from: '+14155550402', body: 'Ada', providerMessageId: 'SM-PROFILE-SECOND-NAME',
+    })).toContain('Reply YES');
   });
 
   it('reports effective outbound status and performs authenticated same-origin audited retries', async () => {
@@ -1110,7 +1150,10 @@ describe('Arcade API', () => {
     });
     expect(await api.processMessagingWebhook({
       from: '+14155550199', body: 'JOIN ARCADE-01 LANG en-US', providerMessageId: 'SM-RETRY-JOIN',
-    })).toContain('Reply YES');
+    })).toContain('first name');
+    await api.processMessagingWebhook({
+      from: '+14155550199', body: 'Ada', providerMessageId: 'SM-RETRY-NAME',
+    });
     await api.processMessagingWebhook({
       from: '+14155550199', body: 'YES', providerMessageId: 'SM-RETRY-TERMS',
     });

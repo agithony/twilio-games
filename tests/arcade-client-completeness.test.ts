@@ -86,8 +86,8 @@ describe('Arcade client completeness', () => {
     expect(join).toContain('buildJoinGuidance');
     expect(joinGuidance).toContain("portuguese ? 'ENTRAR' : 'JOIN'");
     expect(joinGuidance).not.toContain('JOIN ${station}');
-    expect(joinGuidance).toContain('including YES for terms');
-    expect(joinGuidance).toContain('incluindo SIM para os termos');
+    expect(joinGuidance).toContain('Send ${command} by ${englishChannel}.');
+    expect(joinGuidance).not.toContain('including YES for terms');
     expect(joinGuidance).toContain('Just tap Send');
     expect(joinGuidance).toContain('Basta tocar em Enviar');
     expect(join).toContain('messageCommandPanel');
@@ -96,6 +96,7 @@ describe('Arcade client completeness', () => {
     expect(join).toContain('const whatsappNumber = availableNumber(bootstrap.whatsappNumber)');
     expect(join).toContain('const sms = arcade.channels.sms && Boolean(smsNumber)');
     expect(join).toContain('const whatsapp = arcade.channels.whatsapp && Boolean(whatsappNumber)');
+    expect(join).not.toContain("' primary'");
   });
 
   it('lets a current ready browser player cast and change a localized game vote', () => {

@@ -210,7 +210,7 @@ Keep the Twilio phone number's direct incoming Messaging webhook as the fail-saf
 POST <base>/sms
 ```
 
-The direct `/sms` route returns empty TwiML while connected TAC owns an active event, preventing duplicate replies. Conversation Orchestrator must deliver the captured communication to `/tac/webhook`; without that callback, active-event messages are acknowledged but not processed. Configure the approved WhatsApp sender in the same Orchestrator capture configuration, open the generated join link, and verify that the prefilled `JOIN` command creates one Conversation, one Memory profile, and one deterministic reply.
+Configure the approved WhatsApp sender's incoming-message webhook with the same `POST <base>/sms` URL. The signed direct `/sms` route owns deterministic game commands and immediate replies for both SMS and WhatsApp, so player entry still works if an Orchestrator callback is delayed or unavailable. Conversation Orchestrator delivers captured communications to `/tac/webhook` for Conversation Memory profile enrichment only; it does not execute the game command or send a second reply. Keep the sender in the same Orchestrator capture configuration, open the generated join link, and verify that the prefilled `JOIN` command creates one Conversation, one Memory profile, and one deterministic reply.
 
 The voice webhook returns TwiML that connects Conversation Relay to `wss://<fqdn>/voice` and sets `POST <base>/voice/session-ended` as the session-ended callback. `PUBLIC_BASE_URL` is populated from the Container App FQDN, so these derived URLs do not require separate configuration.
 

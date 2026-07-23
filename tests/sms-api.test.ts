@@ -41,7 +41,7 @@ describe('SMS concierge API', () => {
     expect(r.xml.toLowerCase()).toMatch(/not supported/);
   });
 
-  it('lets TAC own active messaging and accepts Conversation Orchestrator events', async () => {
+  it('keeps the direct reply fallback while accepting Conversation Orchestrator events', async () => {
     const events: Array<{ payload: unknown; token?: string }> = [];
     const gateway = {
       start: async () => undefined,
@@ -57,9 +57,9 @@ describe('SMS concierge API', () => {
     });
     const port = await srv.start();
     const inbound = await sms(port, '+15551115555', 'JOIN ARCADE-01');
-    expect(inbound.xml).toBe('<?xml version="1.0" encoding="UTF-8"?>\n<Response></Response>');
+    expect(inbound.xml).toContain('<Message>');
     const mms = await sms(port, '+15551115555', '', { NumMedia: '1' });
-    expect(mms.xml).toBe('<?xml version="1.0" encoding="UTF-8"?>\n<Response></Response>');
+    expect(mms.xml).toContain('Images are not supported');
 
     const payload = { eventType: 'COMMUNICATION_CREATED', data: { id: 'comm-1' } };
     const response = await fetch(`http://127.0.0.1:${port}/tac/webhook`, {

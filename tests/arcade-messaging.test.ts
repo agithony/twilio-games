@@ -98,32 +98,97 @@ describe('Arcade messaging commands', () => {
   it('deduplicates provider messages durably and converges SMS and WhatsApp identity', async () => {
     const h = await harness('coin_only');
     const joined = await message(h.service, 'SM001', 'JOIN ARCADE-01 LANG en-US');
-    expect(joined.reply).toContain('Reply YES');
-    expect((await message(h.service, 'SM002', 'YES')).reply).toContain('Reply COIN');
-    const status = await message(h.service, 'SM003', 'STATUS');
+    expect(joined.reply).toContain('first name');
+    expect((await message(h.service, 'SM002', 'COIN')).reply).toBe(joined.reply);
+    expect(await h.service.getStation('ARCADE-01')).toBeNull();
+    expect((await message(h.service, 'SM003', 'Ada')).reply).toContain('Reply YES');
+    expect((await message(h.service, 'SM004', 'YES')).reply).toContain('Thanks, Ada');
+    const status = await message(h.service, 'SM005', 'STATUS');
     expect(status.reply).toContain('Balance: 2');
     expect(await message(h.service, 'SM001', 'JOIN ARCADE-01 LANG en-US')).toEqual(joined);
 
     const whatsapp = await message(
-      h.service, 'SM004', 'JOIN ARCADE-01 LANG en-US', '+14155550199', 'whatsapp',
+      h.service, 'SM006', 'JOIN ARCADE-01 LANG en-US', '+14155550199', 'whatsapp',
     );
     expect(whatsapp.playerId).toBe(joined.playerId);
-    const coin = await message(h.service, 'SM005', 'COIN');
+    const coin = await message(h.service, 'SM007', 'COIN');
     expect(coin.reply).toContain('position 1');
     expect(coin.reply).toContain('Watch the screen');
     expect(coin.reply).not.toContain('we will text');
-    expect(await message(h.service, 'SM005', 'COIN')).toEqual(coin);
+    expect(await message(h.service, 'SM007', 'COIN')).toEqual(coin);
 
     const state = h.store.snapshot();
-    expect(Object.keys(state.inboundMessages)).toHaveLength(5);
+    expect(Object.keys(state.inboundMessages)).toHaveLength(7);
     expect(Object.values(state.channelAddresses).map(address => address.playerId))
       .toEqual([joined.playerId, joined.playerId]);
+    expect(state.players[joined.playerId!]?.lead).toBeNull();
+    expect(state.messagingDrafts[joined.playerId!]?.firstName).toBe('Ada');
     expect(state.wallets[joined.playerId!]?.reservations).toHaveLength(1);
-    await expect(message(h.service, 'SM005', 'LEAVE')).rejects.toMatchObject({ code: 'IDEMPOTENCY_CONFLICT' });
+    await expect(message(h.service, 'SM007', 'LEAVE')).rejects.toMatchObject({ code: 'IDEMPOTENCY_CONFLICT' });
 
-    const left = await message(h.service, 'SM006', 'LEAVE');
+    const left = await message(h.service, 'SM008', 'LEAVE');
     expect(left.reply).toContain('held coin is available again');
     expect(h.store.snapshot().wallets[joined.playerId!]?.reservations[0]?.status).toBe('RELEASED');
+  });
+
+  it('requires a first name before ready entry on both SMS and WhatsApp without creating a lead', async () => {
+    for (const channel of ['sms', 'whatsapp'] as const) {
+      const h = await harness('coin_only', 'per_player', value => {
+        value.registration.termsAcknowledgementRequired = false;
+      });
+      const from = channel === 'sms' ? '+14155550231' : '+14155550232';
+      const joined = await message(h.service, `${channel}-JOIN`, 'JOIN', from, channel);
+      expect(joined.reply).toContain('first name');
+      expect((await message(h.service, `${channel}-COIN-EARLY`, 'COIN', from, channel)).reply)
+        .toBe(joined.reply);
+      expect(await h.service.getStation('ARCADE-01')).toBeNull();
+      expect((await message(h.service, `${channel}-NAME`, 'Ada', from, channel)).reply)
+        .toContain('Thanks, Ada');
+      expect((await message(h.service, `${channel}-COIN`, 'COIN', from, channel)).reply)
+        .toContain('position 1');
+      const state = h.store.snapshot();
+      expect(state.players[joined.playerId!]?.lead).toBeNull();
+      expect(state.messagingDrafts[joined.playerId!]?.firstName).toBe('Ada');
+    }
+  });
+
+  it('prompts legacy unnamed coin-only players before their next ready entry', async () => {
+    const h = await harness('coin_only');
+    const joined = await message(h.service, 'legacy-JOIN', 'JOIN');
+    await h.store.transaction(state => {
+      state.messagingDrafts[joined.playerId!] = {
+        ...state.messagingDrafts[joined.playerId!]!, step: 'COMPLETE', firstName: null,
+      };
+      state.players[joined.playerId!] = {
+        ...state.players[joined.playerId!]!, termsAcceptedAt: new Date(T0).toISOString(),
+      };
+    });
+    expect((await message(h.service, 'legacy-COIN-EARLY', 'COIN')).reply).toContain('first name');
+    expect(await h.service.getStation('ARCADE-01')).toBeNull();
+    expect((await message(h.service, 'legacy-NAME', 'Ada')).reply).toContain('Thanks, Ada');
+    expect((await message(h.service, 'legacy-COIN', 'COIN')).reply).toContain('Coin inserted');
+  });
+
+  it('finishes legacy terms before asking for a name and still permits an unnamed active player to leave', async () => {
+    const terms = await harness('coin_only');
+    const joined = await message(terms.service, 'legacy-terms-JOIN', 'JOIN');
+    await terms.store.transaction(state => {
+      state.messagingDrafts[joined.playerId!] = {
+        ...state.messagingDrafts[joined.playerId!]!, step: 'TERMS', firstName: null,
+      };
+    });
+    expect((await message(terms.service, 'legacy-terms-YES', 'YES')).reply).toContain('first name');
+    expect(terms.store.snapshot().players[joined.playerId!]?.termsAcceptedAt).not.toBeNull();
+    expect((await message(terms.service, 'legacy-terms-NAME', 'Ada')).reply).toContain('Thanks, Ada');
+
+    await message(terms.service, 'legacy-active-COIN', 'COIN');
+    await terms.store.transaction(state => {
+      state.messagingDrafts[joined.playerId!] = {
+        ...state.messagingDrafts[joined.playerId!]!, step: 'COMPLETE', firstName: null,
+      };
+    });
+    expect((await message(terms.service, 'legacy-active-LEAVE', 'LEAVE')).reply).toContain('left the ready pool');
+    expect(terms.store.snapshot().wallets[joined.playerId!]?.reservations[0]?.status).toBe('RELEASED');
   });
 
   it('persists the Conversation Memory profile from the first TAC interaction', async () => {
@@ -219,23 +284,25 @@ describe('Arcade messaging commands', () => {
   it('uses READY language and creates no wallet ledger in free play', async () => {
     const h = await harness('coin_only', 'free');
     const joined = await message(h.service, 'SM301', 'JOIN ARCADE-01 LANG en-US');
-    expect(joined.reply).toContain('Reply YES');
-    expect((await message(h.service, 'SM302', 'YES')).reply).toContain('Reply READY');
-    const ready = await message(h.service, 'SM303', 'READY');
+    expect(joined.reply).toContain('first name');
+    expect((await message(h.service, 'SM302', 'Ada')).reply).toContain('Reply YES');
+    expect((await message(h.service, 'SM303', 'YES')).reply).toContain('Thanks, Ada');
+    const ready = await message(h.service, 'SM304', 'READY');
     expect(ready.reply).toContain('ready in position 1');
     expect(ready.reply).toContain('Watch the screen');
     expect(ready.reply).not.toContain('we will text');
     expect(h.store.snapshot().wallets[joined.playerId!]?.transactions).toEqual([]);
     expect(h.store.snapshot().wallets[joined.playerId!]?.reservations).toEqual([]);
     expect(Object.values(h.store.snapshot().stationReadyEntries)[0]?.reservationId).toBeNull();
-    expect((await message(h.service, 'SM304', 'STATUS')).reply)
+    expect((await message(h.service, 'SM305', 'STATUS')).reply)
       .toBe('Station status: READY. Watch for game selection, then reply with the game name or number.');
   });
 
   it('requires a fresh JOIN after the cabinet changes', async () => {
     const h = await harness('coin_only');
     await message(h.service, 'SM401', 'JOIN ARCADE-01 LANG en-US');
-    await message(h.service, 'SM402', 'YES');
+    await message(h.service, 'SM402', 'Ada');
+    await message(h.service, 'SM402B', 'YES');
     h.setCabinet('ARCADE-02');
     expect((await message(h.service, 'SM403', 'STATUS', '+14155550199', 'sms', 'ARCADE-02')).reply)
       .toBe('Reply JOIN to start');
@@ -247,7 +314,8 @@ describe('Arcade messaging commands', () => {
   it('reconciles persisted drafts when station mode changes', async () => {
     const coinToLead = await harness('coin_only');
     await message(coinToLead.service, 'SM-MODE-001', 'JOIN ARCADE-01 LANG en-US');
-    await message(coinToLead.service, 'SM-MODE-002', 'YES');
+    await message(coinToLead.service, 'SM-MODE-002', 'Ada');
+    await message(coinToLead.service, 'SM-MODE-002B', 'YES');
     coinToLead.setMode('lead_capture');
     expect((await message(coinToLead.service, 'SM-MODE-003', 'JOIN ARCADE-01 LANG en-US')).reply)
       .toContain('first name');
@@ -313,20 +381,21 @@ describe('Arcade messaging commands', () => {
       preferredLocale: 'en-US', idempotencyKey: providerKey('SM-LOCALE-PT', '+5511999999999'),
     });
     expect(portuguese.locale).toBe('pt-BR');
-    expect(portuguese.reply).toContain('Responda SIM');
+    expect(portuguese.reply).toContain('primeiro nome');
     const explicitEnglish = await h.service.processInboundStationMessage({
       channel: 'sms', normalizedAddress: '+14155550222', providerAddress: '+14155550222',
       providerMessageId: 'SM-LOCALE-EN', body: 'ENTRAR ARCADE-01 LANG en-US', stationId: 'ARCADE-01',
       preferredLocale: 'pt-BR', idempotencyKey: providerKey('SM-LOCALE-EN', '+14155550222'),
     });
     expect(explicitEnglish.locale).toBe('en-US');
-    expect(explicitEnglish.reply).toContain('Reply YES');
+    expect(explicitEnglish.reply).toContain('first name');
   });
 
   it('records numbered and named game choices only during live selection', async () => {
     const h = await harness('coin_only');
     const joined = await message(h.service, 'SM-CHOICE-001', 'JOIN');
-    await message(h.service, 'SM-CHOICE-002', 'YES');
+    await message(h.service, 'SM-CHOICE-002', 'Ada');
+    await message(h.service, 'SM-CHOICE-002B', 'YES');
     expect((await message(h.service, 'SM-CHOICE-003', 'RACER')).reply)
       .toContain('Game selection opens after recruiting');
     await message(h.service, 'SM-CHOICE-004', 'COIN');
@@ -352,9 +421,11 @@ describe('Arcade messaging commands', () => {
     const englishFrom = '+14155550199';
     const portugueseFrom = '+5511999999999';
     await message(h.service, 'SM-CLOSED-EN-JOIN', 'JOIN', englishFrom);
+    await message(h.service, 'SM-CLOSED-EN-NAME', 'Ada', englishFrom);
     await message(h.service, 'SM-CLOSED-EN-TERMS', 'YES', englishFrom);
     await message(h.service, 'SM-CLOSED-EN-COIN', 'COIN', englishFrom);
     await message(h.service, 'SM-CLOSED-PT-JOIN', 'ENTRAR', portugueseFrom);
+    await message(h.service, 'SM-CLOSED-PT-NAME', 'Bia', portugueseFrom);
     await message(h.service, 'SM-CLOSED-PT-TERMS', 'SIM', portugueseFrom);
     await message(h.service, 'SM-CLOSED-PT-COIN', 'MOEDA', portugueseFrom);
     const recruiting = await h.service.getStation('ARCADE-01');
@@ -433,7 +504,8 @@ describe('Arcade messaging commands', () => {
   it('replenishes one coin for a messaging player after their prior paid game', async () => {
     const h = await harness('coin_only', 'per_player', config => { config.coins.startingBalance = 1; });
     const joined = await message(h.service, 'SM-REP-001', 'JOIN ARCADE-01 LANG en-US');
-    await message(h.service, 'SM-REP-002', 'YES');
+    await message(h.service, 'SM-REP-002', 'Ada');
+    await message(h.service, 'SM-REP-002B', 'YES');
     await message(h.service, 'SM-REP-003', 'COIN');
     const station = await h.service.getStation('ARCADE-01');
     const selecting = await h.service.closeStationRecruiting({

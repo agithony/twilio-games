@@ -634,7 +634,7 @@ type MessagingCopyKey = 'wrongStation' | 'joinFirst' | 'joined' | 'help' | 'stat
   | 'joinedFree' | 'helpFree' | 'statusFree' | 'finishRegistrationFree'
   | 'registeredFree' | 'leftFree' | 'poolFullFree' | 'readyFree' | 'continueInBrowser'
   | 'coinScreen' | 'readyFreeScreen' | 'notReadyFree' | 'capacity' | 'gameChoice' | 'gameChoiceInvalid'
-  | 'gameChoiceUnavailable' | 'gameChoiceClosed';
+  | 'gameChoiceUnavailable' | 'gameChoiceClosed' | 'named' | 'namedFree';
 
 const MESSAGING_COPY: Record<'en-US' | 'pt-BR', Record<MessagingCopyKey, string>> = {
   'en-US': {
@@ -670,6 +670,8 @@ const MESSAGING_COPY: Record<'en-US' | 'pt-BR', Record<MessagingCopyKey, string>
     gameChoiceInvalid: 'That is not a valid game choice. Reply with one of: {choices}.',
     gameChoiceUnavailable: 'Game selection opens after recruiting for players who are ready. When the screen asks you to choose, reply with one of: {choices}.',
     gameChoiceClosed: 'Game selection is closed. Watch the screen for the chosen game and your next instruction.',
+    named: 'Thanks, {name}. You have {balance} coins. Reply COIN when you are ready at the screen.',
+    namedFree: 'Thanks, {name}. Reply READY when you are at the screen.',
   },
   'pt-BR': {
     wrongStation: 'Esse codigo de estacao expirou. Escaneie o QR novamente ou responda ENTRAR.',
@@ -704,6 +706,8 @@ const MESSAGING_COPY: Record<'en-US' | 'pt-BR', Record<MessagingCopyKey, string>
     gameChoiceInvalid: 'Essa escolha de jogo nao e valida. Responda com uma destas opcoes: {choices}.',
     gameChoiceUnavailable: 'A escolha do jogo abre depois do recrutamento para quem esta pronto. Quando a tela pedir sua escolha, responda com uma destas opcoes: {choices}.',
     gameChoiceClosed: 'A escolha do jogo ja terminou. Acompanhe a tela para ver o jogo escolhido e a proxima instrucao.',
+    named: 'Obrigado, {name}. Voce tem {balance} moedas. Responda MOEDA quando estiver pronto na tela.',
+    namedFree: 'Obrigado, {name}. Responda PRONTO quando estiver na tela.',
   },
 };
 
@@ -1222,7 +1226,8 @@ export class ArcadeService {
       return Object.freeze({
         queueEntryId: entry.id,
         playerId: entry.playerId,
-        firstName: own(state.players, entry.playerId)?.lead?.firstName ?? null,
+        firstName: own(state.players, entry.playerId)?.lead?.firstName
+          ?? own(state.messagingDrafts, entry.playerId)?.firstName ?? null,
         assignedGame: captured?.assignedGame ?? null,
         matchId: captured?.matchId ?? null,
         status: entry.status,
@@ -1258,7 +1263,8 @@ export class ArcadeService {
     return Object.freeze({
       queueEntryId: entry.id,
       playerId: entry.playerId,
-      firstName: own(state.players, entry.playerId)?.lead?.firstName ?? null,
+      firstName: own(state.players, entry.playerId)?.lead?.firstName
+        ?? own(state.messagingDrafts, entry.playerId)?.firstName ?? null,
       assignedGame: captured?.assignedGame ?? null,
       matchId: captured?.matchId ?? null,
       status: entry.status,
@@ -1998,17 +2004,25 @@ export class ArcadeService {
         const freePlay = config.coins.chargePolicy === 'free';
 
         if (config.arcade.mode === 'coin_only') {
-          if (config.registration.termsAcknowledgementRequired && !player.termsAcceptedAt) {
-            draft = draft?.step === 'TERMS'
-              ? { ...draft, stationId: draftStationId, updatedAt: at }
-              : { ...createMessagingDraft(playerId, draftStationId, at), step: 'TERMS' };
-            state.messagingDrafts[playerId] = draft;
-          } else {
-            draft = { ...createMessagingDraft(playerId, draftStationId, at), step: 'COMPLETE' };
-            state.messagingDrafts[playerId] = draft;
-            if (!freePlay) {
-              this.ensureWalletAndStartingGrant(state, playerId, `${input.idempotencyKey}:grant`, config, at);
-            }
+          const firstName = draft?.firstName?.trim() || player.lead?.firstName.trim() || null;
+          const legacyTermsPending = draft?.step === 'TERMS' && firstName === null
+            && config.registration.termsAcknowledgementRequired && !player.termsAcceptedAt;
+          draft = {
+            ...(draft ?? createMessagingDraft(playerId, draftStationId, at)),
+            stationId: draftStationId,
+            firstName,
+            step: legacyTermsPending
+              ? 'TERMS'
+              : firstName === null
+              ? 'FIRST_NAME'
+              : config.registration.termsAcknowledgementRequired && !player.termsAcceptedAt
+                ? 'TERMS'
+                : 'COMPLETE',
+            updatedAt: at,
+          };
+          state.messagingDrafts[playerId] = draft;
+          if (draft.step === 'COMPLETE' && !freePlay) {
+            this.ensureWalletAndStartingGrant(state, playerId, `${input.idempotencyKey}:grant`, config, at);
           }
         } else if (!player.lead && (!draft || !isLeadCaptureDraft(draft))) {
           draft = createMessagingDraft(playerId, draftStationId, at);
@@ -2023,7 +2037,7 @@ export class ArcadeService {
             draft = { ...createMessagingDraft(playerId, stationId, at), step: 'COMPLETE' };
           }
           if (draft) state.messagingDrafts[playerId] = draft;
-          if (config.arcade.mode === 'coin_only' && draft?.step === 'TERMS') {
+          if (config.arcade.mode === 'coin_only' && draft && draft.step !== 'COMPLETE') {
             return finish('JOIN', messagingPrompt(locale, draft));
           }
           if (config.arcade.mode === 'lead_capture' && !own(state.players, playerId)?.lead) {
@@ -2036,15 +2050,48 @@ export class ArcadeService {
 
         const command = messagingCommand(normalizedCommand);
         const gameChoice = parseMessagingGameChoice(normalizedCommand);
+        if (config.arcade.mode === 'coin_only' && draft?.step === 'FIRST_NAME') {
+          const firstName = body.trim();
+          if (command === 'LEAVE') {
+            // Legacy unnamed players must still be able to release an existing reservation.
+          } else if (command !== 'TEXT' || gameChoice !== null || !validMessagingText(firstName, 50)) {
+            return finish(command, messagingPrompt(locale, draft));
+          } else {
+            draft = {
+              ...draft,
+              firstName,
+              step: config.registration.termsAcknowledgementRequired && !player.termsAcceptedAt
+                ? 'TERMS'
+                : 'COMPLETE',
+              updatedAt: at,
+            };
+            state.messagingDrafts[playerId] = draft;
+            if (draft.step === 'TERMS') return finish('REGISTER', messagingPrompt(locale, draft));
+            if (freePlay) return finish('REGISTER', messagingCopy(locale, 'namedFree', { name: firstName }));
+            const wallet = this.ensureWalletAndStartingGrant(state, playerId, `${input.idempotencyKey}:grant`, config, at);
+            return finish('REGISTER', messagingCopy(locale, 'named', {
+              name: firstName,
+              balance: availableBalance(wallet),
+            }));
+          }
+        }
         if (config.arcade.mode === 'coin_only' && draft?.step === 'TERMS') {
           if (!['YES', 'SIM'].includes(normalizedCommand)) {
             return finish(command, messagingPrompt(locale, draft));
           }
-          state.messagingDrafts[playerId] = { ...draft, step: 'COMPLETE', updatedAt: at };
           state.players[playerId] = { ...player, termsAcceptedAt: at, updatedAt: at };
-          if (freePlay) return finish('REGISTER', messagingCopy(locale, 'registeredFree'));
+          if (draft.firstName === null) {
+            const nameDraft = { ...draft, step: 'FIRST_NAME' as const, updatedAt: at };
+            state.messagingDrafts[playerId] = nameDraft;
+            return finish('REGISTER', messagingPrompt(locale, nameDraft));
+          }
+          state.messagingDrafts[playerId] = { ...draft, step: 'COMPLETE', updatedAt: at };
+          if (freePlay) return finish('REGISTER', messagingCopy(locale, 'namedFree', { name: draft.firstName! }));
           const wallet = this.ensureWalletAndStartingGrant(state, playerId, `${input.idempotencyKey}:grant`, config, at);
-          return finish('REGISTER', messagingCopy(locale, 'registered', { balance: availableBalance(wallet) }));
+          return finish('REGISTER', messagingCopy(locale, 'named', {
+            name: draft.firstName!,
+            balance: availableBalance(wallet),
+          }));
         }
 
         if (config.arcade.mode === 'lead_capture' && !own(state.players, playerId)?.lead) {

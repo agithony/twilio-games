@@ -7,6 +7,7 @@ const css = readFileSync(new URL('../client/arcade/arcade.css', import.meta.url)
 const home = readFileSync(new URL('../client/index.html', import.meta.url), 'utf8');
 const join = readFileSync(new URL('../client/join/index.html', import.meta.url), 'utf8');
 const joinScript = readFileSync(new URL('../client/join/join.ts', import.meta.url), 'utf8');
+const joinCss = readFileSync(new URL('../client/join/join.css', import.meta.url), 'utf8');
 const vite = readFileSync(new URL('../client/vite.config.ts', import.meta.url), 'utf8');
 const racerMain = readFileSync(new URL('../client/main.ts', import.meta.url), 'utf8');
 const racerScreens = readFileSync(new URL('../client/screens.ts', import.meta.url), 'utf8');
@@ -443,7 +444,8 @@ describe('Arcade browser UI', () => {
     expect(script).toContain('It asks for terms only when required and never asks for marketing consent');
     expect(html).toContain('<summary>Information collected</summary>');
     expect(script).toContain('termsAcknowledgementRequired');
-    expect(script).toContain('Players enter through an enabled messaging channel');
+    expect(script).toContain('Messaging entry collects first name only');
+    expect(script).toContain('First name is collected for the game display. No lead form is created');
     expect(script).toContain('Pausing freezes the current event flow and stops its timers without removing players or coins');
     expect(script).toContain("output.textContent='Paused'");
     expect(script).toContain('The event is paused and this flow is frozen. Reset the event flow before reopening.');
@@ -490,5 +492,9 @@ describe('Arcade browser UI', () => {
     expect(css).toContain('.settings-layout{display:grid;grid-template-columns:repeat(2');
     expect(css).toContain('.choice-card:has(input:checked)');
     expect(script).toContain("document.body.classList.add(operatorView?'operator-page':'player-page')");
+    expect(joinScript).toContain("link.className = 'channel'");
+    expect(joinScript).not.toContain('available.length === 0');
+    expect(joinCss).not.toContain('.channel.primary');
+    expect(joinCss).toContain('.channel:focus-visible');
   });
 });

@@ -2,7 +2,7 @@ import { HttpServer } from './http-server';
 import { ArcadeApi } from './arcade-api';
 import { ArcadeConfigStore } from './arcade-config-store';
 import { ArcadeEventHub } from './arcade-events';
-import { ArcadeTacGateway, recalledMemoryLocale } from './arcade-tac-gateway';
+import { ArcadeTacGateway } from './arcade-tac-gateway';
 import { ArcadePlayerRuntime } from './arcade-player-runtime';
 import { GoogleAnalyticsAuth } from './google-analytics-auth';
 import { isLoopbackAddress, isLoopbackUrl } from './arcade-dev-auth';
@@ -116,14 +116,15 @@ arcadeTacGateway?.setMessageHandler(async input => {
   const author = input.channel === 'whatsapp' && !input.author.toLowerCase().startsWith('whatsapp:')
     ? `whatsapp:${input.author}`
     : input.author;
-  return arcadeApi.processMessagingWebhook({
-    from: author,
-    body: input.message,
-    providerMessageId: input.providerMessageId,
-    conversationProfileId: input.profileId,
-    conversationId: input.conversationId,
-    recalledLocale: recalledMemoryLocale(input.memory),
-  });
+  if (input.profileId) {
+    await arcadeApi.attachMessagingProfile({
+      from: author,
+      conversationProfileId: input.profileId,
+    });
+  }
+  // The signed provider webhook owns deterministic state and the immediate player reply. TAC only
+  // enriches Conversation Memory identity, so either webhook order is safe and never sends twice.
+  return null;
 });
 // Deploy-safe levels: the LIVE maps file lives on the persistent mount (data/maps.json) so editor-
 // authored levels survive redeploys; the image's committed assets/maps/maps.json is the one-time

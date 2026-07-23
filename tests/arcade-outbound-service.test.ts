@@ -91,6 +91,7 @@ async function createThreeReadyPlayers(h: Awaited<ReturnType<typeof harness>>): 
   for (const [index, locale] of ['en-US', 'pt-BR', 'pt-BR'].entries()) {
     const from = `+1415555010${index + 1}`;
     await inbound(h.service, `SM-JOIN-${index}`, `JOIN ARCADE-01 LANG ${locale}`, from);
+    await inbound(h.service, `SM-NAME-${index}`, `Player${index + 1}`, from);
     await inbound(h.service, `SM-TERMS-${index}`, locale === 'pt-BR' ? 'SIM' : 'YES', from);
     const ready = await inbound(
       h.service, `SM-COIN-${index}`, locale === 'pt-BR' ? 'MOEDA' : 'COIN', from,
@@ -184,6 +185,7 @@ describe('Arcade station outbound outbox', () => {
     const h = await harness();
     h.setVoice(true, { 'en-US': '+14155550100', 'pt-BR': null });
     await inbound(h.service, 'SM-NO-CALL-JOIN', 'JOIN ARCADE-01 LANG pt-BR', '+5511999999999');
+    await inbound(h.service, 'SM-NO-CALL-NAME', 'Bia', '+5511999999999');
     await inbound(h.service, 'SM-NO-CALL-TERMS', 'SIM', '+5511999999999');
     await inbound(h.service, 'SM-NO-CALL-COIN', 'MOEDA', '+5511999999999');
     const recruiting = await h.service.getStation('ARCADE-01');
@@ -207,6 +209,7 @@ describe('Arcade station outbound outbox', () => {
   it('allows off-mode completion without queuing results', async () => {
     const h = await harness();
     await inbound(h.service, 'SM-OFF-JOIN', 'JOIN ARCADE-01 LANG en-US', '+14155550200');
+    await inbound(h.service, 'SM-OFF-NAME', 'Ada', '+14155550200');
     await inbound(h.service, 'SM-OFF-TERMS', 'YES', '+14155550200');
     await inbound(h.service, 'SM-OFF-COIN', 'COIN', '+14155550200');
     const recruiting = await h.service.getStation('ARCADE-01');

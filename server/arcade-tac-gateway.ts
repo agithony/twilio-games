@@ -37,6 +37,23 @@ export function recalledMemoryLocale(
   return null;
 }
 
+export function resolveTacProviderMessageId(input: {
+  channelId?: unknown;
+  lastCommunicationId?: unknown;
+  memory?: ArcadeTacMessage['memory'];
+  message: string;
+}): string {
+  const channelId = String(input.channelId ?? '').trim();
+  if (/^(?:SM|MM)[a-f0-9]{32}$/i.test(channelId)) return channelId;
+  const communicationId = String(input.lastCommunicationId ?? '').trim();
+  if (communicationId) return communicationId;
+  const recalled = [...(input.memory?.communications ?? [])].reverse().find(communication => (
+    communication.id.trim() && (communication.content?.text ?? '').trim() === input.message.trim()
+  ));
+  if (recalled) return recalled.id;
+  throw new Error('TAC inbound message is missing a unique provider communication ID');
+}
+
 export type ArcadeTacClientFactory = () => Promise<ArcadeTacClient>;
 
 export type ArcadeTacGatewayStatus = Readonly<{
@@ -221,10 +238,12 @@ async function createDefaultTacClient(): Promise<ArcadeTacClient> {
     if ((channel !== 'sms' && channel !== 'whatsapp') || !handler) return null;
     // Orchestrator channelId is the original SMS/WhatsApp provider SID. Prefer it so a direct
     // signed-webhook fallback and a later Orchestrator retry share one durable idempotency key.
-    const channelId = String(session.metadata.channelId ?? '');
-    const providerMessageId = /^(?:SM|MM)[a-f0-9]{32}$/i.test(channelId)
-      ? channelId
-      : String(session.metadata.lastCommunicationId ?? conversationId);
+    const providerMessageId = resolveTacProviderMessageId({
+      channelId: session.metadata.channelId,
+      lastCommunicationId: session.metadata.lastCommunicationId,
+      memory: recalled,
+      message,
+    });
     const task = (async () => {
       const response = await handler!({
         conversationId: String(conversationId),

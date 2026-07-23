@@ -822,14 +822,14 @@ function renderRuntimeSummary():void{
   el('lead-capture-summary').textContent=modeSelect.value==='lead_capture'
     ? 'Lead capture is on for browser and messaging entry.'
     : modeSelect.value==='coin_only'
-      ? 'Lead capture is off. Players enter through an enabled messaging channel.'
+      ? 'Lead capture is off. Messaging entry collects first name only.'
       : state.operatorStation&&state.operatorStation.station.phase!=='ATTRACT'
         ? 'Lead capture is off. Pausing preserves the current event flow and its players.'
         : 'Lead capture is off. The event is paused and no new player details are collected.';
   el('lead-capture-fields').textContent=modeSelect.value==='lead_capture'
     ? 'Browser entry collects first and last name, work email, company, phone number, country or region, terms acknowledgement when required, and optional marketing consent. Messaging entry uses the sender phone and asks for first and last name, work email, company, and country or region. It asks for terms only when required and never asks for marketing consent.'
     : modeSelect.value==='coin_only'
-      ? 'No registration details are collected. The messaging address and game activity are used to run the session.'
+      ? 'First name is collected for the game display. No lead form is created; the messaging address and game activity are used to run the session.'
       : state.operatorStation&&state.operatorStation.station.phase!=='ATTRACT'
         ? 'Pausing freezes the current event flow and stops its timers without removing players or coins. Use Reset event flow before reopening.'
         : 'Players cannot enter while the event is paused, so no new player information is collected.';

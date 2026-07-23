@@ -11,21 +11,21 @@ const base = {
 describe('join guidance', () => {
   it('names only the messaging channels that are actually available', () => {
     const sms = buildJoinGuidance({ ...base, sms: true, whatsapp: false });
-    expect(sms.intro).toContain('by SMS');
+    expect(sms.intro).toBe('Send JOIN by SMS.');
     expect(sms.intro).not.toContain('WhatsApp');
 
     const whatsapp = buildJoinGuidance({ ...base, sms: false, whatsapp: true });
-    expect(whatsapp.intro).toContain('by WhatsApp');
+    expect(whatsapp.intro).toBe('Send JOIN by WhatsApp.');
     expect(whatsapp.intro).not.toContain('SMS');
 
     const both = buildJoinGuidance({ ...base, sms: true, whatsapp: true });
-    expect(both.intro).toContain('SMS or WhatsApp');
+    expect(both.intro).toBe('Send JOIN by SMS or WhatsApp.');
   });
 
   it('keeps browser-only guidance free of unavailable messaging channels', () => {
     const guidance = buildJoinGuidance({ ...base, mode: 'lead_capture', sms: false, whatsapp: false });
     expect(guidance.messaging).toBe(false);
-    expect(guidance.intro).toBe('Register in your browser to join. No messaging app is needed.');
+    expect(guidance.intro).toBe('Register in your browser to join.');
     expect(guidance.intro).not.toMatch(/SMS|WhatsApp/);
   });
 
@@ -33,15 +33,14 @@ describe('join guidance', () => {
     const guidance = buildJoinGuidance({ ...base, mode: 'lead_capture', sms: true, whatsapp: false });
     expect(guidance.messaging).toBe(true);
     expect(guidance.command).toBe('JOIN');
-    expect(guidance.intro).toContain('Register in your browser or send JOIN by SMS');
+    expect(guidance.intro).toBe('Register in your browser or send JOIN by SMS.');
     expect(guidance.commandHelp).toContain('Just tap Send');
   });
 
-  it('localizes the exact command and required terms reply', () => {
+  it('localizes the concise channel subtitle', () => {
     const guidance = buildJoinGuidance({ ...base, portuguese: true, sms: false, whatsapp: true, termsRequired: true });
     expect(guidance.command).toBe('ENTRAR');
-    expect(guidance.intro).toContain('ENTRAR por WhatsApp');
-    expect(guidance.intro).toContain('SIM para os termos');
+    expect(guidance.intro).toBe('Envie ENTRAR por WhatsApp.');
     expect(guidance.intro).not.toContain('SMS');
   });
 });

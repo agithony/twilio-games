@@ -55,7 +55,7 @@ async function outboxHarness(input: {
   const channel = input.channel ?? 'sms';
   for (let index = 0; index < (input.playerCount ?? 1); index += 1) {
     const from = `+1415555019${index}`;
-    for (const [suffix, body] of [['JOIN', 'JOIN ARCADE-01 LANG en-US'], ['TERMS', 'YES'], ['COIN', 'COIN']] as const) {
+    for (const [suffix, body] of [['JOIN', 'JOIN ARCADE-01 LANG en-US'], ['NAME', `Player${index + 1}`], ['TERMS', 'YES'], ['COIN', 'COIN']] as const) {
       const providerMessageId = `SM-${suffix}-${index}`;
       await service.processInboundStationMessage({
         channel,
