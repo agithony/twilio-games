@@ -166,6 +166,9 @@ properties:
             secretRef: arcade-display-token
           - name: ARCADE_STATE_PATH
             value: /app/data/arcade-state.json
+          # Mode-off production calls receive paused TwiML instead of standalone Conversation Relay.
+          - name: ARCADE_STANDALONE_VOICE_ENABLED
+            value: "false"
           # TAC owns active-event SMS and WhatsApp responses through Conversation Orchestrator while
           # the deterministic game state machine remains authoritative inside the TAC callback.
           - name: ARCADE_TAC_ENABLED

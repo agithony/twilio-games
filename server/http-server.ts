@@ -57,6 +57,11 @@ import {
 const BATTLE_VOICE_RECONNECT_GRACE_MS = 30_000;
 const FIGHTER_VOICE_RECONNECT_GRACE_MS = 30_000;
 const RACER_VOICE_RECONNECT_GRACE_MS = 30_000;
+const VOICE_XML_HEADERS = { 'Content-Type': 'text/xml; charset=utf-8' } as const;
+const VOICE_UNAVAILABLE_MESSAGES: Record<SupportedLocale, string> = {
+  'en-US': 'Twilio Games is currently paused or unavailable. Please try again when the event is open. Goodbye.',
+  'pt-BR': 'O Twilio Games está pausado ou indisponível no momento. Tente novamente quando o evento estiver aberto. Até logo.',
+};
 
 export function isRacerAdvanceWord(spoken: string, locale: SupportedLocale = DEFAULT_LOCALE): boolean {
   const text = normalizeForMatching(spoken, locale);
@@ -121,6 +126,7 @@ export class HttpServer {
   private readonly crVoice: string;
   private readonly voiceRelayToken: string;
   private readonly defaultLocale: SupportedLocale;
+  private readonly standaloneVoiceEnabled: boolean;
   /** Cached selectable cars/maps for the lobby (refreshed from manifest + maps.json periodically). */
   private roomConfigCache: { carCount: number; maps: string[]; carNames: string[] } = { carCount: 0, maps: [], carNames: [] };
   private roomConfigTimer: ReturnType<typeof setInterval> | null = null;
@@ -191,6 +197,7 @@ export class HttpServer {
     analyticsAuth?: GoogleAnalyticsAuth;
     arcadeApi?: ArcadeApi;
     arcadeTacGateway?: ArcadeTacGateway;
+    standaloneVoiceEnabled?: boolean;
   }) {
     this.port = opts.port;
     this.authToken = opts.authToken;
@@ -229,6 +236,7 @@ export class HttpServer {
     this.crVoice = (process.env.CR_TTS_VOICE ?? '').trim();
     this.voiceRelayToken = (process.env.VOICE_RELAY_TOKEN ?? this.authToken ?? '').trim();
     this.defaultLocale = resolveLocale(process.env.DEFAULT_LOCALE, DEFAULT_LOCALE);
+    this.standaloneVoiceEnabled = opts.standaloneVoiceEnabled ?? process.env.NODE_ENV !== 'production';
     // Conversational AI host: OpenAI when OPENAI_API_KEY is set (model via OPENAI_MODEL), else a
     // null client so the game degrades gracefully to the scripted phrase-bank lines.
     const configuredOpenAiKey = (process.env.OPENAI_API_KEY ?? '').trim();
@@ -1418,18 +1426,44 @@ export class HttpServer {
       const fallbackRoomCode = path === '/voice/join'
         ? ((params['Digits'] ?? '').trim() || DEFAULT_ROOM)
         : DEFAULT_ROOM;
-      const stationRoute = await this.arcadeApi?.stationVoiceRoute(
-        params['From'] ?? '', params['CallSid'] ?? '',
-      );
       const dialedLocale = this.arcadeApi?.voiceLocaleForNumber(params['To'] ?? '') ?? null;
-      if (!stationRoute && this.arcadeApi?.requiresStationVoiceAssignment()) {
+      const unavailableLocale = dialedLocale ?? this.defaultLocale;
+      const unavailableXml = twimlSayAndHangup(
+        VOICE_UNAVAILABLE_MESSAGES[unavailableLocale], unavailableLocale,
+      );
+      let eventRoutingActive = this.arcadeApi?.requiresStationVoiceAssignment() ?? false;
+      if (!eventRoutingActive && !this.standaloneVoiceEnabled) {
+        res.writeHead(200, VOICE_XML_HEADERS).end(unavailableXml);
+        return;
+      }
+      let stationRoute: Awaited<ReturnType<ArcadeApi['stationVoiceRoute']>> = null;
+      if (eventRoutingActive) {
+        try {
+          stationRoute = await this.arcadeApi!.stationVoiceRoute(
+            params['From'] ?? '', params['CallSid'] ?? '',
+          );
+        } catch (error) {
+          console.error('[voice] station routing failed:', error instanceof Error ? error.message : 'unknown error');
+          res.writeHead(200, VOICE_XML_HEADERS).end(unavailableXml);
+          return;
+        }
+      }
+      if (eventRoutingActive && !this.arcadeApi!.requiresStationVoiceAssignment()) {
+        eventRoutingActive = false;
+        stationRoute = null;
+        if (!this.standaloneVoiceEnabled) {
+          res.writeHead(200, VOICE_XML_HEADERS).end(unavailableXml);
+          return;
+        }
+      }
+      if (!stationRoute && eventRoutingActive) {
         const xml = twimlSayAndHangup(
           dialedLocale === 'pt-BR'
             ? 'Voce nao esta em uma partida ativa do Twilio Games. Responda STATUS na mensagem do jogo para receber ajuda.'
             : 'You are not assigned to an active Twilio Games match. Reply STATUS to the game message for help.',
           dialedLocale ?? this.defaultLocale,
         );
-        res.writeHead(200, { 'Content-Type': 'text/xml' }).end(xml);
+        res.writeHead(200, VOICE_XML_HEADERS).end(xml);
         return;
       }
       if (stationRoute && !stationRoute.admitted) {
@@ -1439,7 +1473,7 @@ export class HttpServer {
             : 'This phone is not assigned to the active match. Reply STATUS to the Twilio Games message for help.',
           dialedLocale ?? this.defaultLocale,
         );
-        res.writeHead(200, { 'Content-Type': 'text/xml' }).end(xml);
+        res.writeHead(200, VOICE_XML_HEADERS).end(xml);
         return;
       }
       const roomCode = stationRoute?.roomCode ?? fallbackRoomCode;
@@ -1469,7 +1503,7 @@ export class HttpServer {
         // "Welcome to Voice Monsters" TWICE (TwiML greeting + the WS greeting).
         welcomeGreeting: '',
       });
-      res.writeHead(200, { 'Content-Type': 'text/xml' }).end(xml);
+      res.writeHead(200, VOICE_XML_HEADERS).end(xml);
       return;
     }
     if (req.method === 'POST' && path === '/voice/session-ended') {

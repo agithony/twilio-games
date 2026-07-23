@@ -361,12 +361,9 @@ export class ArcadeApi {
     readyEntryId: string | null;
   } | null> {
     const config = this.configStore.getSnapshot();
-    if (config.arcade.mode !== 'off' && !config.channels.voice) return null;
+    if (config.arcade.mode === 'off' || !config.channels.voice) return null;
     const runtime = this.requirePlayerRuntime();
-    const resources = config.arcade.mode === 'off'
-      ? runtime.getInitializedResources()
-      : await this.getActivePlayerResources();
-    if (!resources) return null;
+    const resources = await this.getActivePlayerResources();
     const state = await resources.store.read();
     const aggregate = stationAggregateFromState(state, config.arcade.cabinetId)
       ?? Object.values(state.stations)

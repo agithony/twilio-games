@@ -12,9 +12,9 @@ Configure the Twilio number's incoming voice webhook as:
 | URL | `https://<public-host>/voice/incoming` |
 | Method | `POST` |
 
-`POST /voice/incoming` connects an admitted call directly to Conversation Relay. It does not gather a room code.
+`POST /voice/incoming` connects an admitted active-event call directly to Conversation Relay. It does not gather a room code. When the event is paused, production returns localized unavailable TwiML and hangs up without reading retained station state.
 
-In station mode, the server resolves the caller to one persisted admitted player and places the match game, engine room, ready-entry ID, and launch generation into signed Relay setup parameters. Recent-display routing below is used only for standalone play when the station is off:
+In station mode, the server resolves the caller to one persisted admitted player and places the match game, engine room, ready-entry ID, and launch generation into signed Relay setup parameters. Recent-display routing below is used only when standalone Voice is explicitly enabled:
 
 | Display | Local URL | WebSocket |
 |---|---|---|
@@ -89,6 +89,7 @@ For a deployed environment, configure the same `POST /voice/incoming` webhook ag
 | `CR_TTS_VOICE` | No | ElevenLabs voice ID for Conversation Relay talk-back. If unset, Relay uses its default voice. |
 | `CR_TTS_VOICE_PT_BR` | No | Optional Brazilian Portuguese ElevenLabs voice ID. Empty uses Relay's `pt-BR` default. |
 | `DEFAULT_LOCALE` | No | Call locale used when no localized display is connected. Defaults to `en-US`. |
+| `ARCADE_STANDALONE_VOICE_ENABLED` | No | Set to literal `true` to allow recent-display Conversation Relay routing while Arcade mode is off. Defaults to `false` in production and `true` outside production; the production Container App pins it to `false`. |
 | `VOICE_RELAY_TOKEN` | Required by production deployment | Independent token of at least 32 characters that authenticates the Conversation Relay `setup` frame. The generated TwiML passes it to Twilio automatically; do not reuse `TWILIO_AUTH_TOKEN`. |
 | `OPENAI_API_KEY` | No | Enables conversational menu help for Voice Racer and Voice Monsters. Deterministic selection and gameplay still work without it. |
 | `OPENAI_MODEL` | No | Overrides the OpenAI model when `OPENAI_API_KEY` is set. |

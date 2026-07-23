@@ -52,6 +52,7 @@ async function harness(options: {
   smsNumber?: string | null;
   whatsappNumber?: string | null;
   displayToken?: string | null;
+  standaloneVoiceEnabled?: boolean;
   outboundTransport?: ArcadeMessagingTransport;
   inboundMessagingRateLimits?: {
     addressLimit?: number;
@@ -118,6 +119,7 @@ async function harness(options: {
     publicBaseUrl: 'http://localhost',
     validateSignatures: false,
     arcadeApi: api,
+    standaloneVoiceEnabled: options.standaloneVoiceEnabled,
     analyticsPath: path.join(directory, 'analytics.json'),
     manifestPath: path.join(directory, 'manifest.json'),
     mapsPath: path.join(directory, 'maps.json'),
@@ -1329,7 +1331,9 @@ describe('Arcade API', () => {
   });
 
   it('keeps player state and signing secrets untouched while mode is off', async () => {
-    const { baseUrl, playerRuntime } = await harness({ signingSecret: null });
+    const { baseUrl, playerRuntime, api } = await harness({
+      signingSecret: null, standaloneVoiceEnabled: false,
+    });
     const response = await createPlayerSession(baseUrl, 'off-session');
     expect(response.status).toBe(409);
     expect((await response.json() as Record<string, any>).error.code).toBe('ARCADE_MODE_DISABLED');
@@ -1345,6 +1349,8 @@ describe('Arcade API', () => {
       body: new URLSearchParams({ From: '+14155550199', CallSid: 'CA-mode-off' }),
     });
     expect(voice.status).toBe(200);
+    expect(await voice.text()).toContain('<Hangup />');
+    expect(await api.stationVoiceRoute('+14155550199', 'CA-retained-mode-off')).toBeNull();
     expect(playerRuntime.getStatus().initialized).toBe(false);
     expect((await fetch(`${baseUrl}/healthz`)).status).toBe(200);
   });

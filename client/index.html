@@ -33,21 +33,36 @@
       <div class="standalone-heading">
         <span class="eyebrow" id="standaloneEyebrow">Voice-controlled party games · powered by Twilio</span>
         <h1 id="standaloneTitle">Play with your <span>voice.</span></h1>
-        <p id="standaloneDescription">Choose a game on the shared screen. Players call from any phone and use their voices as controllers.</p>
+        <p id="standaloneDescription">Powered by Twilio ConversationRelay. Your voice is the controller.</p>
       </div>
-      <div id="standaloneGames" class="standalone-games"></div>
+      <div class="standalone-catalog">
+        <div id="standaloneGames" class="standalone-games"></div>
+        <section class="standalone-future" aria-labelledby="futureGamesLabel">
+          <span class="eyebrow" id="futureGamesLabel">Coming soon</span>
+          <div class="standalone-future-cards">
+            <article class="standalone-future-game">
+              <span class="future-game-number" aria-hidden="true">01</span>
+              <div><h2 id="voiceTriviaTitle">Voice Trivia</h2><p id="voiceTriviaDescription">Quick questions, spoken answers, and rounds built for everyone.</p></div>
+            </article>
+            <article class="standalone-future-game">
+              <span class="future-game-number" aria-hidden="true">02</span>
+              <div><h2 id="voiceKaraokeTitle">Voice Karaoke</h2><p id="voiceKaraokeDescription">Pick a song, take the mic, and sing through your phone.</p></div>
+            </article>
+          </div>
+        </section>
+      </div>
     </section>
 
     <section id="recruitingView" class="station-view recruiting-view">
       <div class="game-mosaic" aria-label="Twilio Games">
         <article class="mosaic-tile mosaic-racer">
-          <video src="/video/vr-demo.mp4" loop muted playsinline></video>
+          <video data-src="/video/vr-demo.mp4" preload="none" loop muted playsinline></video>
         </article>
         <article class="mosaic-tile mosaic-monsters">
-          <video src="/video/vm-demo.mp4" loop muted playsinline></video>
+          <video data-src="/video/vm-demo.mp4" preload="none" loop muted playsinline></video>
         </article>
         <article class="mosaic-tile mosaic-fighter">
-          <video src="/video/vf-demo.mp4" loop muted playsinline></video>
+          <video data-src="/video/vf-demo.mp4" preload="none" loop muted playsinline></video>
         </article>
         <div class="mosaic-message">
           <span class="eyebrow" id="phaseEyebrow">Now recruiting</span>

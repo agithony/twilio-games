@@ -373,7 +373,9 @@ function renderOverlay(): void {
   // "Waiting…" canvas rendered ON TOP of the lobby/select overlays (covering the buttons — the bug).
   // Also keep it up while AWAITING CONTINUE (battle ended, holding on the win before the results modal).
   const inBattle = phase === 'battle' || draining || awaitingContinue;
+  const stageWasHidden = stageEl.style.display === 'none';
   stageEl.style.display = inBattle ? '' : 'none';
+  if (inBattle && stageWasHidden) requestAnimationFrame(() => dispatchEvent(new Event('resize')));
   // The monster collage backs the MENU overlays only (hidden during a battle, where the arena owns it).
   buildCollage();
   collage.style.display = inBattle || phase === 'connecting' ? 'none' : '';

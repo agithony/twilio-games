@@ -113,6 +113,7 @@ The deployed specification currently sets these variables:
 | `ARCADE_ADMIN_EMAILS` | GitHub repository variable | Comma-separated authenticated emails allowed to update Arcade runtime configuration; empty disables admin updates |
 | `ARCADE_SIGNING_SECRET` | Container App secret populated from the matching GitHub secret | Root key for signed player sessions and challenge claims; ignored while station mode is `off` |
 | `ARCADE_DISPLAY_TOKEN` | Container App secret populated from the matching GitHub secret | Server-held kiosk capability for station launch and display-ready acknowledgement; use at least 16 random characters |
+| `ARCADE_STANDALONE_VOICE_ENABLED` | Literal `false` | Prevents paused production events from falling through to standalone Conversation Relay routing |
 | `GAME_PHONE_NUMBER` | GitHub repository variable | Legacy fallback used only when an operator has not configured locale-specific voice numbers |
 | Runtime `channels.voiceNumbers` | Twilio Games operator settings | Public `en-US` and `pt-BR` voice numbers used by lobbies and call-now notices; editable without deployment |
 | `TWILIO_SMS_NUMBER` | GitHub repository variable | SMS-capable number used by the join chooser and outbound SMS transport |
@@ -202,7 +203,7 @@ PORT=8099 NODE_ENV=production npx tsx server/index.ts
 curl --fail http://localhost:8099/healthz
 ```
 
-In production, Twilio signature validation defaults on and the deployment requires `TWILIO_AUTH_TOKEN`. Outside production it defaults off unless `TWILIO_VALIDATE_SIGNATURES=true`; enabling validation without an auth token makes webhook requests fail with status 500.
+In production, Twilio signature validation defaults on and the deployment requires `TWILIO_AUTH_TOKEN`. Outside production it defaults off unless `TWILIO_VALIDATE_SIGNATURES=true`; enabling validation without an auth token makes webhook requests fail with status 500. The deployed `ARCADE_STANDALONE_VOICE_ENABLED=false` setting makes mode-off Voice calls receive localized Say-and-Hangup TwiML instead of Conversation Relay.
 
 ## Rollback
 

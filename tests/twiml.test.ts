@@ -1,5 +1,14 @@
 import { describe, it, expect } from 'vitest';
-import { twimlGatherRoomCode, twimlConnectRelay } from '../server/twiml';
+import { twimlGatherRoomCode, twimlConnectRelay, twimlSayAndHangup } from '../server/twiml';
+
+describe('twimlSayAndHangup', () => {
+  it('escapes spoken text and applies the requested locale', () => {
+    const xml = twimlSayAndHangup('Paused <now> & say "goodbye".', 'pt-BR');
+    expect(xml).toContain('<Say language="pt-BR">Paused &lt;now&gt; &amp; say &quot;goodbye&quot;.</Say>');
+    expect(xml).toContain('<Hangup />');
+    expect(xml).not.toContain('Paused <now>');
+  });
+});
 
 describe('twimlGatherRoomCode', () => {
   it('asks for a 4-digit room code via DTMF', () => {

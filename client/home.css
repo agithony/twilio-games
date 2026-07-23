@@ -66,14 +66,23 @@ html[data-theme="light"] .brand-lockup img, html[data-theme="light"] .countdown-
 .standalone-heading h1 { margin:8px 0 10px;font-size:clamp(36px,5.5vw,76px);font-weight:800;line-height:.95;letter-spacing:.01em; }
 .standalone-heading h1 span { color:#EF223A; }
 .standalone-heading p { max-width:720px;margin:0;color:var(--th-dim);font-size:clamp(14px,1.3vw,18px);line-height:1.4; }
-.standalone-games { flex:1 1 auto;min-height:0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:clamp(10px,1.5vw,18px); }
-.standalone-game { position:relative;min-height:0;overflow:hidden;border:1px solid var(--th-border);border-radius:22px;color:#fff;background:#080C18;text-decoration:none;box-shadow:0 18px 45px var(--th-panel-shadow);isolation:isolate; }
+.standalone-catalog { flex:1 1 auto;min-height:0;display:grid;grid-template-rows:minmax(0,1fr) auto;gap:clamp(10px,1.5vh,16px); }
+.standalone-games { min-height:0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:clamp(10px,1.5vw,18px); }
+.standalone-game { position:relative;min-height:0;overflow:hidden;border:1px solid var(--th-border);border-radius:22px;color:#fff;background:radial-gradient(circle at 75% 20%,#38425E 0,transparent 38%),#080C18;text-decoration:none;box-shadow:0 18px 45px var(--th-panel-shadow);isolation:isolate; }
 .standalone-game video { position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:-2;transition:transform .35s ease,filter .35s ease; }
 .standalone-game::after { content:'';position:absolute;inset:0;z-index:-1;background:linear-gradient(180deg,rgba(0,13,37,.08) 28%,rgba(0,13,37,.92) 100%); }
 .standalone-game span { position:absolute;left:clamp(14px,2vw,26px);right:14px;bottom:clamp(42px,6vh,66px);font:800 clamp(22px,2.8vw,40px)/1 'Twilio Sans Display',sans-serif; }
 .standalone-game p { position:absolute;left:clamp(14px,2vw,26px);right:clamp(14px,2vw,26px);bottom:clamp(13px,2vh,22px);margin:0;color:#DDE0E6;font-size:clamp(11px,1vw,14px);line-height:1.3;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden; }
 .standalone-game:hover video,.standalone-game:focus-visible video { transform:scale(1.04);filter:saturate(1.1); }
 .standalone-game:focus-visible { outline:3px solid #2188EF;outline-offset:-3px; }
+.standalone-future { min-height:74px;display:grid;grid-template-columns:minmax(100px,auto) minmax(0,1fr);align-items:stretch;gap:clamp(10px,1.5vw,18px);padding-top:clamp(9px,1.2vh,14px);border-top:1px solid var(--th-border); }
+.standalone-future>.eyebrow { align-self:center;padding-right:clamp(8px,1vw,16px);color:var(--th-dim); }
+.standalone-future-cards { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:clamp(8px,1vw,14px); }
+.standalone-future-game { position:relative;min-height:74px;display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;gap:13px;overflow:hidden;padding:10px clamp(12px,1.4vw,20px);border:1px dashed var(--th-border);border-radius:14px;color:var(--th-label);background:color-mix(in srgb,var(--th-raised) 64%,transparent); }
+.future-game-number { color:var(--th-muted);font:800 clamp(24px,2.5vw,38px)/1 'Twilio Sans Display',sans-serif;opacity:.55; }
+.standalone-future-game h2 { margin:0;color:var(--th-label);font-size:clamp(16px,1.5vw,22px);line-height:1; }
+.standalone-future-game p { margin:4px 0 0;color:var(--th-dim);font-size:clamp(10px,.85vw,12px);line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+.standalone-mode .magic-hat { display:none; }
 .selection-view { min-height:0;display:grid;grid-template-rows:auto minmax(0,1fr);gap:clamp(14px,2.5vh,28px);overflow:hidden }
 .standalone-view[hidden], .selection-view[hidden], .countdown-view[hidden], .recruiting-view[hidden] { display: none; }
 .selection-heading { position:relative;padding-right:clamp(130px,14vw,220px); }
@@ -158,6 +167,9 @@ html[data-theme="light"] .brand-lockup img, html[data-theme="light"] .countdown-
   .standalone-heading p { display:none; }
   .standalone-game span { bottom:18px;font-size:clamp(16px,2.5vw,24px); }
   .standalone-game p { display:none; }
+  .standalone-future { min-height:58px;padding-top:6px; }
+  .standalone-future-game { min-height:52px;padding:6px 10px; }
+  .standalone-future-game p { display:none; }
 }
 @media (max-width: 900px) {
   .station-header { height:auto;max-height:132px;align-items:flex-start;gap:12px;flex-wrap:wrap;padding:12px 16px; }
@@ -201,11 +213,21 @@ html[data-theme="light"] .brand-lockup img, html[data-theme="light"] .countdown-
   .standalone-game { border-radius:15px; }
   .standalone-game span { left:10px;right:8px;bottom:14px;font-size:clamp(15px,4.5vw,22px); }
   .standalone-game p { display:none; }
+  .standalone-future { grid-template-columns:1fr;gap:6px; }
+  .standalone-future>.eyebrow { padding-right:0; }
+  .standalone-future-cards { gap:7px; }
+  .standalone-future-game { grid-template-columns:auto minmax(0,1fr);padding:8px 10px; }
+  .standalone-future-game p { display:none; }
   .persistent-join { right:10px;bottom:10px;padding:8px;gap:8px; }
   .persistent-join div { display:none; }
   .persistent-join canvas { width:76px!important;height:76px!important; }
 }
 @media (max-width:600px) and (min-height:601px) {
+  .standalone-view { overflow-y:auto; }
+  .standalone-catalog { display:block; }
+  .standalone-games { grid-template-columns:1fr;grid-auto-rows:minmax(160px,25vh); }
+  .standalone-future { margin-top:12px; }
+  .standalone-future-cards { grid-template-columns:1fr; }
   .selection-view { overflow-y:auto; }
   .selection-heading { padding-right:0; }
   .selection-heading time { position:static;display:block;margin-top:10px; }

@@ -29,6 +29,9 @@ const outboundRestCredentialsConfigured = configuredCredential(
 const validateSignatures = process.env.TWILIO_VALIDATE_SIGNATURES
   ? process.env.TWILIO_VALIDATE_SIGNATURES !== 'false'
   : Boolean(authToken || additionalAuthTokens.length) || process.env.NODE_ENV === 'production';
+const standaloneVoiceEnabled = process.env.ARCADE_STANDALONE_VOICE_ENABLED === undefined
+  ? process.env.NODE_ENV !== 'production'
+  : process.env.ARCADE_STANDALONE_VOICE_ENABLED === 'true';
 
 if (validateSignatures && !authToken) {
   console.warn('[security] signature validation is ON but TWILIO_AUTH_TOKEN is unset — webhooks will 500 until it is configured.');
@@ -127,7 +130,7 @@ arcadeTacGateway?.setMessageHandler(async input => {
 // SEED copied in on first boot when the persistent file doesn't exist yet.
 const srv = new HttpServer({
   port, publicBaseUrl, authToken, additionalAuthTokens, validateSignatures, editorToken,
-  analyticsAuth, arcadeApi, arcadeTacGateway,
+  analyticsAuth, arcadeApi, arcadeTacGateway, standaloneVoiceEnabled,
   analyticsPath: process.env.ANALYTICS_PATH ?? 'data/analytics.json',
   googleOAuthClientSecret: process.env.GOOGLE_OAUTH_CLIENT_SECRET,
   mapsPath: process.env.MAPS_PATH ?? 'data/maps.json',

@@ -63,7 +63,7 @@ el<HTMLFormElement>('join-form').addEventListener('submit', event => void joinQu
 el('queue-leave').addEventListener('click', () => void leaveCurrentAdmission());
 for(const button of document.querySelectorAll<HTMLButtonElement>('[data-game-choice]'))button.addEventListener('click',()=>void chooseGame(button.dataset.gameChoice as PlayableGame));
 el<HTMLFormElement>('mode-form').addEventListener('submit', event => void saveMode(event));
-el<HTMLFormElement>('mode-form').addEventListener('input',()=>{modeFormDirty=true;});
+el<HTMLFormElement>('mode-form').addEventListener('input',()=>setModeFormDirty(true));
 el('discard-mode-changes').addEventListener('click',()=>void discardModeChanges());
 el<HTMLFormElement>('station-controls').addEventListener('submit', event => event.preventDefault());
 el<HTMLSelectElement>('admin-charge-policy').addEventListener('change', renderChargePolicy);
@@ -115,7 +115,7 @@ async function refreshAll(): Promise<void> {
     if(currentConfig.arcade.mode==='coin_only'&&redirectNoLeadPlayer())return;
     if (currentConfig.arcade.mode === 'off') {
       state.player = null; state.wallet = null; state.station = null;
-      renderPlayer();startPlayerUpdates();setNotice(playerText('Games are paused. Ask the host when the next game begins.','Os jogos estão pausados. Pergunte ao anfitrião quando começa o próximo jogo.'));
+      renderPlayer();startPlayerUpdates();setNotice('');
       return;
     }
     await ensureSession();
@@ -139,16 +139,16 @@ async function refreshDeploymentConfig():Promise<void>{
   if(state.adminConfig)renderRuntimeSummary();
 }
 
-async function refreshOperatorConfiguration():Promise<void>{
+async function refreshOperatorConfiguration(forceConfigRender=false):Promise<void>{
   await Promise.all([refreshPublicConfig(),refreshDeploymentConfig()]);
-  await checkAdmin();
+  await checkAdmin(forceConfigRender);
   if(state.adminConfig)renderRuntimeSummary();
 }
 
 function configureView():void{
   const link=el<HTMLAnchorElement>('view-link');
   document.body.classList.add(operatorView?'operator-page':'player-page');
-  if(operatorView){document.documentElement.lang='en-US';link.href='/player';link.textContent='Open player page';el('hero-title').innerHTML='Keep every game <span>moving.</span>';el('hero-lede').textContent='See what is happening now, help players, and adjust the event when needed.';show('balance-hero',false);show('off-panel',false);}
+  if(operatorView){document.documentElement.lang='en-US';link.href='/player';link.textContent='Open player page';document.querySelector<HTMLElement>('.hero .eyebrow')!.textContent='Event operations';el('hero-title').textContent='Operator console';el('hero-lede').textContent='Monitor the live event, help players, and manage setup.';show('balance-hero',false);show('off-panel',false);}
   else{link.href='/operator';link.textContent='Staff sign in';}
 }
 
@@ -254,7 +254,7 @@ function renderPlayer(): void {
       ? playerText('Ready when <span>you are.</span>','Pronto quando <span>você estiver.</span>')
       : playerText('Your next game is <span>one coin away.</span>','Seu próximo jogo está a <span>uma moeda.</span>');
   el('hero-lede').textContent=mode==='off'
-    ? playerText('Ask the host when the next game begins.','Pergunte ao anfitrião quando começa o próximo jogo.')
+    ? playerText('The event is not accepting players right now.','O evento não está aceitando jogadores agora.')
     : freePlay
       ? playerText('Join the next game, then keep an eye on the big screen.','Entre no próximo jogo e acompanhe a tela grande.')
       : playerText('Use a coin to join the next game, then watch the big screen.','Use uma moeda para entrar no próximo jogo e acompanhe a tela grande.');
@@ -451,7 +451,7 @@ function stopPlayerUpdates():void{
   playerRefreshGeneration+=1;
 }
 
-async function checkAdmin():Promise<void>{
+async function checkAdmin(forceConfigRender=false):Promise<void>{
   const previousVersion=state.adminConfig?.version??null;
   const session=await maybe<{authenticated:boolean;email?:string}>('/api/analytics/session'); state.adminEmail=session?.authenticated?session.email??null:null;
   let adminConfig:AdminConfig|null=null;
@@ -461,7 +461,7 @@ async function checkAdmin():Promise<void>{
   el('admin-login-label').textContent=state.adminEmail?'Use another Google account':'Sign in with Google';
   el('admin-user').textContent=authorized?`Signed in as ${state.adminEmail}`:`${state.adminEmail??''} is not a Twilio Games operator`;
   if(!state.adminConfig){stopOperatorUpdates();return;}
-  if(previousVersion===state.adminConfig.version)return;
+  if(previousVersion===state.adminConfig.version&&!forceConfigRender){renderOperatorOverview();return;}
   el<HTMLSelectElement>('admin-mode').value=state.adminConfig.arcade.mode;
   el<HTMLSelectElement>('admin-charge-policy').value=state.adminConfig.coins.chargePolicy;
   el<HTMLInputElement>('admin-starting-coins').value=String(state.adminConfig.coins.startingBalance);
@@ -477,7 +477,7 @@ async function checkAdmin():Promise<void>{
   el<HTMLInputElement>('admin-challenges-enabled').checked=state.adminConfig.earning.enabled;
   const timing=state.adminConfig.station.timings;
   el<HTMLInputElement>('admin-timing-recruiting').value=String(timing.recruitingSeconds);el<HTMLInputElement>('admin-timing-hard').value=String(timing.hardDeadlineSeconds);el<HTMLInputElement>('admin-timing-selection').value=String(timing.selectionSeconds);el<HTMLInputElement>('admin-timing-locked').value=String(timing.lockedSeconds);el<HTMLInputElement>('admin-timing-launch').value=String(timing.launchTimeoutSeconds);el<HTMLInputElement>('admin-timing-results').value=String(timing.resultsSeconds);el<HTMLInputElement>('admin-timing-postgame').value=String(timing.postGameRecruitingSeconds);
-  closeChallengeEditor();renderAdminChallenges();renderChargePolicy();renderPrioritySettings();renderRuntimeSummary();modeFormDirty=false;
+  closeChallengeEditor();renderAdminChallenges();renderChargePolicy();renderPrioritySettings();renderRuntimeSummary();setModeFormDirty(false);
 }
 
 async function switchAccount():Promise<void>{await fetch('/auth/logout',{method:'POST',credentials:'include'});location.href='/auth/google?returnTo=/operator';}
@@ -553,10 +553,15 @@ async function saveMode(event:Event):Promise<void>{
   station.automaticSelection.policy=selectionPolicy;station.automaticSelection.order=order;station.qrRail=el<HTMLSelectElement>('admin-qr-rail').value as AdminConfig['station']['qrRail'];
   station.timings={recruitingSeconds:numberField('admin-timing-recruiting'),hardDeadlineSeconds:numberField('admin-timing-hard'),selectionSeconds:numberField('admin-timing-selection'),lockedSeconds:numberField('admin-timing-locked'),launchTimeoutSeconds:numberField('admin-timing-launch'),resultsSeconds:numberField('admin-timing-results'),postGameRecruitingSeconds:numberField('admin-timing-postgame')};
   setBusy(form,true);
-  try{await updateConfig(version,settings);modeFormDirty=false;setNotice('Settings saved.','success');await refreshAll();}catch(error){if(error instanceof ApiError&&error.status===412){modeFormDirty=false;await refreshOperatorConfiguration();setNotice('Someone else saved changes first. The latest settings are now loaded; review them before saving again.','error');}else showError(error);}finally{setBusy(form,false);}
+  try{await updateConfig(version,settings);setModeFormDirty(false);setNotice('Settings saved.','success');await refreshAll();}catch(error){if(error instanceof ApiError&&error.status===412){setModeFormDirty(false);await refreshOperatorConfiguration();setNotice('Someone else saved changes first. The latest settings are now loaded; review them before saving again.','error');}else showError(error);}finally{setBusy(form,false);}
 }
 
-async function discardModeChanges():Promise<void>{modeFormDirty=false;await refreshOperatorConfiguration();setNotice('Unsaved event setting changes were discarded.','success');}
+async function discardModeChanges():Promise<void>{setModeFormDirty(false);await refreshOperatorConfiguration(true);setNotice('Unsaved event setting changes were discarded.','success');}
+
+function setModeFormDirty(dirty:boolean):void{
+  modeFormDirty=dirty;
+  el('settings-savebar').hidden=!dirty;
+}
 
 function renderAdminChallenges():void{
   const host=el('admin-challenges');host.replaceChildren();
@@ -722,13 +727,21 @@ function renderRuntimeSummary():void{
   const entryReady=modeSelect.value==='lead_capture'||remoteReady;
   const status=modeSelect.value==='off'?'Paused':voice&&voiceReady&&gamesReady&&entryReady?'Ready to open':'Needs setup';
   el('runtime-summary').textContent=status;
+  el('voice-number-fields').hidden=!voice;
   el('lead-capture-summary').textContent=modeSelect.value==='lead_capture'
-    ? 'Lead capture on. Browser entry collects first and last name, work email, company, phone number, country or region, terms acknowledgement when required, and optional marketing consent. When enabled, messaging uses the sender phone and asks for first and last name, work email, company, and country or region. It asks for terms only when required and never asks for marketing consent.'
+    ? 'Lead capture is on for browser and messaging entry.'
     : modeSelect.value==='coin_only'
-      ? 'Lead capture off. Players enter through enabled SMS or WhatsApp. No registration details are collected; their messaging address and game activity are used to run the session.'
+      ? 'Lead capture is off. Players enter through an enabled messaging channel.'
       : state.operatorStation&&state.operatorStation.station.phase!=='ATTRACT'
-        ? 'Lead capture off. Pausing freezes the current event flow and stops its timers without removing players or coins. Use Reset event flow before reopening.'
-        : 'Lead capture off. The event is paused, players cannot enter, and no new player information is collected.';
+        ? 'Lead capture is off. Pausing preserves the current event flow and its players.'
+        : 'Lead capture is off. The event is paused and no new player details are collected.';
+  el('lead-capture-fields').textContent=modeSelect.value==='lead_capture'
+    ? 'Browser entry collects first and last name, work email, company, phone number, country or region, terms acknowledgement when required, and optional marketing consent. Messaging entry uses the sender phone and asks for first and last name, work email, company, and country or region. It asks for terms only when required and never asks for marketing consent.'
+    : modeSelect.value==='coin_only'
+      ? 'No registration details are collected. The messaging address and game activity are used to run the session.'
+      : state.operatorStation&&state.operatorStation.station.phase!=='ATTRACT'
+        ? 'Pausing freezes the current event flow and stops its timers without removing players or coins. Use Reset event flow before reopening.'
+        : 'Players cannot enter while the event is paused, so no new player information is collected.';
   el('sms-status').textContent=capabilityStatus(sms,smsNumber);
   el('whatsapp-status').textContent=capabilityStatus(whatsapp,whatsappNumber);
   el('voice-number-status').textContent=voice
@@ -738,6 +751,34 @@ function renderRuntimeSummary():void{
   el('post-game-status').textContent=!postGame?.enabled
     ? 'Off'
     : `${postGame.channels.map(channel=>channel==='sms'?'Text': 'WhatsApp').join(' + ')}${postGame.includeCoinBalance?' with coin balance':''}`;
+  renderOperatorOverview();
+}
+
+function renderOperatorOverview():void{
+  if(!operatorView)return;
+  const config=state.adminConfig,station=state.operatorStation,messaging=state.adminStatus?.messaging;
+  const eventCard=el<HTMLAnchorElement>('overview-event-card');
+  el('overview-event').textContent=!config?'Loading':config.arcade.mode==='off'?'Paused':'Open';
+  el('overview-event-detail').textContent=!config?'Checking settings':config.arcade.mode==='lead_capture'?'Lead capture on':config.arcade.mode==='coin_only'?'Messaging entry':'Not accepting players';
+  eventCard.dataset.state=!config?'neutral':config.arcade.mode==='off'?'attention':'active';
+
+  const gameCard=el<HTMLAnchorElement>('overview-game-card'),phase=station?.station.phase,stationKnown=state.operatorStationEtag!==null;
+  el('overview-game').textContent=!stationKnown?'Loading':!station?'Waiting for players':station.station.activeGame?gameName(station.station.activeGame):phaseName(station.station.phase);
+  el('overview-game-detail').textContent=!stationKnown?'Checking live event':!station?'No active game flow':station.station.activeGame?phaseName(station.station.phase):'No game active';
+  gameCard.dataset.state=phase&&['LOCKED','LAUNCHING','PLAYING','RESULTS'].includes(phase)?'active':'neutral';
+
+  const activeRoundIds=new Set([station?.station.activeRoundId,station?.station.nextRoundId].filter((id):id is string=>Boolean(id)));
+  const playerCount=station?.readyEntries.filter(entry=>entry.status!=='LEFT'&&activeRoundIds.has(entry.roundId)).length??0;
+  el('overview-players').textContent=String(playerCount);
+  el('overview-players-detail').textContent=`${playerCount===1?'Player':'Players'} in the current flow`;
+  el<HTMLAnchorElement>('overview-players-card').dataset.state=playerCount?'active':'neutral';
+
+  const messagingKnown=state.adminStatus!==null;
+  const messagingLabel=!messagingKnown?'Loading':messaging?.enabled?'Ready':messaging?.configured?'Needs setup':'Off';
+  const failureCount=messaging?.counts.FAILED??0;
+  el('overview-messaging').textContent=messagingLabel;
+  el('overview-messaging-detail').textContent=!messagingKnown?'Checking delivery':failureCount?`${failureCount} message${failureCount===1?'':'s'} need attention`:'No delivery failures';
+  el<HTMLAnchorElement>('overview-messaging-card').dataset.state=failureCount||messagingLabel==='Needs setup'?'attention':messaging?.enabled?'active':'neutral';
 }
 
 function validPhoneNumber(value:unknown):string|null{
@@ -869,7 +910,7 @@ function renderOperatorStation():void{
   el('station-revision').textContent=String(view?.station.revision??0);renderStationDeadline();
   renderStationFacts('station-round',view?.round?[['Status',phaseName(view.round.phase)],['Started',formatTimestamp(view.round.firstCoinAt)],['Next game',view.round.selectedGame?gameName(view.round.selectedGame):'Not chosen'],['Last update',formatTimestamp(view.station.updatedAt)]]:[],'Waiting for the first player.');
   renderStationFacts('station-match',view?.match?[['Game',gameName(view.match.game)],['Status',phaseName(view.match.phase)],[phase==='RESULTS'?'Players completed':'Playing now',String(view.match.participantReadyEntryIds.length)],['Waiting next',String(view.match.overflowReadyEntryIds.length)],['Big screen',view.match.displayReadyAt?'Ready':'Connecting'],...(phase==='RESULTS'?[['Outcome',matchOutcome(view)] as [string,string]]:[])]:[],'No game is active.');
-  renderStationRoster(view);renderStationAudit(view);renderStationControls(phase);
+  renderStationRoster(view);renderStationAudit(view);renderStationControls(phase);renderOperatorOverview();
 }
 
 function renderStationAudit(view:OperatorStationView|null):void{
@@ -1039,6 +1080,7 @@ function renderMessagingStatus():void{
     const item=document.createElement('div'),value=document.createElement('strong'),label=document.createElement('span');
     value.textContent=String(messaging?.counts[status]??0);label.textContent=phaseName(status);item.append(value,label);counts.append(item);
   }
+  renderOperatorOverview();
   const failures=el('messaging-failure-list');failures.replaceChildren();
   if(!messaging?.recentFailures.length){const empty=document.createElement('div');empty.className='empty';empty.textContent='No messages need attention.';failures.append(empty);return;}
   for(const failure of messaging.recentFailures)failures.append(messagingFailureItem(failure));

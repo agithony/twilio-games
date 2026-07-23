@@ -89,7 +89,7 @@ flowchart LR
 - `assets/` contains runtime 3D assets, manifests, map catalogs, previews, and attribution records.
 - `tools/` contains asset inspection, optimization, fixture, and browser smoke-test utilities.
 
-One `/voice` WebSocket serves all games. In station mode, persisted admission selects the exact game, room, launch generation, and player identity. Outside station mode, the incoming-call webhook falls back to the most recently connected game display and defaults to Voice Racer.
+One `/voice` WebSocket serves all games. In station mode, persisted admission selects the exact game, room, launch generation, and player identity. Mode-off production calls receive localized unavailable TwiML; explicit standalone Voice routing can instead use the most recently connected game display and defaults to Voice Racer.
 
 ## Game Flow
 
@@ -110,7 +110,7 @@ flowchart TD
   Commands --> Updates[State updates reach display and spoken feedback reaches caller]
 ```
 
-Incoming calls join the default room `4821` immediately. The current `/voice/incoming` flow does not ask callers to enter a room code. `/voice/join` remains an alias for legacy DTMF room-code requests.
+During an open event, incoming calls route directly to each caller's assigned game room without asking for a room code. Paused production events return localized Say-and-Hangup TwiML; explicit standalone deployments may still use room `4821`. `/voice/join` remains an alias for legacy DTMF room-code requests.
 
 ## Installation
 
@@ -216,6 +216,7 @@ The application runs locally without Twilio or OpenAI credentials. Configure the
 | `ARCADE_CONFIG_DIRECTORY` | Persistent Arcade configuration and audit directory | `data/` |
 | `ARCADE_SIGNING_SECRET` | Exactly 64 hexadecimal characters used to derive player-session and challenge-token keys when station mode is enabled | Not read while station mode is `off` |
 | `ARCADE_STATE_PATH` | Persistent player, wallet, and queue state | `data/arcade-state.json` |
+| `ARCADE_STANDALONE_VOICE_ENABLED` | Allows mode-off calls to use recent-display standalone Relay routing when set to `true` | `false` in production; `true` outside production |
 | `ARCADE_DEV_ADMIN` | Explicit local-only admin bypass used by `dev:arcade:server`; ignored in production | `false` |
 | `ARCADE_TAC_ENABLED` | Enables the active-event TAC lifecycle gateway; the local Arcade script disables it for credential-free testing | Enabled in production |
 | `TWILIO_ACCOUNT_SID`, `TWILIO_API_KEY`, `TWILIO_API_SECRET` | TAC, Conversation Memory, and outbound Messaging credentials from the primary SMS/WhatsApp account | Required by the production workflow |

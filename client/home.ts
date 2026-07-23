@@ -35,7 +35,11 @@ const copy = locale === 'pt-BR' ? {
   freePlay: 'Jogo livre', chooseGame: 'Escolha um jogo.',
   standaloneEyebrow: 'Jogos de festa controlados por voz · com tecnologia Twilio',
   standaloneTitle: 'Jogue com sua <span>voz.</span>',
-  standaloneDescription: 'Escolha um jogo na tela compartilhada. Os jogadores ligam de qualquer telefone e usam a voz como controle.',
+  standaloneDescription: 'Com tecnologia Twilio ConversationRelay. Sua voz é o controle.',
+  comingSoon: 'Em breve',
+  triviaTitle: 'Quiz por Voz', karaokeTitle: 'Karaokê por Voz',
+  triviaPreview: 'Perguntas rápidas, respostas em voz alta e rodadas para todos.',
+  karaokePreview: 'Escolha a música, pegue o microfone e cante pelo telefone.',
   nextGame: 'Próximo jogo', gameComplete: 'Partida concluída',
   playersNext: 'jogadores já estão prontos para a próxima partida',
   displaySetup: 'Conexão segura necessária', missingDisplayToken: 'Tela não conectada',
@@ -66,7 +70,11 @@ const copy = locale === 'pt-BR' ? {
   freePlay: 'Free play', chooseGame: 'Choose a game.',
   standaloneEyebrow: 'Voice-controlled party games · powered by Twilio',
   standaloneTitle: 'Play with your <span>voice.</span>',
-  standaloneDescription: 'Choose a game on the shared screen. Players call from any phone and use their voices as controllers.',
+  standaloneDescription: 'Powered by Twilio ConversationRelay. Your voice is the controller.',
+  comingSoon: 'Coming soon',
+  triviaTitle: 'Voice Trivia', karaokeTitle: 'Voice Karaoke',
+  triviaPreview: 'Quick questions, spoken answers, and rounds built for everyone.',
+  karaokePreview: 'Pick a song, take the mic, and sing through your phone.',
   nextGame: 'Next game', gameComplete: 'Game complete',
   playersNext: 'players are already ready for the next game',
   displaySetup: 'Secure connection required', missingDisplayToken: 'Display not connected',
@@ -108,6 +116,16 @@ const selectionVideos = {
   racer: '/video/vr-demo.mp4', monsters: '/video/vm-demo.mp4', fighter: '/video/vf-demo.mp4',
 } as const;
 const gameCommands = { racer: 1, monsters: 2, fighter: 3 } as const;
+
+interface PreviewConnection {
+  readonly saveData?: boolean;
+  readonly effectiveType?: string;
+  addEventListener?(type: 'change', listener: () => void): void;
+}
+
+const reducedMotionPreference = matchMedia('(prefers-reduced-motion: reduce)');
+const previewConnection = (navigator as Navigator & { connection?: PreviewConnection }).connection;
+let activeView: HTMLElement = views.recruiting;
 
 let stationId = new URLSearchParams(location.search).get('station') ?? 'ARCADE-01';
 let current: PublicStation | null = null;
@@ -156,7 +174,7 @@ function buildGameCard(impact: PublicStation['games'][number]): HTMLElement {
   const card = document.createElement('article');
   card.className = 'game-card';
   card.dataset.game = impact.id;
-  card.innerHTML = `<div class="game-card-media"><span class="game-media-fallback" role="img" aria-label="${gameCommands[impact.id]}, ${title}"><strong>${gameCommands[impact.id]}</strong><b>${title}</b></span><video src="${selectionVideos[impact.id]}" preload="metadata" loop muted playsinline autoplay aria-hidden="true"></video>
+  card.innerHTML = `<div class="game-card-media"><span class="game-media-fallback" role="img" aria-label="${gameCommands[impact.id]}, ${title}"><strong>${gameCommands[impact.id]}</strong><b>${title}</b></span><video data-src="${selectionVideos[impact.id]}" preload="none" loop muted playsinline aria-hidden="true"></video>
       <span class="game-command"><small>${copy.textCommand}</small><strong>${gameCommands[impact.id]}</strong></span></div>
     <div class="game-card-body"><div class="game-card-meta"><span data-role="vote-count"></span><b data-role="leader" hidden></b></div>
       <h2>${title}</h2>
@@ -164,27 +182,45 @@ function buildGameCard(impact: PublicStation['games'][number]): HTMLElement {
       <div class="capacity"><b data-role="play-now"></b><b data-role="overflow"></b></div></div>`;
   const video = card.querySelector<HTMLVideoElement>('video')!;
   video.addEventListener('error', () => card.classList.add('game-card-video-unavailable'), { once: true });
-  void video.play().catch(() => card.classList.add('game-card-video-unavailable'));
   return card;
 }
 
 function renderStandaloneLauncher(): void {
-  const videos: Record<'racer'|'monsters'|'fighter',string> = {
-    racer: '/video/vr-demo.mp4', monsters: '/video/vm-demo.mp4', fighter: '/video/vf-demo.mp4',
-  };
-  standaloneGames.replaceChildren(...PLAYABLE_ARCADE_GAMES.map(game => {
+  if (standaloneGames.childElementCount > 0) return;
+  standaloneGames.append(...PLAYABLE_ARCADE_GAMES.map(game => {
     const link = document.createElement('a');
     const url = new URL(game.route, location.origin);
     url.searchParams.set('display', '1');url.searchParams.set('room', '4821');url.searchParams.set('locale', locale);
     link.href=url.toString();link.className='standalone-game';link.dataset.game=game.id;
-    link.innerHTML=`<video src="${videos[game.id]}" loop muted playsinline autoplay></video><span>${gameTitle(locale,game.id)}</span><p>${game.id==='racer'?copy.racerBlurb:game.id==='monsters'?copy.monstersBlurb:copy.fighterBlurb}</p>`;
+    link.innerHTML=`<video data-src="${selectionVideos[game.id]}" preload="none" loop muted playsinline aria-hidden="true"></video><span>${gameTitle(locale,game.id)}</span><p>${game.id==='racer'?copy.racerBlurb:game.id==='monsters'?copy.monstersBlurb:copy.fighterBlurb}</p>`;
     return link;
   }));
-  standaloneGames.querySelectorAll<HTMLVideoElement>('video').forEach(video=>void video.play().catch(()=>undefined));
+}
+
+function previewPlaybackAllowed(): boolean {
+  return document.visibilityState !== 'hidden'
+    && !reducedMotionPreference.matches
+    && !previewConnection?.saveData
+    && !['slow-2g', '2g'].includes(previewConnection?.effectiveType ?? '');
+}
+
+function syncPreviewPlayback(): void {
+  const playbackAllowed = previewPlaybackAllowed();
+  document.querySelectorAll<HTMLVideoElement>('.station-view video').forEach(video => {
+    if (!playbackAllowed || !activeView.contains(video)) {
+      video.pause();
+      return;
+    }
+    const source=video.dataset.src;
+    if(source&&!video.getAttribute('src'))video.src=source;
+    if (video.paused) void video.play().catch(() => undefined);
+  });
 }
 
 function show(view: keyof typeof views): void {
   for (const [name, element] of Object.entries(views)) element.toggleAttribute('hidden', name !== view);
+  activeView = views[view];
+  syncPreviewPlayback();
 }
 
 function render(station: PublicStation): void {
@@ -204,15 +240,15 @@ function render(station: PublicStation): void {
   persistentJoin.hidden=standaloneMode||qrRailMode==='hidden'||station.phase==='ATTRACT'||station.phase==='RECRUITING';
 
   if (standaloneMode) {
-    show('standalone');
     renderStandaloneLauncher();
+    show('standalone');
   } else if (station.phase === 'GAME_SELECTION') {
-    show('selection');
     selectionTimer.hidden = false;
     document.getElementById('selectionEyebrow')!.textContent = copy.selectionEyebrow;
     document.getElementById('selectionTitle')!.textContent = copy.selectionTitle;
     document.getElementById('selectionDescription')!.textContent = copy.selectionDescription;
     renderGameCards(station);
+    show('selection');
   } else if (station.phase === 'LOCKED') {
     show('countdown');
     document.getElementById('countdownEyebrow')!.textContent = copy.countdownEyebrow;
@@ -278,8 +314,8 @@ async function refresh(): Promise<void> {
   refreshing = true;
   try {
     if (standaloneMode) {
-      show('standalone');
       renderStandaloneLauncher();
+      show('standalone');
       return;
     }
     const result = await fetchPublicStation(displayToken);
@@ -339,6 +375,11 @@ function localizeStaticPage(): void {
   document.getElementById('standaloneEyebrow')!.textContent=copy.standaloneEyebrow;
   document.getElementById('standaloneTitle')!.innerHTML=copy.standaloneTitle;
   document.getElementById('standaloneDescription')!.textContent=copy.standaloneDescription;
+  document.getElementById('futureGamesLabel')!.textContent=copy.comingSoon;
+  document.getElementById('voiceTriviaTitle')!.textContent=copy.triviaTitle;
+  document.getElementById('voiceKaraokeTitle')!.textContent=copy.karaokeTitle;
+  document.getElementById('voiceTriviaDescription')!.textContent=copy.triviaPreview;
+  document.getElementById('voiceKaraokeDescription')!.textContent=copy.karaokePreview;
   document.getElementById('persistentJoinLabel')!.textContent=locale==='pt-BR'?'Proxima rodada':'Next round';
   document.getElementById('persistentJoinTitle')!.textContent=locale==='pt-BR'?'Escaneie para entrar':'Scan to join';
   const operator=document.getElementById('operatorLink')!;operator.innerHTML=OPERATOR_ICON;operator.title=copy.operator;operator.setAttribute('aria-label',copy.operator);
@@ -387,6 +428,7 @@ async function refreshConfiguration(): Promise<void> {
     ]);
     joinBaseUrl = effectivePublicVisitorBaseUrl(bootstrap.publicBaseUrl);
     standaloneMode = config.arcade.mode === 'off';
+    document.body.classList.toggle('standalone-mode',standaloneMode);
     freePlay = config.coins.chargePolicy === 'free';
     smsAvailable = config.channels.sms && Boolean(bootstrap.smsNumber);
     whatsappAvailable = config.channels.whatsapp && Boolean(bootstrap.whatsappNumber);
@@ -396,7 +438,7 @@ async function refreshConfiguration(): Promise<void> {
     stationId = config.arcade.cabinetId;
     qrRailMode=config.station.qrRail;
     renderEntryPolicyCopy();
-    if(standaloneMode){show('standalone');renderStandaloneLauncher();}
+    if(standaloneMode){renderStandaloneLauncher();show('standalone');}
     else if(current)render(current);
     if (!standaloneMode) {
       await QRCode.toCanvas(
@@ -425,7 +467,9 @@ async function initialize(): Promise<void> {
   injectLanguagePicker('header-controls');
   injectMagicHat();
   document.addEventListener('click', () => getMusicManager().switchContext('lobby'), { once: true });
-  document.querySelectorAll<HTMLVideoElement>('video').forEach(video => void video.play().catch(() => undefined));
+  reducedMotionPreference.addEventListener('change', syncPreviewPlayback);
+  previewConnection?.addEventListener?.('change', syncPreviewPlayback);
+  document.addEventListener('visibilitychange',syncPreviewPlayback);
   await refreshConfiguration();
   subscribeToStation(() => { void refreshConfiguration().then(() => refresh()); });
   setInterval(() => void refresh(), 5_000);

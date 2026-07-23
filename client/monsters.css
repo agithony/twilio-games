@@ -47,6 +47,32 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); c
   border-radius: 18px; box-shadow: 0 0 60px rgba(239,34,58,.12), inset 0 0 0 1px var(--glass-brd);
 }
 
+/* Terminal outcomes live in a DOM layer aligned to the renderer's integer-scaled 160x144 canvas.
+   Each badge is positioned beside its global A/B health HUD, above live GIF sprites and away from the
+   command panel. The renderer scales the logical-size badge with the same integer used by the canvas. */
+.battle-outcome-layer { z-index: 4; pointer-events: none; overflow: visible; }
+.battle-outcome-badge {
+  position: absolute; transform-origin: top left; display: flex; align-items: center; justify-content: center;
+  gap: 3px; padding: 2px 4px; border: 1px solid; border-radius: 3px; white-space: nowrap;
+  font-family: var(--mono); font-size: 5px; font-weight: 800; line-height: 1; letter-spacing: .02em;
+  box-shadow: 0 0 0 1px #05070d, 0 2px 0 rgba(0,0,0,.65); animation: vm-outcome-reveal .18s steps(3,end) both;
+}
+.battle-outcome-badge[hidden] { display: none; }
+.battle-outcome-badge[data-outcome="winner"] { color: #ffe16a; background: #211700; border-color: #ffd23f; text-shadow: 0 1px #000; }
+.battle-outcome-badge[data-outcome="fainted"] { color: #fff; background: #a30d24; border-color: #ff697c; text-shadow: 0 1px #41000a; }
+.battle-outcome-icon { width: 7px; height: 7px; flex: 0 0 7px; line-height: 0; }
+.battle-outcome-icon svg { display: block; width: 100%; height: 100%; fill: currentColor; }
+.battle-outcome-icon--trophy { color: #ffd23f; filter: drop-shadow(0 1px #7a5400); animation: vm-outcome-trophy .8s steps(2,end) infinite; }
+.battle-outcome-icon--ko { color: #fff; filter: drop-shadow(0 1px #5b0010); }
+.battle-outcome-badge[data-outcome="winner"] .battle-outcome-icon--ko,
+.battle-outcome-badge[data-outcome="fainted"] .battle-outcome-icon--trophy { display: none; }
+.battle-outcome-announcer { position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0; }
+@keyframes vm-outcome-reveal { from { opacity: 0; filter: brightness(1.8); } to { opacity: 1; filter: brightness(1); } }
+@keyframes vm-outcome-trophy { 50% { transform: translateY(-1px); } }
+@media (prefers-reduced-motion: reduce) {
+  .battle-outcome-badge, .battle-outcome-icon--trophy { animation: none; }
+}
+
 /* Overlay: lobby / monster-select / results — a full-screen Twilio glass panel over the navy bg.
    Everything must fit ON SCREEN (no scrolling) with margin top+bottom: the card is capped to the
    viewport height and its inner content shrinks to fit (see .vm-card.wide + the grid sizing). */

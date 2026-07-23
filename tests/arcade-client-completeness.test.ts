@@ -65,6 +65,21 @@ describe('Arcade client completeness', () => {
     expect(arcade).toContain("return number?'Ready':'Add a phone number'");
   });
 
+  it('derives operator overview cards from existing config, station, and messaging state', () => {
+    for (const id of [
+      'operator-overview', 'overview-event', 'overview-game', 'overview-players', 'overview-messaging',
+      'live-event', 'messages', 'setup', 'settings-savebar', 'voice-number-fields',
+    ]) expect(arcadeHtml).toContain(`id="${id}"`);
+    const overview = /function renderOperatorOverview\(\):void\{[\s\S]*?\n}/.exec(arcade)?.[0] ?? '';
+    expect(overview).toContain('state.adminConfig');
+    expect(overview).toContain('state.operatorStation');
+    expect(overview).toContain('state.adminStatus?.messaging');
+    expect(overview).not.toMatch(/\b(?:api|request|fetch|post)\s*[<(]/);
+    expect(arcade).toContain("addEventListener('input',()=>setModeFormDirty(true))");
+    expect(arcade).toContain("el('settings-savebar').hidden=!dirty");
+    expect(arcade).toContain("el('voice-number-fields').hidden=!voice");
+  });
+
   it('uses the short localized join command and explains the guided replies', () => {
     expect(join).toContain('buildJoinGuidance');
     expect(joinGuidance).toContain("portuguese ? 'ENTRAR' : 'JOIN'");

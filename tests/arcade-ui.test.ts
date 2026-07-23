@@ -50,7 +50,7 @@ describe('Arcade browser UI', () => {
   it('restores a clean video-card launcher when station mode is off', () => {
     expect(home).toContain('id="standaloneView"');
     expect(homeScript).toContain("show('standalone')");
-    expect(homeScript).toContain("if(standaloneMode){show('standalone');renderStandaloneLauncher();}");
+    expect(homeScript).toContain("if(standaloneMode){renderStandaloneLauncher();show('standalone');}");
     for (const video of ['vr-demo.mp4','vm-demo.mp4','vf-demo.mp4']) expect(homeScript).toContain(video);
     expect(homeScript).not.toContain('Arcade station mode is off');
     expect(homeScript).not.toContain('Joining unavailable');
@@ -77,7 +77,8 @@ describe('Arcade browser UI', () => {
     expect(homeScript).toContain('gameCards.querySelector<HTMLElement>');
     const cardUpdater = /function renderGameCards\(station: PublicStation\)[\s\S]*?\n}/.exec(homeScript)?.[0] ?? '';
     expect(cardUpdater.match(/replaceChildren/g)).toHaveLength(1);
-    expect(homeScript).toContain('preload="metadata"');
+    expect(homeScript).toContain('data-src="${selectionVideos[impact.id]}"');
+    expect(homeScript).toContain('preload="none"');
     expect(homeScript).toContain('game-media-fallback');
     expect(homeScript).toContain("addEventListener('error'");
     expect(homeCss).toContain('.game-command strong');
@@ -220,6 +221,72 @@ describe('Arcade browser UI', () => {
     expect(racerScreens).toContain('screen.lobby.coinQrCaption');
   });
 
+  it('uses a semantic operator information architecture with linked live summaries', () => {
+    expect(html).toContain('<main id="operations"');
+    const consoleMarkup = /<div id="admin-console"[\s\S]*?<\/main>/.exec(html)?.[0] ?? '';
+    for (const [label, target] of [
+      ['Overview', 'operator-overview'],
+      ['Live event', 'live-event'],
+      ['Messages', 'messages'],
+      ['Setup', 'setup'],
+    ]) expect(consoleMarkup).toContain(`<a href="#${target}">${label}</a>`);
+    const sectionPositions = ['operator-overview', 'live-event', 'messages', 'setup'].map(id => consoleMarkup.indexOf(`id="${id}"`));
+    expect(sectionPositions).toEqual([...sectionPositions].sort((left, right) => left - right));
+    for (const label of ['Event', 'Live game', 'Players', 'Messaging']) {
+      expect(consoleMarkup).toContain(`<span>${label}</span>`);
+    }
+    expect(script).toContain('function renderOperatorOverview():void');
+    expect(script).toContain("!station?'Waiting for players'");
+    expect(script).toContain("entry.status!=='LEFT'");
+    expect(script).toContain('messaging?.counts.FAILED??0');
+    expect(script).toMatch(/function renderRuntimeSummary\([\s\S]*?renderOperatorOverview\(\);\s*}/);
+    expect(script).toMatch(/function renderOperatorStation\([\s\S]*?renderOperatorOverview\(\);\s*}/);
+    expect(script).toMatch(/function renderMessagingStatus\([\s\S]*?renderOperatorOverview\(\);/);
+    expect(css).toContain('.operator-page .shell{width:min(1200px');
+    expect(css).toContain('.operator-nav{position:sticky');
+    expect(css).toContain('.operator-page .notice{position:static');
+    expect(css).toContain('overflow-x:auto');
+    expect(css).toContain('.operator-section{scroll-margin-top:');
+    expect(css).toContain('.overview-grid{display:grid;grid-template-columns:repeat(4');
+    expect(css).toContain('@media(max-width:999px){.operator-page .overview-grid{grid-template-columns:repeat(2');
+    expect(css).toContain('.operator-page .overview-grid{grid-template-columns:1fr}');
+    const operatorReordering = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+      .filter(match => match[1]?.includes('.operator-page') && /(?:^|;)\s*order\s*:/.test(match[2] ?? ''));
+    expect(operatorReordering).toEqual([]);
+  });
+
+  it('keeps secondary operator tools collapsed and primary operations visible', () => {
+    expect(html).toMatch(/<details class="operator-details station-activity-details">\s*<summary>Recent activity<\/summary>/);
+    expect(html).toMatch(/<details class="operator-details messaging-details">\s*<summary>Delivery metrics<\/summary>/);
+    expect(html).toMatch(/<details class="advanced-settings">\s*<summary>Timing<\/summary>/);
+    expect(html).toMatch(/<details id="admin-challenge-panel"[^>]*setup-details/);
+    expect(html).toMatch(/<details class="panel compact qr-operator-panel setup-details">/);
+    expect(html).toMatch(/<details id="display-connect-panel"[^>]*setup-details/);
+    for (const id of ['station-phase', 'station-controls', 'station-ready', 'messaging-failure-list']) {
+      const beforeControl = html.slice(0, html.indexOf(`id="${id}"`));
+      expect(beforeControl.lastIndexOf('<details')).toBeLessThanOrEqual(beforeControl.lastIndexOf('</details>'));
+    }
+    expect(html).toMatch(/id="settings-savebar" class="settings-savebar" hidden/);
+    expect(script).toContain("el('settings-savebar').hidden=!dirty");
+    expect(script).toContain("el('voice-number-fields').hidden=!voice");
+    expect(script).toContain('refreshOperatorConfiguration(true)');
+    expect(css).toContain('.settings-savebar{position:sticky');
+    expect(css).toContain('.operator-page .settings-savebar{position:static');
+    expect(css).toContain('.settings-layout{display:grid;grid-template-columns:repeat(2');
+    expect(css).toContain('.operator-page .challenge-form{grid-template-columns:repeat(2');
+  });
+
+  it('presents future voice games as static setup concepts only', () => {
+    const concepts = /<div class="coming-soon-concepts"[\s\S]*?<\/div>/.exec(html)?.[0] ?? '';
+    expect(concepts).toContain('<b>Voice Trivia</b>');
+    expect(concepts).toContain('<b>Voice Karaoke</b>');
+    expect(concepts.match(/Coming soon/g)).toHaveLength(2);
+    expect(concepts).not.toMatch(/<(?:input|button|a|option)\b|\btabindex=|\bdata-game-choice=/);
+    expect(stationGameSelect).not.toMatch(/Trivia|Karaoke/i);
+    expect(script).not.toMatch(/['"](?:trivia|karaoke)['"]/i);
+    expect(html).toContain('<h2>Manage the live event</h2>');
+  });
+
   it('manages configured challenges through the staff-only versioned config editor', () => {
     expect(html.indexOf('id="admin-console"')).toBeLessThan(html.indexOf('id="admin-challenge-panel"'));
     for (const id of [
@@ -352,10 +419,11 @@ describe('Arcade browser UI', () => {
     expect(html).toContain('>Entry cost<');
     expect(script).toContain('Browser entry collects first and last name, work email, company, phone number, country or region');
     expect(script).toContain('terms acknowledgement when required, and optional marketing consent');
-    expect(script).toContain('messaging uses the sender phone and asks for first and last name, work email, company, and country or region');
+    expect(script).toContain('Messaging entry uses the sender phone and asks for first and last name, work email, company, and country or region');
     expect(script).toContain('It asks for terms only when required and never asks for marketing consent');
+    expect(html).toContain('<summary>Information collected</summary>');
     expect(script).toContain('termsAcknowledgementRequired');
-    expect(script).toContain('Players enter through enabled SMS or WhatsApp');
+    expect(script).toContain('Players enter through an enabled messaging channel');
     expect(script).toContain('Pausing freezes the current event flow and stops its timers without removing players or coins');
     expect(script).toContain("output.textContent='Paused'");
     expect(script).toContain('The event is paused and this flow is frozen. Reset the event flow before reopening.');
@@ -369,6 +437,16 @@ describe('Arcade browser UI', () => {
     expect(script).toContain("ATTRACT:'Waiting for players'");
   });
 
+  it('keeps the paused host instruction only in the localized player panel', () => {
+    expect(script).toContain("renderPlayer();startPlayerUpdates();setNotice('')");
+    expect(script).toContain("playerText('The event is not accepting players right now.','O evento não está aceitando jogadores agora.')");
+    expect(html).toContain('Check back soon or ask the host when the next game begins.');
+    expect(script).toContain("'Volte em breve ou pergunte ao anfitrião quando começa o próximo jogo.'");
+    expect(script).not.toContain('Games are paused. Ask the host');
+    expect(script).not.toContain('Os jogos estão pausados. Pergunte ao anfitrião');
+    expect(css).toContain('.notice:empty{display:none}');
+  });
+
   it('keeps player copy simple and groups operator settings by task', () => {
     for (const phrase of ['HttpOnly', 'lead PII', 'Coin ledger', 'ready pool', "cabinet's"]) {
       expect(html).not.toContain(phrase);
@@ -378,7 +456,7 @@ describe('Arcade browser UI', () => {
     for (const heading of ['Event', 'Ways to join and play', 'Games', 'Timing']) {
       expect(html).toContain(`>${heading}<`);
     }
-    expect(css).toContain('.settings-layout{display:grid;grid-template-columns:repeat(12');
+    expect(css).toContain('.settings-layout{display:grid;grid-template-columns:repeat(2');
     expect(css).toContain('.choice-card:has(input:checked)');
     expect(script).toContain("document.body.classList.add(operatorView?'operator-page':'player-page')");
   });

@@ -20,6 +20,12 @@ import { hpFraction, hpZone, hpColor } from './hp-bar';
 import { DEFAULT_LOCALE, type SupportedLocale } from '../../shared/i18n/locales';
 import { MONSTERS_MESSAGES, type MonstersMessageKey } from '../../shared/i18n/monsters';
 import { createTranslator, type MessageValues } from '../../shared/i18n/translate';
+import {
+  BATTLE_HUD_RECTS,
+  BATTLE_OUTCOME_RECTS,
+  outcomeBadgePresentation,
+  outcomesBySide,
+} from './battle-hud-layout';
 
 // Logical GB resolution (160×144); we scale up to fill the element with nearest-neighbor crispness.
 const GB_W = 160, GB_H = 144;
@@ -67,6 +73,11 @@ export class BattleRenderer {
    *  the canvas layout; only procedural placeholders take the canvas path. Sits above the canvas
    *  (z-index 3); sprites never overlap the HP boxes/command window, so no occlusion is lost. */
   private spriteLayer: HTMLElement;
+  /** A DOM layer above the live GIF sprites, aligned to the same integer-scaled 160x144 screen. */
+  private outcomeLayer: HTMLElement;
+  private outcomeAnnouncer: HTMLElement;
+  private outcomeBadges: Record<'a' | 'b', { root: HTMLElement; label: HTMLElement }>;
+  private resizeObserver: ResizeObserver | null = null;
   /** The <img> currently shown on screen per side (so we can reposition/replace it each frame). */
   private shownImg: { a: HTMLImageElement | null; b: HTMLImageElement | null } = { a: null, b: null };
   private text: (key: MonstersMessageKey, values?: MessageValues) => string;
@@ -86,9 +97,27 @@ export class BattleRenderer {
     this.spriteLayer.setAttribute('aria-hidden', 'true');
     this.spriteLayer.style.cssText = 'position:absolute;inset:0;margin:auto;z-index:3;pointer-events:none;overflow:visible';
     host.appendChild(this.spriteLayer);
+    this.outcomeLayer = document.createElement('div');
+    this.outcomeLayer.className = 'battle-outcome-layer';
+    this.outcomeLayer.style.cssText = 'position:absolute;inset:0;margin:auto;z-index:4;pointer-events:none;overflow:visible';
+    this.outcomeAnnouncer = document.createElement('div');
+    this.outcomeAnnouncer.className = 'battle-outcome-announcer';
+    this.outcomeAnnouncer.setAttribute('role', 'status');
+    this.outcomeAnnouncer.setAttribute('aria-live', 'polite');
+    this.outcomeAnnouncer.setAttribute('aria-atomic', 'true');
+    this.outcomeLayer.appendChild(this.outcomeAnnouncer);
+    this.outcomeBadges = {
+      a: this.createOutcomeBadge('a'),
+      b: this.createOutcomeBadge('b'),
+    };
+    host.appendChild(this.outcomeLayer);
     this.ctx = this.canvas.getContext('2d')!;
     this.resize();
     window.addEventListener('resize', () => this.resize());
+    if (typeof ResizeObserver !== 'undefined') {
+      this.resizeObserver = new ResizeObserver(() => this.resize());
+      this.resizeObserver.observe(host);
+    }
     this.loop();
   }
 
@@ -102,6 +131,17 @@ export class BattleRenderer {
     // Match the sprite layer to the canvas's on-screen box so GB-logical coords map 1:1 to CSS px.
     this.spriteLayer.style.width = `${GB_W * this.scale}px`;
     this.spriteLayer.style.height = `${GB_H * this.scale}px`;
+    this.outcomeLayer.style.width = `${GB_W * this.scale}px`;
+    this.outcomeLayer.style.height = `${GB_H * this.scale}px`;
+    for (const side of ['a', 'b'] as const) {
+      const rect = BATTLE_OUTCOME_RECTS[side];
+      const badge = this.outcomeBadges[side].root;
+      badge.style.left = `${rect.x * this.scale}px`;
+      badge.style.top = `${rect.y * this.scale}px`;
+      badge.style.width = `${rect.width}px`;
+      badge.style.height = `${rect.height}px`;
+      badge.style.transform = `scale(${this.scale})`;
+    }
   }
 
   /** Point the renderer at the current battle state, the local player's moves, the turn state, and
@@ -122,7 +162,11 @@ export class BattleRenderer {
     this.statusLine = statusLine;
     this.foeType = foeType;   // the opponent's type → menu pips show effectiveness vs THIS foe
     // A live, unfinished battle with both sides up → clear any prior faint/win flourish (rematch).
-    if (snap && !snap.winner && snap.a.hp > 0 && snap.b.hp > 0) { this.faintedSide = null; this.winnerSide = null; }
+    if (!snap || (!snap.winner && snap.a.hp > 0 && snap.b.hp > 0)) {
+      this.faintedSide = null;
+      this.winnerSide = null;
+    }
+    this.renderOutcomeBadges();
     if (snap) { this.ensureSprite(snap.a.monsterId, snap.a.type, 'back'); this.ensureSprite(snap.b.monsterId, snap.b.type, 'front'); }
   }
 
@@ -154,14 +198,16 @@ export class BattleRenderer {
     } else if (ev.kind === 'heal') {
       this.resHp.hit(ev.on, ev.hpLeft);   // guard/potion heal → the bar rises to the new HP mid-resolution
     } else if (ev.kind === 'faint') {
-      this.faintedSide = ev.side;   // the KO'd monster slumps + gets sleepy Z's
+      this.faintedSide = ev.side;
+      this.renderOutcomeBadges();
     } else if (ev.kind === 'battle_over') {
-      this.winnerSide = ev.winner;   // the victor gets a bobbing trophy
+      this.winnerSide = ev.winner;
+      this.renderOutcomeBadges();
     }
   }
   private lastMoveType: string = 'normal';   // type of the most recent move_used → drives the impact FX
-  private faintedSide: 'a' | 'b' | null = null;   // the defeated monster (slumped + Z's)
-  private winnerSide: 'a' | 'b' | null = null;    // the victor (trophy)
+  private faintedSide: 'a' | 'b' | null = null;
+  private winnerSide: 'a' | 'b' | null = null;
 
   /** Load a real sprite if present, else keep the synthesized placeholder. Cached per id+view. Tries
    *  an animated GIF first, then a static PNG (spriteCandidateUrls order); the first that loads wins.
@@ -229,14 +275,10 @@ export class BattleRenderer {
       this.drawMonster('b', 108, 42, 46, 'front');   // platform center (x, groundY), sprite size
       this.drawMonster('a', 44, 82, 52, 'back');
       this.attackFx.draw(ctx, S, this.tick);   // typed attack FX OVER the monsters (never below y88)
-      this.drawHpBox('b', this.snap.b, 6, 8, false);   // enemy: top-left
-      this.drawHpBox('a', this.snap.a, 84, 58, true);  // you: bottom-right (with HP numbers)
-      // Win/faint flourish: drawn LAST so they render ON TOP of sprites and HP boxes.
-      // Trophy bobs above the VICTOR; K.O. badge above the fainted loser.
-      if (this.winnerSide === 'b') this.drawTrophy(108, 2);
-      else if (this.winnerSide === 'a') this.drawTrophy(44, 14);
-      if (this.faintedSide === 'b') this.drawKO(108, 2);
-      else if (this.faintedSide === 'a') this.drawKO(44, 14);
+      const bHud = BATTLE_HUD_RECTS.b;
+      const aHud = BATTLE_HUD_RECTS.a;
+      this.drawHpBox('b', this.snap.b, bHud);   // enemy: top-left
+      this.drawHpBox('a', this.snap.a, aHud);   // you: bottom-right
       // Turn indicator: a bobbing arrow to the SIDE of whoever is acting, pointing at it. To the RIGHT
       // of the top monster (b, points left) and to the LEFT of the bottom monster (a, points right).
       if (this.activeSide === 'b') this.drawTurnArrow(136, 20, 'left');    // right of b's sprite (~x131)
@@ -344,9 +386,46 @@ export class BattleRenderer {
     if (cur && cur !== keep) { cur.remove(); this.shownImg[side] = null; }
   }
 
-  private drawHpBox(side: 'a' | 'b', st: BattleSnapshot['a'], x: number, y: number, showNumbers: boolean): void {
+  private createOutcomeBadge(side: 'a' | 'b'): { root: HTMLElement; label: HTMLElement } {
+    const root = document.createElement('div');
+    root.className = 'battle-outcome-badge';
+    root.dataset.side = side;
+    root.hidden = true;
+    root.setAttribute('aria-hidden', 'true');
+    root.innerHTML = `<span class="battle-outcome-icon battle-outcome-icon--trophy" aria-hidden="true">
+      <svg viewBox="0 0 24 24" focusable="false"><path d="M7 3h10v5a5 5 0 0 1-10 0V3Zm-3 2h3v3H6a2 2 0 0 1-2-2V5Zm13 0h3v1a2 2 0 0 1-2 2h-1V5Zm-6 8h2v4h4v3H7v-3h4v-4Z"/></svg>
+    </span><span class="battle-outcome-icon battle-outcome-icon--ko" aria-hidden="true">
+      <svg viewBox="0 0 24 24" focusable="false"><path d="M5.6 3.5 12 9.9l6.4-6.4 2.1 2.1-6.4 6.4 6.4 6.4-2.1 2.1-6.4-6.4-6.4 6.4-2.1-2.1L9.9 12 3.5 5.6l2.1-2.1Z"/></svg>
+    </span><span class="battle-outcome-label"></span>`;
+    this.outcomeLayer.appendChild(root);
+    return { root, label: root.querySelector<HTMLElement>('.battle-outcome-label')! };
+  }
+
+  private renderOutcomeBadges(): void {
+    const outcomes = outcomesBySide(this.winnerSide, this.faintedSide);
+    const announcements: string[] = [];
+    for (const side of ['a', 'b'] as const) {
+      const badge = this.outcomeBadges[side];
+      const outcome = outcomes[side];
+      const monster = this.snap && (side === 'a' ? this.snap.a : this.snap.b);
+      if (!outcome || !monster) {
+        badge.root.hidden = true;
+        delete badge.root.dataset.outcome;
+        badge.label.textContent = '';
+        continue;
+      }
+      const presentation = outcomeBadgePresentation(outcome, monster.monsterName, this.locale);
+      badge.root.dataset.outcome = outcome;
+      badge.label.textContent = presentation.label;
+      badge.root.hidden = false;
+      announcements.push(presentation.accessibleLabel);
+    }
+    this.outcomeAnnouncer.textContent = announcements.join('. ');
+  }
+
+  private drawHpBox(side: 'a' | 'b', st: BattleSnapshot['a'], rect: { x:number;y:number;width:number;height:number }): void {
     const ctx = this.ctx;
-    const w = 70, h = showNumbers ? 26 : 20;
+    const { x, y, width:w, height:h } = rect;
     this.drawWindow(x, y, w, h);
     this.drawText(st.monsterName.slice(0, 11), x + 5, y + 4, true);
     // HP: during a paced resolution show the tracker's value (drops one hit at a time); else snapshot.
@@ -356,7 +435,7 @@ export class BattleRenderer {
     ctx.fillStyle = DARK; ctx.fillRect(barX - 1, barY - 1, barW + 2, barH + 2);   // frame
     ctx.fillStyle = PAPER; ctx.fillRect(barX, barY, barW, barH);
     ctx.fillStyle = hpColor(hpZone(frac)); ctx.fillRect(barX, barY, Math.round(barW * frac), barH);
-    if (showNumbers) this.drawText(`${hp}/${st.maxHp}`, x + 5, y + 19, true);
+    this.drawText(`${hp}/${st.maxHp}`, x + 5, y + 21, true);
   }
 
   /** A GB-style window: light fill + a dark inner/outer border. */
@@ -426,50 +505,11 @@ export class BattleRenderer {
     }
   }
 
-  /** A little gold TROPHY bobbing above the victor (centered on cx, top near y). Chunky GB pixels. */
-  private drawTrophy(cx: number, y: number): void {
-    const ctx = this.ctx;
-    const bob = Math.round(Math.sin(this.tick * 0.12) * 1.5);
-    const ty = y + bob;
-    const GOLD = '#ffd23f', GOLD_DK = '#c99a1e';
-    // cup bowl (6 wide), handles, stem, base
-    ctx.fillStyle = GOLD;
-    ctx.fillRect(cx - 3, ty, 7, 4);          // bowl
-    ctx.fillRect(cx - 5, ty + 1, 2, 2);      // left handle
-    ctx.fillRect(cx + 4, ty + 1, 2, 2);      // right handle
-    ctx.fillStyle = GOLD_DK;
-    ctx.fillRect(cx - 1, ty + 4, 3, 2);      // stem
-    ctx.fillRect(cx - 3, ty + 6, 7, 2);      // base
-    // sparkle
-    ctx.fillStyle = '#fff';
-    if (Math.floor(this.tick * 0.1) % 2 === 0) ctx.fillRect(cx - 2, ty + 1, 1, 1);
+  dispose(): void {
+    cancelAnimationFrame(this.raf);
+    this.resizeObserver?.disconnect();
+    this.canvas.remove();
+    this.spriteLayer.remove();
+    this.outcomeLayer.remove();
   }
-
-  /** A "K.O." badge above a fainted monster — a red pill with white "K.O." + spinning faint stars, the
-   *  classic "knocked out" read. Bobs down into place. Centered on cx, top near y. */
-  private drawKO(cx: number, y: number): void {
-    const ctx = this.ctx;
-    const drop = Math.max(0, 4 - this.tick * 0.2);   // small settle-in from above (decays over ~20 frames)
-    const by = y + drop;
-    // red pill background
-    const label = this.locale === 'pt-BR' ? 'NOCAUTE' : 'K.O.';
-    const w = this.locale === 'pt-BR' ? 38 : 22, h = 11, px = cx - w / 2;
-    ctx.fillStyle = '#0a0a0a'; ctx.fillRect(px - 1, by - 1, w + 2, h + 2);   // dark outline
-    ctx.fillStyle = '#e5533c'; ctx.fillRect(px, by, w, h);                    // red fill
-    // "K.O." text
-    ctx.fillStyle = '#fff';
-    ctx.font = `bold ${this.locale === 'pt-BR' ? 6 : 8}px monospace`;
-    ctx.textBaseline = 'top';
-    ctx.fillText(label, px + 3, by + 2);
-    // two little faint-stars circling above the badge
-    ctx.fillStyle = '#ffd23f';
-    for (let i = 0; i < 2; i++) {
-      const a = this.tick * 0.15 + i * Math.PI;
-      const sx = Math.round(cx + Math.cos(a) * 8);
-      const sy = Math.round(by - 4 + Math.sin(a) * 2);
-      ctx.fillRect(sx, sy, 2, 2);
-    }
-  }
-
-  dispose(): void { cancelAnimationFrame(this.raf); this.canvas.remove(); this.spriteLayer.remove(); }
 }
