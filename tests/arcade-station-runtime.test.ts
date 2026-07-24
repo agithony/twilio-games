@@ -167,6 +167,19 @@ describe('ArcadeStationRuntime', () => {
     await restarted.stop();
   });
 
+  it('yields deeply overdue recovery instead of failing runtime initialization', async () => {
+    const h = await harness();
+    await h.service.identifyCoinOnly({ playerId: 'p1', idempotencyKey: 'stale-identify' });
+    await h.service.insertStationCoin({ stationId: 'expo', playerId: 'p1', idempotencyKey: 'stale-coin' });
+    h.setTime(T0 + 30 * 60_000);
+    const runtime = h.makeRuntime();
+
+    await expect(runtime.start()).resolves.toBeUndefined();
+    expect(h.runtimeErrors).toEqual([]);
+    expect((await h.service.getStation('expo'))!.station.revision).toBeGreaterThan(1);
+    await runtime.stop();
+  });
+
   it('cancels deadlines and does not advance station phases while paused', async () => {
     const h = await harness();
     await h.service.identifyCoinOnly({ playerId: 'p1', idempotencyKey: 'pause-timer-identify' });

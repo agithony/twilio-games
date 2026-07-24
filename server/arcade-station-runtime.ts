@@ -364,7 +364,10 @@ export class ArcadeStationRuntime {
         throw error;
       }
     }
-    throw new Error('Twilio Games station runtime exceeded its overdue transition limit');
+    // A long outage can leave many complete station cycles overdue. Yield between bounded batches
+    // instead of failing player-runtime initialization; the retry continues catch-up without
+    // monopolizing startup or treating stale chronology as a broken dependency.
+    this.scheduleRetry();
   }
 
   private async applyTransition(
