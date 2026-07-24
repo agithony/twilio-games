@@ -258,7 +258,7 @@ describe('ConversationRelayAdapter', () => {
     resolveRecap('Photo finish. What a race!');
     await waiting;
 
-    expect(said).toEqual(['Photo finish. What a race!']);
+    expect(said).toEqual(['Photo finish.', 'What a race!']);
   });
 
   it('uses requeue guidance instead of replay copy when a station recap falls back', async () => {

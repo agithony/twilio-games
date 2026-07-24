@@ -15,6 +15,8 @@ describe('voice integration (fake Conversation Relay client)', () => {
     const port = await srv.start();
     const voice = new WebSocket(`ws://127.0.0.1:${port}/voice`);
     let closeCode: number | null = null;
+    let lastPlayedAt = 0;
+    let endedAt = 0;
     voice.on('close', code => { closeCode = code; });
     const receivedTypes:string[]=[];
     const ended = new Promise<Record<string, unknown>>((resolve, reject) => {
@@ -23,8 +25,10 @@ describe('voice integration (fake Conversation Relay client)', () => {
         const message = JSON.parse(data.toString()) as Record<string, unknown>;
         receivedTypes.push(String(message.type));
         if (message.type === 'text') {
+          lastPlayedAt = Date.now();
           voice.send(JSON.stringify({ type: 'info', name: 'tokensPlayed', value: message.token }));
         } else if (message.type === 'end') {
+          endedAt = Date.now();
           clearTimeout(timeout);
           resolve(message);
         }
@@ -42,6 +46,7 @@ describe('voice integration (fake Conversation Relay client)', () => {
     expect(JSON.parse(String(message.handoffData))).toEqual({ reasonCode: 'match-complete' });
     expect(receivedTypes.at(-1)).toBe('end');
     expect(closeCode).toBeNull();
+    expect(endedAt - lastPlayedAt).toBeGreaterThanOrEqual(650);
     voice.send(JSON.stringify({type:'prompt',voicePrompt:'say something else',last:true}));
     await wait(100);
     expect(receivedTypes.at(-1)).toBe('end');
@@ -389,7 +394,10 @@ describe('voice integration (fake Conversation Relay client)', () => {
       voice.send(JSON.stringify({ type: 'prompt', voicePrompt: 'batalhar', last: true }));
       await wait(100);
       expect(states.at(-1)?.phase).toBe('battle');
-      voice.send(JSON.stringify({ type: 'prompt', voicePrompt: 'lutar dois', last: true }));
+      voice.send(JSON.stringify({ type: 'prompt', voicePrompt: 'lutar', last: true }));
+      await wait(80);
+      expect(states.at(-1)?.activeMenu).toBe('fight');
+      voice.send(JSON.stringify({ type: 'prompt', voicePrompt: 'dois', last: true }));
       await wait(250);
       expect(events.some(event => event.kind === 'move_used' && event.moveId === 'sparkmouse.zap')).toBe(true);
       expect(spoken.some(message => message.token.includes('Monstros por Voz'))).toBe(true);

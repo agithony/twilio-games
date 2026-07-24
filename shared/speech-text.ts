@@ -25,8 +25,6 @@ export function speechSafeText(input: string, maxLen = 500, locale: SupportedLoc
     .replace(/\s+([,.!?;:])/g, '$1')
     .replace(/([,.!?;:])(?=\S)/g, '$1 ')
     .replace(/\s+/g, ' ')
-    // Keep the brand pronunciation stable across TTS providers and commentator voices.
-    .replace(/\bTwilio\b/gi, 'Twill-ee-oh')
     .trim();
 
   if (normalized.length <= maxLen) return normalized;

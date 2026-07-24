@@ -702,7 +702,7 @@ export class HttpServer {
           adapter.ignoreLateRacingPrompt(frame?.last === true);
           return;
         }
-        if (type === 'prompt' || type === 'interrupt') clearRelayTextQueue(ws);
+        if (type === 'prompt' || type === 'interrupt') clearRelayTextQueue(ws, type === 'interrupt');
       } catch { /* adapter will ignore bad frames */ }
       if (route === null) route = this.pickVoiceGame(raw);
       if (route === 'battle') {
@@ -743,7 +743,7 @@ export class HttpServer {
         if (handleRelayPlaybackEvent(ws, raw)) return;
         const relayState = relayQueues.get(ws);
         if (relayState?.ending || relayState?.ended) {
-          if (relayState.ending && isRelayInterrupt(raw)) clearRelayTextQueue(ws);
+          if (relayState.ending && isRelayInterrupt(raw)) clearRelayTextQueue(ws, true);
           return;
         }
         let setup: Record<string, any> | null = null;
@@ -850,6 +850,7 @@ export class HttpServer {
   }
 
   private voiceHints(game: 'racer' | 'battle' | 'fighter', locale: SupportedLocale): string {
+    const numbers = selectionNumberHints(locale);
     if (game === 'battle') {
       const commands = locale === 'pt-BR'
         ? ['lutar', 'lute', 'atacar', 'ataque', 'defender', 'defenda-se', 'bloquear', 'bloqueie', 'proteger', 'proteja-se', 'item', 'poção', 'curar', 'provocar', 'provoque', 'zombar', 'zombe', 'voltar', 'volte', 'cancelar', 'começar', 'batalhar', 'revanche', 'próximo', 'sim']
@@ -858,7 +859,7 @@ export class HttpServer {
         ...localizedMonsterAliases(monster.id, monster.name),
         ...monster.moves.flatMap(move => localizedMoveAliases(move.id, move.name)),
       ]);
-      return [...commands, 'um', 'dois', 'três', 'quatro', 'primeiro', 'segundo', 'terceiro', 'quarto', ...content].join(', ');
+      return [...commands, ...numbers, ...content].join(', ');
     }
     if (game === 'fighter') {
       const commands = locale === 'pt-BR'
@@ -866,10 +867,9 @@ export class HttpServer {
         : ['forward', 'closer', 'back', 'backward', 'away', 'jump', 'leap', 'hop', 'punch', 'jab', 'strike', 'kick', 'roundhouse', 'block', 'guard', 'defend', 'start', 'next', 'fight', 'rematch', 'help'];
       const fighters = FIGHTER_ROSTER.flatMap(fighter => localizedFighterAliases(fighter.id, fighter.name));
       const maps = this.fighterMaps.flatMap(map => [map.name, localizedFighterMapName(locale, map.id, map.name),
-        ...(map.id==='inakaya'?['Inakaya','Ina Kaya','Izakaya']:[])]);
-      const numbers=locale==='pt-BR'
-        ? ['um','dois','três','quatro','cinco','seis','sete','oito','nove','dez','onze','doze','primeiro','segundo','terceiro','quarto','quinto']
-        : ['one','two','three','four','five','six','seven','eight','nine','ten','eleven','twelve','first','second','third','fourth','fifth'];
+        ...(map.id === 'inakaya'
+          ? ['Inakaya', 'Inakaya Restaurant', 'Ina Kaya', 'In a Kaya', 'In Akaya', 'Innakaya', 'Inikaya', 'Izakaya']
+          : [])]);
       return [...fighters, ...maps, ...commands, ...numbers].join(', ');
     }
     const commands = locale === 'pt-BR'
@@ -877,7 +877,7 @@ export class HttpServer {
       : ['left', 'right', 'boost', 'go', 'brake', 'slow', 'stop', 'nitro', 'power', 'start', 'next', 'race', 'rematch'];
     const cars = this.roomConfigCache.carNames.flatMap(localizedCarAliases);
     const tracks = this.roomConfigCache.maps.flatMap(localizedTrackAliases);
-    return [...commands, 'um', 'dois', 'três', 'primeiro', 'segundo', 'terceiro', ...cars, ...tracks].join(', ');
+    return [...commands, ...numbers, ...cars, ...tracks].join(', ');
   }
 
   private makeFighterSession(say: (text: string) => void): FighterVoiceSession {
@@ -2235,6 +2235,7 @@ export class HttpServer {
 }
 
 const RELAY_CHUNK_GAP_MS = 700;
+const RELAY_END_GRACE_MS = 750;
 const RELAY_END_TIMEOUT_MS = 20_000;
 const RELAY_SPEECH_SETTLE_TIMEOUT_MS = 10_000;
 type RelayQueue = {
@@ -2244,6 +2245,7 @@ type RelayQueue = {
   pendingPlayback: string[];
   ending: boolean;
   ended: boolean;
+  endGraceScheduled: boolean;
   endTimer: ReturnType<typeof setTimeout> | null;
 };
 const relayQueues = new WeakMap<WebSocket, RelayQueue>();
@@ -2251,7 +2253,7 @@ const relayQueues = new WeakMap<WebSocket, RelayQueue>();
 function relayQueue(ws: WebSocket): RelayQueue {
   let queue = relayQueues.get(ws);
   if (!queue) {
-    queue = { tail: Promise.resolve(), lastAt: 0, generation: 0, pendingPlayback: [], ending: false, ended:false, endTimer: null };
+    queue = { tail: Promise.resolve(), lastAt: 0, generation: 0, pendingPlayback: [], ending: false, ended:false, endGraceScheduled:false, endTimer: null };
     relayQueues.set(ws, queue);
   }
   return queue;
@@ -2270,8 +2272,9 @@ function sendRelayText(ws: WebSocket, text: string, locale: SupportedLocale = DE
       if (elapsed < RELAY_CHUNK_GAP_MS) await sleep(RELAY_CHUNK_GAP_MS - elapsed);
       if (generation !== queue.generation) return;
       if (ws.readyState !== ws.OPEN) return;
-      ws.send(JSON.stringify({ type: 'text', token, last: true, lang: locale }));
-      queue.pendingPlayback.push(token);
+      const speechToken = relaySpeechMarkup(token, locale);
+      ws.send(JSON.stringify({ type: 'text', token: speechToken, last: true, lang: locale }));
+      queue.pendingPlayback.push(speechToken);
       queue.lastAt = Date.now();
     }
   }).catch(() => {
@@ -2281,14 +2284,15 @@ function sendRelayText(ws: WebSocket, text: string, locale: SupportedLocale = DE
 
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 
-function clearRelayTextQueue(ws: WebSocket): void {
+function clearRelayTextQueue(ws: WebSocket, endImmediately = false): void {
   const queue = relayQueues.get(ws);
   if (!queue) return;
   queue.generation++;
   queue.tail = Promise.resolve();
   queue.lastAt = 0;
   queue.pendingPlayback = [];
-  maybeEndRelay(ws, queue);
+  queue.endGraceScheduled = false;
+  maybeEndRelay(ws, queue, endImmediately);
 }
 
 function handleRelayPlaybackEvent(ws: WebSocket, raw: string): boolean {
@@ -2321,10 +2325,16 @@ function endRelayAfterPlayback(ws: WebSocket): void {
   });
 }
 
-function maybeEndRelay(ws: WebSocket, queue: RelayQueue): void {
+function maybeEndRelay(ws: WebSocket, queue: RelayQueue, immediately = false): void {
   if (!queue.ending || queue.pendingPlayback.length > 0) return;
   void queue.tail.then(() => {
-    if (queue.ending && queue.pendingPlayback.length === 0) sendRelayEnd(ws, queue);
+    if (!queue.ending || queue.pendingPlayback.length > 0) return;
+    if (immediately) { sendRelayEnd(ws, queue); return; }
+    if (queue.endGraceScheduled) return;
+    queue.endGraceScheduled = true;
+    if (queue.endTimer) clearTimeout(queue.endTimer);
+    queue.endTimer = setTimeout(() => sendRelayEnd(ws, queue), RELAY_END_GRACE_MS);
+    queue.endTimer.unref?.();
   });
 }
 
@@ -2335,6 +2345,7 @@ function sendRelayEnd(ws: WebSocket, queue: RelayQueue): void {
   queue.generation++;
   queue.tail=Promise.resolve();
   queue.pendingPlayback=[];
+  queue.endGraceScheduled=false;
   if (queue.endTimer) clearTimeout(queue.endTimer);
   queue.endTimer = null;
   if (ws.readyState === ws.OPEN) {
@@ -2353,6 +2364,18 @@ export function relayTextChunks(text: string, locale: SupportedLocale = DEFAULT_
   if (!token) return [];
   const controls = splitControlText(token);
   return controls.length > 1 ? controls : [token];
+}
+
+export function relaySpeechMarkup(text: string, locale: SupportedLocale = DEFAULT_LOCALE): string {
+  return locale === 'en-US'
+    ? text.replace(/\bTwilio\b/gi, '<phoneme alphabet="ipa" ph="ˈtwɪlioʊ">Twilio</phoneme>')
+    : text;
+}
+
+function selectionNumberHints(locale: SupportedLocale): string[] {
+  return locale === 'pt-BR'
+    ? ['um', 'dois', 'três', 'quatro', 'cinco', 'seis', 'sete', 'oito', 'nove', 'dez', 'onze', 'doze', 'primeiro', 'segundo', 'terceiro', 'quarto', 'quinto']
+    : ['one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'first', 'second', 'third', 'fourth', 'fifth'];
 }
 
 function splitControlText(text: string): string[] {

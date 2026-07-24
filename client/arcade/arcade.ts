@@ -657,6 +657,10 @@ async function saveMode(event:Event):Promise<void>{
   postGame.includeCoinBalance=el<HTMLInputElement>('admin-post-game-balance').checked;
   postGame.includeChallenges=el<HTMLInputElement>('admin-post-game-challenges').checked;
   postGame.channels=(['sms','whatsapp'] as const).filter(channel=>el<HTMLInputElement>(`admin-post-game-${channel}`).checked);
+  if(config.arcade.mode==='off'&&selectedMode!=='off'&&!postGame.enabled){
+    postGame.channels=(['sms','whatsapp'] as const).filter(channel=>(settings.channels as AdminConfig['channels'])[channel]);
+    postGame.enabled=postGame.channels.length>0;
+  }
   if(postGame.enabled&&!postGame.channels.length){setNotice('Choose Text message or WhatsApp for result messages.','error');return;}
   if(postGame.channels.includes('sms')&&!el<HTMLInputElement>('admin-sms').checked){setNotice('Turn on Text message before using it for result messages.','error');return;}
   if(postGame.channels.includes('whatsapp')&&!el<HTMLInputElement>('admin-whatsapp').checked){setNotice('Turn on WhatsApp before using it for result messages.','error');return;}
@@ -953,7 +957,8 @@ function renderOperatorOverview():void{
   el('display-connect-description').textContent=display?.configured
     ? 'Open a second tab or booth device, sign in with Google, pair it once, and leave it open as the shared display. Pairing keeps your Google session active.'
     : 'Big-screen security is not configured in this deployment. Ask a deployment administrator to configure ARCADE_DISPLAY_TOKEN before opening the event.';
-  show('display-connect-panel',displayKnown&&!displayConnected&&!display?.checking);
+  const pairingRequired=Boolean(config&&config.arcade.mode!=='off'&&display?.configured&&!displayConnected&&!display.checking);
+  show('display-connect-panel',pairingRequired);
 }
 
 function openCurrentStationAction():void{

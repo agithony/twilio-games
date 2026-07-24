@@ -6,6 +6,7 @@ interface Player { playerId: string; name: string; fighterId: string | null; sid
 
 export const FIGHTER_LOADING_TIMEOUT_SECONDS = 15;
 export const FIGHTER_VICTORY_SECONDS = 10.5;
+const MAX_VOICE_COMMAND_QUEUE = 12;
 
 export class FighterRoom {
   phase: FighterPhase = 'lobby';
@@ -21,7 +22,7 @@ export class FighterRoom {
   private loadingElapsed = 0;
   private loadingGeneration = 0;
   private victory = 0;
-  private voiceCommands = new Map<string, { command: FighterCommand; expiresAt: number }[]>();
+  private voiceCommands = new Map<string, FighterCommand[]>();
   private rng: number;
 
   constructor(readonly code: string, seed = 0x12345678, private maps: FighterMapEntry[] = FIGHTER_MAPS) { this.rng = seed >>> 0; }
@@ -95,8 +96,8 @@ export class FighterRoom {
     const events = this.command(playerId, command); if (events.length) return true;
     if (this.phase !== 'fight' || !this.world || !this.hasPlayer(playerId)) return false;
     const queued = this.voiceCommands.get(playerId) ?? [];
-    if (queued.length >= 6) return false;
-    queued.push({ command, expiresAt: this.world.now + 6 }); this.voiceCommands.set(playerId, queued); return true;
+    if (queued.length >= MAX_VOICE_COMMAND_QUEUE) return false;
+    queued.push(command); this.voiceCommands.set(playerId, queued); return true;
   }
   tick(delta: number): void {
     if (this.phase === 'loading') {
@@ -131,9 +132,8 @@ export class FighterRoom {
     this.events.push(...resolved);
     if (this.world.status === 'fighting') {
       for (const [playerId, queued] of this.voiceCommands) {
-        while (queued[0] && queued[0].expiresAt < this.world.now) queued.shift();
         const next = queued[0]; if (!next) { this.voiceCommands.delete(playerId); continue; }
-        const events = this.command(playerId, next.command);
+        const events = this.command(playerId, next);
         if (events.length) queued.shift();
         if (!queued.length) this.voiceCommands.delete(playerId);
       }

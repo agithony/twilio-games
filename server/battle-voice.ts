@@ -81,6 +81,7 @@ export class BattleVoiceSession {
   private authoritativeName: string | null = null;
   private stationManaged=false;
   private interimFightOpened=false;
+  private interimFightCount=0;
   private text: (key: MonstersMessageKey, values?: MessageValues) => string = createTranslator(DEFAULT_LOCALE, MONSTERS_MESSAGES);
 
   constructor(private deps: BattleVoiceDeps) {}
@@ -142,6 +143,7 @@ export class BattleVoiceSession {
           if (text) this.openFightFromInterim(text);
           return;
         }
+        this.interimFightCount = 0;
         if (this.interimFightOpened) {
           this.interimFightOpened = false;
           const snap = this.deps.snapshot(this.code, this.playerId, this.commandLocale);
@@ -155,6 +157,8 @@ export class BattleVoiceSession {
       }
       case 'interrupt':
         this.turnEpoch++;   // caller barged in → drop any in-flight LLM reply
+        this.interimFightCount = 0;
+        this.interimFightOpened = false;
         break;
       case 'dtmf':
       case 'error':
@@ -266,7 +270,13 @@ export class BattleVoiceSession {
     if (this.interimFightOpened || this.draining || this.evQ.length > 0) return;
     const snap = this.deps.snapshot(this.code!, this.playerId!, this.commandLocale);
     if (!snap || snap.phase !== 'battle' || snap.whoseTurn !== 'me' || snap.activeMenu !== 'root'
-      || !this.isOpenFightCommand(text, snap)) return;
+      || !this.isOpenFightCommand(text, snap)) {
+      this.interimFightCount = 0;
+      return;
+    }
+    this.interimFightCount++;
+    // Two stable partials avoid acting on one ASR guess that is immediately revised.
+    if (this.interimFightCount < 2) return;
     this.interimFightOpened = true;
     this.turnEpoch++;
     this.menuLevel = 'fight';

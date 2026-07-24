@@ -200,6 +200,54 @@ describe('Arcade station outbound outbox', () => {
     expect(new Set(Object.values(h.store.snapshot().outboundNotifications).map(item => item.id)).size).toBe(8);
   });
 
+  it('includes each Racer place and time in one idempotent result summary', async () => {
+    const h = await harness();
+    await createThreeReadyPlayers(h);
+    const recruiting = await h.service.getStation('ARCADE-01');
+    const selecting = await h.service.closeStationRecruiting({
+      stationId: 'ARCADE-01', expectedRevision: recruiting!.station.revision,
+      idempotencyKey: 'racer-close', authorization: AUTHORIZATION,
+    });
+    const locked = await h.service.selectStationGame({
+      stationId: 'ARCADE-01', expectedRevision: selecting.station.revision,
+      game: 'racer', engineRoomCode: 'RACE', idempotencyKey: 'racer-select', authorization: AUTHORIZATION,
+    });
+    const launching = await h.service.requestStationLaunch({
+      stationId: 'ARCADE-01', expectedRevision: locked.station.revision,
+      idempotencyKey: 'racer-launch', authorization: AUTHORIZATION,
+    });
+    const displayReady = await h.service.markStationDisplayReady({
+      stationId: 'ARCADE-01', expectedRevision: launching.station.revision,
+      matchId: launching.match!.id, launchGeneration: launching.match!.launchGeneration,
+      idempotencyKey: 'racer-display', authorization: AUTHORIZATION,
+    });
+    const participantIds = displayReady.match!.participantReadyEntryIds;
+    const enginePlayerIdsByReadyEntryId = Object.fromEntries(participantIds.map((readyEntryId, index) => [readyEntryId, `racer-${index + 1}`]));
+    const playing = await h.service.startStationMatch({
+      stationId: 'ARCADE-01', expectedRevision: displayReady.station.revision,
+      idempotencyKey: 'racer-start', authorization: AUTHORIZATION, enginePlayerIdsByReadyEntryId,
+    });
+    const completionInput = {
+      stationId: 'ARCADE-01', expectedRevision: playing.station.revision,
+      idempotencyKey: 'racer-complete', authorization: AUTHORIZATION, resultSource: 'ENGINE' as const,
+      engineResults: participantIds.map((readyEntryId, index) => ({
+        enginePlayerId: enginePlayerIdsByReadyEntryId[readyEntryId]!, rank: index + 1,
+        completed: true, won: index === 0, score: null, durationSeconds: index === 0 ? 12.34 : 15.67 + index,
+      })),
+    };
+    const results = await h.service.completeStationMatch(completionInput);
+    await expect(h.service.completeStationMatch(completionInput)).resolves.toEqual(results);
+
+    const resultNotices = Object.values(h.store.snapshot().outboundNotifications)
+      .filter(item => item.kind === 'STATION_RESULTS');
+    const englishResult = resultNotices.find(item => item.locale === 'en-US')!;
+    expect(englishResult.body).toContain('YOU WON! You finished #1.');
+    expect(englishResult.body).toContain('Race time: 12.34 seconds.');
+    const portugueseResult = resultNotices.find(item => item.locale === 'pt-BR' && item.body.includes('2º lugar'))!;
+    expect(portugueseResult.body).toContain('Tempo da corrida: 16,67 segundos.');
+    expect(resultNotices).toHaveLength(3);
+  });
+
   it('does not bind or notify a browser-created ready entry', async () => {
     const h = await harness();
     await h.service.identifyCoinOnly({ playerId: 'browser-player', idempotencyKey: 'identify-browser' });
