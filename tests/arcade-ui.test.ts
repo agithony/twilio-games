@@ -473,7 +473,7 @@ describe('Arcade browser UI', () => {
     expect(homeCss).toContain('.display-setup-panel');
   });
 
-  it('installs booth access from the authenticated operator console, signs out, and replaces the same tab', () => {
+  it('installs and confirms booth access without ending the Google session', () => {
     expect(html).toContain('id="display-connect-panel"');
     expect(html).toContain('id="connect-booth-display"');
     expect(html).toContain('id="overview-display"');
@@ -482,7 +482,8 @@ describe('Arcade browser UI', () => {
     expect(html).toContain('id="overview-display-card"');
     expect(html).toContain('Pair this tab as the big screen');
     expect(html).toContain('Pair a dedicated big screen');
-    expect(html).toContain('private window, separate browser profile, or booth device');
+    expect(html).toContain('sign in with Google');
+    expect(html).toContain('Pairing keeps your Google session active');
     const flow = /async function connectBoothDisplay\(\):Promise<void>\{[\s\S]*?\n}/.exec(script)?.[0] ?? '';
     expect(flow).toContain("'/api/admin/arcade/display/connect'");
     expect(flow).toContain("'Content-Type':'application/json'");
@@ -490,11 +491,12 @@ describe('Arcade browser UI', () => {
     expect(flow).toContain("keys.length!==1||keys[0]!=='displayToken'");
     expect(flow).toContain('new TextEncoder().encode(token).byteLength<16');
     expect(flow).toContain('storeDisplayToken(token)');
-    expect(flow).toContain("fetch('/auth/logout',{method:'POST',credentials:'include'})");
+    expect(flow).toContain('await fetchPublicStation(token)');
     expect(flow).toContain("location.replace('/')");
     expect(flow).toContain('rejectDisplayToken(installedToken)');
-    expect(flow.indexOf('storeDisplayToken(token)')).toBeLessThan(flow.indexOf("fetch('/auth/logout'"));
-    expect(flow.indexOf("fetch('/auth/logout'")).toBeLessThan(flow.indexOf("location.replace('/')"));
+    expect(flow.indexOf('storeDisplayToken(token)')).toBeLessThan(flow.indexOf('fetchPublicStation(token)'));
+    expect(flow.indexOf('fetchPublicStation(token)')).toBeLessThan(flow.indexOf("location.replace('/')"));
+    expect(flow).not.toContain("fetch('/auth/logout'");
     expect(flow).not.toContain('searchParams');
     expect(flow).not.toContain('console.');
   });

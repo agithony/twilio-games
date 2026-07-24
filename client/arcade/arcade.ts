@@ -1,7 +1,7 @@
 import QRCode from 'qrcode';
 import { updateThemeToggleIcon } from '../icon-controls';
 import { locale as resolvedLocale } from '../i18n';
-import { effectivePublicVisitorBaseUrl, rejectDisplayToken, resolveStationQrImage, stationQrAsset, storeDisplayToken } from '../station-client';
+import { effectivePublicVisitorBaseUrl, fetchPublicStation, rejectDisplayToken, resolveStationQrImage, stationQrAsset, storeDisplayToken } from '../station-client';
 
 type ArcadeMode = 'off' | 'coin_only' | 'lead_capture';
 type PlayableGame = 'racer' | 'monsters' | 'fighter';
@@ -585,8 +585,7 @@ async function connectBoothDisplay():Promise<void>{
     }
     installedToken=token;
     if(!storeDisplayToken(token))throw new Error('This browser blocked display storage. Allow session storage for this site and try again.');
-    const logout=await fetch('/auth/logout',{method:'POST',credentials:'include'});
-    if(!logout.ok)throw new Error('Display access was not installed because operator sign-out failed. Retry the connection.');
+    await fetchPublicStation(token);
     location.replace('/');
     installedToken=null;
   }catch(error){
@@ -939,7 +938,7 @@ function renderOperatorOverview():void{
   displayCard.dataset.state=displayConnected?'active':displayKnown&&!display?.checking?'attention':'neutral';
   const connectButton=el<HTMLButtonElement>('connect-booth-display');connectButton.hidden=displayKnown&&!display?.configured;
   el('display-connect-description').textContent=display?.configured
-    ? 'Open a private window, separate browser profile, or booth device. Pair it once and leave it open as the shared display so signing out there does not interrupt this operator console.'
+    ? 'Open a second tab or booth device, sign in with Google, pair it once, and leave it open as the shared display. Pairing keeps your Google session active.'
     : 'Big-screen security is not configured in this deployment. Ask a deployment administrator to configure ARCADE_DISPLAY_TOKEN before opening the event.';
   show('display-connect-panel',displayKnown&&!displayConnected&&!display?.checking);
 }
