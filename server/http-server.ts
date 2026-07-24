@@ -863,7 +863,7 @@ export class HttpServer {
         ...localizedMonsterAliases(monster.id, monster.name),
         ...monster.moves.flatMap(move => localizedMoveAliases(move.id, move.name)),
       ]);
-      return voiceHintList(commands, numbers, content);
+      return [...commands, ...numbers, ...content].join(', ');
     }
     if (game === 'fighter') {
       const commands = locale === 'pt-BR'
@@ -874,14 +874,14 @@ export class HttpServer {
         ...(map.id === 'inakaya'
           ? ['Inakaya', 'Inakaya Restaurant', 'Ina Kaya', 'In a Kaya', 'In Akaya', 'Innakaya', 'Inikaya', 'Izakaya']
           : [])]);
-      return voiceHintList(commands, numbers, fighters, maps);
+      return [...fighters, ...maps, ...commands, ...numbers].join(', ');
     }
     const commands = locale === 'pt-BR'
       ? ['esquerda', 'direita', 'acelerar', 'acelere', 'acelera', 'vai', 'frear', 'freie', 'freia', 'devagar', 'reduzir', 'reduza', 'desacelerar', 'desacelere', 'parar', 'nitro', 'turbo', 'poder', 'começar', 'iniciar', 'próximo', 'próxima', 'corrida', 'correr', 'revanche', 'sim']
       : ['left', 'right', 'boost', 'go', 'brake', 'slow', 'stop', 'nitro', 'power', 'start', 'next', 'race', 'rematch'];
     const cars = this.roomConfigCache.carNames.flatMap(localizedCarAliases);
     const tracks = this.roomConfigCache.maps.flatMap(localizedTrackAliases);
-    return voiceHintList(commands, numbers, cars, tracks);
+    return [...commands, ...numbers, ...cars, ...tracks].join(', ');
   }
 
   private makeFighterSession(say: (text: string) => void): FighterVoiceSession {
@@ -1747,6 +1747,10 @@ export class HttpServer {
         }
       }
       const callSid = (params['CallSid'] ?? params['callSid'] ?? '').trim();
+      const sessionStatus = (params['SessionStatus'] ?? 'unknown').trim().slice(0, 40);
+      const errorCode = (params['ErrorCode'] ?? '').trim().slice(0, 20);
+      const errorMessage = (params['ErrorMessage'] ?? '').trim().replace(/\s+/g, ' ').slice(0, 300);
+      console.log(`[CR] session ended call=${callSid.slice(0, 8) || 'unknown'} status=${sessionStatus}${errorCode ? ` error=${errorCode}` : ''}${errorMessage ? ` message=${errorMessage}` : ''}`);
       this.arcadeApi?.stationVoiceCallEnded(callSid);
       this.endRacerVoiceCall(callSid); this.endBattleVoiceCall(callSid); this.endFighterVoiceCall(callSid);
       res.writeHead(200, VOICE_XML_HEADERS).end(twimlHangup());
@@ -2380,27 +2384,6 @@ function selectionNumberHints(locale: SupportedLocale): string[] {
   return locale === 'pt-BR'
     ? ['um', 'dois', 'três', 'quatro', 'cinco', 'seis', 'sete', 'oito', 'nove', 'dez', 'onze', 'doze', 'primeiro', 'segundo', 'terceiro', 'quarto', 'quinto']
     : ['one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'first', 'second', 'third', 'fourth', 'fifth'];
-}
-
-const MAX_RELAY_HINTS_LENGTH = 500;
-
-function voiceHintList(...groups: readonly (readonly string[])[]): string {
-  const hints: string[] = [];
-  const seen = new Set<string>();
-  let length = 0;
-  for (const group of groups) {
-    for (const value of group) {
-      const hint = value.trim();
-      const key = hint.toLowerCase();
-      if (!hint || seen.has(key)) continue;
-      const nextLength = length + (hints.length ? 2 : 0) + hint.length;
-      if (nextLength > MAX_RELAY_HINTS_LENGTH) continue;
-      hints.push(hint);
-      seen.add(key);
-      length = nextLength;
-    }
-  }
-  return hints.join(', ');
 }
 
 function splitControlText(text: string): string[] {

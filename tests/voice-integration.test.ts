@@ -1,10 +1,10 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { WebSocket } from 'ws';
 import { HttpServer } from '../server/http-server';
 import type { GameServer } from '../server/game-server';
 
 let srv: HttpServer;
-afterEach(async () => { await srv?.stop(); });
+afterEach(async () => { vi.restoreAllMocks(); await srv?.stop(); });
 const wait = (ms: number) => new Promise(r => setTimeout(r, ms));
 const closeWs = (ws: WebSocket) => { if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) ws.close(); };
 const DISPLAY_TOKEN = 'test-standalone-display-token';
@@ -178,16 +178,18 @@ describe('voice integration (fake Conversation Relay client)', () => {
   });
 
   it('returns explicit hangup TwiML after Conversation Relay ends', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
     srv = new HttpServer({ port: 0, publicBaseUrl: 'http://localhost', validateSignatures: false });
     const port = await srv.start();
     const response = await fetch(`http://127.0.0.1:${port}/voice/session-ended`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: 'CallSid=CA-ended&SessionStatus=ended',
+      body: 'CallSid=CA-ended&SessionStatus=failed&ErrorCode=64106&ErrorMessage=Invalid+voice+configuration',
     });
     expect(response.status).toBe(200);
     expect(response.headers.get('content-type')).toContain('text/xml');
     expect(await response.text()).toContain('<Hangup />');
+    expect(log).toHaveBeenCalledWith('[CR] session ended call=CA-ended status=failed error=64106 message=Invalid voice configuration');
   });
 
   it('inherits Twilio STT and TTS locale from the active display room', async () => {

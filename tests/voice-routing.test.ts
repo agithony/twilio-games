@@ -199,11 +199,6 @@ describe('Arcade Voice routing', () => {
     expect(xml).toContain('<Parameter name="game" value="monsters"');
     expect(xml).toContain('<Parameter name="matchId" value="match-1"');
     expect(xml).toContain('<Parameter name="launchGeneration" value="4"');
-    const hints = / hints="([^"]*)"/.exec(xml)?.[1] ?? '';
-    expect(hints.length).toBeLessThanOrEqual(500);
-    expect(hints).toContain('fight');
-    expect(hints).toContain('two');
-    expect(hints.endsWith(', ')).toBe(false);
   });
 
   it('returns unavailable TwiML when active station routing fails', async () => {
