@@ -20,6 +20,10 @@ describe('speechSafeText', () => {
     expect(speechSafeText('Welcome to Twilio Voice Racer.')).toBe('Welcome to Twilio Voice Racer.');
   });
 
+  it('preserves decimal race times without inserting a spoken pause', () => {
+    expect(speechSafeText('Race time: 65.25 seconds.')).toBe('Race time: 65.25 seconds.');
+  });
+
   it('drops empty/control-only speech', () => {
     expect(speechSafeText('\u0000\u200b\n')).toBe('');
   });

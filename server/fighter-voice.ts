@@ -90,9 +90,15 @@ export class FighterVoiceSession {
       } else {
         if(this.authoritativeName&&snapshot){
           this.deps.say(this.t('voice.welcomeName',{name:this.authoritativeName}));
+          this.deps.say(this.t('voice.greetingRelay'));
+          this.deps.say(this.t('voice.controlsIntro'));
           this.deps.say(this.t('voice.fightHelp'));
           this.speakContext(snapshot);
-        }else this.deps.say(this.t('voice.welcome'));
+        }else{
+          this.deps.say(this.t('voice.welcome'));
+          this.deps.say(this.t('voice.greetingRelay'));
+          this.deps.say(this.t('voice.tellName'));
+        }
       }
       return;
     }
@@ -138,7 +144,12 @@ export class FighterVoiceSession {
       if (name && !isFighterAdvanceWord(spoken, this.commandLocale)) {
         this.deps.setName(this.code!, this.playerId!, name);
         const next = this.deps.snapshot(this.code!, this.playerId!, this.commandLocale) ?? snapshot;
-        if (next.phase === 'lobby') this.deps.say(this.t('voice.welcomeStart', { name }));
+        if (next.phase === 'lobby') {
+          this.deps.say(this.t('voice.welcomeStart', { name }));
+          this.deps.say(this.t('voice.controlsIntro'));
+          this.deps.say(this.t('voice.fightHelp'));
+          this.speakContext(next);
+        }
         else { this.deps.say(this.t('voice.welcomeName', { name })); this.speakContext(next); }
         return;
       }
@@ -168,7 +179,10 @@ export class FighterVoiceSession {
           ? this.t('voice.mapSelected', { name: this.localizedMapName(map) }) : this.t('voice.mapUnavailable', { name: this.localizedMapName(map) }));
         return;
       }
-      if (isFighterAdvanceWord(spoken, this.commandLocale)) { this.advanceOrExplain(snapshot); return; }
+      if (isFighterAdvanceWord(spoken, this.commandLocale)
+        || (snapshot.selectedMap && isFighterStartAlias(spoken, this.commandLocale))) {
+        this.advanceOrExplain(snapshot); return;
+      }
       this.deps.say(this.t('voice.arenaUnknown', { prompt: this.t('voice.choiceArena') })); return;
     }
     if (snapshot.phase === 'fight') {
@@ -351,6 +365,10 @@ function isFighterAdvanceWord(spoken: string, locale: SupportedLocale): boolean 
   const text = normalizeForMatching(spoken, locale);
   if (/\b(?:comecar|iniciar|avancar|proxim[oa]|continuar|lutar|luta|combater|pront[oa]|revanche|jogar de novo|jogar novamente|mais uma vez|sim)\b/.test(text)) return true;
   return /\b(?:escolher|escolha|selecionar|selecione)\b/.test(text) && /\b(?:lutador|personagem|campeao)\b/.test(text);
+}
+
+function isFighterStartAlias(spoken: string, locale: SupportedLocale): boolean {
+  return locale === 'en-US' && /^(?:flight|fights)$/.test(normalizeForMatching(spoken, locale));
 }
 
 function parseFighterSpokenName(spoken: string, locale: SupportedLocale): string | null {

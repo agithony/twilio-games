@@ -119,7 +119,8 @@ describe('voice integration (fake Conversation Relay client)', () => {
       const resultsIndex=displayMessages.findIndex(message=>message.type==='results');
       expect(resultsIndex).toBeGreaterThanOrEqual(0);
       expect(displayMessages.slice(resultsIndex+1)).not.toContainEqual(expect.objectContaining({type:'select_state',phase:'car_select'}));
-      expect(spoken.join(' ')).toMatch(/finished this race|race is complete|track leaderboard/i);
+      expect(spoken.join(' ')).toMatch(/finished this race.*time.*seconds/i);
+      expect(spoken.join(' ')).toMatch(/leads Silver Lake.*fastest time/i);
       expect(spoken.join(' ')).not.toMatch(/choose a car/i);
 
       voice.send(JSON.stringify({type:'prompt',voicePrompt:'go again',last:true}));

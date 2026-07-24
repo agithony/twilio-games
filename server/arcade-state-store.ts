@@ -116,6 +116,7 @@ export const ARCADE_STATION_NOTIFICATION_KINDS = [
   'STATION_CALL_NOW',
   'STATION_RESULTS',
   'STATION_NEXT_GAME',
+  'CHALLENGE_REWARD',
 ] as const;
 export type ArcadeStationNotificationKind = typeof ARCADE_STATION_NOTIFICATION_KINDS[number];
 
@@ -1389,10 +1390,15 @@ export function assertArcadeState(state: unknown): asserts state is ArcadeState 
     const match = own(stationMatches, notification.matchId);
     const entry = own(stationReadyEntries, notification.readyEntryId);
     const address = own(channelAddresses, notification.channelAddressId);
-    if (!player || !station || round?.stationId !== station.id || match?.stationId !== station.id
-      || match.roundId !== round.id || !entry || entry.playerId !== player.id
-      || entry.stationId !== station.id || !address || address.playerId !== player.id
-      || address.channel !== notification.channel || address.providerAddress !== notification.to) {
+    const challengeOwnershipValid = notification.kind === 'CHALLENGE_REWARD'
+      && player && address?.playerId === player.id && address.channel === notification.channel
+      && address.providerAddress === notification.to;
+    const stationOwnershipValid = notification.kind !== 'CHALLENGE_REWARD'
+      && player && station && round?.stationId === station.id && match?.stationId === station.id
+      && match.roundId === round.id && entry?.playerId === player.id
+      && entry.stationId === station.id && address?.playerId === player.id
+      && address.channel === notification.channel && address.providerAddress === notification.to;
+    if (!challengeOwnershipValid && !stationOwnershipValid) {
       throw new ArcadeStateStoreError('INVALID_STATE', `outbound notification ${key} has invalid ownership`);
     }
     if (notification.channel === 'sms' && !/^\+[1-9][0-9]{7,14}$/.test(notification.to)) {

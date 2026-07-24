@@ -63,8 +63,7 @@ export interface BattleVoiceDeps {
 }
 
 const GREETING_KEYS = [
-  'voice.greetingWelcome', 'voice.greetingRelay', 'voice.greetingRules',
-  'voice.greetingActions', 'voice.askName',
+  'voice.greetingWelcome', 'voice.greetingRelay', 'voice.askName',
 ] as const satisfies readonly MonstersMessageKey[];
 
 export class BattleVoiceSession {
@@ -128,8 +127,14 @@ export class BattleVoiceSession {
           } else if(this.authoritativeName&&snap){
             this.deps.say(this.text('voice.welcomeNamed',{name:this.authoritativeName}));
             this.deps.say(this.text('voice.greetingRelay'));
-            this.deps.say(this.text('voice.greetingActions'));
-            this.deps.say(this.text(snap.phase==='monster_select'?'voice.helpSelect':snap.phase==='battle'?'voice.howTo':'voice.helpLobbyNamed'));
+            if(snap.phase==='lobby'){
+              this.deps.say(this.text('voice.greetingRules'));
+              this.deps.say(this.text('voice.greetingActions'));
+              this.deps.say(this.text('voice.helpLobbyNamed'));
+            }else{
+              this.deps.say(this.text('voice.greetingActions'));
+              this.deps.say(this.text(snap.phase==='monster_select'?'voice.helpSelect':'voice.howTo'));
+            }
           } else {
             for (const key of this.authoritativeName ? GREETING_KEYS.slice(0, -1) : GREETING_KEYS) this.deps.say(this.text(key));
           }
@@ -314,6 +319,11 @@ export class BattleVoiceSession {
           : phase === 'battle' ? 'voice.nameBattle' : 'voice.nameSelect',
       { name },
     ));
+    if (phase === 'lobby') {
+      this.deps.say(this.text('voice.greetingRules'));
+      this.deps.say(this.text('voice.greetingActions'));
+      this.deps.say(this.text('voice.helpLobbyNamed'));
+    }
     return true;
   }
 
@@ -328,6 +338,7 @@ export class BattleVoiceSession {
   private introDone = false;   // one dramatic "X vs Y" intro + how-to-play recap per battle
   private evQ: BattleEvent[] = [];   // events queued to narrate, drained on the SAME clock as the screen
   private draining = false;
+  private settleWaiters: (() => void)[] = [];
   private pendingStateCue = false;
   private lastTurnCueKey = '';
   private lastActionSide: 'a' | 'b' | null = null;
@@ -355,6 +366,7 @@ export class BattleVoiceSession {
     if (!ev) {
       this.draining = false;
       if (this.pendingStateCue) { this.pendingStateCue = false; this.speakStateCue(); }
+      for (const resolve of this.settleWaiters.splice(0)) resolve();
       return;
     }
     const actionSide = sideForActionEvent(ev);
@@ -446,6 +458,11 @@ export class BattleVoiceSession {
     return snap?.phase === 'results' && (!snap.canRematch || this.draining || this.evQ.length > 0);
   }
 
+  whenSpeechSettled(): Promise<void> {
+    if (!this.draining && this.evQ.length === 0) return Promise.resolve();
+    return new Promise(resolve => this.settleWaiters.push(resolve));
+  }
+
   private speakResumeCue(): void {
     if (!this.code || !this.playerId) return;
     const snap = this.deps.snapshot(this.code, this.playerId, this.commandLocale);
@@ -517,6 +534,7 @@ export class BattleVoiceSession {
     this.turnEpoch++;
     this.evQ = [];
     this.draining = false;
+    for (const resolve of this.settleWaiters.splice(0)) resolve();
     this.pendingStateCue = false;
     this.code = null; this.playerId = null; this.callSid = null;
   }

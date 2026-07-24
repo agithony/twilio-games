@@ -199,6 +199,8 @@ export class ArcadeMessagingRuntime {
     });
   }
 
+  wake(): void { this.enqueueReconcile(); }
+
   async getAdminStatus(): Promise<ArcadeMessagingRuntimeStatus> {
     await this.refreshStatusState();
     return this.getStatus();
@@ -647,6 +649,10 @@ function notificationSuppressionReason(
     const hasChallengePrompt = /Reply MORE|Responda MAIS/.test(notification.body);
     if (hasChallengePrompt && !challengeResults) return 'RESULTS_OBSOLETE';
     if (!standardResults && !challengeResults) return 'CHANNEL_DISABLED';
+  }
+  if (notification.kind === 'CHALLENGE_REWARD') {
+    return state.wallets[notification.playerId]?.challengeClaims
+      .some(claim => claim.id === notification.matchId) ? null : 'NOTICE_STATE_CHANGED';
   }
   const station = state.stations[notification.stationId];
   const match = state.stationMatches[notification.matchId];

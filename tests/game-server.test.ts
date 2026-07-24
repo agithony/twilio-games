@@ -233,6 +233,7 @@ describe('GameServer integration', () => {
     server.setRoomConfigProvider(() => ({ carCount: 19, maps: ['Silver Lake'] }));
     const heard: string[] = [];
     server.setOnRoomEvents((_code, events) => heard.push(...events.map(e => e.kind)));
+    server.setOnRaceFinished(() => heard.push('reported'));
     await server.start();
 
     const room = server.getOrCreateRoom('VOICEEND');
@@ -244,6 +245,7 @@ describe('GameServer integration', () => {
     expect(room.phase).toBe('results');
     expect(heard).toContain('finish');
     expect(heard).toContain('race_over');
+    expect(heard.indexOf('race_over')).toBeLessThan(heard.indexOf('reported'));
   });
 
   it('hard-aborts a station room', async () => {

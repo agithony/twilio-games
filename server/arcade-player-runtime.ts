@@ -280,6 +280,7 @@ export class ArcadePlayerRuntime {
     const roomCodeSecret = deriveSecret(root, 'engine-room').toString('hex');
     const store = await this.getStateStoreForCleanup();
     const operatorMarker = Object.freeze({});
+    let messaging: ArcadeMessagingRuntime | null = null;
     const service = new ArcadeService({
       store,
       config: () => this.configStore.getSnapshot(),
@@ -298,6 +299,7 @@ export class ArcadePlayerRuntime {
       readyEntryAdded: event => this.events.publish(createArcadeReadyEntryAddedEvent(
         event.revision, event.displayName, event.admission,
       )),
+      outboundNotificationAdded: () => messaging?.wake(),
       stationNotifications: this.outboundMessaging ? {
         enabled: this.outboundMessaging.enabled,
         callNumber: this.outboundMessaging.callNumber,
@@ -325,7 +327,7 @@ export class ArcadePlayerRuntime {
       roomCodeSecret: () => roomCodeSecret,
       onMatchRemoved: (game, roomCode, removal) => this.stationMatchRemoved?.(game, roomCode, removal),
     });
-    const messaging = new ArcadeMessagingRuntime({
+    messaging = new ArcadeMessagingRuntime({
       store,
       config: () => this.configStore.getSnapshot(),
       events: this.events,

@@ -9,6 +9,13 @@ describe('fighter voice session', () => {
   it('uses an authoritative station name without asking for it again', () => {
     const game=voiceGame();const ada=game.connect('CA-known','VOICE',undefined,'Ada');
     expect(game.room.state().players[0]?.name).toBe('Ada');
+    expect(ada.spoken.slice(0, 5)).toEqual([
+      'Welcome to Voice Fighter, Ada.',
+      'This game is powered by Twilio Conversation Relay, so your voice controls the fight in real time over this call.',
+      'Before you start, check the controls on the display.',
+      'Reduce your rival to zero health. During the fight, say forward, back, jump, punch, kick, or block.',
+      'Say start to choose fighters.',
+    ]);
     const arrival=ada.spoken.join(' ').toLowerCase();
     expect(arrival).toContain('ada');
     expect(arrival).toMatch(/forward|back|punch|kick/);
@@ -19,8 +26,19 @@ describe('fighter voice session', () => {
   it('drives the complete solo journey through intro, combat, victory, and rematch', () => {
     const game = voiceGame();
     const ada = game.connect('CA1', ' voice ');
+    expect(ada.spoken).toEqual([
+      'Welcome to Voice Fighter!',
+      'This game is powered by Twilio Conversation Relay, so your voice controls the fight in real time over this call.',
+      'First, what is your name?',
+    ]);
 
     ada.prompt('Ada');
+    expect(ada.spoken.slice(-4)).toEqual([
+      'Welcome, Ada.',
+      'Before you start, check the controls on the display.',
+      'Reduce your rival to zero health. During the fight, say forward, back, jump, punch, kick, or block.',
+      'Say start to choose fighters.',
+    ]);
     ada.prompt('start');
     expect(ada.spoken.at(-1)).toBe('Choose your fighter. Say the name or number shown on screen.');
     ada.prompt('Nicks', false);
@@ -32,7 +50,7 @@ describe('fighter voice session', () => {
     ada.prompt('next');
     expect(ada.spoken.at(-1)).toBe('Choose your arena. Say the name or number shown on screen.');
     ada.prompt('second');
-    ada.prompt('fight');
+    ada.prompt('flight');
     expect(game.room.phase).toBe('loading');
     expect(ada.spoken.at(-1)).toBe('Void Circuit selected. Say fight to begin.');
 
@@ -55,6 +73,7 @@ describe('fighter voice session', () => {
     game.tick(0.7);
 
     const world = game.room.state().world!;
+    ada.session.setStationManaged(true);
     world.p1.x = 0; world.p2.x = 1; world.p2.health = 10;
     ada.prompt('punch', false);
     ada.prompt('kick');
@@ -77,7 +96,9 @@ describe('fighter voice session', () => {
     expect(ada.spoken).toContain('1');
     expect(ada.spoken.some(line => line.startsWith('Fight!'))).toBe(true);
     expect(ada.spoken.filter(line => line.includes('You win!'))).toHaveLength(1);
+    expect(ada.spoken.join(' ')).toMatch(/results.*display.*thanks for playing.*check your messages/i);
 
+    ada.session.setStationManaged(false);
     ada.prompt('rematch');
     expect(game.room.phase).toBe('fighter_select');
     expect(game.room.state().players.find(player => player.playerId === ada.playerId)?.fighterId).toBeNull();
@@ -147,13 +168,34 @@ describe('fighter voice session', () => {
     expect(matchVoiceChoice('brainstorm',productionMaps)).toBeNull();
   });
 
+  it('accepts safe fight ASR variants only after an arena is selected', () => {
+    const game = voiceGame(), ada = game.connect('CA-FLIGHT');
+    ada.prompt('Ada'); ada.prompt('start'); ada.prompt('Nyx'); ada.prompt('next');
+    ada.prompt('my flight is delayed');
+    expect(game.room.phase).toBe('map_select');
+    ada.prompt('second');
+    ada.prompt('he fights at night');
+    expect(game.room.phase).toBe('map_select');
+    ada.prompt('fights');
+    expect(game.room.phase).toBe('loading');
+  });
+
   it('uses the setup command locale for Portuguese menus, choices, commands, and speech', () => {
     const game = voiceGame();
     const ana = game.connect('CA-PT', 'VOICE', 'pt-BR');
-    expect(ana.spoken[0]).toContain('Durante a luta, diga avançar, recuar, pular, soco, chute ou bloquear.');
+    expect(ana.spoken).toEqual([
+      'Boas-vindas à Luta por Voz!',
+      'Este jogo usa o Twilio Conversation Relay, então sua voz controla a luta em tempo real por esta ligação.',
+      'Primeiro, qual é o seu nome?',
+    ]);
 
     ana.prompt('meu nome é ana');
-    expect(ana.spoken.at(-1)).toBe('Boas-vindas, Ana. Diga começar quando quiser escolher os lutadores.');
+    expect(ana.spoken.slice(-4)).toEqual([
+      'Boas-vindas, Ana.',
+      'Antes de começar, veja os controles na tela.',
+      'Reduza os pontos de vida do rival a zero. Durante a luta, diga avançar, recuar, pular, soco, chute ou bloquear.',
+      'Diga começar para escolher os lutadores.',
+    ]);
     ana.prompt('começar');
     expect(ana.spoken.at(-1)).toBe('Escolha seu lutador. Diga o nome ou número exibido na tela.');
     ana.prompt('primeira');
@@ -298,6 +340,7 @@ function voiceGame() {
       snapshot: (_code, id) => snapshot(id),
     });
     session.setAuthoritativeName(authoritativeName??null);
+    session.setStationManaged(authoritativeName!==undefined);
     sessions.push(session);
     session.handleMessage(JSON.stringify({ type: 'setup', callSid, customParameters: { roomCode, ...(commandLocale ? { commandLocale } : {}) } }));
     return {

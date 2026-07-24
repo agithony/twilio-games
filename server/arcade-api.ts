@@ -418,7 +418,7 @@ export class ArcadeApi {
       const reply = standaloneAvailable
         ? locale === 'pt-BR'
           ? 'O jogo independente está ativo. Escolha um jogo na tela principal e escaneie o QR da sala para ligar e jogar por voz.'
-          : "Standalone play is active. Choose a game on the big screen, then scan that lobby's call QR to play by voice."
+          : "Standalone play is active. Choose a game on the display, then scan that lobby's call QR to play by voice."
         : locale === 'pt-BR'
           ? 'Os jogos por voz não estão disponíveis agora. Peça ajuda à equipe.'
           : 'Voice games are unavailable right now. Please ask booth staff for help.';
@@ -461,8 +461,8 @@ export class ArcadeApi {
     if (!config.channels[channel]) {
       const portuguese = String(language).toLowerCase().startsWith('pt');
       return channel === 'whatsapp'
-        ? portuguese ? 'O WhatsApp não está disponível agora. Use SMS ou escaneie o QR na tela principal.' : "WhatsApp isn't available right now. Use SMS or scan the QR on the big screen."
-        : portuguese ? 'O SMS não está disponível agora. Use WhatsApp ou escaneie o QR na tela principal.' : "SMS isn't available right now. Use WhatsApp or scan the QR on the big screen.";
+        ? portuguese ? 'O WhatsApp não está disponível agora. Use SMS ou escaneie o QR na tela principal.' : "WhatsApp isn't available right now. Use SMS or scan the QR on the display."
+        : portuguese ? 'O SMS não está disponível agora. Use WhatsApp ou escaneie o QR na tela principal.' : "SMS isn't available right now. Use WhatsApp or scan the QR on the display.";
     }
     this.requireStationRuntimeCapabilities(config);
     const runtime = this.requirePlayerRuntime();
