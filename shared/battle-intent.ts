@@ -59,8 +59,8 @@ export function matchMove(spoken: string, names: string[], locale: SupportedLoca
 // ── the two-level command menu, by voice ───────────────────────────────────────────────────────────
 // ROOT keyword → action synonyms. A word-boundary match anywhere in the utterance fires it, so
 // "let me fight", "brace for it", "use a potion" all work. Ordered most-specific first isn't needed —
-// each set is disjoint. FIGHT is handled at root as "open the moves"; a move NAME said at root jumps
-// straight into that move (below), so callers don't have to say "fight" first.
+// each set is disjoint. FIGHT is handled at root as "open the moves". Attacks are deliberately
+// selected only after that menu is open.
 const COMMAND_WORDS: Record<SupportedLocale, {
   guard: string[]; item: string[]; taunt: string[]; fight: string[]; back: string[];
 }> = {
@@ -68,7 +68,7 @@ const COMMAND_WORDS: Record<SupportedLocale, {
     guard: ['guard', 'block', 'brace', 'defend', 'shield'],
     item: ['item', 'potion', 'heal', 'bag', 'medicine'],
     taunt: ['taunt', 'mock', 'provoke', 'jeer', 'insult'],
-    fight: ['fight', 'attack'],
+    fight: ['fight', 'fights', 'attack', 'flight'],
     back: ['back', 'cancel', 'return', 'never mind', 'undo'],
   },
   'pt-BR': {
@@ -117,7 +117,7 @@ export type BattleNav = { kind: 'openFight' } | { kind: 'back' };
  *        taunt/mock/provoke → taunt · fight/attack → openFight (root only).
  *   3. A NUMBER: in the fight submenu it's a MOVE slot; at the root it's a ROOT action
  *        (1 FIGHT→openFight, 2 GUARD, 3 ITEM, 4 TAUNT — 3 refused with no potions).
- *   4. A move NAME (either level): commit that fight move — so "Ember!" works straight from the root.
+ *   4. A move NAME (fight level only): commit that fight move.
  *  Keyword wins over an incidental fuzzy name hit; a NUMBER's meaning is level-dependent (see above). */
 export function matchBattleAction(spoken: string, ctx: BattleMenuCtx, locale: SupportedLocale = DEFAULT_LOCALE):
   BattleAction | BattleNav | null {
@@ -136,10 +136,7 @@ export function matchBattleAction(spoken: string, ctx: BattleMenuCtx, locale: Su
   if (saysAny(spoken, words.item, locale)) return item();          // null when out of potions
   if (saysAny(spoken, words.taunt, locale)) return { kind: 'taunt' };
   if (ctx.level === 'root' && saysAny(spoken, words.fight, locale)) {
-    const directMove = fuzzyName(spoken, names, locale);
-    if (directMove >= 0) return asMove(directMove);
-    const directNumber = parseMoveNumber(spoken, locale);
-    return directNumber !== null ? asMove(directNumber - 1) : { kind: 'openFight' };
+    return { kind: 'openFight' };
   }
 
   // 3. A NUMBER — its meaning depends on the level.
@@ -155,7 +152,7 @@ export function matchBattleAction(spoken: string, ctx: BattleMenuCtx, locale: Su
     }
   }
 
-  // 4. A move NAME (fuzzy) — at either level it commits that fight move ("Ember!" straight from root).
+  // 4. A move NAME (fuzzy) commits only after the move menu is visible.
   // Content names remain their canonical English names and are valid aliases in every locale.
-  return asMove(fuzzyName(spoken, names, locale));
+  return ctx.level === 'fight' ? asMove(fuzzyName(spoken, names, locale)) : null;
 }

@@ -562,7 +562,8 @@ describe('BattleVoiceSession', () => {
     const s = new BattleVoiceSession(deps);
     s.handleMessage(setup());
     s.handleMessage(prompt('what should I do'));
-    s.handleMessage(prompt('fight',false));
+    s.handleMessage(prompt('fight', false));
+    s.handleMessage(prompt('fight', false));
     release();
     await pending;
     await Promise.resolve();
@@ -761,12 +762,13 @@ describe('BattleVoiceSession', () => {
   });
 
   it('resolves pt-BR commandLocale for deterministic commands and spoken output', () => {
-    const snap = battleSnap({
+    let activeMenu: BattleVoiceSnapshot['activeMenu'] = 'root';
+    const snapshot = () => battleSnap({
       phase: 'battle', myName: 'Ada', myMonsterId: 'sparkmouse', myMonsterName: 'Sparkmouse', myMonsterType: 'electric',
-      foeMonsterName: 'Shellback', foeMonsterType: 'water', whoseTurn: 'me', activeSide: 'a', activeMenu: 'root',
+      foeMonsterName: 'Shellback', foeMonsterType: 'water', whoseTurn: 'me', activeSide: 'a', activeMenu,
       myMoves: [{ id: 'sparkmouse.jolt', name: 'Thunder Jolt' }, { id: 'sparkmouse.zap', name: 'Static Zap' }],
     });
-    const { deps, log, said } = fakeDeps({ snapshot: () => snap });
+    const { deps, log, said } = fakeDeps({ snapshot });
     const s = new BattleVoiceSession(deps);
 
     s.handleMessage(setup('4821', 'pt-BR'));
@@ -778,10 +780,12 @@ describe('BattleVoiceSession', () => {
     expect(said.join(' ')).toMatch(/seus golpes|diga o nome/i);
     expect(said.join(' ')).toContain('Thunder Jolt');
 
-    s.handleMessage(prompt('defender'));
+    activeMenu = 'fight';
     s.handleMessage(prompt('Thunder Jolt'));
-    expect(log.some(line => line.includes('"kind":"guard"'))).toBe(true);
     expect(log.some(line => line.includes('"moveId":"sparkmouse.jolt"'))).toBe(true);
+    activeMenu = 'root';
+    s.handleMessage(prompt('defender'));
+    expect(log.some(line => line.includes('"kind":"guard"'))).toBe(true);
     said.length = 0;
     s.handleMessage(prompt('ajuda'));
     expect(said.join(' ')).toMatch(/lutar.*defender.*item.*provocar/i);

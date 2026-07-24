@@ -112,8 +112,9 @@ export class FighterVoiceSession {
       }
       if (this.interimFiredCommand) {
         const commands = matchFighterCommands(message.voicePrompt, this.commandLocale);
-        if (commands[0] === this.interimFiredCommand) commands.shift();
-        const correctedSingle = commands.length === 1 && commands[0] !== this.interimFiredCommand;
+        const repeatsFiredCommand = commands[0] === this.interimFiredCommand;
+        if (repeatsFiredCommand) commands.shift();
+        const correctedSingle = !repeatsFiredCommand && commands.length === 1;
         this.resetInterim();
         if (!correctedSingle) for (const command of commands) this.deps.command(this.code, this.playerId, command);
         return;
@@ -336,7 +337,9 @@ const VOICE_CHOICE_ALIASES: Record<string, string[]> = {
   'gran-slam': ['grand slam', 'gran', 'vo pancada'], 'bass-nova': ['bass', 'grave nova'], 'velvet-thunder': ['velvet', 'trovao de veludo'],
   'iron-oni': ['iron', 'oni de ferro'], bulkhead: ['bulk head', 'blindado'], 'sir-knockout': ['knockout', 'sir nocaute'],
   foundry: ['fundição neon', 'fundicao neon'], void: ['circuito do vazio'],
-  'cyberpunk-city': ['cidade cyberpunk'], inakaya: ['restaurante inakaya','inakaya restaurant','ina kaya','izakaya'], rain: ['chuva'],
+  'cyberpunk-city': ['cidade cyberpunk'],
+  inakaya: ['restaurante inakaya', 'inakaya restaurant', 'ina kaya', 'in a kaya', 'in akaya', 'innakaya', 'inikaya', 'izakaya'],
+  rain: ['chuva'],
 };
 const FIGHTER_MAP_NAME_KEYS: Record<string, FighterMessageKey> = {
   foundry: 'content.mapName.foundry', void: 'content.mapName.void', 'cyberpunk-city': 'content.mapName.cyberpunk-city',

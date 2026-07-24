@@ -2,6 +2,8 @@ import type { FighterCommand } from './fighter-world';
 import { DEFAULT_LOCALE, type SupportedLocale } from './i18n/locales';
 import { normalizeForMatching } from './i18n/translate';
 
+const MAX_COMMANDS_PER_UTTERANCE = 12;
+
 const COMMANDS: Record<SupportedLocale, [FighterCommand, RegExp][]> = {
   'en-US': [
     ['forward', /^(?:move |step |go )?(?:forward|closer|in)$/],
@@ -53,7 +55,7 @@ export function matchFighterCommands(spoken: string, locale: SupportedLocale = D
     const command = matchFighterCommand(token, locale);
     if (command) commands.push(command);
     else if (!FILLER[locale].has(token)) return [];
-    if (commands.length === 6) break;
+    if (commands.length === MAX_COMMANDS_PER_UTTERANCE) break;
   }
   return commands;
 }

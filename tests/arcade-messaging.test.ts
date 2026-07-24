@@ -119,6 +119,8 @@ describe('Arcade messaging commands', () => {
     expect(coin.reply).toContain('Save the number on screen');
     expect(coin.reply.split('\n')).toHaveLength(2);
     expect(coin.reply).toContain('Watch the big screen');
+    expect(coin.reply).toContain('current game finishes');
+    expect(coin.reply).toContain('next countdown');
     expect(coin.reply).not.toContain('we will text');
     expect(await message(h.service, 'SM007', 'COIN')).toEqual(coin);
 
@@ -502,11 +504,13 @@ describe('Arcade messaging commands', () => {
     await message(h.service, 'SM-CLOSED-EN-JOIN', 'JOIN', englishFrom);
     await message(h.service, 'SM-CLOSED-EN-NAME', 'Ada', englishFrom);
     await message(h.service, 'SM-CLOSED-EN-TERMS', 'YES', englishFrom);
-    await message(h.service, 'SM-CLOSED-EN-COIN', 'COIN', englishFrom);
+    const englishCoin = await message(h.service, 'SM-CLOSED-EN-COIN', 'COIN', englishFrom);
     await message(h.service, 'SM-CLOSED-PT-JOIN', 'ENTRAR', portugueseFrom);
     await message(h.service, 'SM-CLOSED-PT-NAME', 'Bia', portugueseFrom);
     await message(h.service, 'SM-CLOSED-PT-TERMS', 'SIM', portugueseFrom);
-    await message(h.service, 'SM-CLOSED-PT-COIN', 'MOEDA', portugueseFrom);
+    const portugueseCoin = await message(h.service, 'SM-CLOSED-PT-COIN', 'MOEDA', portugueseFrom);
+    expect(englishCoin.reply).toContain('next countdown');
+    expect(portugueseCoin.reply).toContain('próxima contagem regressiva');
     const recruiting = await h.service.getStation('ARCADE-01');
     const selecting = await h.service.closeStationRecruiting({
       stationId: 'ARCADE-01', expectedRevision: recruiting!.station.revision,

@@ -12,6 +12,7 @@ describe('fighter voice intent', () => {
   it('parses repeated and chained commands without treating conversation as gameplay', () => {
     expect(matchFighterCommands('punch five times')).toEqual(['punch', 'punch', 'punch', 'punch', 'punch']);
     expect(matchFighterCommands('punch punch kick')).toEqual(['punch', 'punch', 'kick']);
+    expect(matchFighterCommands('punch punch punch punch punch punch punch punch punch punch punch punch')).toHaveLength(12);
     expect(matchFighterCommands('move forward then block')).toEqual(['forward', 'block']);
     expect(matchFighterCommands('can I punch now')).toEqual([]);
   });

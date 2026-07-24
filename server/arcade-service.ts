@@ -793,8 +793,8 @@ const MESSAGING_COPY: Record<'en-US' | 'pt-BR', Record<MessagingCopyKey, string>
     noCoins: "You're out of game coins, but you can earn another play. Reply MORE for the challenge page.",
     poolFull: 'The next-game line is full. Stay nearby and try COIN again when the current game starts.',
     coinUnavailable: "Coins aren't being used in this session. Reply READY to line up.",
-    coin: "COIN IN!\nYou're #{position} for the next game. Coins left: {balance}.\nWhen VOTE appears, reply {choices}.\nIf selected, we'll text you a number to call, then your voice controls the big screen.",
-    coinScreen: "COIN IN! You're #{position}. Coins left: {balance}.\nSave {callNumber}. Watch the big screen, and call that number when it says you're up.",
+    coin: "COIN IN!\nYou're #{position} for the next game. Coins left: {balance}.\nStay near the big screen while the current game finishes; voting and the next countdown will appear there.\nWhen VOTE appears, reply {choices}.\nIf selected, we'll text you a number to call, then your voice controls the big screen.",
+    coinScreen: "COIN IN! You're #{position}. Coins left: {balance}.\nSave {callNumber}. Stay near while the current game finishes. Watch the big screen for the next countdown, and call that number when it says you're up.",
     joinedFree: "Welcome to Twilio Games!\nAt the big screen, reply READY to line up. If selected, we'll text you when to call.",
     helpFree: "TWILIO GAMES\nREADY - line up for the next game\nSTATUS - see your spot\nLEAVE - leave the line\n\nWhen VOTE appears, reply with a game number. If selected, we'll text you a number to call, then your voice controls the big screen.",
     statusFree: '{status}\n{next}',
@@ -802,8 +802,8 @@ const MESSAGING_COPY: Record<'en-US' | 'pt-BR', Record<MessagingCopyKey, string>
     registeredFree: "Player ready! At the big screen, reply READY. If selected, we'll tell you when to call and play by voice.",
     leftFree: "You're out of the next-game line. Reply READY whenever you want to line up again.",
     poolFullFree: 'The next-game line is full. Stay nearby and try READY again when the current game starts.',
-    readyFree: "YOU'RE READY!\nYou're #{position} for the next game.\nWhen VOTE appears, reply {choices}.\nIf selected, we'll text you a number to call, then your voice controls the big screen.",
-    readyFreeScreen: "YOU'RE READY! You're #{position}.\nSave {callNumber}. Watch the big screen, and call that number when it says you're up.",
+    readyFree: "YOU'RE READY!\nYou're #{position} for the next game.\nStay near the big screen while the current game finishes; voting and the next countdown will appear there.\nWhen VOTE appears, reply {choices}.\nIf selected, we'll text you a number to call, then your voice controls the big screen.",
+    readyFreeScreen: "YOU'RE READY! You're #{position}.\nSave {callNumber}. Stay near while the current game finishes. Watch the big screen for the next countdown, and call that number when it says you're up.",
     notReadyFree: "You're not lined up yet. At the big screen, reply READY.",
     continueInBrowser: "You're already registered in this phone's browser. Return to that Twilio Games tab to join the next game.",
     capacity: "We can't start another phone session right now. Show this message to booth staff so they can help.",
@@ -832,8 +832,8 @@ const MESSAGING_COPY: Record<'en-US' | 'pt-BR', Record<MessagingCopyKey, string>
     noCoins: 'Suas moedas acabaram, mas você pode ganhar outra jogada. Responda MAIS para abrir os desafios.',
     poolFull: 'A fila do próximo jogo está cheia. Fique por perto e tente MOEDA novamente quando a partida atual começar.',
     coinUnavailable: 'Esta sessão não usa moedas. Responda PRONTO para entrar na fila.',
-    coin: 'MOEDA INSERIDA!\nVocê é o nº {position} para o próximo jogo. Saldo: {balance}.\nQuando aparecer VOTAÇÃO, responda {choices}.\nSe for selecionado, enviaremos um número para ligar, e sua voz controlará a tela.',
-    coinScreen: 'MOEDA INSERIDA! Você é o nº {position}. Saldo: {balance}.\nSalve {callNumber}. Acompanhe a tela e ligue para esse número quando chegar sua vez.',
+    coin: 'MOEDA INSERIDA!\nVocê é o nº {position} para o próximo jogo. Saldo: {balance}.\nFique perto da tela enquanto a partida atual termina; a votação e a próxima contagem regressiva aparecerão nela.\nQuando aparecer VOTAÇÃO, responda {choices}.\nSe for selecionado, enviaremos um número para ligar, e sua voz controlará a tela.',
+    coinScreen: 'MOEDA INSERIDA! Você é o nº {position}. Saldo: {balance}.\nSalve {callNumber}. Fique por perto enquanto a partida atual termina. Acompanhe a tela para a próxima contagem regressiva e ligue quando ela indicar sua vez.',
     joinedFree: 'Boas-vindas ao Twilio Games!\nDiante da tela, responda PRONTO para entrar na fila. Se for selecionado, avisaremos quando ligar.',
     helpFree: 'TWILIO GAMES\nPRONTO - entrar na fila do próximo jogo\nSTATUS - ver sua posição\nSAIR - sair da fila\n\nQuando aparecer VOTAÇÃO, responda com o número do jogo. Se for selecionado, enviaremos um número para ligar, e sua voz controlará a tela.',
     statusFree: '{status}\n{next}',
@@ -841,8 +841,8 @@ const MESSAGING_COPY: Record<'en-US' | 'pt-BR', Record<MessagingCopyKey, string>
     registeredFree: 'Jogador pronto! Diante da tela, responda PRONTO. Se for selecionado, avisaremos quando ligar e jogar por voz.',
     leftFree: 'Você saiu da fila do próximo jogo. Responda PRONTO quando quiser entrar novamente.',
     poolFullFree: 'A fila do próximo jogo está cheia. Fique por perto e tente PRONTO novamente quando a partida atual começar.',
-    readyFree: 'TUDO PRONTO!\nVocê é o nº {position} para o próximo jogo.\nQuando aparecer VOTAÇÃO, responda {choices}.\nSe for selecionado, enviaremos um número para ligar, e sua voz controlará a tela.',
-    readyFreeScreen: 'TUDO PRONTO! Você é o nº {position}.\nSalve {callNumber}. Acompanhe a tela e ligue para esse número quando chegar sua vez.',
+    readyFree: 'TUDO PRONTO!\nVocê é o nº {position} para o próximo jogo.\nFique perto da tela enquanto a partida atual termina; a votação e a próxima contagem regressiva aparecerão nela.\nQuando aparecer VOTAÇÃO, responda {choices}.\nSe for selecionado, enviaremos um número para ligar, e sua voz controlará a tela.',
+    readyFreeScreen: 'TUDO PRONTO! Você é o nº {position}.\nSalve {callNumber}. Fique por perto enquanto a partida atual termina. Acompanhe a tela para a próxima contagem regressiva e ligue quando ela indicar sua vez.',
     notReadyFree: 'Você ainda não está na fila. Diante da tela, responda PRONTO.',
     continueInBrowser: 'Você já está cadastrado no navegador deste celular. Volte à aba do Twilio Games para entrar no próximo jogo.',
     capacity: 'Não é possível iniciar outra sessão de celular agora. Mostre esta mensagem à equipe para receber ajuda.',
@@ -1213,6 +1213,7 @@ function stationNotificationContent(input: {
   offerChallenges: boolean;
   rank: number | null;
   won: boolean | null;
+  durationSeconds: number | null;
   freePlay: boolean;
 }): { body: string; templateVariables: Readonly<Record<string, string>> } {
   const game = STATION_GAME_NAMES[input.locale][input.game];
@@ -1232,15 +1233,17 @@ function stationNotificationContent(input: {
     }
     if (input.kind === 'STATION_RESULTS') {
       const balance = input.balance === null ? '' : `\nSaldo: ${input.balance} moeda${input.balance === 1 ? '' : 's'}.`;
+      const duration = input.game === 'racer' && input.durationSeconds !== null && input.durationSeconds > 0
+        ? `\nTempo da corrida: ${input.durationSeconds.toFixed(2).replace('.', ',')} segundos.` : '';
       const replay = input.offerChallenges
         ? '\nQuer jogar novamente? Responda MAIS para completar um desafio e ganhar mais moedas.'
         : input.freePlay ? '\nResponda PRONTO para entrar na próxima partida.'
           : input.remainingBalance===0 ? '\nMostre esta mensagem à equipe para receber ajuda e jogar novamente.'
             : '\nResponda MOEDA para entrar na próxima partida.';
       const result = input.rank === null ? '\nConfira o placar na tela.'
-        : input.won ? '\nVOCÊ VENCEU!' : `\nVocê terminou em ${input.rank}º lugar.`;
+        : input.won ? `\nVOCÊ VENCEU! Você terminou em ${input.rank}º lugar.` : `\nVocê terminou em ${input.rank}º lugar.`;
       return {
-        body: `FIM DE JOGO: ${game}!${result}\nVocê acabou de controlar a tela por ligação.${balance}${replay}`,
+        body: `FIM DE JOGO: ${game}!${result}${duration}\nVocê acabou de controlar a tela por ligação.${balance}${replay}`,
         templateVariables: { '1': game, ...(input.balance === null ? {} : { '2': String(input.balance) }) },
       };
     }
@@ -1259,15 +1262,17 @@ function stationNotificationContent(input: {
   }
   if (input.kind === 'STATION_RESULTS') {
     const balance = input.balance === null ? '' : `\nBalance: ${input.balance} game coin${input.balance === 1 ? '' : 's'}.`;
+    const duration = input.game === 'racer' && input.durationSeconds !== null && input.durationSeconds > 0
+      ? `\nRace time: ${input.durationSeconds.toFixed(2)} seconds.` : '';
     const replay = input.offerChallenges
       ? '\nWant another play? Reply MORE to complete a challenge and earn more game coins.'
       : input.freePlay ? '\nReply READY to line up again.'
         : input.remainingBalance===0 ? '\nShow this message to booth staff for help getting another play.'
           : '\nReply COIN to line up again.';
     const result = input.rank === null ? '\nCheck the scoreboard on the big screen.'
-      : input.won ? '\nYOU WON!' : `\nYou finished #${input.rank}.`;
+      : input.won ? `\nYOU WON! You finished #${input.rank}.` : `\nYou finished #${input.rank}.`;
     return {
-      body: `${game} complete!${result}\nYou just controlled the big screen by phone call.${balance}${replay}`,
+      body: `${game} complete!${result}${duration}\nYou just controlled the big screen by phone call.${balance}${replay}`,
       templateVariables: { '1': game, ...(input.balance === null ? {} : { '2': String(input.balance) }) },
     };
   }
@@ -4180,6 +4185,7 @@ export class ArcadeService {
     const balance = config.coins.chargePolicy !== 'free' && standardResultsDelivery && config.postGame.includeCoinBalance
       ? actualBalance
       : null;
+    const participantResult = match.result?.participants.find(result => result.readyEntryId === entry.id);
     const content = stationNotificationContent({
       kind,
       locale,
@@ -4189,8 +4195,9 @@ export class ArcadeService {
       balance,
       remainingBalance:actualBalance,
       offerChallenges,
-      rank: match.result?.participants.find(result => result.readyEntryId === entry.id)?.rank ?? null,
-      won: match.result?.participants.find(result => result.readyEntryId === entry.id)?.won ?? null,
+      rank: participantResult?.rank ?? null,
+      won: participantResult?.won ?? null,
+      durationSeconds: participantResult?.durationSeconds ?? null,
       freePlay: config.coins.chargePolicy === 'free',
     });
     const id = stationNotificationId(kind, match.id, entry.id);

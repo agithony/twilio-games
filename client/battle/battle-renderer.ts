@@ -15,7 +15,7 @@ import { GB_SHADES, drawMonsterSprite, typeColor } from './monster-sprite';
 import { AttackFx } from './attack-fx';
 import { spriteCandidateUrls } from './sprite-sources';
 import { ResolutionHp } from './resolution-hp';
-import { effectivePips } from './move-menu';
+import { effectivePips, fitMoveName } from './move-menu';
 import { hpFraction, hpZone, hpColor } from './hp-bar';
 import { DEFAULT_LOCALE, type SupportedLocale } from '../../shared/i18n/locales';
 import { MONSTERS_MESSAGES, type MonstersMessageKey } from '../../shared/i18n/monsters';
@@ -298,7 +298,7 @@ export class BattleRenderer {
       ? (this.eventBanner || this.statusLine)
       : (this.statusLine || (this.snap ? '' : this.text('renderer.waiting')));
     // Wrap long banners ("Sparkmouse used Thunder Jolt!") to a 2nd line instead of running off the edge.
-    this.drawWrappedText(line, 11, 93, GB_W - 8 - 14, 9);
+    this.drawWrappedText(line, 11, 93, GB_W - 8 - 14, 9, this.uiPhase === 'awaiting-input' ? 2 : 5);
     if (this.uiPhase === 'awaiting-input') {
       if (this.menuView === 'fight') this.drawFightMenu();
       else this.drawRootMenu();
@@ -332,7 +332,7 @@ export class BattleRenderer {
     this.menuMoves.slice(0, 4).forEach((m, i) => {
       const col = i % 2, row = Math.floor(i / 2);
       const x = 11 + col * 73, y = 111 + row * 15;
-      this.drawText(`${i + 1} ${m.name}`, x, y, true);
+      this.drawText(`${i + 1} ${fitMoveName(m.name, 16)}`, x, y, true);
       const mult = this.foeType ? typeMultiplier(m.type as MonsterType, this.foeType) : 1;
       this.drawPips(x + 6, y + 7, effectivePips(m.power, mult), typeColor(m.type));
       this.drawText(`${accuracyPercent(m.power)}%`, x + 52, y + 7, true);   // hit chance
@@ -459,10 +459,8 @@ export class BattleRenderer {
     ctx.fillText(text, x, y);
   }
 
-  /** Draw `text` in the 8px font, WORD-WRAPPING to new lines so a long banner never runs off the
-   *  window edge. Wraps at `maxWidth` px; each line is `lineH` px tall. Caps at 3 lines (the window
-   *  fits that above the move menu). */
-  private drawWrappedText(text: string, x: number, y: number, maxWidth: number, lineH: number): void {
+  /** Draw `text` in the 8px font, word-wrapping within the available part of the command window. */
+  private drawWrappedText(text: string, x: number, y: number, maxWidth: number, lineH: number, maxLines: number): void {
     const ctx = this.ctx;
     ctx.font = '8px monospace';
     ctx.fillStyle = INK;
@@ -476,7 +474,7 @@ export class BattleRenderer {
       else cur = trial;
     }
     if (cur) lines.push(cur);
-    lines.slice(0, 3).forEach((ln, i) => ctx.fillText(ln, x, y + i * lineH));
+    lines.slice(0, maxLines).forEach((ln, i) => ctx.fillText(ln, x, y + i * lineH));
   }
 
   /** A bobbing SIDE-pointing arrow marking the monster whose turn it is. `dir` is which way it points

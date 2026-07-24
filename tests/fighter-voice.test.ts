@@ -142,6 +142,7 @@ describe('fighter voice session', () => {
       {id:'inakaya',name:'Inakaya Restaurant'},{id:'rain',name:'Rain'}];
     expect(matchVoiceChoice('option four',productionMaps)?.id).toBe('inakaya');
     expect(matchVoiceChoice('Ina Kaya',productionMaps)?.id).toBe('inakaya');
+    expect(matchVoiceChoice('Inikaya',productionMaps)?.id).toBe('inakaya');
     expect(matchVoiceChoice('start training',productionMaps)).toBeNull();
     expect(matchVoiceChoice('brainstorm',productionMaps)).toBeNull();
   });
@@ -207,10 +208,12 @@ describe('fighter voice session', () => {
     const prompt = (voicePrompt: string, last: boolean) => session.handleMessage(JSON.stringify({ type: 'prompt', voicePrompt, last }));
     prompt('punch', false); prompt('punch', false); prompt('punch five times', true);
     expect(commands).toEqual(['punch', 'punch', 'punch', 'punch', 'punch']);
+    prompt('kick', false); prompt('kick', false); prompt('kick punch', true);
+    expect(commands.slice(5)).toEqual(['kick', 'punch']);
     prompt('kick', false);
     session.handleMessage(JSON.stringify({ type: 'interrupt', utteranceUntilInterrupt: '', durationUntilInterruptMs: 100 }));
     prompt('kick', false);
-    expect(commands).toHaveLength(5);
+    expect(commands).toHaveLength(7);
     prompt('kick', false);
     expect(commands.at(-1)).toBe('kick');
     expect(spoken.join(' ')).not.toContain('Say forward');

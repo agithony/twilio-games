@@ -159,13 +159,13 @@ export class ConversationRelayAdapter {
         const prompt = createTranslator(this.commandLocale, RACER_MESSAGES)('voice.raceOverPrompt');
         let speech!: Promise<void>;
         speech = this.deps.converse(this.roomCode, this.playerId, prompt, this.commandLocale)
-          .then(reply => { if (epoch === this.turnEpoch) this.deps.say?.(reply || fallback()); })
-          .catch(() => { this.deps.say?.(fallback()); })
+          .then(reply => { if (epoch === this.turnEpoch) this.speakResultRecap(reply || fallback()); })
+          .catch(() => { if (epoch === this.turnEpoch) this.speakResultRecap(fallback()); })
           .finally(() => this.pendingSpeech.delete(speech));
         this.pendingSpeech.add(speech);
         return;
       }
-      this.deps.say?.(fallback());
+      this.speakResultRecap(fallback());
       return;
     }
     const line = lineForEvent(ev, this.playerId, this.lineSeq, this.commandLocale);
@@ -174,6 +174,12 @@ export class ConversationRelayAdapter {
 
   async whenSpeechSettled(): Promise<void> {
     await Promise.allSettled([...this.pendingSpeech]);
+  }
+
+  private speakResultRecap(text: string): void {
+    for (const sentence of text.split(/(?<=[.!?])\s+/).map(part => part.trim()).filter(Boolean)) {
+      this.deps.say?.(sentence);
+    }
   }
 
   ignoreLateRacingPrompt(final: boolean): void {

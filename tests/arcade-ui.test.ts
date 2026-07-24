@@ -492,7 +492,8 @@ describe('Arcade browser UI', () => {
     expect(html).toContain('id="display-connect-panel"');
     expect(html).toContain('id="connect-booth-display"');
     expect(html).toContain('id="overview-display"');
-    expect(script).toContain("show('display-connect-panel',displayKnown&&!displayConnected&&!display?.checking)");
+    expect(script).toContain("config&&config.arcade.mode!=='off'&&display?.configured&&!displayConnected&&!display.checking");
+    expect(script).toContain("show('display-connect-panel',pairingRequired)");
     expect(script).toContain('function isDisplayConnected(');
     expect(html).toContain('id="overview-display-card"');
     expect(html).toContain('Pair this tab as the big screen');
@@ -587,10 +588,14 @@ describe('Arcade browser UI', () => {
     expect(css).toContain('.settings-layout{display:grid;grid-template-columns:repeat(2');
     expect(css).toContain('.choice-card:has(input:checked)');
     expect(script).toContain("document.body.classList.add(operatorView?'operator-page':'player-page')");
+    expect(script).toContain("config.arcade.mode==='off'&&selectedMode!=='off'&&!postGame.enabled");
+    expect(script).toContain('postGame.enabled=postGame.channels.length>0');
     expect(joinScript).toContain('link.className = `channel channel--${kind}`');
     expect(joinScript).not.toContain('messageCommandPanel');
     expect(joinScript).not.toContain('available.length === 0');
     expect(joinCss).not.toContain('.channel.primary');
     expect(joinCss).toContain('.channel:focus-visible');
+    expect(joinCss).toContain('box-shadow:var(--action-shadow)');
+    expect(joinCss).toContain('.channel:active{transform:translateY(5px)');
   });
 });
