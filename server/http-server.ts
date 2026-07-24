@@ -863,7 +863,7 @@ export class HttpServer {
         ...localizedMonsterAliases(monster.id, monster.name),
         ...monster.moves.flatMap(move => localizedMoveAliases(move.id, move.name)),
       ]);
-      return [...commands, ...numbers, ...content].join(', ');
+      return voiceHintList(commands, numbers, content);
     }
     if (game === 'fighter') {
       const commands = locale === 'pt-BR'
@@ -874,14 +874,14 @@ export class HttpServer {
         ...(map.id === 'inakaya'
           ? ['Inakaya', 'Inakaya Restaurant', 'Ina Kaya', 'In a Kaya', 'In Akaya', 'Innakaya', 'Inikaya', 'Izakaya']
           : [])]);
-      return [...fighters, ...maps, ...commands, ...numbers].join(', ');
+      return voiceHintList(commands, numbers, fighters, maps);
     }
     const commands = locale === 'pt-BR'
       ? ['esquerda', 'direita', 'acelerar', 'acelere', 'acelera', 'vai', 'frear', 'freie', 'freia', 'devagar', 'reduzir', 'reduza', 'desacelerar', 'desacelere', 'parar', 'nitro', 'turbo', 'poder', 'começar', 'iniciar', 'próximo', 'próxima', 'corrida', 'correr', 'revanche', 'sim']
       : ['left', 'right', 'boost', 'go', 'brake', 'slow', 'stop', 'nitro', 'power', 'start', 'next', 'race', 'rematch'];
     const cars = this.roomConfigCache.carNames.flatMap(localizedCarAliases);
     const tracks = this.roomConfigCache.maps.flatMap(localizedTrackAliases);
-    return [...commands, ...numbers, ...cars, ...tracks].join(', ');
+    return voiceHintList(commands, numbers, cars, tracks);
   }
 
   private makeFighterSession(say: (text: string) => void): FighterVoiceSession {
@@ -2384,6 +2384,24 @@ function selectionNumberHints(locale: SupportedLocale): string[] {
   return locale === 'pt-BR'
     ? ['um', 'dois', 'três', 'quatro', 'cinco', 'seis', 'sete', 'oito', 'nove', 'dez', 'onze', 'doze', 'primeiro', 'segundo', 'terceiro', 'quarto', 'quinto']
     : ['one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'first', 'second', 'third', 'fourth', 'fifth'];
+}
+
+const MAX_RELAY_HINT_TERMS = 100;
+
+function voiceHintList(...groups: readonly (readonly string[])[]): string {
+  const hints: string[] = [];
+  const seen = new Set<string>();
+  for (const group of groups) {
+    for (const value of group) {
+      const hint = value.trim();
+      const key = hint.toLowerCase();
+      if (!hint || seen.has(key)) continue;
+      hints.push(hint);
+      seen.add(key);
+      if (hints.length === MAX_RELAY_HINT_TERMS) return hints.join(', ');
+    }
+  }
+  return hints.join(', ');
 }
 
 function splitControlText(text: string): string[] {
