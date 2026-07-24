@@ -110,6 +110,11 @@ describe('Arcade station outbound outbox', () => {
   it('atomically queues admitted, overflow, call-now, results, and promoted-next notices', async () => {
     const h = await harness();
     await createThreeReadyPlayers(h);
+    const activePlayerId = Object.values(h.store.snapshot().channelAddresses)[0]!.playerId;
+    await expect(h.service.restorePlayerStartingBalance({
+      playerId: activePlayerId, expectedConfigVersion: 1, idempotencyKey: 'restore-active-player',
+      authorization: AUTHORIZATION, reason: 'should be blocked',
+    })).rejects.toMatchObject({ code: 'PLAYER_ACTIVE_ADMISSION' });
     const recruiting = await h.service.getStation('ARCADE-01');
     const selecting = await h.service.closeStationRecruiting({
       stationId: 'ARCADE-01', expectedRevision: recruiting!.station.revision,
@@ -159,6 +164,27 @@ describe('Arcade station outbound outbox', () => {
     expect(Object.values(h.store.snapshot().outboundNotifications)
       .filter(item => item.kind === 'STATION_RESULTS' && item.channel === 'whatsapp')
       .every(item => item.templateContentSid === null)).toBe(true);
+    const recovery = await h.service.listPlayersNeedingCoins();
+    expect(recovery).toMatchObject({ startingBalance: 1, players: [{ availableBalance: 0 }, { availableBalance: 0 }] });
+    expect(JSON.stringify(recovery)).not.toContain('+1415555010');
+    const target = recovery.players[0]!;
+    const restoreInput = {
+      playerId: target.playerId, expectedConfigVersion: recovery.configVersion,
+      idempotencyKey: 'restore-zero-player', authorization: AUTHORIZATION, reason: 'help attendee replay',
+    };
+    const restored = await h.service.restorePlayerStartingBalance(restoreInput);
+    expect(restored).toMatchObject({ restored: true, amountGranted: 1, targetBalance: 1, availableBalance: 1 });
+    expect(await h.service.restorePlayerStartingBalance(restoreInput)).toEqual(restored);
+    await expect(h.service.restorePlayerStartingBalance({ ...restoreInput, idempotencyKey: 'restore-zero-player-again' }))
+      .rejects.toMatchObject({ code: 'PLAYER_BALANCE_CHANGED' });
+    const restoredWallet = h.store.snapshot().wallets[target.playerId]!;
+    expect(restoredWallet.transactions.filter(transaction => transaction.type === 'operator_grant')).toEqual([
+      expect.objectContaining({ delta: 1, metadata: expect.objectContaining({
+        action: 'restore_starting_balance', reason: 'help attendee replay',
+        configuredStartingBalance: 1, previousAvailableBalance: 0,
+      }) }),
+    ]);
+    expect((await h.service.listPlayersNeedingCoins()).players).toHaveLength(1);
     await h.service.advanceStationResults({
       stationId: 'ARCADE-01', expectedRevision: results.station.revision,
       idempotencyKey: 'advance', authorization: AUTHORIZATION,

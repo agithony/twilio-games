@@ -293,6 +293,18 @@
               </form>
             </dialog>
           </article>
+          <article id="player-recovery-panel" class="panel player-recovery-panel">
+            <div class="panel-heading">
+              <div><p class="eyebrow">Player support</p><h2>Players needing coins</h2></div>
+              <span id="player-recovery-count" class="badge neutral">0 players</span>
+            </div>
+            <p>These registered players have zero available coins and no active game or held coin.</p>
+            <div id="player-recovery-list" class="ready-list"></div>
+            <div class="operator-actions">
+              <button id="refresh-players" class="button quiet" type="button">Refresh players</button>
+              <button id="load-more-players" class="button quiet" type="button" hidden>Load more players</button>
+            </div>
+          </article>
         </section>
 
         <section id="messages" class="operator-section" role="tabpanel" aria-labelledby="operator-tab-messages" tabindex="0" hidden>

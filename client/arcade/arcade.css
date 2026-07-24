@@ -121,6 +121,7 @@ input,select{width:100%;color:var(--th-text);background:var(--th-input);border:1
 .operator-page .station-panel{padding:30px;border-top:0}
 .operator-page .settings-panel{padding:30px}
 .operator-page .messaging-panel{border-top:0}
+.player-recovery-panel{margin-top:14px}.player-recovery-item .meta{margin-top:5px}
 .operator-page label{font-size:.8rem;text-transform:none;letter-spacing:0}
 .operator-page input,.operator-page select{min-height:46px;border-radius:10px}
 .operator-page .station-summary{grid-template-columns:repeat(2,1fr)}

@@ -25,6 +25,8 @@ interface OperatorStationView {
   readyEntries:Array<{id:string;roundId:string;displayName:string;originalReadyAt:string;status:string;overflowOrdinal:number|null;availableBalance:number;connected:boolean}>;
   recentControls:Array<{id:string;action:string;actorKind:'operator'|'system';actorSubject:string;reason:string;fromRevision:number;toRevision:number;occurredAt:string}>;
 }
+interface OperatorPlayerRecoveryItem {playerId:string;displayName:string;identities:Array<{channel:'sms'|'whatsapp'|'browser';maskedAddress:string}>;availableBalance:number;lastActivityAt:string;lastReadyStatus:string|null;}
+interface OperatorPlayerRecoveryPage {configVersion:number;startingBalance:number;players:OperatorPlayerRecoveryItem[];nextCursor:string|null;}
 interface MessagingFailedNotice { notificationId:string;kind:string;channel:'sms'|'whatsapp';status:'FAILED';attempts:number;maximumAttempts:number;lastErrorCode:string|null;lastErrorMessage:string|null;terminalReason:string|null;updatedAt:string;expiresAt:string;retryEligible:boolean;retryIneligibleReason:string|null; }
 interface AdminStatus { display:{configured:boolean;connected:boolean;checking:boolean;lastSeenAt:string|null;presenceTimeoutSeconds:number};messaging:{configured:boolean;enabled:boolean;started:boolean;lastError:string|null;channels:Record<'sms'|'whatsapp',boolean>;counts:Record<string,number>;recentFailures:MessagingFailedNotice[];onboarding:Record<'sms'|'whatsapp',boolean>;storage:{players:number;messagingIdentities:number;identityCapacity:number;remainingIdentityCapacity:number;channelAddresses:number;drafts:number;cleanupEligible:number;retentionDays:number;pruneBatchSize:number}|null}|null; }
 
@@ -41,7 +43,8 @@ const state: {
   operatorStation: OperatorStationView | null;
   operatorStationEtag: string | null;
   adminStatus: AdminStatus | null;
-} = { config:null,deployment:null,player:null,wallet:null,station:null,adminConfig:null,adminEmail:null,operatorStation:null,operatorStationEtag:null,adminStatus:null };
+  operatorPlayers: OperatorPlayerRecoveryPage | null;
+} = { config:null,deployment:null,player:null,wallet:null,station:null,adminConfig:null,adminEmail:null,operatorStation:null,operatorStationEtag:null,adminStatus:null,operatorPlayers:null };
 
 const notice = el('notice'), modeBadge = el('mode-badge'), heroBalance = el('hero-balance');
 const operatorView = location.pathname === '/operator' || location.pathname === '/operator/';
@@ -63,6 +66,7 @@ let stationResetIdempotencyKey:string|null=null;
 let stationResetEtag:string|null=null;
 let gameChoiceSaving=false;
 let displayPresenceExpiresAt=0;
+let playerRecoveryRequest:Promise<void>|null=null;
 el('refresh').addEventListener('click', () => void refreshAll(true));
 el('theme-toggle').addEventListener('click', toggleTheme);
 el<HTMLFormElement>('registration-form').addEventListener('submit', event => void register(event));
@@ -83,6 +87,8 @@ el('cancel-admin-challenge').addEventListener('click',closeChallengeEditor);
 el<HTMLFormElement>('admin-challenge-form').addEventListener('submit',event=>void saveAdminChallenge(event));
 el('admin-logout').addEventListener('click', () => void switchAccount());
 el('connect-booth-display').addEventListener('click', () => void connectBoothDisplay());
+el('refresh-players').addEventListener('click',()=>void refreshOperatorPlayers(false,true));
+el('load-more-players').addEventListener('click',()=>void refreshOperatorPlayers(true));
 el('close-recruiting').addEventListener('click',()=>void stationAction('close'));
 el('select-station-game').addEventListener('click',()=>void stationAction('select',el<HTMLSelectElement>('station-game').value as PlayableGame));
 el('request-launch').addEventListener('click',()=>void stationAction('launch'));
@@ -119,7 +125,7 @@ async function refreshAll(showProgress=!operatorView): Promise<boolean> {
     if(!currentConfig)throw new Error('Twilio Games settings are unavailable.');
     if(operatorView){
       await checkAdmin();show('operations',true);show('dashboard',false);
-      if(state.adminConfig){await Promise.all([refreshOperatorStation(),refreshOperatorStatus()]);startOperatorUpdates();}
+      if(state.adminConfig){await Promise.all([refreshOperatorStation(),refreshOperatorStatus(),refreshOperatorPlayers()]);startOperatorUpdates();}
       if(showProgress)setNotice('Event data refreshed.','success');return true;
     }
     show('operations',false);show('dashboard',true);
@@ -960,6 +966,68 @@ async function refreshOperatorStation():Promise<void>{
   applyOperatorStation(payload,response);
 }
 
+async function refreshOperatorPlayers(append=false,force=false):Promise<void>{
+  if(!state.adminConfig)return;
+  if(playerRecoveryRequest){
+    if(!force)return;
+    await playerRecoveryRequest;
+    if(!state.adminConfig)return;
+  }
+  if(!append&&!force&&(state.operatorPlayers?.players.length??0)>100)return;
+  const cursor=append?state.operatorPlayers?.nextCursor:null;
+  if(append&&!cursor)return;
+  const request=(async()=>{
+    const path=`/api/admin/arcade/players?limit=100${cursor?`&cursor=${encodeURIComponent(cursor)}`:''}`;
+    const page=await api<OperatorPlayerRecoveryPage>(path);
+    state.operatorPlayers=append&&state.operatorPlayers
+      ?{...page,players:[...state.operatorPlayers.players,...page.players]}
+      :page;
+    renderOperatorPlayers();
+  })();
+  playerRecoveryRequest=request;
+  try{
+    await request;
+  }finally{if(playerRecoveryRequest===request)playerRecoveryRequest=null;}
+}
+
+function renderOperatorPlayers():void{
+  const panel=el('player-recovery-panel'),host=el('player-recovery-list'),page=state.operatorPlayers;
+  panel.hidden=state.adminConfig?.coins.chargePolicy==='free';host.replaceChildren();
+  const players=page?.players??[];
+  el('player-recovery-count').textContent=`${players.length} ${players.length===1?'player':'players'}`;
+  if(!players.length){const empty=document.createElement('div');empty.className='empty';empty.textContent='No inactive zero-coin players need help.';host.append(empty);}
+  for(const player of players){
+    const item=document.createElement('div');item.className='list-item player-recovery-item';
+    const copy=document.createElement('div'),title=document.createElement('h4'),meta=document.createElement('div');
+    title.textContent=player.displayName;meta.className='meta';
+    const identities=player.identities.map(identity=>`${identity.channel==='sms'?'Text':identity.channel==='whatsapp'?'WhatsApp':'Browser'} · ${identity.maskedAddress}`).join(' · ');
+    meta.textContent=`${identities} · ${player.availableBalance} coins · Last activity ${formatTimestamp(player.lastActivityAt)}${player.lastReadyStatus?` · ${phaseName(player.lastReadyStatus)}`:''}`;
+    copy.append(title,meta);
+    const actions=document.createElement('div');actions.className='operator-actions';
+    const restore=document.createElement('button');restore.type='button';restore.className='button primary';restore.textContent=`Restore to ${page?.startingBalance??0} coin${page?.startingBalance===1?'':'s'}`;restore.addEventListener('click',()=>void restorePlayerBalance(player,restore));actions.append(restore);
+    item.append(copy,actions);host.append(item);
+  }
+  el<HTMLButtonElement>('load-more-players').hidden=!page?.nextCursor;
+}
+
+async function restorePlayerBalance(player:OperatorPlayerRecoveryItem,button:HTMLButtonElement):Promise<void>{
+  const page=state.operatorPlayers;if(!page)return;
+  const response=await requestOperatorReason('Restore starting coins',`Restore ${player.displayName} to the configured starting balance of ${page.startingBalance} coin${page.startingBalance===1?'':'s'}.`);
+  if(!response)return;
+  button.disabled=true;button.textContent='Restoring...';
+  try{
+    const result=await api<{restored:boolean;amountGranted:number;availableBalance:number}>(`/api/admin/arcade/players/${encodeURIComponent(player.playerId)}/restore-starting-balance`,{
+      method:'POST',headers:{'Content-Type':'application/json','If-Match':`"arcade-config-${page.configVersion}"`,'Idempotency-Key':crypto.randomUUID()},body:JSON.stringify({reason:response.reason}),
+    });
+    setNotice(result.restored?`Restored ${player.displayName} to ${result.availableBalance} coin${result.availableBalance===1?'':'s'}.`:`${player.displayName} already has the configured starting balance.`,'success');
+    await Promise.all([refreshOperatorPlayers(false,true),refreshOperatorStation()]);
+  }catch(error){
+    if(error instanceof ApiError&&error.status===412){await refreshAll(false);await refreshOperatorPlayers(false,true);}
+    showError(error);
+  }
+  finally{button.disabled=false;button.textContent=`Restore to ${page.startingBalance} coin${page.startingBalance===1?'':'s'}`;}
+}
+
 function applyOperatorStation(view:OperatorStationView|null,response:Response):void{
   const etag=response.headers.get('ETag');
   if(!etag)throw new Error('Live event status is unavailable. Refresh and try again.');
@@ -1242,7 +1310,7 @@ function startOperatorUpdates():void{
   const events=new EventSource('/api/arcade/events');operatorEvents=events;
   events.addEventListener('arcade_station_updated',event=>{
     try{JSON.parse((event as MessageEvent<string>).data);}catch{/* Refetch malformed notifications safely. */}
-    void Promise.all([refreshOperatorStation(),refreshOperatorStatus()]).catch(()=>setStationConnection('Refresh failed','error'));
+    void Promise.all([refreshOperatorStation(),refreshOperatorStatus(),refreshOperatorPlayers()]).catch(()=>setStationConnection('Refresh failed','error'));
   });
   events.addEventListener('arcade_config_updated',()=>{
     void refreshAll().catch(()=>setStationConnection('Config refresh failed','error'));

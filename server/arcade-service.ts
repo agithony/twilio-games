@@ -305,6 +305,30 @@ export interface GrantStationPlayerCoinsInput {
   readonly reason: string;
 }
 
+export interface RestorePlayerStartingBalanceInput {
+  readonly playerId: string;
+  readonly expectedConfigVersion: number;
+  readonly idempotencyKey: string;
+  readonly authorization: unknown;
+  readonly reason: string;
+}
+
+export interface OperatorPlayerRecoveryItem {
+  readonly playerId: string;
+  readonly displayName: string;
+  readonly identities: readonly Readonly<{ channel: ArcadeMessagingChannel | 'browser'; maskedAddress: string }>[];
+  readonly availableBalance: number;
+  readonly lastActivityAt: string;
+  readonly lastReadyStatus: StationReadyEntry['status'] | null;
+}
+
+export interface OperatorPlayerRecoveryPage {
+  readonly configVersion: number;
+  readonly startingBalance: number;
+  readonly players: readonly OperatorPlayerRecoveryItem[];
+  readonly nextCursor: string | null;
+}
+
 export interface DropStationAdmittedEntryInput extends StationRevisionInput {
   readonly readyEntryId: string;
   readonly authorization: unknown;
@@ -1250,6 +1274,120 @@ export class ArcadeService {
       retentionDays: this.messagingRetentionMs / (24 * 60 * 60 * 1000),
       pruneBatchSize: this.messagingPruneBatchSize,
     });
+  }
+
+  async listPlayersNeedingCoins(limitInput = 100, cursorInput: string | null = null): Promise<OperatorPlayerRecoveryPage> {
+    if (!Number.isSafeInteger(limitInput) || limitInput < 1 || limitInput > 100) {
+      throw new ArcadeServiceError('INVALID_INPUT', 'player recovery limit must be from 1 to 100');
+    }
+    let cursor: { lastActivityAt: string; playerId: string } | null = null;
+    if (cursorInput !== null) {
+      try {
+        const decoded = JSON.parse(Buffer.from(requireIdentifier(cursorInput, 'cursor', 512), 'base64url').toString('utf8')) as unknown;
+        if (!decoded || typeof decoded !== 'object' || Array.isArray(decoded)) throw new Error('invalid cursor');
+        const value = decoded as Record<string, unknown>;
+        cursor = {
+          lastActivityAt: requireIdentifier(value.lastActivityAt, 'cursor activity'),
+          playerId: requireIdentifier(value.playerId, 'cursor player'),
+        };
+        if (!Number.isFinite(Date.parse(cursor.lastActivityAt))) throw new Error('invalid cursor timestamp');
+      } catch {
+        throw new ArcadeServiceError('INVALID_INPUT', 'player recovery cursor is invalid');
+      }
+    }
+    const state = await this.store.read();
+    const config = this.config();
+    if (config.coins.chargePolicy === 'free') {
+      return { configVersion: config.version, startingBalance: 0, players: [], nextCursor: null };
+    }
+    const addressesByPlayer = new Map<string, typeof state.channelAddresses[string][]>();
+    for (const address of Object.values(state.channelAddresses)) {
+      const addresses = addressesByPlayer.get(address.playerId) ?? [];
+      addresses.push(address);addressesByPlayer.set(address.playerId, addresses);
+    }
+    const readyByPlayer = new Map<string, StationReadyEntry[]>(), activeReadyPlayers = new Set<string>();
+    for (const entry of Object.values(state.stationReadyEntries)) {
+      const entries = readyByPlayer.get(entry.playerId) ?? [];
+      entries.push(entry);readyByPlayer.set(entry.playerId, entries);
+      if (!['COMPLETED', 'LEFT'].includes(entry.status)) activeReadyPlayers.add(entry.playerId);
+    }
+    const activeQueuePlayers = new Set<string>(), queueActivityByPlayer = new Map<string, string>();
+    for (const entry of Object.values(state.queueEntries)) {
+      if (!isTerminalQueueStatus(entry.status)) activeQueuePlayers.add(entry.playerId);
+      const prior = queueActivityByPlayer.get(entry.playerId);
+      if (!prior || Date.parse(entry.updatedAt) > Date.parse(prior)) queueActivityByPlayer.set(entry.playerId, entry.updatedAt);
+    }
+    const retiredHashes = new Set(Object.values(state.idempotencyRecords)
+      .filter(record => record.operation === 'RESET_TEST_PLAYER')
+      .map(record => (record.result as { retiredPlayerHash?: unknown } | null)?.retiredPlayerHash)
+      .filter((hash): hash is string => typeof hash === 'string'));
+    const items: OperatorPlayerRecoveryItem[] = [];
+    const compareItems = (left: OperatorPlayerRecoveryItem, right: OperatorPlayerRecoveryItem): number => (
+      Date.parse(right.lastActivityAt) - Date.parse(left.lastActivityAt) || left.playerId.localeCompare(right.playerId)
+    );
+    const cursorActivity = cursor === null ? null : Date.parse(cursor.lastActivityAt);
+    for (const player of Object.values(state.players)) {
+      if (player.id.startsWith('reset-player:') || retiredHashes.has(retiredPlayerHash(player.id))) continue;
+      const wallet = own(state.wallets, player.id);
+      if (!wallet || !wallet.transactions.some(transaction => transaction.type === 'registration_grant')) continue;
+      const ledger = deriveLedger(wallet.transactions, wallet.reservations);
+      if (ledger.availableBalance !== 0 || ledger.reservedBalance !== 0
+        || wallet.reservations.some(reservation => reservation.status === 'ACTIVE')
+        || activeReadyPlayers.has(player.id) || activeQueuePlayers.has(player.id)) continue;
+      const addresses = addressesByPlayer.get(player.id) ?? [];
+      const draft = own(state.messagingDrafts, player.id);
+      if (!player.lead && draft?.step !== 'COMPLETE') continue;
+      const readyEntries = readyByPlayer.get(player.id) ?? [];
+      const activity = [player.updatedAt, wallet.wallet.updatedAt, draft?.updatedAt,
+        queueActivityByPlayer.get(player.id), ...addresses.map(address => address.lastSeenAt), ...readyEntries.map(entry => entry.readyAt)]
+        .filter((value): value is string => Boolean(value))
+        .sort((left, right) => Date.parse(right) - Date.parse(left))[0] ?? player.updatedAt;
+      const activityTime = Date.parse(activity);
+      if (cursor !== null && cursorActivity !== null
+        && (activityTime > cursorActivity || (activityTime === cursorActivity && player.id <= cursor.playerId))) continue;
+      const identities: OperatorPlayerRecoveryItem['identities'][number][] = addresses.map(address => ({
+        channel: address.channel,
+        maskedAddress: `•••• ${address.normalizedAddress.slice(-4)}`,
+      }));
+      if (!identities.length && player.lead) identities.push({
+        channel: 'browser', maskedAddress: `•••• ${player.lead.phoneNumber.slice(-4)}`,
+      });
+      let lastReadyStatus: StationReadyEntry['status'] | null = null;
+      let lastReadyAt = Number.NEGATIVE_INFINITY;
+      for (const entry of readyEntries) {
+        const readyAt = Date.parse(entry.readyAt);
+        if (readyAt > lastReadyAt) {
+          lastReadyAt = readyAt;
+          lastReadyStatus = entry.status;
+        }
+      }
+      const item = {
+        playerId: player.id,
+        displayName: player.lead?.firstName.trim() || draft?.firstName?.trim() || 'Unnamed player',
+        identities,
+        availableBalance: ledger.availableBalance,
+        lastActivityAt: activity,
+        lastReadyStatus,
+      } satisfies OperatorPlayerRecoveryItem;
+      let low = 0, high = items.length;
+      while (low < high) {
+        const middle = (low + high) >>> 1;
+        if (compareItems(item, items[middle]!) < 0) high = middle;
+        else low = middle + 1;
+      }
+      items.splice(low, 0, item);
+      if (items.length > limitInput + 1) items.pop();
+    }
+    const players = items.slice(0, limitInput);
+    const last = players.at(-1);
+    return {
+      configVersion: config.version,
+      startingBalance: config.coins.startingBalance,
+      players,
+      nextCursor: items.length > limitInput && last
+        ? Buffer.from(JSON.stringify({ lastActivityAt: last.lastActivityAt, playerId: last.playerId }), 'utf8').toString('base64url')
+        : null,
+    };
   }
 
   async isRetiredPlayer(playerIdInput: string): Promise<boolean> {
@@ -2636,6 +2774,69 @@ export class ArcadeService {
     return pending.then(result => {
       if (stationRevision > 0) this.stationUpdated?.(stationRevision);
       return result;
+    });
+  }
+
+  restorePlayerStartingBalance(input: RestorePlayerStartingBalanceInput): Promise<{
+    restored: boolean;
+    amountGranted: number;
+    targetBalance: number;
+    availableBalance: number;
+  }> {
+    const playerId = requireIdentifier(input.playerId, 'playerId');
+    const expectedConfigVersion = requirePositiveInteger(input.expectedConfigVersion, 'expectedConfigVersion');
+    const principal = this.authorizeOperator(input.authorization, 'STATION_ACTION_UNAUTHORIZED');
+    const reason = requireReason(input.reason);
+    return this.execute('RESTORE_PLAYER_STARTING_BALANCE', input.idempotencyKey, null, {
+      playerId, expectedConfigVersion, reason, authorizedBy: principal,
+    }, (state, config, at) => {
+      if (config.version !== expectedConfigVersion) {
+        throw new ArcadeServiceError('STALE_CONFIG_VERSION', 'configuration version changed');
+      }
+      if (config.coins.chargePolicy !== 'per_player' || config.coins.startingBalance < 1) {
+        throw new ArcadeServiceError('PLAYER_BALANCE_RESTORE_UNAVAILABLE', 'starting balance restoration requires paid per-player play');
+      }
+      const player = this.requirePlayer(state, playerId);
+      if (player.id.startsWith('reset-player:') || isRetiredPlayer(state, playerId)) {
+        throw new ArcadeServiceError('PLAYER_NOT_FOUND', 'player was reset');
+      }
+      const draft = own(state.messagingDrafts, playerId);
+      if (!player.lead && draft?.step !== 'COMPLETE') {
+        throw new ArcadeServiceError('PLAYER_NOT_FOUND', 'completed messaging player was not found');
+      }
+      const current = this.requireWallet(state, playerId);
+      if (!current.transactions.some(transaction => transaction.type === 'registration_grant')) {
+        throw new ArcadeServiceError('PLAYER_BALANCE_RESTORE_UNAVAILABLE', 'player has no paid registration grant');
+      }
+      const before = deriveLedger(current.transactions, current.reservations);
+      if (before.reservedBalance !== 0 || current.reservations.some(reservation => reservation.status === 'ACTIVE')
+        || Object.values(state.stationReadyEntries).some(entry => entry.playerId === playerId
+          && !['COMPLETED', 'LEFT'].includes(entry.status))
+        || Object.values(state.queueEntries).some(entry => entry.playerId === playerId
+          && !isTerminalQueueStatus(entry.status))) {
+        throw new ArcadeServiceError('PLAYER_ACTIVE_ADMISSION', 'player has an active game or coin hold');
+      }
+      if (before.availableBalance !== 0) {
+        throw new ArcadeServiceError('PLAYER_BALANCE_CHANGED', 'player balance is no longer zero');
+      }
+      const amount = Math.max(0, config.coins.startingBalance - before.availableBalance);
+      const wallet = grantOperatorCoins(current, {
+        amount,
+        transactionId: this.id('wallet-transaction'),
+        idempotencyKey: `${input.idempotencyKey}:restore`,
+        createdAt: at,
+        configVersion: config.version,
+        metadata: {
+          source: 'operator', action: 'restore_starting_balance', reason,
+          authorizedBy: principal, configuredStartingBalance: config.coins.startingBalance,
+          previousAvailableBalance: before.availableBalance,
+        },
+      });
+      state.wallets[playerId] = wallet;
+      return {
+        restored: true, amountGranted: amount, targetBalance: config.coins.startingBalance,
+        availableBalance: availableBalance(wallet),
+      };
     });
   }
 

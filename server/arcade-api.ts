@@ -876,6 +876,17 @@ export class ArcadeApi {
         return;
       }
 
+      if (pathname === '/api/admin/arcade/players') {
+        await this.handleOperatorPlayers(request, response);
+        return;
+      }
+
+      const playerBalanceRestore = parseOperatorPlayerBalanceRestoreRoute(pathname);
+      if (playerBalanceRestore) {
+        await this.handleOperatorPlayerBalanceRestore(request, response, playerBalanceRestore.playerId);
+        return;
+      }
+
       const messagingRetry = parseOperatorMessagingRetryRoute(pathname);
       if (messagingRetry) {
         await this.handleOperatorMessagingRetry(request, response, messagingRetry.notificationId);
@@ -1606,6 +1617,48 @@ export class ArcadeApi {
     sendJson(response, 200, result, { 'Cache-Control': 'no-store' });
   }
 
+  private async handleOperatorPlayers(
+    request: http.IncomingMessage,
+    response: http.ServerResponse,
+  ): Promise<void> {
+    this.requireMethod(request, ['GET']);
+    this.requireAdmin(request);
+    const url = new URL(request.url ?? '', 'http://localhost');
+    const limitValue = url.searchParams.get('limit');
+    const limit = limitValue === null ? 100 : Number(limitValue);
+    const cursor = url.searchParams.get('cursor');
+    const resources = await this.requirePlayerRuntime().getForCleanup();
+    const result = await resources.service.listPlayersNeedingCoins(limit, cursor);
+    sendJson(response, 200, result, { 'Cache-Control': 'no-store, private' });
+  }
+
+  private async handleOperatorPlayerBalanceRestore(
+    request: http.IncomingMessage,
+    response: http.ServerResponse,
+    playerId: string,
+  ): Promise<void> {
+    this.requireMethod(request, ['POST']);
+    const principal = this.requireAdmin(request);
+    this.requireSameOrigin(request);
+    requireJsonContentType(request);
+    const expectedConfigVersion = parseIfMatch(request.headers['if-match']);
+    const idempotencyKey = requireHeader(
+      request.headers['idempotency-key'], 'Idempotency-Key', PLAYER_IDEMPOTENCY_KEY_LIMIT,
+    );
+    const body = requireExactObject(await readJson(request, STATION_BODY_LIMIT), ['reason'], []);
+    const resources = await this.requirePlayerRuntime().getForCleanup();
+    const result = await resources.service.restorePlayerStartingBalance({
+      playerId,
+      expectedConfigVersion,
+      reason: operatorReason(body.reason),
+      idempotencyKey: playerServiceKey(
+        `operator:${principal.email}`, `restore-player:${playerId}`, idempotencyKey,
+      ),
+      authorization: resources.operatorAuthorization(principal.email),
+    });
+    sendJson(response, 200, result, { 'Cache-Control': 'no-store, private' });
+  }
+
   private async handleOperatorStationCoinGrant(
     request: http.IncomingMessage,
     response: http.ServerResponse,
@@ -2261,6 +2314,11 @@ function parseOperatorMessagingRetryRoute(pathname: string): { notificationId: s
   return match ? { notificationId: match[1]!.replace(/%3A/i, ':').toLowerCase() } : null;
 }
 
+function parseOperatorPlayerBalanceRestoreRoute(pathname: string): { playerId: string } | null {
+  const match = /^\/api\/admin\/arcade\/players\/([A-Za-z0-9](?:(?:%3A)|[A-Za-z0-9:._-]){0,255})\/restore-starting-balance$/i.exec(pathname);
+  return match ? { playerId: match[1]!.replace(/%3A/ig, ':') } : null;
+}
+
 function parseOperatorStationCoinGrantRoute(pathname: string): { readyEntryId: string } | null {
   const match = /^\/api\/admin\/arcade\/station\/ready\/([A-Za-z0-9](?:(?:%3A)|[A-Za-z0-9:._-]){0,127})\/coins\/grant$/i.exec(pathname);
   return match ? { readyEntryId: match[1]!.replace(/%3A/ig, ':') } : null;
@@ -2421,6 +2479,8 @@ function playerServiceError(serviceCode: string): { status: number; code: string
       return { status: 409, code: serviceCode, message: 'idempotency key was reused for another request' };
     case 'STALE_STATION_REVISION':
       return { status: 412, code: serviceCode, message: 'The live event changed. Refresh and review the player before retrying.' };
+    case 'STALE_CONFIG_VERSION':
+      return { status: 412, code: serviceCode, message: 'Event settings changed. Refresh before restoring coins.' };
     case 'MODE_DISABLED':
       return { status: 409, code: 'ARCADE_MODE_DISABLED', message: 'station mode does not allow this operation' };
     case 'PAUSED_EVENT_RESET_REQUIRED':
@@ -2447,6 +2507,12 @@ function playerServiceError(serviceCode: string): { status: number; code: string
       return { status: 409, code: serviceCode, message: 'phone number is already linked to another player' };
     case 'PHONE_CHANGE_REQUIRES_RELINK':
       return { status: 409, code: serviceCode, message: 'messaging-linked phone number requires verified relinking' };
+    case 'PLAYER_ACTIVE_ADMISSION':
+      return { status: 409, code: serviceCode, message: 'player has an active game or coin hold' };
+    case 'PLAYER_BALANCE_CHANGED':
+      return { status: 409, code: serviceCode, message: 'player balance is no longer zero' };
+    case 'PLAYER_BALANCE_RESTORE_UNAVAILABLE':
+      return { status: 409, code: serviceCode, message: 'starting balance restoration is unavailable' };
     case 'MESSAGING_IDENTITY_REQUIRED':
       return { status: 409, code: serviceCode, message: 'join through SMS or WhatsApp before entering the ready pool' };
     case 'QUEUE_FULL':

@@ -1060,6 +1060,65 @@ describe('Arcade API', () => {
     expect(Object.values(state.channelAddresses).some(address => address.normalizedAddress === '+14155550123')).toBe(false);
   });
 
+  it('lists inactive zero-coin players and restores the configured starting balance', async () => {
+    const { baseUrl, api, playerRuntime } = await harness({ playerMode: 'coin_only' });
+    const send = (providerMessageId: string, body: string) => api.processMessagingWebhook({
+      from: '+14155550177', body, providerMessageId,
+    });
+    await send('SM-RESTORE-JOIN', 'JOIN');
+    await send('SM-RESTORE-NAME', 'Ada');
+    await send('SM-RESTORE-TERMS', 'YES');
+    await send('SM-RESTORE-COIN', 'COIN');
+    const resources = await playerRuntime.getActive();
+    const authorization = resources.operatorAuthorization('admin@twilio.com');
+    const recruiting = await resources.service.getStation('ARCADE-01');
+    const selecting = await resources.service.closeStationRecruiting({
+      stationId: 'ARCADE-01', expectedRevision: recruiting!.station.revision,
+      idempotencyKey: 'restore-close', authorization, reason: 'finish test game',
+    });
+    const locked = await resources.service.selectStationGame({
+      stationId: 'ARCADE-01', expectedRevision: selecting.station.revision,
+      game: 'racer', engineRoomCode: 'RESTORE-ROOM', idempotencyKey: 'restore-select', authorization,
+    });
+    const launching = await resources.service.requestStationLaunch({
+      stationId: 'ARCADE-01', expectedRevision: locked.station.revision,
+      idempotencyKey: 'restore-launch', authorization, reason: 'finish test game',
+    });
+    const ready = await resources.service.markStationDisplayReady({
+      stationId: 'ARCADE-01', expectedRevision: launching.station.revision,
+      matchId: launching.match!.id, launchGeneration: launching.match!.launchGeneration,
+      idempotencyKey: 'restore-display', authorization, reason: 'display ready',
+    });
+    const playing = await resources.service.startStationMatch({
+      stationId: 'ARCADE-01', expectedRevision: ready.station.revision,
+      idempotencyKey: 'restore-start', authorization, reason: 'start',
+    });
+    await resources.service.completeStationMatch({
+      stationId: 'ARCADE-01', expectedRevision: playing.station.revision,
+      idempotencyKey: 'restore-complete', authorization, reason: 'complete',
+    });
+
+    expect((await fetch(`${baseUrl}/api/admin/arcade/players`)).status).toBe(401);
+    const listed = await fetch(`${baseUrl}/api/admin/arcade/players`, { headers: ADMIN_HEADER });
+    expect(listed.status).toBe(200);
+    const page = await listed.json() as Record<string, any>;
+    expect(page).toMatchObject({ startingBalance: 1, players: [{ displayName: 'Ada', availableBalance: 0 }] });
+    expect(JSON.stringify(page)).not.toContain('+14155550177');
+    const playerId = page.players[0].playerId as string;
+    const endpoint = `${baseUrl}/api/admin/arcade/players/${encodeURIComponent(playerId)}/restore-starting-balance`;
+    const restored = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        ...ADMIN_HEADER, Origin: 'http://localhost', 'Content-Type': 'application/json',
+        'If-Match': `"arcade-config-${page.configVersion}"`, 'Idempotency-Key': 'restore-player-balance',
+      },
+      body: JSON.stringify({ reason: 'attendee needs another turn' }),
+    });
+    expect(restored.status).toBe(200);
+    expect(await restored.json()).toMatchObject({ restored: true, amountGranted: 1, availableBalance: 1 });
+    expect((await (await fetch(`${baseUrl}/api/admin/arcade/players`, { headers: ADMIN_HEADER })).json() as Record<string, any>).players).toEqual([]);
+  });
+
   it('routes signed-provider SMS commands through durable Arcade messaging when enabled', async () => {
     const { baseUrl, store, playerRuntime, api } = await harness({ playerMode: 'coin_only' });
     const enabled = settings('coin_only') as Record<string, any>;

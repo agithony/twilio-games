@@ -373,6 +373,17 @@ describe('Arcade browser UI', () => {
     expect(script).toContain("window.confirm(`Reset ${entry.displayName}? This cannot be undone.`)");
   });
 
+  it('shows inactive zero-coin players independently from the live ready roster', () => {
+    for (const id of ['player-recovery-panel','player-recovery-count','player-recovery-list','load-more-players']) {
+      expect(html).toContain(`id="${id}"`);
+    }
+    expect(script).toContain('`/api/admin/arcade/players?limit=100');
+    expect(script).toContain('/restore-starting-balance`');
+    expect(script).toContain("'If-Match':`\"arcade-config-${page.configVersion}\"`");
+    expect(script).toContain("requestOperatorReason('Restore starting coins'");
+    expect(script).not.toContain('restore-starting-balance`,{amount');
+  });
+
   it('does not wire browser speech synthesis into the Voice Racer display', () => {
     expect(racerMain).toContain('new Announcer({ sink: null');
     expect(racerMain).not.toContain('browserSpeechSink');

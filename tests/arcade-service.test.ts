@@ -685,6 +685,12 @@ describe('ArcadeService atomicity and idempotency', () => {
       queueEntryIds: [p1Entry, p2Joined.entry.id], matchId: started.matchId,
       idempotencyKey: 'match:complete-all', ...OPERATOR,
     });
+    const firstPage = await h.service.listPlayersNeedingCoins(1, null);
+    expect(firstPage.players).toHaveLength(1);
+    expect(firstPage.nextCursor).not.toBeNull();
+    const secondPage = await h.service.listPlayersNeedingCoins(1, firstPage.nextCursor);
+    expect(new Set([...firstPage.players, ...secondPage.players].map(player => player.playerId))).toEqual(new Set(['p1', 'p2']));
+    expect(secondPage.nextCursor).toBeNull();
   });
 });
 

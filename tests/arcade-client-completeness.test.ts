@@ -70,6 +70,7 @@ describe('Arcade client completeness', () => {
       'operator-overview', 'overview-event', 'overview-game', 'overview-players', 'overview-messaging', 'overview-display',
       'operator-tab-overview', 'operator-tab-live-event', 'operator-tab-messages', 'operator-tab-setup',
       'live-event', 'messages', 'setup', 'settings-savebar', 'settings-open-blocker', 'voice-number-fields',
+      'player-recovery-panel', 'player-recovery-list',
     ]) expect(arcadeHtml).toContain(`id="${id}"`);
     const overview = /function renderOperatorOverview\(\):void\{[\s\S]*?\n}/.exec(arcade)?.[0] ?? '';
     expect(overview).toContain('state.adminConfig');
