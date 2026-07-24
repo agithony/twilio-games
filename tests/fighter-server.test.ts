@@ -51,6 +51,21 @@ function latestState(client: Client): Message | undefined {
 }
 
 describe('FighterServer WebSocket authority and lifecycle', () => {
+  it('does not advance a paid station fight out of results', async () => {
+    const port=await start('paid-station-display-token');fighter!.setBrowserPlayerAdmission(code=>code!=='PAID');
+    const playerId=fighter!.voiceJoin('PAID','Ada')!;
+    const room=fighter!.findRoom('PAID')!;room.phase='results';
+
+    const display=await connect(port);
+    send(display,{type:'display_auth',roomCode:'PAID',token:'paid-station-display-token'});
+    send(display,{type:'spectate',roomCode:'PAID'});
+    await waitFor(display,message=>message.type==='fighter_state');
+    send(display,{type:'advance'});
+    await waitFor(display,message=>message.type==='error'&&message.code==='station_requeue_required');
+
+    expect(fighter!.voiceAdvance('PAID',playerId)).toBe(false);
+    expect(room.phase).toBe('results');
+  });
   it('requires the configured display token before granting host authority', async () => {
     const port = await start('secret'); const display = await connect(port);
     fighter!.setBrowserPlayerAdmission(() => false);

@@ -375,23 +375,6 @@ describe('Arcade messaging commands', () => {
     expect((await message(restarted, 'SM203', 'Hopper')).reply).toContain('work email');
   });
 
-  it('uses READY language and creates no wallet ledger in free play', async () => {
-    const h = await harness('coin_only', 'free');
-    const joined = await message(h.service, 'SM301', 'JOIN ARCADE-01 LANG en-US');
-    expect(joined.reply).toContain('first name');
-    expect((await message(h.service, 'SM302', 'Ada')).reply).toContain('Reply YES');
-    expect((await message(h.service, 'SM303', 'YES')).reply).toContain("You're set, Ada");
-    const ready = await message(h.service, 'SM304', 'READY');
-    expect(ready.reply).toContain("YOU'RE READY");
-    expect(ready.reply).toContain('Save the number on screen');
-    expect(ready.reply).not.toContain('we will text');
-    expect(h.store.snapshot().wallets[joined.playerId!]?.transactions).toEqual([]);
-    expect(h.store.snapshot().wallets[joined.playerId!]?.reservations).toEqual([]);
-    expect(Object.values(h.store.snapshot().stationReadyEntries)[0]?.reservationId).toBeNull();
-    expect((await message(h.service, 'SM305', 'STATUS')).reply)
-      .toBe("You're #1 in line for the next game.\nWatch the big screen. When VOTE appears, reply with the game number.");
-  });
-
   it('requires a fresh JOIN after the cabinet changes', async () => {
     const h = await harness('coin_only');
     await message(h.service, 'SM401', 'JOIN ARCADE-01 LANG en-US');
@@ -418,14 +401,14 @@ describe('Arcade messaging commands', () => {
     const leadToCoin = await harness('lead_capture');
     await message(leadToCoin.service, 'SM-MODE-101', 'JOIN ARCADE-01 LANG en-US');
     await message(leadToCoin.service, 'SM-MODE-102', 'Grace');
-    leadToCoin.setMode('coin_only', 'free');
+    leadToCoin.setMode('coin_only', 'per_player');
     expect((await message(leadToCoin.service, 'SM-MODE-103', 'JOIN ARCADE-01 LANG en-US')).reply)
       .toContain('Reply YES');
     expect((await message(leadToCoin.service, 'SM-MODE-104', 'READY')).reply)
       .toContain('Reply YES to accept');
     await message(leadToCoin.service, 'SM-MODE-105', 'YES');
-    expect((await message(leadToCoin.service, 'SM-MODE-106', 'READY')).reply)
-      .toContain("YOU'RE READY");
+    expect((await message(leadToCoin.service, 'SM-MODE-106', 'COIN')).reply)
+      .toContain('COIN IN');
   });
 
   it('does not record terms acceptance when acknowledgement is disabled', async () => {
@@ -597,8 +580,14 @@ describe('Arcade messaging commands', () => {
     ]);
   });
 
-  it('does not silently replenish a paid messaging player after their coin is used', async () => {
-    const h = await harness('coin_only', 'per_player', config => { config.coins.startingBalance = 1; });
+  it('requires a paid player to earn a new coin and queue again after completion', async () => {
+    const h = await harness('coin_only', 'per_player', config => {
+      config.coins.startingBalance = 1;
+      config.earning.challenges = [{
+        id:'requeue',title:'Requeue challenge',message:'Visit to earn another coin.',url:'https://www.twilio.com/docs',
+        rewardCoins:1,enabled:true,maxClaimsPerPlayer:1,displayOrder:0,startsAt:null,endsAt:null,
+      }];
+    });
     const joined = await message(h.service, 'SM-REP-001', 'JOIN ARCADE-01 LANG en-US');
     await message(h.service, 'SM-REP-002', 'Ada');
     await message(h.service, 'SM-REP-002B', 'YES');
@@ -641,10 +630,21 @@ describe('Arcade messaging commands', () => {
     expect(wallet.transactions.filter(transaction => transaction.type === 'operator_grant'))
       .toHaveLength(0);
     expect(wallet.reservations.filter(reservation => reservation.status === 'ACTIVE')).toHaveLength(0);
+
+    const more=await message(h.service,'SM-REP-005','MORE');
+    const link=/(http:\/\/localhost\/challenge\/\?locale=en-US#\S+)/.exec(more.reply)?.[1];
+    const token=decodeURIComponent(new URL(link!).hash.slice(1));
+    await h.service.visitChallengeFromPortal(token,'requeue');
+    await h.service.claimChallengeFromPortal(token,'requeue');
+    const rejoined=await message(h.service,'SM-REP-006','COIN');
+    expect(rejoined.reply).toContain('COIN IN');
+    const updated=h.store.snapshot().wallets[joined.playerId!]!;
+    expect(updated.transactions.filter(transaction=>transaction.type==='challenge_reward')).toHaveLength(1);
+    expect(updated.reservations.filter(reservation=>reservation.status==='ACTIVE')).toHaveLength(1);
   });
 
   it('prunes stale anonymous drafts in bounded batches while retaining active, economic, and lead players', async () => {
-    const h = await harness('lead_capture', 'free', undefined, {
+    const h = await harness('lead_capture', 'per_player', undefined, {
       retentionMs: 30 * 24 * 60 * 60 * 1000,
       pruneBatchSize: 1,
     });
@@ -703,7 +703,7 @@ describe('Arcade messaging commands', () => {
   });
 
   it('returns an idempotent capacity response before creating excess messaging identities', async () => {
-    const h = await harness('lead_capture', 'free', undefined, { identityCapacity: 2 });
+    const h = await harness('lead_capture', 'per_player', undefined, { identityCapacity: 2 });
     await message(h.service, 'SM-CAP-001', 'JOIN ARCADE-01', '+14155550201');
     await message(h.service, 'SM-CAP-002', 'JOIN ARCADE-01', '+14155550202');
     const rejected = await message(h.service, 'SM-CAP-003', 'JOIN ARCADE-01', '+14155550203');
@@ -737,7 +737,7 @@ describe('Arcade messaging commands', () => {
       .filter(receipt => receipt.command === 'CAPACITY').length).toBeLessThanOrEqual(100);
     expect(flooded.inboundMessages[providerKey('SM-CAP-001', '+14155550201')]).toBeDefined();
 
-    const fileGuarded = await harness('lead_capture', 'free', undefined, {
+    const fileGuarded = await harness('lead_capture', 'per_player', undefined, {
       stateAdmissionMaxBytes: 1,
     });
     const fileRejected = await message(

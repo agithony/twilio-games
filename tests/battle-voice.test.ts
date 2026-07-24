@@ -377,6 +377,7 @@ describe('BattleVoiceSession', () => {
 
     expect(said.some(t => /sparkmouse.*shellback/i.test(t) && /electric.*water/i.test(t))).toBe(true);
     expect(said.some(t => /you go first|your turn/i.test(t))).toBe(true);
+    expect(said.filter(t => /fight/i.test(t) && /guard|item|taunt/i.test(t))).toHaveLength(1);
   });
 
   it('on battle state start, tells the waiting caller the other monster goes first', () => {
@@ -393,6 +394,7 @@ describe('BattleVoiceSession', () => {
     s.onBattleStateChanged();
 
     expect(said.some(t => /sparkmouse goes first|wait for sparkmouse/i.test(t))).toBe(true);
+    expect(said.filter(t => /fight/i.test(t) && /guard|item|taunt/i.test(t))).toHaveLength(1);
   });
 
   it('saying FIGHT on your turn opens the server-synced fight menu and reads the four moves', () => {
@@ -416,6 +418,28 @@ describe('BattleVoiceSession', () => {
 
     expect(log).toContain('openFight');
     expect(said.some(t => /thunder jolt/i.test(t) && /static zap/i.test(t))).toBe(true);
+  });
+
+  it('opens FIGHT from an interim transcript and announces moves once on an empty final', () => {
+    const { deps, log, said } = fakeDeps({
+      snapshot: () => battleSnap({
+        phase: 'battle', myName: 'Ada', myMonsterId: 'sparkmouse', myMonsterName: 'Sparkmouse',
+        turn: 0, activeSide: 'a', activeMenu: 'root', whoseTurn: 'me',
+        myMoves: [
+          { id: 'sparkmouse.jolt', name: 'Thunder Jolt' },
+          { id: 'sparkmouse.zap', name: 'Static Zap' },
+        ],
+      }),
+    });
+    const session = new BattleVoiceSession(deps);
+    session.handleMessage(setup()); said.length = 0;
+
+    session.handleMessage(prompt('fight', false));
+    session.handleMessage(prompt('fight', false));
+    session.handleMessage(prompt('', true));
+
+    expect(log.filter(entry => entry === 'openFight')).toHaveLength(1);
+    expect(said.filter(text => /thunder jolt/i.test(text) && /static zap/i.test(text))).toHaveLength(1);
   });
 
   it('refuses an out-of-turn battle command with a wait cue instead of committing it', () => {
@@ -519,7 +543,7 @@ describe('BattleVoiceSession', () => {
     expect(log.some(l => l.includes('"kind":"guard"'))).toBe(true);
   });
 
-  it('drops a superseded LLM turn before it can execute stale work', async () => {
+  it('drops a superseded LLM turn when an interim fight command opens the move menu', async () => {
     let release!: () => void;
     let staleActionRan = false;
     const pending = new Promise<void>(r => { release = r; });
@@ -538,7 +562,7 @@ describe('BattleVoiceSession', () => {
     const s = new BattleVoiceSession(deps);
     s.handleMessage(setup());
     s.handleMessage(prompt('what should I do'));
-    s.handleMessage(prompt('guard'));
+    s.handleMessage(prompt('fight',false));
     release();
     await pending;
     await Promise.resolve();
@@ -691,14 +715,14 @@ describe('BattleVoiceSession', () => {
     expect(line).toMatch(/rematch/i);
   });
 
-  it('explains automatic station results without promising that a held scoreboard will advance', () => {
+  it('sends station players back to messaging and the queue without offering a rematch', () => {
     const {deps,said}=fakeDeps({snapshot:()=>battleSnap({
       phase:'results',myName:'Ada',myMonsterName:'Sparkmouse',foeName:'Bo',foeMonsterName:'Embertail',winnerName:'Ada',
     })});
     const session=new BattleVoiceSession(deps);session.setStationManaged(true);session.handleMessage(setup());said.length=0;
     session.onBattleEvent({kind:'battle_over',winner:'a',winnerName:'Ada'});
-    expect(said.join(' ')).toMatch(/automatically.*unless the booth holds/i);
-    expect(said.join(' ')).not.toMatch(/say rematch/i);
+    expect(said.join(' ')).toMatch(/check your Twilio Games instructions.*join the line again/i);
+    expect(said.join(' ')).not.toMatch(/rematch|automatically/i);
   });
 
   it('names monsters correctly for a side-b caller (event sides are absolute)', () => {

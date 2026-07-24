@@ -844,6 +844,10 @@ function parseSettingsObject(object: Record<string, unknown>): ArcadeConfigSetti
     invalid('$.channels', 'coin_only mode requires SMS or WhatsApp identity');
   }
   const postGame = parsePostGame(object.postGame);
+  const coins = parseCoins(object.coins);
+  if (arcade.mode !== 'off' && coins.chargePolicy !== 'per_player') {
+    invalid('$.coins.chargePolicy', 'Messaging Entry and Lead Capture require one coin per player');
+  }
   if (postGame.enabled) {
     for (const channel of postGame.channels) {
       if (!channels[channel]) invalid(`$.postGame.channels`, `${channel} must also be enabled in $.channels`);
@@ -853,7 +857,7 @@ function parseSettingsObject(object: Record<string, unknown>): ArcadeConfigSetti
     arcade,
     station: parseStation(object.station, arcade.mode),
     registration: parseRegistration(object.registration, arcade.mode),
-    coins: parseCoins(object.coins),
+    coins,
     earning: parseEarning(object.earning),
     queue: parseQueue(object.queue),
     channels,

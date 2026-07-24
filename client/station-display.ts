@@ -99,7 +99,7 @@ export function createStationDisplay(): StationDisplay {
       rail.status.textContent = latest.station.phase === 'RESULTS'
         ? latest.station.resultsHeld
           ?locale === 'pt-BR'?'Resultados mantidos pela cabine':'Results held by booth'
-          :locale === 'pt-BR'?'Resultados na tela · próxima rodada automática':'Results on screen · next round automatic'
+          :locale === 'pt-BR'?'Resultados na tela · jogadores entram novamente na fila':'Results on screen · players rejoin the line'
         : latest.station.phase === 'PLAYING'
         ? locale === 'pt-BR' ? 'Partida ao vivo · próxima fila aberta' : 'Match live · next pool open'
         : latest.station.phase === 'LAUNCHING'
@@ -200,7 +200,7 @@ function renderResultsFallback(root:HTMLElement,results:PublicStation['results']
   }
   const hold=document.createElement('p');hold.className='station-results-hold';hold.textContent=held
     ?(locale==='pt-BR'?'A cabine manteve o placar na tela.':'The booth is holding the scoreboard on screen.')
-    :(locale==='pt-BR'?'A próxima rodada continuará automaticamente.':'The next round continues automatically.');root.append(hold);root.hidden=false;
+    :(locale==='pt-BR'?'Para jogar novamente, entre de novo na fila.':'To play again, join the line again.');root.append(hold);root.hidden=false;
 }
 
 async function acknowledge(

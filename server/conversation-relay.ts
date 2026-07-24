@@ -119,6 +119,8 @@ export class ConversationRelayAdapter {
   private clockMs = 0;   // advanced from event cadence; monotonic enough for throttling
   private recapDone = false;   // one proactive results recap per race (reset on a new countdown/go)
   private pendingSpeech = new Set<Promise<void>>();
+  private lateRacingPromptUntil = 0;
+  private lateRacingPromptActive = false;
   private myFinishPlace: number | null = null;
   private lastMenuPrompt: { kind: 'enter_car_select' | 'enter_map_select'; at: number } | null = null;
   onGameEvent(ev: GameEvent): void {
@@ -127,6 +129,8 @@ export class ConversationRelayAdapter {
     if (ev.kind === 'go' || ev.kind === 'countdown') {
       this.recapDone = false;
       this.myFinishPlace = null;
+      this.lateRacingPromptUntil = 0;
+      this.lateRacingPromptActive = false;
     }
     if (ev.kind === 'enter_car_select' || ev.kind === 'enter_map_select') {
       if (this.lastMenuPrompt?.kind === ev.kind && this.clockMs - this.lastMenuPrompt.at < 1000) return;
@@ -140,23 +144,28 @@ export class ConversationRelayAdapter {
     }
     if (ev.kind === 'finish' && this.playerId && ev.playerId === this.playerId) {
       this.myFinishPlace = ev.place;
+      if (this.stationManaged) return;
     }
     // The final recap waits for race_over so the room is on the results screen and hostContext has the
     // actual standings. A finish event can fire earlier while other racers are still driving.
     if (ev.kind === 'race_over' && this.playerId && !this.recapDone) {
       this.recapDone = true;
+      this.lateRacingPromptUntil = Date.now() + 10_000;
+      const fallback = () => this.stationManaged
+        ? createTranslator(this.commandLocale, RACER_MESSAGES)('voice.waitOperator')
+        : raceOverLine(this.myFinishPlace, this.commandLocale);
       if (this.deps.converse && this.roomCode) {
         const epoch = ++this.turnEpoch;
         const prompt = createTranslator(this.commandLocale, RACER_MESSAGES)('voice.raceOverPrompt');
         let speech!: Promise<void>;
         speech = this.deps.converse(this.roomCode, this.playerId, prompt, this.commandLocale)
-          .then(reply => { if (epoch === this.turnEpoch) this.deps.say?.(reply || raceOverLine(this.myFinishPlace, this.commandLocale)); })
-          .catch(() => { this.deps.say?.(raceOverLine(this.myFinishPlace, this.commandLocale)); })
+          .then(reply => { if (epoch === this.turnEpoch) this.deps.say?.(reply || fallback()); })
+          .catch(() => { this.deps.say?.(fallback()); })
           .finally(() => this.pendingSpeech.delete(speech));
         this.pendingSpeech.add(speech);
         return;
       }
-      this.deps.say?.(raceOverLine(this.myFinishPlace, this.commandLocale));
+      this.deps.say?.(fallback());
       return;
     }
     const line = lineForEvent(ev, this.playerId, this.lineSeq, this.commandLocale);
@@ -165,6 +174,19 @@ export class ConversationRelayAdapter {
 
   async whenSpeechSettled(): Promise<void> {
     await Promise.allSettled([...this.pendingSpeech]);
+  }
+
+  ignoreLateRacingPrompt(final: boolean): void {
+    this.lateRacingPromptActive = !final;
+    if (final) this.firedIntents = [];
+  }
+
+  acceptsLateRacingPrompt(): boolean {
+    return Date.now() <= this.lateRacingPromptUntil;
+  }
+
+  hasActiveLateRacingPrompt(): boolean {
+    return this.lateRacingPromptActive;
   }
 
   handleMessage(raw: string): void {

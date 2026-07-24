@@ -572,41 +572,6 @@ describe('ArcadeService station journey', () => {
     expect(redemption?.configVersion).toBe(1);
   });
 
-  it('runs free play without grants, holds, redemptions, or wallet copy', async () => {
-    const h = await harness(stationConfig({ chargePolicy: 'free' }));
-    await identify(h, 'p1');
-    const inserted = await coin(h, 'p1');
-    expect(inserted.reservation).toBeNull();
-    expect(inserted.availableBalance).toBe(0);
-    expect(h.store.snapshot().wallets.p1?.transactions).toEqual([]);
-    expect(h.store.snapshot().wallets.p1?.reservations).toEqual([]);
-    h.advance();
-    const selecting = await h.service.closeStationRecruiting({
-      ...CONTROL, stationId: 'expo', expectedRevision: inserted.station.revision, idempotencyKey: 'free:close',
-    });
-    h.advance();
-    const locked = await h.service.selectStationGame({
-      ...CONTROL, stationId: 'expo', expectedRevision: selecting.station.revision,
-      game: 'racer', engineRoomCode: 'FREE-01', idempotencyKey: 'free:select',
-    });
-    h.advance();
-    const launching = await h.service.requestStationLaunch({
-      ...CONTROL, stationId: 'expo', expectedRevision: locked.station.revision, idempotencyKey: 'free:launch',
-    });
-    h.advance();
-    const ready = await h.service.markStationDisplayReady({
-      ...CONTROL, stationId: 'expo', expectedRevision: launching.station.revision,
-      matchId: launching.match!.id, launchGeneration: launching.match!.launchGeneration,
-      idempotencyKey: 'free:ready',
-    });
-    h.advance();
-    const playing = await h.service.startStationMatch({
-      ...CONTROL, stationId: 'expo', expectedRevision: ready.station.revision, idempotencyKey: 'free:start',
-    });
-    expect(playing.station.phase).toBe('PLAYING');
-    expect(h.store.snapshot().wallets.p1?.transactions).toEqual([]);
-  });
-
   it('requires a trusted controller for privileged station transitions', async () => {
     const h = await harness();
     await identify(h, 'p1');

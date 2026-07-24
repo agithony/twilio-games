@@ -182,6 +182,10 @@ export class GameServer {
         // per-race seed for a fresh course. Mid-race Enter is ignored (race already running).
         if (conn.roomCode) {
           const room = this.rooms.find(conn.roomCode);
+          if (room && this.stationResultsLocked(room)) {
+            this.send(conn, { type: 'error', code: 'station_requeue_required', message: 'station_requeue_required' });
+            break;
+          }
           if (room && (room.phase === 'lobby' || room.phase === 'finished')) {
             room.start();
             this.reportStartedOnce(room);
@@ -219,6 +223,10 @@ export class GameServer {
       case 'advance': {
         const room = conn.roomCode ? this.rooms.find(conn.roomCode) : undefined;
         if (room) {
+          if (this.stationResultsLocked(room)) {
+            this.send(conn, { type: 'error', code: 'station_requeue_required', message: 'station_requeue_required' });
+            break;
+          }
           const before = room.phase;
           room.advance();
           const after = room.phase;
@@ -247,7 +255,11 @@ export class GameServer {
         // Conversation Relay emit movement intents only), so it isn't a griefing vector — and a
         // host wanting to reroll the course mid-race is legitimate, not griefing.
         const room = conn.roomCode ? this.rooms.find(conn.roomCode) : undefined;
-        if (room) { this.reportAbandonedOnce(room); room.start(); this.reportStartedOnce(room); this.broadcastItems(conn.roomCode!); }
+        if (room && !this.allowBrowserPlayer(room.code)) {
+          this.send(conn, { type: 'error', code: 'station_requeue_required', message: 'station_requeue_required' });
+        } else if (room) {
+          this.reportAbandonedOnce(room); room.start(); this.reportStartedOnce(room); this.broadcastItems(conn.roomCode!);
+        }
         break;
       }
       case 'spectate': {
@@ -334,6 +346,7 @@ export class GameServer {
   /** Advance the flow (lobby→car_select→map_select→race). Returns true if the phase actually changed. */
   voiceAdvance(roomCode: string, spokenReplyPlayerId?: string): boolean {
     const room = this.rooms.find(roomCode); if (!room) return false;
+    if (this.stationResultsLocked(room)) return false;
     const before = room.phase;
     room.advance();
     const after = room.phase;
@@ -345,6 +358,10 @@ export class GameServer {
       else if (after === 'map_select') this.emitEvent(roomCode, { kind: 'enter_map_select', spokenReplyPlayerId });
     }
     return after !== before;
+  }
+
+  private stationResultsLocked(room: Room): boolean {
+    return !this.allowBrowserPlayer(room.code) && ['results', 'finished'].includes(room.phase);
   }
 
   /** Test seam: advance one room's simulation by `dt` (drives the same stepRoom path the loop uses),

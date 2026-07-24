@@ -84,7 +84,7 @@ describe('twimlConnectRelay', () => {
     });
     expect(x).toContain('ttsProvider="ElevenLabs"');
     expect(x).toContain('voice="voice-123"');
-    expect(x).toContain('welcomeGreeting="Welcome to Twilio Voice Racer!"');
+    expect(x).toContain('welcomeGreeting="Welcome to Twill-ee-oh Voice Racer!"');
   });
   it('sanitizes the Relay welcome greeting before XML escaping', () => {
     const x = twimlConnectRelay({

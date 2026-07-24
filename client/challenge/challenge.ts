@@ -25,7 +25,7 @@ if(portuguese){
   document.documentElement.lang='pt-BR';
   document.title='Ganhe moedas | Twilio Games';
   document.getElementById('title')!.textContent='Ganhe mais moedas.';
-  document.getElementById('description')!.textContent='Abra cada desafio abaixo. Quando voltar, confirme a recompensa. Visite todos para ganhar todas as moedas disponíveis.';
+  document.getElementById('description')!.textContent='Escolha um desafio para abri-lo e ganhar as moedas em um clique.';
 }
 
 async function request<T>(action:'status'|'visit'|'claim',challengeId?:string):Promise<T>{
@@ -93,33 +93,30 @@ function challengeCard(challenge:ChallengeCard):HTMLElement{
   const card=document.createElement('article');card.className=`challenge-card ${challenge.action}`;
   const reward=document.createElement('span');reward.className='reward';reward.textContent=`+${challenge.rewardCoins}`;
   const heading=document.createElement('h2');heading.textContent=challenge.title;
-  const message=document.createElement('p');message.textContent=challenge.message??(portuguese?'Visite este desafio e volte para confirmar suas moedas.':'Visit this challenge, then return to confirm your coins.');
+  const message=document.createElement('p');message.textContent=challenge.message??(portuguese?`Abra este desafio para ganhar +${challenge.rewardCoins} moedas.`:`Open this challenge to earn +${challenge.rewardCoins} coins.`);
   const button=document.createElement('button');button.type='button';
   button.textContent=challenge.action==='claimed'
     ?(portuguese?'Moedas recebidas':'Coins earned')
-    :challenge.action==='claim'
-      ?(portuguese?`Confirmar +${challenge.rewardCoins} moedas`:`Confirm +${challenge.rewardCoins} coins`)
-      :(portuguese?'Abrir desafio':'Open challenge');
+    :(portuguese?`Abrir desafio e ganhar +${challenge.rewardCoins} moedas`:`Open challenge and earn +${challenge.rewardCoins} coins`);
   button.disabled=challenge.action==='claimed';
-  button.addEventListener('click',()=>void act(challenge,button));
+  button.addEventListener('click',event=>{if(event.isTrusted)void act(challenge,button);});
   card.append(reward,heading,message,button);return card;
 }
 
 async function act(challenge:ChallengeCard,button:HTMLButtonElement):Promise<void>{
+  const challengeWindow=window.open('about:blank','_blank');
+  if(challengeWindow)challengeWindow.opener=null;
   button.disabled=true;
-  statusElement.textContent=challenge.action==='visit'
-    ?(portuguese?'Abrindo desafio...':'Opening challenge...')
-    :(portuguese?'Adicionando moedas...':'Adding coins...');
+  statusElement.textContent=portuguese?'Abrindo o desafio e adicionando moedas...':'Opening the challenge and adding coins...';
+  let destinationOpened=false;
   try{
-    if(challenge.action==='visit'){
-      const result=await request<{destinationUrl:string}>('visit',challenge.id);
-      if(typeof result.destinationUrl!=='string')throw new Error('Challenge destination is unavailable.');
-      location.href=result.destinationUrl;
-      return;
-    }
+    const result=await request<{destinationUrl:string}>('visit',challenge.id);
+    if(typeof result.destinationUrl!=='string')throw new Error('Challenge destination is unavailable.');
+    if(challengeWindow)challengeWindow.location.href=result.destinationUrl;
+    destinationOpened=true;
     await request('claim',challenge.id);
-    await refresh();
-  }catch(error){statusElement.textContent=error instanceof Error?error.message:'Reward failed.';button.disabled=false;}
+    if(challengeWindow)await refresh();else location.href=result.destinationUrl;
+  }catch(error){if(!destinationOpened)challengeWindow?.close();statusElement.textContent=error instanceof Error?error.message:'Reward failed.';button.disabled=false;}
 }
 
 function showError(message:string):void{

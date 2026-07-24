@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { WebSocket } from 'ws';
 import { GameServer } from '../server/game-server';
-import { HttpServer } from '../server/http-server';
+import { HttpServer, isLateRacerGameplayPrompt } from '../server/http-server';
 import type { ServerMessage } from '../shared/types';
 import { mkdir, unlink, writeFile } from 'node:fs/promises';
 
@@ -254,12 +254,50 @@ describe('GameServer integration', () => {
     expect(server.findRoom('ABORT')).toBeUndefined();
     expect(server.abortRoom('ABORT')).toBe(false);
   });
+
+  it('rejects every replay path once a paid station race reaches results', async () => {
+    const displayToken='paid-station-display-token';
+    server=new GameServer({port:0,displayToken});
+    server.setBrowserPlayerAdmission(code=>code!=='PAID');
+    server.setRoomConfigProvider(()=>({carCount:1,maps:['Silver Lake']}));
+    const port=await server.start();
+    const room=server.getOrCreateRoom('PAID');const player=room.addPlayer('Ada') as {playerId:string};
+    room.advance();room.selectCar(player.playerId,0);room.advance();room.selectMap('Silver Lake');room.advance();
+    for(let i=0;i<100&&room.phase!=='racing';i++)server.stepRoomForTest(room,0.1);
+    const display=connect(port);await display.open();
+    display.ws.send(JSON.stringify({type:'spectate',roomCode:'PAID',displayToken}));await wait(20);
+    display.ws.send(JSON.stringify({type:'restart'}));await wait(20);
+    expect(room.phase).toBe('racing');
+    for(let i=0;i<2000&&room.phase!=='results';i++)server.stepRoomForTest(room,0.1);
+    expect(room.phase).toBe('results');
+
+    for(const type of ['advance','ready','restart'])display.ws.send(JSON.stringify({type}));
+    await wait(50);
+
+    expect(room.phase).toBe('results');
+    expect(server.voiceAdvance('PAID',player.playerId)).toBe(false);
+    expect(display.inbox).toContainEqual(expect.objectContaining({type:'error',code:'station_requeue_required'}));
+    display.ws.close();
+  });
 });
 
 describe('HttpServer voice routing seams', () => {
   let http: HttpServer;
   let LB = '';
   afterEach(async () => { await http?.stop(); if (LB) { try { await unlink(LB); } catch {} } });
+
+  it('distinguishes late racing commands from explicit rematch requests', () => {
+    expect(isLateRacerGameplayPrompt('go')).toBe(true);
+    expect(isLateRacerGameplayPrompt('go now please')).toBe(true);
+    expect(isLateRacerGameplayPrompt('left right boost')).toBe(true);
+    expect(isLateRacerGameplayPrompt('go again')).toBe(false);
+    expect(isLateRacerGameplayPrompt('race again')).toBe(false);
+    expect(isLateRacerGameplayPrompt('rematch')).toBe(false);
+    expect(isLateRacerGameplayPrompt('vai agora', 'pt-BR')).toBe(true);
+    expect(isLateRacerGameplayPrompt('vai de novo', 'pt-BR')).toBe(false);
+    expect(isLateRacerGameplayPrompt('correr de novo', 'pt-BR')).toBe(false);
+    expect(isLateRacerGameplayPrompt('revanche', 'pt-BR')).toBe(false);
+  });
 
   it('does not capture Portuguese advance phrases as a caller name', async () => {
     http = new HttpServer({ port: 0, publicBaseUrl: 'http://localhost', validateSignatures: false });
@@ -293,6 +331,19 @@ describe('HttpServer voice routing seams', () => {
     const reply = http.directSelectionForTest(room, res.playerId, '(The race is over. Invite a rematch.)');
 
     expect(reply).toBeNull();
+    expect(room.phase).toBe('results');
+  });
+
+  it('does not let a delayed Racer host action cross into a newer results phase', async()=>{
+    http=new HttpServer({port:0,publicBaseUrl:'http://localhost',validateSignatures:false});await http.start();
+    const game=(http as unknown as {game:GameServer}).game;
+    game.setRoomConfigProvider(()=>({carCount:1,carNames:['Roadster'],maps:['Silver Lake']}));
+    const room=game.getOrCreateRoom('STALEHOST');const player=room.addPlayer('Ada') as {playerId:string};
+    const context=http.hostContextForTest(room,player.playerId);
+    room.advance();room.selectCar(player.playerId,0);room.advance();room.selectMap('Silver Lake');room.advance();
+    for(let i=0;i<2000&&room.phase!=='results';i++)game.stepRoomForTest(room,0.1);
+    expect(room.phase).toBe('results');
+    expect(context.startRace()).toBeNull();
     expect(room.phase).toBe('results');
   });
 

@@ -193,7 +193,13 @@ export class BattleServer {
         });
         break;
       case 'advance':
-        this.withRoom(conn, (room) => { room.advance(); this.flushEvents(room); this.pushState(room.code); });
+        this.withRoom(conn, (room) => {
+          if (!this.allowBrowserPlayer(room.code) && room.phase === 'results') {
+            this.send(conn, { type:'error',code:'station_requeue_required',message:'station_requeue_required' });
+            return;
+          }
+          room.advance(); this.flushEvents(room); this.pushState(room.code);
+        });
         break;
       case 'back':
         this.withRoom(conn, (room) => { room.back(); this.pushState(room.code); });
@@ -433,6 +439,7 @@ export class BattleServer {
   }
   voiceAdvance(code: string): void {
     const room = this.rooms.get(code); if (!room) return;
+    if (!this.allowBrowserPlayer(code) && room.phase === 'results') return;
     room.advance(); this.flushEvents(room); this.pushState(code);
   }
 

@@ -80,6 +80,7 @@ export class BattleVoiceSession {
   private commandLocale: SupportedLocale = DEFAULT_LOCALE;
   private authoritativeName: string | null = null;
   private stationManaged=false;
+  private interimFightOpened=false;
   private text: (key: MonstersMessageKey, values?: MessageValues) => string = createTranslator(DEFAULT_LOCALE, MONSTERS_MESSAGES);
 
   constructor(private deps: BattleVoiceDeps) {}
@@ -135,8 +136,20 @@ export class BattleVoiceSession {
         break;
       }
       case 'prompt': {
-        if (!msg.last || !this.code || !this.playerId) return;   // only act on the FINAL transcript
+        if (!this.code || !this.playerId) return;
         const text = msg.voicePrompt.trim();
+        if (!msg.last) {
+          if (text) this.openFightFromInterim(text);
+          return;
+        }
+        if (this.interimFightOpened) {
+          this.interimFightOpened = false;
+          const snap = this.deps.snapshot(this.code, this.playerId, this.commandLocale);
+          if (snap && (!text || this.isOpenFightCommand(text, snap))) {
+            this.speakMoveChoices(snap);
+            return;
+          }
+        }
         if (text) this.handleUtterance(text);
         break;
       }
@@ -171,7 +184,7 @@ export class BattleVoiceSession {
     // Every REQUIRED step of the flow has a deterministic, LLM-INDEPENDENT path here, so the game is
     // fully playable by voice even with the LLM off/slow. The LLM is only a fallback for chat/questions.
 
-    if(snap.phase==='results'&&this.stationManaged&&isAdvanceWord(text,this.commandLocale)){
+    if(snap.phase==='results'&&this.stationManaged){
       this.deps.say(this.text('voice.waitOperator'));return;
     }
     if (snap.phase === 'results' && (!snap.canRematch || this.draining || this.evQ.length > 0) && isAdvanceWord(text, this.commandLocale)) {
@@ -235,8 +248,7 @@ export class BattleVoiceSession {
         if (res.kind === 'openFight') {
           this.menuLevel = 'fight';
           this.deps.openFight(this.code!, this.playerId!);
-          const list = formatList(this.commandLocale, snap.myMoves.map((m, i) => `${i + 1}, ${m.name}`));
-          this.deps.say(this.text('voice.moves', { moves: list }));
+          this.speakMoveChoices(snap);
           return;
         }
         if (res.kind === 'back') { this.menuLevel = 'root'; this.deps.backMenu(this.code!, this.playerId!); return; }
@@ -248,6 +260,28 @@ export class BattleVoiceSession {
 
     // Everything else (chat, questions, ambiguous, or the LLM should decide) → the host brain.
     void this.converse(text);
+  }
+
+  private openFightFromInterim(text: string): void {
+    if (this.interimFightOpened || this.draining || this.evQ.length > 0) return;
+    const snap = this.deps.snapshot(this.code!, this.playerId!, this.commandLocale);
+    if (!snap || snap.phase !== 'battle' || snap.whoseTurn !== 'me' || snap.activeMenu !== 'root'
+      || !this.isOpenFightCommand(text, snap)) return;
+    this.interimFightOpened = true;
+    this.turnEpoch++;
+    this.menuLevel = 'fight';
+    this.deps.openFight(this.code!, this.playerId!);
+  }
+
+  private isOpenFightCommand(text: string, snap: BattleVoiceSnapshot): boolean {
+    return matchBattleAction(text, {
+      moves: snap.myMoves, potions: snap.myPotions, level: 'root',
+    }, this.commandLocale)?.kind === 'openFight';
+  }
+
+  private speakMoveChoices(snap: BattleVoiceSnapshot): void {
+    const list = formatList(this.commandLocale, snap.myMoves.map((move, index) => `${index + 1}, ${move.name}`));
+    this.deps.say(this.text('voice.moves', { moves: list }));
   }
 
   private looksLikeBattleCommand(text: string, snap: BattleVoiceSnapshot): boolean {
@@ -391,7 +425,7 @@ export class BattleVoiceSession {
       this.introDone = true;
       this.menuLevel = 'root';
       this.deps.say(this.battleIntroFor(snap));
-      this.deps.say(this.text('voice.howTo'));
+      if (snap.whoseTurn !== 'me') this.deps.say(this.text('voice.howTo'));
     }
     this.speakTurnCue(snap);
   }

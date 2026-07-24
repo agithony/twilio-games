@@ -19,6 +19,25 @@ function connectCollect(port: number): Promise<{ ws: WebSocket; msgs: Record<str
 const send = (ws: WebSocket, m: unknown) => ws.send(JSON.stringify(m));
 
 describe('BattleServer', () => {
+  it('does not advance a paid station battle out of results', async () => {
+    server=new BattleServer({port:0,displayToken:'paid-station-display-token'});
+    server.setBrowserPlayerAdmission(code=>code!=='PAID');
+    const port=await server.start();
+    const playerId=server.voiceJoin('PAID','Ada')!;
+    const room=server.findRoom('PAID')!;
+    (room as unknown as {_phase:string})._phase='results';
+
+    const display=await connectCollect(port);
+    send(display.ws,{type:'spectate',roomCode:'PAID',displayToken:'paid-station-display-token'});await wait(20);
+    send(display.ws,{type:'advance'});await wait(20);
+
+    server.voiceAdvance('PAID');
+
+    expect(room.phase).toBe('results');
+    expect(room.lobbyPlayers()).toContainEqual(expect.objectContaining({playerId}));
+    expect(display.msgs).toContainEqual(expect.objectContaining({type:'error',code:'station_requeue_required'}));
+    display.ws.close();
+  });
   it('sends the roster on connect', async () => {
     server = new BattleServer({ port: 0 });
     const port = await server.start();

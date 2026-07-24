@@ -500,6 +500,13 @@ describe('Twilio Games runtime configuration', () => {
     expect(parseArcadeConfig(free).coins).toMatchObject({ chargePolicy: 'free', startingBalance: 0 });
   });
 
+  it('requires coin charging for Messaging Entry and Lead Capture', () => {
+    for (const mode of ['coin_only','lead_capture'] as const) {
+      const candidate=rawConfig();candidate.arcade.mode=mode;candidate.coins.chargePolicy='free';candidate.coins.startingBalance=0;
+      expect(()=>parseArcadeConfig(candidate)).toThrow(/require one coin per player/);
+    }
+  });
+
   it('accepts documented milestone maxima and rejects values immediately above them', () => {
     const atLimit = rawConfig();
     atLimit.coins.startingBalance = 100;

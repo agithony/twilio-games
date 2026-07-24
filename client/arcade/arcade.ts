@@ -635,6 +635,7 @@ async function saveMode(event:Event):Promise<void>{
   if(voiceEn&&voiceEn===voicePt){setNotice('English and Portuguese voice numbers must be different.','error');return;}
   (settings.channels as AdminConfig['channels']).voiceNumbers={'en-US':voiceEn||null,'pt-BR':voicePt||null};
   const selectedMode=(settings.arcade as AdminConfig['arcade']).mode;
+  if(selectedMode!=='off'&&chargePolicy==='free'){setNotice('Messaging Entry and Lead Capture require one coin per player.','error');return;}
   const smsReady=(settings.channels as AdminConfig['channels']).sms&&Boolean(deploymentChannelNumber('sms'));
   const whatsappReady=(settings.channels as AdminConfig['channels']).whatsapp&&Boolean(deploymentChannelNumber('whatsapp'));
   if(selectedMode==='coin_only'&&!smsReady&&!whatsappReady){setNotice('Message entry needs Text message or WhatsApp turned on with a valid number.','error');return;}

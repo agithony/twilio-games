@@ -16,6 +16,12 @@ describe('speechSafeText', () => {
     expect(speechSafeText('esquerda / direita', 500, 'pt-BR')).toBe('esquerda ou direita');
   });
 
+  it('uses one consistent phonetic pronunciation for Twilio in every locale', () => {
+    expect(speechSafeText('Welcome to Twilio Voice Racer.')).toBe('Welcome to Twill-ee-oh Voice Racer.');
+    expect(speechSafeText('Tecnologia Twilio Conversation Relay.',500,'pt-BR'))
+      .toBe('Tecnologia Twill-ee-oh Conversation Relay.');
+  });
+
   it('drops empty/control-only speech', () => {
     expect(speechSafeText('\u0000\u200b\n')).toBe('');
   });

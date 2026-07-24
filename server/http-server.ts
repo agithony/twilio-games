@@ -41,6 +41,7 @@ import { DEFAULT_LOCALE, SUPPORTED_LOCALES, resolveLocale, type SupportedLocale 
 import { RACER_MESSAGES } from '../shared/i18n/racer';
 import { MONSTERS_MESSAGES } from '../shared/i18n/monsters';
 import { createTranslator, normalizeForMatching } from '../shared/i18n/translate';
+import { intentsFromTranscript } from './voice-intent';
 import {
   carName as localizedCarName,
   trackName as localizedTrackName,
@@ -77,6 +78,14 @@ export function isRacerAdvanceWord(spoken: string, locale: SupportedLocale = DEF
   return locale === 'pt-BR'
     ? /\b(comecar|iniciar|proximo|proxima|continuar|pronto|pronta|revanche|correr|corrida|de novo|correr de novo|vamos correr|sim)\b/.test(text)
     : /\b(start|begin|go|next|continue|ready|race|rematch|again|race again|go again|yes)\b/.test(text);
+}
+
+export function isLateRacerGameplayPrompt(spoken: string, locale: SupportedLocale = DEFAULT_LOCALE): boolean {
+  const text = normalizeForMatching(spoken, locale);
+  const explicitRematch = locale === 'pt-BR'
+    ? /\b(revanche|de novo|correr de novo|vamos correr|sim)\b/.test(text)
+    : /\b(rematch|again|race again|go again|yes)\b/.test(text);
+  return !explicitRematch && intentsFromTranscript(spoken, locale).length > 0;
 }
 
 interface BattleVoiceCallBinding {
@@ -679,7 +688,20 @@ export class HttpServer {
         } catch { ws.close(1008, 'unauthorized relay'); return; }
       }
       try {
-        const type = JSON.parse(raw)?.type;
+        const frame = JSON.parse(raw);
+        const type = frame?.type;
+        const roomCode = adapter.boundRoomCode;
+        const racerResultsPrompt = type === 'prompt' && route === 'racer'
+          && roomCode !== null && ['results', 'finished'].includes(this.game.findRoom(roomCode)?.phase ?? '');
+        const lateRacerCommand = racerResultsPrompt && (adapter.hasActiveLateRacingPrompt()
+          || (adapter.acceptsLateRacingPrompt()
+            && isLateRacerGameplayPrompt(String(frame?.voicePrompt ?? ''), relayLocale)));
+        // A final ASR frame can arrive after the finish event. It still belongs to the race and must
+        // not clear the recap or reinterpret "go" as a rematch that skips the scoreboard.
+        if (lateRacerCommand) {
+          adapter.ignoreLateRacingPrompt(frame?.last === true);
+          return;
+        }
         if (type === 'prompt' || type === 'interrupt') clearRelayTextQueue(ws);
       } catch { /* adapter will ignore bad frames */ }
       if (route === null) route = this.pickVoiceGame(raw);
@@ -1249,6 +1271,7 @@ export class HttpServer {
     const controls = text('voice.controlsIntro');
     const canonicalCars = this.roomConfigCache.carNames;
     const canonicalMaps = room.mapChoices;
+    const capturedPhase = room.phase;
     const cars = canonicalCars.map(name => localizedCarName(locale, name));
     const maps = canonicalMaps.map(name => localizedTrackName(locale, name));
     const carChoices = canonicalCars.map(name => localizedCarAliases(name).join(' '));
@@ -1307,6 +1330,7 @@ export class HttpServer {
         return text('voice.voteTrack', { map: localizedTrackName(locale, room.mapChoices[i]!) });
       },
       startRace: () => {
+        if (room.phase !== capturedPhase) return null;
         // Guard against SKIPPING a step: don't leave car_select until THIS caller has actually picked
         // a car (the "it jumped to track select while I was still choosing" bug). The LLM is also told
         // this in the prompt; this is the hard backstop.
@@ -1358,11 +1382,11 @@ export class HttpServer {
     if(locale==='pt-BR'){
       const race=context.myPlace?`Você terminou esta corrida na posição ${context.myPlace}.`:'A corrida terminou.';
       const board=rank&&count?`Seu tempo ficou em ${rank}º lugar entre ${count} corridas concluídas nesta pista, ${map}.`:`Veja a classificação da pista na tela.`;
-      return `${race} ${board} ${context.stationManaged?'A próxima rodada continua automaticamente, a menos que a cabine segure o placar.':'Diga revanche quando quiser correr novamente.'}`;
+      return `${race} ${board} ${context.stationManaged?'Confira as instruções do Twilio Games e entre novamente na fila quando quiser jogar.':'Diga revanche quando quiser correr novamente.'}`;
     }
     const race=context.myPlace?`You finished this race in place ${context.myPlace}.`:'The race is complete.';
     const board=rank&&count?`Your run ranks number ${rank} out of ${count} completed runs all-time on ${map}.`:'Check the track leaderboard on the big screen.';
-    return `${race} ${board} ${context.stationManaged?'The next round continues automatically unless the booth holds the scoreboard.':'Say rematch when you want to race again.'}`;
+    return `${race} ${board} ${context.stationManaged?'Check your Twilio Games instructions, then join the line again when you want to play.':'Say rematch when you want to race again.'}`;
   }
 
   /** Test seam for verifying voice host context. */

@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { WebSocket } from 'ws';
 import { HttpServer } from '../server/http-server';
+import type { GameServer } from '../server/game-server';
 
 let srv: HttpServer;
 afterEach(async () => { await srv?.stop(); });
@@ -68,6 +69,61 @@ describe('voice integration (fake Conversation Relay client)', () => {
     await ended;
     closeWs(voice);
   });
+
+  it('keeps the Racer scoreboard and recap when a final go transcript arrives after the finish', async () => {
+    srv = new HttpServer({ port:0,publicBaseUrl:'http://localhost',validateSignatures:false,standaloneVoiceEnabled:true });
+    const port = await srv.start();
+    const game = (srv as unknown as { game: GameServer }).game;
+    game.setRoomConfigProvider(() => ({ carCount:1,carNames:['Roadster'],maps:['Silver Lake'] }));
+
+    const displayMessages:Record<string,unknown>[]=[];
+    const display=new WebSocket(`ws://127.0.0.1:${port}/game?display=1`);
+    display.on('message',data=>displayMessages.push(JSON.parse(data.toString())));
+    await new Promise<void>((resolve,reject)=>{display.once('open',resolve);display.once('error',reject);});
+    display.send(JSON.stringify({type:'spectate',roomCode:'LATEGO'}));
+
+    const spoken:string[]=[];
+    const voice=new WebSocket(`ws://127.0.0.1:${port}/voice`);
+    voice.on('message',data=>{
+      const message=JSON.parse(data.toString()) as Record<string,unknown>;
+      if(message.type==='text'){
+        spoken.push(String(message.token));
+        voice.send(JSON.stringify({type:'info',name:'tokensPlayed',value:message.token}));
+      }
+    });
+    await new Promise<void>((resolve,reject)=>{voice.once('open',resolve);voice.once('error',reject);});
+    try {
+      voice.send(JSON.stringify({type:'setup',callSid:'CA-late-go',customParameters:{roomCode:'LATEGO'}}));
+      await wait(50);
+
+      const room=game.findRoom('LATEGO')!;
+      const player=room.lobbyPlayers()[0]!;
+      room.advance();room.selectCar(player.playerId,0);room.advance();room.selectMap('Silver Lake');room.advance();
+      for(let i=0;i<100&&room.phase!=='racing';i++)game.stepRoomForTest(room,0.1);
+      expect(room.phase).toBe('racing');
+      voice.send(JSON.stringify({type:'interrupt',utteranceUntilInterrupt:'',durationUntilInterruptMs:0}));
+      await wait(20);spoken.length=0;displayMessages.length=0;
+      for(let i=0;i<2000&&room.phase!=='results';i++)game.stepRoomForTest(room,0.1);
+      expect(room.phase).toBe('results');
+
+      voice.send(JSON.stringify({type:'prompt',voicePrompt:'go now',last:false}));
+      voice.send(JSON.stringify({type:'prompt',voicePrompt:'go now please',last:true}));
+      await wait(5000);
+
+      expect(room.phase).toBe('results');
+      const resultsIndex=displayMessages.findIndex(message=>message.type==='results');
+      expect(resultsIndex).toBeGreaterThanOrEqual(0);
+      expect(displayMessages.slice(resultsIndex+1)).not.toContainEqual(expect.objectContaining({type:'select_state',phase:'car_select'}));
+      expect(spoken.join(' ')).toMatch(/finished this race|race is complete|track leaderboard/i);
+      expect(spoken.join(' ')).not.toMatch(/choose a car/i);
+
+      voice.send(JSON.stringify({type:'prompt',voicePrompt:'go again',last:true}));
+      await wait(100);
+      expect(room.phase).toBe('car_select');
+    } finally {
+      closeWs(voice);closeWs(display);
+    }
+  },20_000);
 
   it('routes standalone calls from the explicit shared display, not a later attendee socket', async () => {
     srv = new HttpServer({

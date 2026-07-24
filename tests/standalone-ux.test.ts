@@ -50,7 +50,7 @@ describe('standalone and station display UX', () => {
     expect(stationDisplay).toContain("latest?.station.phase==='PLAYING'||latest?.station.phase==='RESULTS'");
   });
 
-  it('requires a challenge visit before explicit reward confirmation', () => {
+  it('earns challenge coins from one trusted click after opening the destination', () => {
     const html = readClient('challenge/index.html');
     const script = readClient('challenge/challenge.ts');
     expect(html).toContain('id="challenge-list"');
@@ -58,7 +58,12 @@ describe('standalone and station display UX', () => {
     expect(script).toContain("request<PortalStatus>('status')");
     expect(script).toContain("request<{destinationUrl:string}>('visit'");
     expect(script).toContain("request('claim',challenge.id)");
+    expect(script).toContain('Open challenge and earn +${challenge.rewardCoins} coins');
+    expect(script).toContain("window.open('about:blank','_blank')");
+    expect(script).toContain('if(event.isTrusted)');
     expect(script).not.toMatch(/dispatchEvent|button\.click\(|form\.submit\(/);
     expect(script.indexOf('history.replaceState')).toBeLessThan(script.indexOf("request<PortalStatus>('status')"));
+    expect(script.indexOf("window.open('about:blank','_blank')")).toBeLessThan(script.indexOf("request<{destinationUrl:string}>('visit'"));
+    expect(script.indexOf("request<{destinationUrl:string}>('visit'")).toBeLessThan(script.indexOf("request('claim',challenge.id)"));
   });
 });

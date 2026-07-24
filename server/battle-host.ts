@@ -116,7 +116,7 @@ export function buildBattleSystemPrompt(ctx: BattleHostContext, locale: Supporte
   }
   if (ctx.phase === 'results') {
     const iWon = ctx.myMonster && ctx.winnerName && ctx.myName && ctx.winnerName.includes(ctx.myName);
-    if(ctx.stationManaged)lines.push(`The battle is over${ctx.winnerName?` — ${ctx.winnerName} won`:''}. Give one concise result line, then say the next round continues automatically unless the booth holds the scoreboard. Do not invite a rematch.`);
+    if(ctx.stationManaged)lines.push(`The battle is over${ctx.winnerName?` — ${ctx.winnerName} won`:''}. Give one concise result line, then tell the caller to check their Twilio Games instructions and join the line again. Do not invite a rematch.`);
     else if (iWon) lines.push('The caller just WON! React with genuine excitement and celebrate them by name — thrilled, but still conversational (one exclamation, no ALL-CAPS shouting). Then invite a rematch (start a new battle if they say yes).');
     else lines.push(`The battle is over${ctx.winnerName ? ` — ${ctx.winnerName} won` : ''}. Give an upbeat, encouraging reaction and invite a rematch (start a new battle if they say yes).`);
   }

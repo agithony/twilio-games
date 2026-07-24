@@ -261,6 +261,16 @@ describe('ConversationRelayAdapter', () => {
     expect(said).toEqual(['Photo finish. What a race!']);
   });
 
+  it('uses requeue guidance instead of replay copy when a station recap falls back', async () => {
+    const room=fakeRoom();const said:string[]=[];
+    const adapter=new ConversationRelayAdapter({findOrCreateRoom:()=>room,say:text=>said.push(text),converse:async()=>null});
+    adapter.setStationManaged(true);
+    adapter.handleMessage(JSON.stringify({type:'setup',callSid:'CA-station',customParameters:{roomCode:'4821'}}));
+    said.length=0;adapter.onGameEvent({kind:'race_over'});await adapter.whenSpeechSettled();
+    expect(said.join(' ')).toMatch(/Twilio Games instructions.*join the line again/i);
+    expect(said.join(' ')).not.toMatch(/rematch|try again|run it back/i);
+  });
+
   it('does not speak repeated menu-entry prompts back to back', () => {
     const room = fakeRoom(); const said: string[] = [];
     const a = new ConversationRelayAdapter({ findOrCreateRoom: () => room, say: (t) => said.push(t) });

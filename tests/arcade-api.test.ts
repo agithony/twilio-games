@@ -538,10 +538,6 @@ describe('Arcade API', () => {
     const cabinetChange = settings('coin_only') as Record<string, any>;
     cabinetChange.arcade.cabinetId = 'ARCADE-02';
     lockedCandidates.push(['cabinet', cabinetChange]);
-    const chargePolicyChange = settings('coin_only') as Record<string, any>;
-    chargePolicyChange.coins.chargePolicy = 'free';
-    chargePolicyChange.coins.startingBalance = 0;
-    lockedCandidates.push(['charge-policy', chargePolicyChange]);
     const channelsChange = settings('coin_only') as Record<string, any>;
     channelsChange.channels.voiceNumbers['en-US'] = '+14155550100';
     channelsChange.channels.voiceNumbers['pt-BR'] = '+551155555555';

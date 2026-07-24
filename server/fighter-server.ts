@@ -166,6 +166,9 @@ export class FighterServer {
       case 'command': if (conn.playerId) room.command(conn.playerId, msg.command); break;
       case 'advance':
         if (!isHost) this.rejectAuthority(conn);
+        else if (!this.allowBrowserPlayer(room.code) && room.phase === 'results') {
+          this.send(conn, { type:'error',code:'station_requeue_required',message:'Join the queue again for another match.' });
+        }
         else if (!room.advance()) this.send(conn, { type: 'error', code: 'not_ready', message: 'Complete the current selection first.' });
         break;
       case 'ready':
@@ -276,6 +279,7 @@ export class FighterServer {
   }
   voiceAdvance(code: string, id: string): boolean {
     code = canonicalRoomCode(code); const room = this.rooms.get(code);
+    if (!this.allowBrowserPlayer(code) && room?.phase === 'results') return false;
     const ok = !!room?.canControlSetup(id) && room.advance();
     if (room?.phase === 'loading') this.pushHostIdentity(code);
     this.pushState(code); return ok;

@@ -8,7 +8,7 @@ describe('Dub link shortener', () => {
     expect(createDubLinkShortener({ apiKey: 'dub-key', domain: 'not a host' })).toBeUndefined();
   });
 
-  it('upserts a deterministic private link and validates the returned destination', async () => {
+  it('creates a short private challenge link and validates the returned destination', async () => {
     const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body)) as Record<string, string>;
       return new Response(JSON.stringify({
@@ -17,18 +17,53 @@ describe('Dub link shortener', () => {
       }), { status: 200, headers: { 'Content-Type': 'application/json' } });
     });
     const fetchImpl = fetchMock as unknown as typeof fetch;
-    const shorten = createDubLinkShortener({ apiKey: 'dub-key', domain: 'go.example.com', folderId: 'folder-1', fetchImpl })!;
+    const shorten = createDubLinkShortener({
+      apiKey: 'dub-key', domain: 'go.example.com', folderId: 'folder-1', fetchImpl,
+      generateKey: () => 'A3k9Q7xB',
+    })!;
     const destination = 'https://games.example.com/challenge/?locale=en-US#opaque-token';
     const first = await shorten(destination, 'challenge-provider-key');
-    const second = await shorten(destination, 'challenge-provider-key');
-    expect(first).toBe(second);
-    expect(first).toMatch(/^https:\/\/go\.example\.com\/challenge-provider-key-[a-f0-9]{16}$/);
+    expect(first).toBe('https://go.example.com/challenge-A3k9Q7xB');
     const [, init] = fetchMock.mock.calls[0]!;
-    expect(init).toMatchObject({ method: 'PUT', redirect: 'error' });
+    expect(init).toMatchObject({ method: 'POST', redirect: 'error' });
     expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer dub-key');
     expect(JSON.parse(String(init?.body))).toMatchObject({
       url: destination, domain: 'go.example.com', folderId: 'folder-1', doIndex: false, trackConversion: false,
     });
+  });
+
+  it('retries a short-key collision without overwriting another link', async () => {
+    const keys=['Taken123','Fresh456'];let creates=0;
+    const fetchImpl=vi.fn(async(input:string|URL|Request,init?:RequestInit)=>{
+      if(String(input).includes('/info?'))return new Response('{}',{status:404});
+      const body=JSON.parse(String(init?.body)) as Record<string,string>;
+      if(creates++===0)return new Response('{}',{status:409});
+      return new Response(JSON.stringify({url:body.url,shortLink:`https://${body.domain}/${body.key}`}),{status:201});
+    }) as unknown as typeof fetch;
+    const shorten=createDubLinkShortener({apiKey:'dub-key',domain:'go.example.com',fetchImpl,generateKey:()=>keys.shift()!})!;
+    expect(await shorten('https://games.example.com/challenge/#token','challenge-provider-key'))
+      .toBe('https://go.example.com/challenge-Fresh456');
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+
+  it('returns the existing destination for a concurrent deterministic create', async()=>{
+    const destination='https://games.example.com/challenge/#token';
+    const fetchImpl=vi.fn(async(input:string|URL|Request,init?:RequestInit)=>{
+      if(String(input).includes('/info?'))return new Response(JSON.stringify({url:destination,shortLink:'https://go.example.com/challenge-Stable12'}),{status:200});
+      return new Response('{}',{status:409});
+    }) as unknown as typeof fetch;
+    const shorten=createDubLinkShortener({apiKey:'dub-key',domain:'go.example.com',fetchImpl,generateKey:()=> 'Stable12'})!;
+    expect(await shorten(destination,'challenge-provider-key')).toBe('https://go.example.com/challenge-Stable12');
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it('resolves a concurrent 422 create through the exact short key',async()=>{
+    const destination='https://games.example.com/challenge/#token';
+    const fetchImpl=vi.fn(async(input:string|URL|Request)=>String(input).includes('/info?')
+      ?new Response(JSON.stringify({url:destination,shortLink:'https://go.example.com/challenge-Stable12'}),{status:200})
+      :new Response('{}',{status:422})) as unknown as typeof fetch;
+    const shorten=createDubLinkShortener({apiKey:'dub-key',domain:'go.example.com',fetchImpl,generateKey:()=> 'Stable12'})!;
+    expect(await shorten(destination,'challenge-provider-key')).toBe('https://go.example.com/challenge-Stable12');
   });
 
   it('fails closed to the caller fallback for malformed Dub responses', async () => {

@@ -552,8 +552,9 @@ function showResult(winner: FighterId): void {
     return;
   }
   const player = state?.players.find(row => row.side === winner); const fighter = roster.find(row => row.id === player?.fighterId);
+  rematch.hidden = stationDisplay.active;
   resultTitle.textContent = t('result.wins', { name: fighter ? localizedFighterName(fighter) : winner }); result.hidden = false; setFightControlsEnabled(false);
-  if (!result.contains(document.activeElement)) requestAnimationFrame(() => rematch.focus());
+  if (!stationDisplay.active && !result.contains(document.activeElement)) requestAnimationFrame(() => rematch.focus());
 }
 function setFightControlsEnabled(enabled: boolean): void { for (const button of commandButtons) button.disabled = !enabled; }
 function applyMapTheme(mapId: string): void {

@@ -325,7 +325,7 @@ export class Screens {
         <div class="res-list"><div class="col-label">${this.text('screen.results.thisRace')}</div>${rows}</div>
         ${board}
       </div>
-      <div class="scr-foot">${this.text('screen.results.againFooter')}</div>`;
+      <div class="scr-foot">${this.text(this.stationManaged?'screen.results.stationFooter':'screen.results.againFooter')}</div>`;
   }
 
   private boardHtml(map: string | null, entries: GlobalEntry[], carNameFor: (i: number) => string): string {
