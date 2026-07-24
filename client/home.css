@@ -51,7 +51,7 @@ html[data-theme="light"] .brand-lockup img, html[data-theme="light"] .countdown-
 .join-panel { min-height:0;height:100%;display:grid;grid-template-rows:auto auto auto minmax(0,1fr) auto;overflow:hidden;padding:clamp(20px,2vw,30px);border:1px solid var(--th-border);border-radius:26px;background:var(--th-card) }
 .join-heading strong { display: block; margin-top: 6px; font-size: clamp(30px,3vw,46px); font-weight: 800; letter-spacing: .02em; line-height: 1; }
 .join-qr { width:auto;height:100%;max-width:100%;max-height:min(330px,38vh);aspect-ratio:1;align-self:center;justify-self:center;margin:12px 0;padding:12px;border-radius:22px;background:#fff; }
-.join-qr canvas { display: block; width: 100% !important; height: 100% !important; }
+.join-qr img { display:block;width:100%;height:100%;object-fit:contain; }
 .join-steps { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
 .join-steps li { display:flex;align-items:center;gap:10px;max-height:3em;overflow:hidden;color:var(--th-label);font-size:14px;line-height:1.35; }
 .join-steps li .step-number { width: 25px; height: 25px; display: grid; flex: 0 0 auto; place-items: center; border: 1px solid var(--th-border); border-radius: 50%; color: #EF223A; font: 12px 'Twilio Sans Mono', monospace; }
@@ -126,7 +126,7 @@ html[data-theme="light"] .brand-lockup img, html[data-theme="light"] .countdown-
 .persistent-join div { display:flex;flex-direction:column;gap:3px; }
 .persistent-join span { color:#FD7685;font:10px 'Twilio Sans Mono',monospace;text-transform:uppercase;letter-spacing:.06em; }
 .persistent-join strong { font:800 20px/1 'Twilio Sans Display',sans-serif; }
-.persistent-join canvas { width:96px!important;height:96px!important;padding:5px;border-radius:9px;background:#fff; }
+.persistent-join img { width:96px;height:96px;padding:5px;border-radius:9px;background:#fff;object-fit:contain; }
 @media (max-height:820px) and (min-width:901px) {
   .join-panel { padding:16px 20px; }
   .join-heading strong { font-size:clamp(28px,3vw,38px); }
@@ -219,7 +219,7 @@ html[data-theme="light"] .brand-lockup img, html[data-theme="light"] .countdown-
   .standalone-future-game p { display:none; }
   .persistent-join { right:10px;bottom:10px;padding:8px;gap:8px; }
   .persistent-join div { display:none; }
-  .persistent-join canvas { width:76px!important;height:76px!important; }
+  .persistent-join img { width:76px;height:76px; }
 }
 @media (max-width:600px) and (min-height:601px) {
   .standalone-view { overflow-y:auto; }

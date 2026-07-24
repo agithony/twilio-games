@@ -139,17 +139,12 @@ describe('ArcadeStationRuntime', () => {
     await runtime.markEngineCompleted('racer', activeMatch.engineRoomCode);
     await runtime.flush();
     expect((await h.service.getStation('expo'))?.station.phase).toBe('RESULTS');
-    expect(h.scheduled()).toBeNull();
+    expect(h.scheduled()?.delayMs).toBe(10_000);
     h.setTime(T0 + 144_000);
-    await runtime.flush();
-    const results = await h.service.getStation('expo');
-    expect(results?.station.phase).toBe('RESULTS');
-    await h.service.advanceStationResults({
-      stationId: 'expo', expectedRevision: results!.station.revision,
-      idempotencyKey: 'operator-close-results', authorization: AUTHORIZATION,
-    });
+    h.fire();
     await runtime.flush();
     expect((await h.service.getStation('expo'))?.station.phase).toBe('ATTRACT');
+    expect(h.removedMatches).toContainEqual({game:'racer',roomCode:activeMatch.engineRoomCode});
     await runtime.stop();
   });
 
@@ -529,6 +524,10 @@ describe('ArcadeStationRuntime', () => {
     expect((await h.service.getWalletStatus('p1'))).toMatchObject({
       reservedBalance: 0, availableBalance: 2,
     });
+    expect(h.scheduled()?.delayMs).toBe(10_000);
+    const recovered=await h.service.getStation('expo');
+    await h.service.holdStationResults({stationId:'expo',expectedRevision:recovered!.station.revision,idempotencyKey:'hold-results',authorization:AUTHORIZATION,reason:'hold for review'});
+    await restarted.flush();
     expect(h.scheduled()).toBeNull();
     await restarted.stop();
   });

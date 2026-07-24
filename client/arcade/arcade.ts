@@ -1,7 +1,7 @@
 import QRCode from 'qrcode';
 import { updateThemeToggleIcon } from '../icon-controls';
 import { locale as resolvedLocale } from '../i18n';
-import { effectivePublicVisitorBaseUrl, rejectDisplayToken, storeDisplayToken } from '../station-client';
+import { effectivePublicVisitorBaseUrl, rejectDisplayToken, resolveStationQrImage, stationQrAsset, storeDisplayToken } from '../station-client';
 
 type ArcadeMode = 'off' | 'coin_only' | 'lead_capture';
 type PlayableGame = 'racer' | 'monsters' | 'fighter';
@@ -24,6 +24,7 @@ interface OperatorStationView {
   match:{game:PlayableGame;phase:string;participantReadyEntryIds:string[];overflowReadyEntryIds:string[];launchGeneration:number;launchRequestedAt:string|null;displayReadyAt:string|null;startedAt:string|null;completedAt:string|null;result:{source:'ENGINE'|'RECOVERY'|'LEGACY_UNAVAILABLE';participants:Array<{readyEntryId:string;rank:number|null;completed:boolean;won:boolean|null;score:number|null;durationSeconds:number|null}>}|null}|null;
   readyEntries:Array<{id:string;roundId:string;displayName:string;originalReadyAt:string;status:string;overflowOrdinal:number|null;availableBalance:number;connected:boolean}>;
   recentControls:Array<{id:string;action:string;actorKind:'operator'|'system';actorSubject:string;reason:string;fromRevision:number;toRevision:number;occurredAt:string}>;
+  resultsHeld:boolean;
 }
 interface OperatorPlayerRecoveryItem {playerId:string;displayName:string;identities:Array<{channel:'sms'|'whatsapp'|'browser';maskedAddress:string}>;availableBalance:number;lastActivityAt:string;lastReadyStatus:string|null;registrationState:'complete'|'in_progress';canRestoreStartingBalance:boolean;canReset:boolean;blockedReason:string|null;}
 interface OperatorPlayerRecoveryPage {configVersion:number;startingBalance:number;players:OperatorPlayerRecoveryItem[];nextCursor:string|null;}
@@ -96,9 +97,9 @@ el('request-launch').addEventListener('click',()=>void stationAction('launch'));
 el('fail-launch').addEventListener('click',()=>void stationAction('fail'));
 el('emergency-complete').addEventListener('click',()=>void stationAction('complete'));
 el('advance-results').addEventListener('click',()=>void stationAction('advance'));
+el('hold-results').addEventListener('click',()=>void stationAction('hold'));
 el('open-station-reset').addEventListener('click',()=>openStationReset());
 el('cancel-station-reset').addEventListener('click',cancelStationReset);
-el<HTMLInputElement>('station-reset-confirmation').addEventListener('input',renderResetConfirmation);
 el<HTMLFormElement>('station-reset-form').addEventListener('submit',event=>{event.preventDefault();void stationAction('reset');});
 el<HTMLDialogElement>('station-reset-dialog').addEventListener('cancel',event=>{event.preventDefault();cancelStationReset();});
 el('review-preserved-flow').addEventListener('click',()=>activateOperatorTab('live-event',true,true));
@@ -273,7 +274,9 @@ function setLabel(name:string,label:string):void{
 
 async function renderPlayerQr():Promise<void>{
   if(!state.config)return;const base=effectivePublicVisitorBaseUrl(state.deployment?.publicBaseUrl);const url=new URL('/join',base);url.searchParams.set('station',state.config.arcade.cabinetId);url.searchParams.set('locale',resolvedLocale);const value=url.toString();el('player-url').textContent=value;
-  try{el<HTMLImageElement>('player-qr').src=await QRCode.toDataURL(value,{width:520,margin:1,color:{dark:'#000D25',light:'#FFFFFF'},errorCorrectionLevel:'M'});}catch{el<HTMLImageElement>('player-qr').removeAttribute('src');}
+  const custom=stationQrAsset(resolvedLocale,state.config.arcade.cabinetId,base);
+  const qr=await resolveStationQrImage(custom,()=>QRCode.toDataURL(value,{width:520,margin:1,color:{dark:'#000D25',light:'#FFFFFF'},errorCorrectionLevel:'M'}));
+  if(qr)el<HTMLImageElement>('player-qr').src=qr;else el<HTMLImageElement>('player-qr').removeAttribute('src');
 }
 
 async function ensureSession(): Promise<void> {
@@ -597,7 +600,7 @@ async function connectBoothDisplay():Promise<void>{
           : error instanceof Error?error.message:'This browser could not be connected. Refresh and try again.';
     setNotice(message,'error');
   }finally{
-    button.disabled=false;button.textContent='Use this tab as the big screen';
+    button.disabled=false;button.textContent='Pair this tab as the big screen';
   }
 }
 
@@ -691,12 +694,13 @@ function renderAdminChallenges():void{
   if(!challenges.length){const empty=document.createElement('div');empty.className='empty';empty.textContent='No coin challenges yet.';host.append(empty);return;}
   for(const challenge of challenges){
     const item=document.createElement('div');item.className='list-item admin-challenge-item';
-    const copy=document.createElement('div'),title=document.createElement('h4'),detail=document.createElement('p'),destination=document.createElement('a'),meta=document.createElement('div');
+    const copy=document.createElement('div'),title=document.createElement('h4'),detail=document.createElement('p'),message=document.createElement('p'),destination=document.createElement('a'),meta=document.createElement('div');
     title.textContent=challenge.title;
     detail.textContent=`${challenge.enabled?'Available':'Hidden'} · +${challenge.rewardCoins} coin${challenge.rewardCoins===1?'':'s'} · ${challenge.maxClaimsPerPlayer} use${challenge.maxClaimsPerPlayer===1?'':'s'} per player`;
+    message.className='challenge-message';message.textContent=challenge.message??'No custom player message.';
     destination.href=challenge.url;destination.target='_blank';destination.rel='noopener noreferrer';destination.textContent=challenge.url;
     meta.className='meta';meta.textContent=challengeSchedule(challenge);
-    copy.append(title,detail,destination,meta);
+    copy.append(title,detail,message,destination,meta);
     const actions=document.createElement('div');actions.className='operator-actions';
     const edit=document.createElement('button');edit.className='button quiet';edit.type='button';edit.textContent='Edit';edit.addEventListener('click',()=>openChallengeEditor(challenge));
     const remove=document.createElement('button');remove.className='button danger';remove.type='button';remove.textContent='Remove';remove.addEventListener('click',()=>void removeAdminChallenge(challenge));
@@ -724,6 +728,7 @@ function challengeSchedule(challenge:AdminChallenge):string{
 }
 
 function openChallengeEditor(challenge?:AdminChallenge):void{
+  if(modeFormDirty){setNotice('Save or discard the event setting changes before editing challenges.','error');el('settings-savebar').scrollIntoView({block:'center'});return;}
   editingChallengeId=challenge?.id??null;
   const form=el<HTMLFormElement>('admin-challenge-form');form.reset();form.hidden=false;
   el('admin-challenge-form-title').textContent=challenge?'Edit challenge':'Add challenge';
@@ -801,7 +806,7 @@ async function saveChallengeSettings(challenges:AdminChallenge[],successMessage:
   (settings.earning as AdminConfig['earning']).enabled=el<HTMLInputElement>('admin-challenges-enabled').checked;
   if(challenges.length>0)(settings.postGame as AdminConfig['postGame']).includeChallenges=true;
   setChallengeBusy(true);
-  try{await updateConfig(version,settings);closeChallengeEditor();setNotice(successMessage,'success');await refreshAll();}
+  try{const saved=await updateConfig(version,settings);state.adminConfig=saved;closeChallengeEditor();el<HTMLInputElement>('admin-challenges-enabled').checked=saved.earning.enabled;el<HTMLInputElement>('admin-post-game-challenges').checked=saved.postGame.includeChallenges;renderAdminChallenges();renderRuntimeSummary();setNotice(successMessage,'success');}
   catch(error){
     if(error instanceof ApiError&&error.status===412){closeChallengeEditor();await refreshOperatorConfiguration();setNotice('Challenge settings changed in another operator session. The latest list is loaded; review it before retrying.','error');}
     else showError(error);
@@ -902,12 +907,15 @@ function renderOperatorOverview():void{
         :phase==='LOCKED'
           ?{title:'Players are confirmed',description:'Start the selected game when the big screen and players are ready.',label:'Start game',disabled:false}
           :phase==='RESULTS'
-            ?{title:'Results are staying on screen',description:'Let players read the scoreboard and hear the recap. Continue only when the booth is ready.',label:'Close results when ready',disabled:false}
+            ?station?.resultsHeld
+              ?{title:'Results are held',description:'The scoreboard will stay up until you continue.',label:'Continue now',disabled:false}
+              :{title:'Results are on screen',description:`The next flow continues automatically after ${config?.station.timings.resultsSeconds??10} seconds. Hold it now if players need more time.`,label:'Hold results',disabled:false}
             :phase==='PLAYING'||phase==='LAUNCHING'
               ?{title:phase==='PLAYING'?'Game in progress':'Game is starting',description:'Open Live event to monitor players and recovery controls.',label:'View live game',disabled:false}
               :{title:'Waiting for the first player',description:'The start-now control appears here as soon as someone inserts a coin.',label:'Choose game after a player joins',disabled:true};
   el('overview-action-title').textContent=action.title;el('overview-action-description').textContent=action.description;
   actionButton.textContent=action.label;actionButton.disabled=action.disabled;actionButton.dataset.target=paused&&!preservedFlow?'setup':'live-event';
+  actionButton.dataset.stationAction=!paused&&phase==='RESULTS'?(station?.resultsHeld?'advance':'hold'):'';
 
   const activeRoundIds=new Set([station?.station.activeRoundId,station?.station.nextRoundId].filter((id):id is string=>Boolean(id)));
   const playerCount=station?.readyEntries.filter(entry=>entry.status!=='LEFT'&&activeRoundIds.has(entry.roundId)).length??0;
@@ -931,13 +939,14 @@ function renderOperatorOverview():void{
   displayCard.dataset.state=displayConnected?'active':displayKnown&&!display?.checking?'attention':'neutral';
   const connectButton=el<HTMLButtonElement>('connect-booth-display');connectButton.hidden=displayKnown&&!display?.configured;
   el('display-connect-description').textContent=display?.configured
-    ? 'The booth connection lets this screen receive private room and launch details that are intentionally hidden from public visitors. This turns the current tab into the big screen, signs you out of the operator console, and opens the game screen. Normally you connect once when opening the booth tab; reloads and new games do not require it again. The authorization has no timer; Overview reports Not connected when the booth has not checked in for 20 seconds.'
+    ? 'Open a private window, separate browser profile, or booth device. Pair it once and leave it open as the shared display so signing out there does not interrupt this operator console.'
     : 'Big-screen security is not configured in this deployment. Ask a deployment administrator to configure ARCADE_DISPLAY_TOKEN before opening the event.';
   show('display-connect-panel',displayKnown&&!displayConnected&&!display?.checking);
 }
 
 function openCurrentStationAction():void{
   const button=el<HTMLButtonElement>('overview-action-button'),target=button.dataset.target==='setup'?'setup':'live-event';
+  if(button.dataset.stationAction==='hold'||button.dataset.stationAction==='advance'){void stationAction(button.dataset.stationAction);return;}
   activateOperatorTab(target,true,true);
   if(target==='setup')return;
   const phase=state.operatorStation?.station.phase;
@@ -974,8 +983,8 @@ function capabilityStatus(enabled:boolean,number:string|null):string{
   return number?'Ready':'Add a phone number';
 }
 
-async function updateConfig(version:number,settings:Record<string,unknown>):Promise<void>{
-  await api('/api/admin/arcade/config',{method:'PATCH',headers:{'Content-Type':'application/json','If-Match':`"arcade-config-${version}"`,'Idempotency-Key':crypto.randomUUID()},body:JSON.stringify(settings)});
+async function updateConfig(version:number,settings:Record<string,unknown>):Promise<AdminConfig>{
+  return api<AdminConfig>('/api/admin/arcade/config',{method:'PATCH',headers:{'Content-Type':'application/json','If-Match':`"arcade-config-${version}"`,'Idempotency-Key':crypto.randomUUID()},body:JSON.stringify(settings)});
 }
 
 const stationRoutes={
@@ -985,10 +994,10 @@ const stationRoutes={
   fail:'/api/admin/arcade/station/launch/fail',
   complete:'/api/admin/arcade/station/match/complete',
   advance:'/api/admin/arcade/station/results/advance',
+  hold:'/api/admin/arcade/station/results/hold',
   reset:'/api/admin/arcade/station/reset',
 } as const;
 type StationAction=keyof typeof stationRoutes;
-const STATION_RESET_CONFIRMATION='RESET EVENT';
 
 async function refreshOperatorStation():Promise<void>{
   if(!state.adminConfig)return;
@@ -1044,12 +1053,11 @@ function renderOperatorPlayers():void{
 
 async function resetPlayerData(player:OperatorPlayerRecoveryItem,button:HTMLButtonElement):Promise<void>{
   if(!player.canReset)return;
-  const response=await requestOperatorReason('Reset everything',`Reset ${player.displayName}. Their name, phone/browser identity, coins, sign-up progress, and Conversation Memory profile will be retired. Their next JOIN starts from scratch.`);
-  if(!response||!window.confirm(`Reset EVERYTHING for ${player.displayName}? Their next JOIN will be treated as a brand-new player.`))return;
+  if(!window.confirm(`Reset everything for ${player.displayName}? Their name, identity, coins, sign-up progress, and Conversation Memory will be cleared. Their next JOIN starts from scratch.`))return;
   button.disabled=true;button.textContent='Resetting...';
   try{
     await api(`/api/admin/arcade/players/${encodeURIComponent(player.playerId)}/reset`,{
-      method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':crypto.randomUUID()},body:JSON.stringify({reason:response.reason}),
+      method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':crypto.randomUUID()},body:JSON.stringify({reason:`Operator reset ${player.displayName} from directory`}),
     });
     setNotice(`${player.displayName} was fully reset. Their next JOIN will ask for their name and create a fresh wallet.`,'success');
     await Promise.all([refreshOperatorPlayers(false,true),refreshOperatorStation()]);
@@ -1058,12 +1066,10 @@ async function resetPlayerData(player:OperatorPlayerRecoveryItem,button:HTMLButt
 
 async function restorePlayerBalance(player:OperatorPlayerRecoveryItem,button:HTMLButtonElement):Promise<void>{
   const page=state.operatorPlayers;if(!page)return;
-  const response=await requestOperatorReason('Restore starting coins',`Restore ${player.displayName} to the configured starting balance of ${page.startingBalance} coin${page.startingBalance===1?'':'s'}.`);
-  if(!response)return;
   button.disabled=true;button.textContent='Restoring...';
   try{
     const result=await api<{restored:boolean;amountGranted:number;availableBalance:number}>(`/api/admin/arcade/players/${encodeURIComponent(player.playerId)}/restore-starting-balance`,{
-      method:'POST',headers:{'Content-Type':'application/json','If-Match':`"arcade-config-${page.configVersion}"`,'Idempotency-Key':crypto.randomUUID()},body:JSON.stringify({reason:response.reason}),
+      method:'POST',headers:{'Content-Type':'application/json','If-Match':`"arcade-config-${page.configVersion}"`,'Idempotency-Key':crypto.randomUUID()},body:JSON.stringify({reason:'Operator restored configured starting balance'}),
     });
     setNotice(result.restored?`Restored ${player.displayName} to ${result.availableBalance} coin${result.availableBalance===1?'':'s'}.`:`${player.displayName} already has the configured starting balance.`,'success');
     await Promise.all([refreshOperatorPlayers(false,true),refreshOperatorStation()]);
@@ -1084,10 +1090,9 @@ function applyOperatorStation(view:OperatorStationView|null,response:Response):v
 async function stationAction(action:StationAction,game?:PlayableGame):Promise<void>{
   if(stationActionSaving)return;
   const resetting=action==='reset';
-  const reasonInput=el<HTMLInputElement>(resetting?'station-reset-reason':'station-reason'),reason=reasonInput.value.trim();
-  if(!reason){reasonInput.focus();setNotice('Add a short reason before continuing.','error');return;}
-  if(reason.length>200){setNotice('Keep the reason to 200 characters or fewer.','error');return;}
-  if(resetting&&el<HTMLInputElement>('station-reset-confirmation').value!==STATION_RESET_CONFIRMATION){el<HTMLInputElement>('station-reset-confirmation').focus();setNotice(`Type ${STATION_RESET_CONFIRMATION} exactly to continue.`,'error');return;}
+  const reason=stationAuditReason(action,game);
+  if(action==='fail'&&!window.confirm('Cancel this game start and return players to recruiting?'))return;
+  if(action==='complete'&&!window.confirm('End the live game now? Use this only if the game cannot finish normally.'))return;
   if(action==='select'&&!['racer','monsters','fighter'].includes(game??'')){setNotice('Select an enabled playable game.','error');return;}
   if(!state.operatorStationEtag){setNotice('Refresh the event before taking action.','error');return;}
   stationActionSaving=true;
@@ -1105,10 +1110,10 @@ async function stationAction(action:StationAction,game?:PlayableGame):Promise<vo
     const {payload,response}=await request<OperatorStationView>(stationRoutes[action],{
       method:'POST',headers:{'Content-Type':'application/json','If-Match':resetting?(stationResetEtag??=state.operatorStationEtag):state.operatorStationEtag,'Idempotency-Key':resetting?(stationResetIdempotencyKey??=crypto.randomUUID()):crypto.randomUUID()},body:JSON.stringify(body),
     });
-    applyOperatorStation(payload,response);reasonInput.value='';
+    applyOperatorStation(payload,response);
     if(resetting){
       const openSettings=pendingOpenSettings;pendingOpenSettings=null;
-      stationResetIdempotencyKey=null;stationResetEtag=null;el<HTMLFormElement>('station-reset-form').reset();renderResetConfirmation();el<HTMLDialogElement>('station-reset-dialog').close();setStationResetCopy(false);
+      stationResetIdempotencyKey=null;stationResetEtag=null;el<HTMLFormElement>('station-reset-form').reset();el<HTMLDialogElement>('station-reset-dialog').close();setStationResetCopy(false);
       if(openSettings){await saveOpenAfterReset(openSettings);return;}
     }
     setNotice(stationActionName(action),'success');
@@ -1124,11 +1129,22 @@ async function stationAction(action:StationAction,game?:PlayableGame):Promise<vo
       if(resetting){stationResetIdempotencyKey=crypto.randomUUID();stationResetEtag=state.operatorStationEtag;}
       setNotice('The event changed before this action finished. The latest status is loaded; review it and try again.','error');
     }else showError(error);
-  }finally{stationActionSaving=false;setBusy(form,false);if(resetting)renderResetConfirmation();}
+  }finally{stationActionSaving=false;setBusy(form,false);}
+}
+
+function stationAuditReason(action:StationAction,game?:PlayableGame):string{
+  return action==='close'?'Operator ended joining and opened voting'
+    :action==='select'?`Operator confirmed ${gameName(game??'racer')}`
+    :action==='launch'?'Operator requested game start'
+    :action==='fail'?'Operator cancelled game start'
+    :action==='complete'?'Operator ended game from console'
+    :action==='advance'?'Operator closed results and continued'
+    :action==='hold'?'Operator held results on screen'
+    :'Operator reset event flow';
 }
 
 function stationActionName(action:StationAction):string{
-  return ({close:'Joining ended.',select:'Next game confirmed.',launch:'Game start requested.',fail:'Game start cancelled.',complete:'Game ended.',advance:'Results closed and the event moved forward.',reset:'Event flow reset.'} as Record<StationAction,string>)[action];
+  return ({close:'Joining ended.',select:'Next game confirmed.',launch:'Game start requested.',fail:'Game start cancelled.',complete:'Game ended.',advance:'Results closed and the event moved forward.',hold:'Results will stay on screen until you continue.',reset:'Event flow reset.'} as Record<StationAction,string>)[action];
 }
 
 function openStationReset(forOpening=false):void{
@@ -1136,9 +1152,9 @@ function openStationReset(forOpening=false):void{
   stationResetIdempotencyKey=crypto.randomUUID();
   stationResetEtag=state.operatorStationEtag;
   setStationResetCopy(forOpening);
-  el<HTMLFormElement>('station-reset-form').reset();renderResetConfirmation();
+  el<HTMLFormElement>('station-reset-form').reset();
   el<HTMLDialogElement>('station-reset-dialog').showModal();
-  el<HTMLInputElement>('station-reset-reason').focus();
+  el<HTMLButtonElement>('confirm-station-reset').focus();
 }
 
 function cancelStationReset():void{
@@ -1173,10 +1189,6 @@ async function saveOpenAfterReset(openSettings:NonNullable<typeof pendingOpenSet
     const detail=error instanceof ApiError?error.message:error instanceof Error?error.message:'Unknown error';
     setNotice(saved?`The event flow was reset and the Open settings were saved, but the result could not be confirmed. Refresh before making another change. ${detail}`:`The event flow was reset, but the Open settings were not saved. Review the draft and save again. ${detail}`,'error');
   }
-}
-
-function renderResetConfirmation():void{
-  el<HTMLButtonElement>('confirm-station-reset').disabled=el<HTMLInputElement>('station-reset-confirmation').value!==STATION_RESET_CONFIRMATION;
 }
 
 function requestOperatorReason(
@@ -1296,12 +1308,11 @@ async function grantPlayerCoins(entry:OperatorStationView['readyEntries'][number
 async function resetTestPlayer(entry:OperatorStationView['readyEntries'][number],button:HTMLButtonElement):Promise<void>{
   if(!state.operatorStationEtag)return;
   const paid=state.adminConfig?.coins.chargePolicy!=='free';
-  const response=await requestOperatorReason(resetPlayerLabel(),`Make ${entry.displayName}'s next JOIN behave like a completely new player. Their name, phone link, ${paid?'coins, ':''}and Conversation Memory profile will be cleared.${paid?' After they finish JOIN setup again, the new wallet receives the active configured starting balance.':''}`);
-  if(!response||!window.confirm(`Reset ${entry.displayName}? This cannot be undone.`))return;
+  if(!window.confirm(`Reset ${entry.displayName}? Their name, phone link, ${paid?'coins, ':''}and Conversation Memory will be cleared. This cannot be undone.`))return;
   button.disabled=true;button.textContent='Resetting...';
   try{
     const result=await request<OperatorStationView>(`/api/admin/arcade/station/ready/${encodeURIComponent(entry.id)}/reset-test-player`,{
-      method:'POST',headers:{'Content-Type':'application/json','If-Match':state.operatorStationEtag,'Idempotency-Key':crypto.randomUUID()},body:JSON.stringify({reason:response.reason}),
+      method:'POST',headers:{'Content-Type':'application/json','If-Match':state.operatorStationEtag,'Idempotency-Key':crypto.randomUUID()},body:JSON.stringify({reason:`Operator reset ${entry.displayName} from live roster`}),
     });
     applyOperatorStation(result.payload,result.response);setNotice(`${entry.displayName} was reset and removed from this roster. Their next completed JOIN setup creates a new ${paid?'wallet with the configured starting balance':'player profile'}.`,'success');
   }catch(error){if(error instanceof ApiError&&error.status===412)await refreshOperatorStation().catch(()=>undefined);showError(error);}
@@ -1315,15 +1326,16 @@ function renderStationControls(phase:StationPhase):void{
   show('recruiting-control',!paused&&phase==='RECRUITING');show('selection-control',!paused&&phase==='GAME_SELECTION');
   show('locked-control',!paused&&phase==='LOCKED');show('launch-failure-control',!paused&&(phase==='LOCKED'||phase==='LAUNCHING'));
   show('playing-control',!paused&&phase==='PLAYING');show('results-control',!paused&&phase==='RESULTS');
-  const actionable=phase!=='ATTRACT';show('station-reason-field',actionable);show('reset-control',actionable);
+  el<HTMLButtonElement>('hold-results').hidden=state.operatorStation?.resultsHeld===true;
+  const actionable=phase!=='ATTRACT';show('reset-control',actionable);
   const gameSelect=el<HTMLSelectElement>('station-game');
   for(const option of [...gameSelect.options])option.disabled=!state.adminConfig?.station.games[option.value as PlayableGame].enabled;
   if(gameSelect.selectedOptions[0]?.disabled)gameSelect.value=[...gameSelect.options].find(option=>!option.disabled)?.value??'';
-  el('station-control-help').textContent=paused&&actionable?'The event is paused and this flow is frozen. Reset the event flow before reopening.':phase==='ATTRACT'?'Waiting for players. Actions appear when the event begins.':phase==='RECRUITING'?'Choose game now skips the remaining countdown. New arrivals wait for the following game.':phase==='LAUNCHING'?'The game is connecting to the big screen. Cancel only if it cannot start.':phase==='PLAYING'?'End the game here only if it cannot finish on its own.':'Only actions available right now are shown.';
+  el('station-control-help').textContent=paused&&actionable?'The event is paused and this flow is frozen. Reset the event flow before reopening.':phase==='ATTRACT'?'Waiting for players. Actions appear when the event begins.':phase==='RECRUITING'?'Choose game now skips the remaining countdown. New arrivals wait for the following game.':phase==='LAUNCHING'?'The game is connecting to the big screen. Cancel only if it cannot start.':phase==='PLAYING'?'End the game here only if it cannot finish on its own.':phase==='RESULTS'?(state.operatorStation?.resultsHeld?'Results are held until you continue.':`Results continue automatically after ${state.adminConfig?.station.timings.resultsSeconds??10} seconds.`):'Only actions available right now are shown.';
 }
 
 function controlActionName(value:string):string{
-  return ({CLOSE_STATION_RECRUITING:'Joining ended',SELECT_STATION_GAME:'Game chosen',REQUEST_STATION_LAUNCH:'Game start requested',MARK_STATION_DISPLAY_READY:'Big screen ready',START_STATION_MATCH:'Game started',COMPLETE_STATION_MATCH:'Game completed',ADVANCE_STATION_RESULTS:'Results closed',FAIL_STATION_LAUNCH:'Game start cancelled',RECOVER_STATION_RESTART:'Event recovered',RESET_STATION:'Event reset',RESET_TEST_PLAYER:'Test player reset'} as Record<string,string>)[value]??phaseName(value);
+  return ({CLOSE_STATION_RECRUITING:'Joining ended',SELECT_STATION_GAME:'Game chosen',REQUEST_STATION_LAUNCH:'Game start requested',MARK_STATION_DISPLAY_READY:'Big screen ready',START_STATION_MATCH:'Game started',COMPLETE_STATION_MATCH:'Game completed',ADVANCE_STATION_RESULTS:'Results closed',HOLD_STATION_RESULTS:'Results held',FAIL_STATION_LAUNCH:'Game start cancelled',RECOVER_STATION_RESTART:'Event recovered',RESET_STATION:'Event reset',RESET_TEST_PLAYER:'Test player reset'} as Record<string,string>)[value]??phaseName(value);
 }
 
 function stationDeadline(view=state.operatorStation):string|null{
@@ -1335,6 +1347,7 @@ function stationDeadline(view=state.operatorStation):string|null{
   if(view.station.phase==='GAME_SELECTION')return view.round.selectionEndsAt;
   if(view.station.phase==='LOCKED')return view.round.lockedEndsAt;
   if(view.station.phase==='LAUNCHING'&&view.match?.launchRequestedAt)return new Date(Date.parse(view.match.launchRequestedAt)+(state.adminConfig?.station.timings.launchTimeoutSeconds??120)*1000).toISOString();
+  if(view.station.phase==='RESULTS'&&!view.resultsHeld&&view.round.resultsAt)return new Date(Date.parse(view.round.resultsAt)+(state.adminConfig?.station.timings.resultsSeconds??10)*1000).toISOString();
   return null;
 }
 

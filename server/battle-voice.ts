@@ -117,10 +117,17 @@ export class BattleVoiceSession {
           this.lastCanRematch = snap?.canRematch ?? false;
           if (snap?.phase === 'battle' && !snap.myMonsterId) {
             this.deps.say(this.text('voice.lateBattle'));
-            this.deps.say(snap.myName ? this.text('voice.welcomeNextNamed', { name: snap.myName }) : this.text('voice.askName'));
+            if(snap.myName){this.deps.say(this.text('voice.welcomeNamed',{name:snap.myName}));this.deps.say(this.text('voice.greetingActions'));}
+            else this.deps.say(this.text('voice.askName'));
           } else if (snap?.phase === 'results') {
             this.deps.say(this.text('voice.lateResults'));
-            this.deps.say(snap.myName ? this.text('voice.welcomeRematchNamed', { name: snap.myName }) : this.text('voice.askName'));
+            this.deps.say(snap.myName?(this.stationManaged?this.text('voice.welcomeNamed',{name:snap.myName}):this.text('voice.welcomeRematchNamed',{name:snap.myName})):this.text('voice.askName'));
+            if(snap.myName&&this.stationManaged)this.deps.say(this.text('voice.waitOperator'));
+          } else if(this.authoritativeName&&snap){
+            this.deps.say(this.text('voice.welcomeNamed',{name:this.authoritativeName}));
+            this.deps.say(this.text('voice.greetingRelay'));
+            this.deps.say(this.text('voice.greetingActions'));
+            this.deps.say(this.text(snap.phase==='monster_select'?'voice.helpSelect':snap.phase==='battle'?'voice.howTo':'voice.helpLobbyNamed'));
           } else {
             for (const key of this.authoritativeName ? GREETING_KEYS.slice(0, -1) : GREETING_KEYS) this.deps.say(this.text(key));
           }
@@ -156,7 +163,7 @@ export class BattleVoiceSession {
     if (isBattleHelpRequest(text, this.commandLocale)) {
       const key = snap.phase === 'lobby' ? this.authoritativeName ? 'voice.helpLobbyNamed' : 'voice.helpLobby'
         : snap.phase === 'monster_select' ? 'voice.helpSelect'
-          : snap.phase === 'results' ? 'voice.helpResults' : 'voice.howTo';
+          : snap.phase === 'results' ? this.stationManaged?'voice.waitOperator':'voice.helpResults' : 'voice.howTo';
       this.deps.say(this.text(key));
       return;
     }
@@ -164,12 +171,12 @@ export class BattleVoiceSession {
     // Every REQUIRED step of the flow has a deterministic, LLM-INDEPENDENT path here, so the game is
     // fully playable by voice even with the LLM off/slow. The LLM is only a fallback for chat/questions.
 
+    if(snap.phase==='results'&&this.stationManaged&&isAdvanceWord(text,this.commandLocale)){
+      this.deps.say(this.text('voice.waitOperator'));return;
+    }
     if (snap.phase === 'results' && (!snap.canRematch || this.draining || this.evQ.length > 0) && isAdvanceWord(text, this.commandLocale)) {
       this.deps.say(this.text('voice.holdFinal'));
       return;
-    }
-    if(snap.phase==='results'&&this.stationManaged&&isAdvanceWord(text,this.commandLocale)){
-      this.deps.say(this.text('voice.waitOperator'));return;
     }
 
     // NAME CAPTURE: the first thing we ask in the lobby. On the monster-picking screen, however, a
@@ -352,6 +359,7 @@ export class BattleVoiceSession {
     const loserPlayer = snap
       ? (ev.winner === snap.mySide ? snap.foeName : snap.myName)
       : null;
+    if(this.stationManaged)return this.text('voice.overStation',{winner:ev.winnerName,winnerMonster});
     return loserPlayer
       ? this.text('voice.overWithPlayer', {
           winner: ev.winnerName, winnerMonster, loserPlayer, loserMonster,
@@ -367,7 +375,7 @@ export class BattleVoiceSession {
       this.lastPhase = snap?.phase ?? null;
       const rematchBecameReady = previous === 'results' && snap?.phase === 'results' && snap.canRematch && !this.lastCanRematch;
       this.lastCanRematch = snap?.phase === 'results' ? snap.canRematch : false;
-      if (rematchBecameReady) this.deps.say(this.text('voice.rematchReady'));
+      if (rematchBecameReady&&!this.stationManaged) this.deps.say(this.text('voice.rematchReady'));
       if (previous === 'battle' && snap?.phase === 'monster_select') {
         const pick = snap.myMonsterName ? this.text('voice.pickLocked', { monster: snap.myMonsterName }) : '';
         this.deps.say(this.text('voice.playerLeft', { pick }));
@@ -416,6 +424,7 @@ export class BattleVoiceSession {
       return;
     }
     if (snap.phase === 'results') {
+      if(this.stationManaged){this.deps.say(this.text('voice.waitOperator'));return;}
       this.deps.say(snap.canRematch
         ? this.text('voice.resumeResultsReady')
         : this.text('voice.resumeResultsWaiting'));

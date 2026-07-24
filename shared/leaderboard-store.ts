@@ -18,15 +18,20 @@ export type AppendResult =
   | { ok: false; error: string };
 
 /** Max history rows kept on disk. Display only ever shows a small top-N, so this is plenty. */
-const MAX_HISTORY = 1000;
+export const MAX_LEADERBOARD_HISTORY = 1000;
 
 /** Parse a stored leaderboard JSON string into clean entries (drops anything malformed). */
 export function parseLeaderboard(json: string): LeaderboardEntry[] {
+  return parseLeaderboardStrict(json) ?? [];
+}
+
+/** Parse a leaderboard while preserving the distinction between empty and corrupt storage. */
+export function parseLeaderboardStrict(json: string): LeaderboardEntry[] | null {
   const trimmed = (json ?? '').trim();
   if (trimmed === '') return [];
   let o: unknown;
-  try { o = JSON.parse(trimmed); } catch { return []; }
-  if (!Array.isArray(o)) return [];
+  try { o = JSON.parse(trimmed); } catch { return null; }
+  if (!Array.isArray(o)) return null;
   return o.filter(isEntry);
 }
 
@@ -41,12 +46,7 @@ function isEntry(v: unknown): v is LeaderboardEntry {
 
 /** Returns null (not []) when the existing file is corrupt, so callers can refuse to overwrite. */
 function parseExistingStrict(json: string): LeaderboardEntry[] | null {
-  const trimmed = (json ?? '').trim();
-  if (trimmed === '') return [];
-  let o: unknown;
-  try { o = JSON.parse(trimmed); } catch { return null; }
-  if (!Array.isArray(o)) return null;
-  return o.filter(isEntry);   // tolerate junk rows inside a valid array, but a non-array is corrupt
+  return parseLeaderboardStrict(json);
 }
 
 /** Append one race's finished racers to the board. `at` is the timestamp (passed in, never read here). */
@@ -64,7 +64,7 @@ export function appendResults(existingJson: string,
     }));
 
   // Newest first, then cap. Keeping newest means the cap drops the oldest history.
-  const entries = [...fresh, ...existing].slice(0, MAX_HISTORY);
+  const entries = [...fresh, ...existing].slice(0, MAX_LEADERBOARD_HISTORY);
   return { ok: true, entries };
 }
 

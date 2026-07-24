@@ -1096,10 +1096,34 @@ describe('Arcade API', () => {
       stationId: 'ARCADE-01', expectedRevision: ready.station.revision,
       idempotencyKey: 'restore-start', authorization, reason: 'start',
     });
-    await resources.service.completeStationMatch({
+    const results = await resources.service.completeStationMatch({
       stationId: 'ARCADE-01', expectedRevision: playing.station.revision,
       idempotencyKey: 'restore-complete', authorization, reason: 'complete',
     });
+
+    const holdEndpoint=`${baseUrl}/api/admin/arcade/station/results/hold`;
+    const holdHeaders={
+      ...ADMIN_HEADER,Origin:'http://localhost','Content-Type':'application/json',
+      'If-Match':`"arcade-station-${results.station.revision}"`,'Idempotency-Key':'hold-api-results',
+    };
+    expect((await fetch(holdEndpoint,{method:'POST',headers:{Origin:'http://localhost','Content-Type':'application/json'},body:'{}'})).status).toBe(401);
+    expect((await fetch(holdEndpoint,{method:'POST',headers:{...ADMIN_HEADER,'Content-Type':'application/json'},body:'{}'})).status).toBe(403);
+    const held=await fetch(holdEndpoint,{method:'POST',headers:holdHeaders,body:JSON.stringify({reason:'players reviewing scores'})});
+    expect(held.status).toBe(200);
+    expect(held.headers.get('etag')).toBe(`"arcade-station-${results.station.revision+1}"`);
+    const heldBody=await held.json() as Record<string,any>;
+    expect(heldBody.resultsHeld).toBe(true);
+    expect(heldBody.recentControls[0]).toMatchObject({action:'HOLD_STATION_RESULTS',reason:'players reviewing scores'});
+    expect((await fetch(holdEndpoint,{method:'POST',headers:holdHeaders,body:JSON.stringify({reason:'players reviewing scores'})})).status).toBe(200);
+    const advanced=await fetch(`${baseUrl}/api/admin/arcade/station/results/advance`,{
+      method:'POST',headers:{...ADMIN_HEADER,Origin:'http://localhost','Content-Type':'application/json','If-Match':`"arcade-station-${results.station.revision+1}"`,'Idempotency-Key':'advance-api-results'},body:JSON.stringify({reason:'score review complete'}),
+    });
+    expect(advanced.status).toBe(200);
+    const inactiveHold=await fetch(holdEndpoint,{
+      method:'POST',headers:{...ADMIN_HEADER,Origin:'http://localhost','Content-Type':'application/json','If-Match':advanced.headers.get('etag')!,'Idempotency-Key':'hold-api-inactive'},body:JSON.stringify({reason:'late hold attempt'}),
+    });
+    expect(inactiveHold.status).toBe(409);
+    expect(await inactiveHold.json()).toMatchObject({error:{code:'RESULTS_NOT_ACTIVE'}});
 
     expect((await fetch(`${baseUrl}/api/admin/arcade/players`)).status).toBe(401);
     const listed = await fetch(`${baseUrl}/api/admin/arcade/players`, { headers: ADMIN_HEADER });
@@ -1466,7 +1490,7 @@ describe('Arcade API', () => {
       idempotencyKey: 'identity-route-select',
       authorization: resources.operatorAuthorization('test@twilio.com'),
     });
-    await resources.service.requestStationLaunch({
+    const launching=await resources.service.requestStationLaunch({
       stationId: 'ARCADE-01', expectedRevision: locked.station.revision,
       idempotencyKey: 'identity-route-launch',
       authorization: resources.operatorAuthorization('test@twilio.com'),
@@ -1479,7 +1503,21 @@ describe('Arcade API', () => {
     expect(await api.resolveStationVoiceSetup({
       callSid:'CA-known-name',readyEntryId:routed!.readyEntryId!,matchId:routed!.matchId,
       launchGeneration:routed!.launchGeneration,game:routed!.game,roomCode:routed!.roomCode,
-    })).toEqual({ firstName: REGISTRATION.lead.firstName });
+    })).toEqual({ firstName: REGISTRATION.lead.firstName, terminal: false });
+    const displayReady=await resources.service.markStationDisplayReady({
+      stationId:'ARCADE-01',expectedRevision:launching.station.revision,idempotencyKey:'identity-route-display',
+      authorization:resources.operatorAuthorization('test@twilio.com'),matchId:launching.match!.id,launchGeneration:launching.match!.launchGeneration,
+    });
+    const playing=await resources.service.startStationMatch({
+      stationId:'ARCADE-01',expectedRevision:displayReady.station.revision,idempotencyKey:'identity-route-start',authorization:resources.operatorAuthorization('test@twilio.com'),
+    });
+    await resources.service.completeStationMatch({
+      stationId:'ARCADE-01',expectedRevision:playing.station.revision,idempotencyKey:'identity-route-complete',authorization:resources.operatorAuthorization('test@twilio.com'),
+    });
+    expect(await api.resolveStationVoiceSetup({
+      callSid:'CA-known-name',readyEntryId:routed!.readyEntryId!,matchId:routed!.matchId,
+      launchGeneration:routed!.launchGeneration,game:routed!.game,roomCode:routed!.roomCode,
+    })).toEqual({firstName:REGISTRATION.lead.firstName,terminal:true});
 
   });
 

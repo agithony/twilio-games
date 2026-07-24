@@ -25,7 +25,7 @@ import { RACER_MESSAGES, type RacerMessageKey } from '../shared/i18n/racer';
 import { createTranslator } from '../shared/i18n/translate';
 import { carName as localizedCarName } from '../shared/i18n/content';
 import { createStationDisplay } from './station-display';
-import { stationJoinUrl, watchVoiceNumber } from './station-client';
+import { resolveStationQrImage, stationJoinUrl, stationQrAsset, watchVoiceNumber } from './station-client';
 
 const text = createTranslator(locale, RACER_MESSAGES);
 
@@ -508,10 +508,9 @@ function boot() {
   addEventListener('pagehide', stopVoiceNumberUpdates, { once: true });
   void fetch('/api/arcade/config/public').then(r => r.ok ? r.json() : null).then(async cfg => {
     if (!cfg || stationDisplay.active || cfg.arcade?.mode === 'off' || typeof cfg.arcade?.cabinetId !== 'string') return;
-    const qr = await QRCode.toDataURL(stationJoinUrl(cfg.arcade.cabinetId, locale), {
-      width: 520, margin: 1, color: { dark: '#000D25', light: '#FFFFFF' }, errorCorrectionLevel: 'M',
-    });
-    screens.setArcadeQr(qr);
+    const base=location.origin,asset=stationQrAsset(locale,cfg.arcade.cabinetId,base);
+    const qr=await resolveStationQrImage(asset,()=>QRCode.toDataURL(stationJoinUrl(cfg.arcade.cabinetId,locale,base),{width:520,margin:1,color:{dark:'#000D25',light:'#FFFFFF'},errorCorrectionLevel:'M'}));
+    if(qr)screens.setArcadeQr(qr);
   }).catch(() => { /* Station mode stays optional. */ });
 
   // Heavy asset work happens in the BACKGROUND (off the critical path). The lobby is already up;

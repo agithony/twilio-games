@@ -422,11 +422,18 @@ describe('ArcadeService station journey', () => {
       phase: 'RESULTS', nextReadyCount: 1,
       roster: [expect.objectContaining({ status: 'OVERFLOW' })],
     });
+    h.setConfig(stationConfig({mode:'off'}));
+    await expect(h.service.advanceStationResults({
+      ...CONTROL,stationId:'expo',expectedRevision:results.station.revision,idempotencyKey:'advance-paused-system',
+    })).rejects.toMatchObject({code:'PAUSED_EVENT_RESET_REQUIRED'});
+    h.setConfig(stationConfig());
+    const held=await h.service.holdStationResults({...CONTROL,stationId:'expo',expectedRevision:results.station.revision,idempotencyKey:'hold-results',reason:'review scoreboard'});
+    expect(await h.service.stationResultsHeld(held.match!.id)).toBe(true);
     h.setConfig(stationConfig({ version: 2 }));
     h.advance();
     const advanced = await h.service.advanceStationResults({
       ...CONTROL,
-      stationId: 'expo', expectedRevision: results.station.revision, idempotencyKey: 'advance',
+      stationId: 'expo', expectedRevision: held.station.revision, idempotencyKey: 'advance',
     });
     expect(advanced.station.phase).toBe('RECRUITING');
     expect(h.store.snapshot().stationReadyEntries[third.readyEntry.id]).toMatchObject({

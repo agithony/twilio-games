@@ -343,7 +343,10 @@ export class BattleServer {
     if (existing) return;
     const timer = setTimeout(() => {
       this.resultsTimers.delete(room.code);
-      if (this.rooms.get(room.code) === room) this.pushState(room.code);
+      if (this.rooms.get(room.code) === room) {
+        this.pushState(room.code);
+        this.reapIfEmpty(room.code);
+      }
     }, room.rematchReadyInMs + 5);
     (timer as { unref?: () => void }).unref?.();
     this.resultsTimers.set(room.code, timer);
@@ -434,6 +437,7 @@ export class BattleServer {
     const room = this.rooms.get(roomCode);
     if (!room || !room.isEmpty) return;
     for (const c of this.conns) if (c.roomCode === roomCode) return;   // a spectator still watching
+    if (room.phase === 'results' && this.resultsTimers.has(roomCode)) return;
     const ai = this.aiTimers.get(roomCode);
     if (ai) { clearTimeout(ai.timer); this.aiTimers.delete(roomCode); }
     const results = this.resultsTimers.get(roomCode);

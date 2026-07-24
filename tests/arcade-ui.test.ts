@@ -35,7 +35,7 @@ describe('Arcade browser UI', () => {
       'registration-form', 'wallet-panel', 'challenge-panel', 'join-form',
       'queue-actions', 'station-panel', 'station-phase', 'station-revision',
       'station-deadline', 'station-round', 'station-match', 'station-ready',
-      'station-reason', 'mode-form',
+      'mode-form',
       'admin-voice-en-us', 'admin-voice-pt-br', 'voice-number-status',
       'admin-challenge-panel', 'admin-challenges', 'admin-challenge-form',
       'post-game-status',
@@ -92,7 +92,7 @@ describe('Arcade browser UI', () => {
   it('offers every phase-sensitive station transition with playable games only', () => {
     for (const id of [
       'close-recruiting', 'select-station-game', 'request-launch',
-      'fail-launch', 'emergency-complete', 'advance-results', 'open-station-reset',
+      'fail-launch', 'emergency-complete', 'advance-results', 'hold-results', 'open-station-reset',
     ]) expect(html).toContain(`id="${id}"`);
     for (const route of [
       '/api/admin/arcade/station/recruiting/close',
@@ -101,6 +101,7 @@ describe('Arcade browser UI', () => {
       '/api/admin/arcade/station/launch/fail',
       '/api/admin/arcade/station/match/complete',
       '/api/admin/arcade/station/results/advance',
+      '/api/admin/arcade/station/results/hold',
       '/api/admin/arcade/station/reset',
     ]) expect(script).toContain(route);
     expect(stationGameSelect).toContain('value="racer"');
@@ -113,15 +114,13 @@ describe('Arcade browser UI', () => {
     expect(script).toContain("show('results-control',!paused&&phase==='RESULTS')");
   });
 
-  it('keeps emergency reset in the operator danger zone behind typed confirmation and a reason', () => {
+  it('keeps emergency reset in one clear confirmation dialog', () => {
     for (const id of [
-      'reset-control', 'station-reset-dialog', 'station-reset-form', 'station-reset-reason',
-      'station-reset-confirmation', 'confirm-station-reset',
+      'reset-control', 'station-reset-dialog', 'station-reset-form', 'confirm-station-reset',
     ]) expect(html).toContain(`id="${id}"`);
-    expect(html).toContain('Type <code>RESET EVENT</code> to confirm');
-    expect(html).toMatch(/id="station-reset-reason"[^>]*required[^>]*maxlength="200"/);
+    expect(html).not.toContain('RESET EVENT');
+    expect(html).not.toContain('station-reset-reason');
     expect(html.indexOf('id="operations"')).toBeLessThan(html.indexOf('id="reset-control"'));
-    expect(script).toContain("const STATION_RESET_CONFIRMATION='RESET EVENT'");
     expect(script).toContain("show('reset-control',actionable)");
     expect(script).toContain("state.operatorStation?.station.phase==='ATTRACT'");
     expect(script).toContain("stationAction('reset')");
@@ -133,9 +132,10 @@ describe('Arcade browser UI', () => {
     expect(css).toContain('.reset-dialog::backdrop{');
   });
 
-  it('uses reasons, station ETags, idempotency, and conflict refresh for transitions', () => {
+  it('uses automatic audit reasons, station ETags, idempotency, and conflict refresh for transitions', () => {
     expect(script).toContain("response.headers.get('ETag')");
-    expect(script).toContain('reasonInput.value.trim()');
+    expect(script).toContain('stationAuditReason(action,game)');
+    expect(script).toContain("'Operator closed results and continued'");
     expect(script).toContain("'If-Match':state.operatorStationEtag");
     expect(script).toContain("'Idempotency-Key':crypto.randomUUID()");
     expect(script).toContain('error.status===412');
@@ -225,7 +225,7 @@ describe('Arcade browser UI', () => {
     expect(script).toContain("chargePolicy==='free'?0:startingBalance");
     expect(script).toContain('renderRuntimeSummary');
     expect(script).toContain("voiceNumbers={'en-US':voiceEn||null,'pt-BR':voicePt||null}");
-    expect(racerMain).toContain('stationJoinUrl(cfg.arcade.cabinetId, locale)');
+    expect(racerMain).toContain('stationQrAsset(locale,cfg.arcade.cabinetId,base)');
     expect(racerMain).toContain('stationDisplay.active || cfg.arcade?.mode === \'off\'');
     expect(racerScreens).toContain('screen.lobby.coinQrCaption');
   });
@@ -324,6 +324,9 @@ describe('Arcade browser UI', () => {
     expect(script).toContain('renderAdminChallenges()');
     expect(script).toContain('(settings.earning as AdminConfig[\'earning\']).challenges=challenges');
     expect(script).toContain('message:message||null');
+    expect(script).toContain("message.textContent=challenge.message??'No custom player message.'");
+    expect(script).toContain('const saved=await updateConfig(version,settings)');
+    expect(html).toContain('Shown on the reward page opened from the MORE/MAIS link.');
     expect(script).toContain("if(challenges.length>0)(settings.postGame as AdminConfig['postGame']).includeChallenges=true");
     expect(script).toContain("method:'PATCH'");
     expect(script).toContain("'If-Match':`\"arcade-config-${version}\"`");
@@ -369,10 +372,10 @@ describe('Arcade browser UI', () => {
   it('offers a destructive fresh-start reset only for safe test-player states', () => {
     expect(script).toContain("['READY','OVERFLOW','COMPLETED'].includes(entry.status)");
     expect(script).toContain('reset.textContent=resetPlayerLabel()');
-    expect(script).toContain('requestOperatorReason(resetPlayerLabel()');
+    expect(script).toContain('reason:`Operator reset ${entry.displayName} from live roster`');
     expect(script).toContain('/reset-test-player`');
     expect(script).toContain("'If-Match':state.operatorStationEtag");
-    expect(script).toContain("window.confirm(`Reset ${entry.displayName}? This cannot be undone.`)");
+    expect(script).toContain('window.confirm(`Reset ${entry.displayName}?');
   });
 
   it('shows an all-mode player directory with independent restore and full-reset actions', () => {
@@ -382,7 +385,7 @@ describe('Arcade browser UI', () => {
     expect(script).toContain('`/api/admin/arcade/players?limit=100');
     expect(script).toContain('/restore-starting-balance`');
     expect(script).toContain("'If-Match':`\"arcade-config-${page.configVersion}\"`");
-    expect(script).toContain("requestOperatorReason('Restore starting coins'");
+    expect(script).toContain("reason:'Operator restored configured starting balance'");
     expect(html).toContain('Player directory');
     expect(script).toContain("reset.textContent='Reset everything'");
     expect(script).toContain('/reset`,{');
@@ -395,7 +398,11 @@ describe('Arcade browser UI', () => {
     for(const id of ['overview-current-action','overview-action-title','overview-action-description','overview-action-button'])expect(html).toContain(`id="${id}"`);
     expect(script).toContain("phase==='RECRUITING'");
     expect(script).toContain("label:'Choose game now'");
-    expect(script).toContain("label:'Close results when ready'");
+    expect(script).toContain("label:'Continue now'");
+    expect(script).toContain("label:'Hold results'");
+    expect(script).toContain("title:'Results are held'");
+    expect(script).toContain("actionButton.dataset.stationAction=!paused&&phase==='RESULTS'");
+    expect(script).toContain("button.dataset.stationAction==='hold'");
   });
 
   it('shows a one-shot arcade coin insertion cue on home and active game displays', () => {
@@ -431,6 +438,7 @@ describe('Arcade browser UI', () => {
     expect(fighter).toContain("pageUrl.searchParams.delete('hostToken')");
     expect(racerMain).toContain('isDisplay && !stationDisplay.active');
     expect(monsters).toContain('!isDisplay || stationDisplay.active');
+    expect(monsters).toContain('if (stationDisplay.active) {');
     expect(fighter).toContain('if (stationDisplay.active) return');
     expect(stationDisplay).not.toContain('if (rail.root.hidden === !visible) return');
     expect(stationDisplayCss).toContain('.station-rail[hidden] { display:none !important; }');
@@ -472,9 +480,9 @@ describe('Arcade browser UI', () => {
     expect(script).toContain("show('display-connect-panel',displayKnown&&!displayConnected&&!display?.checking)");
     expect(script).toContain('function isDisplayConnected(');
     expect(html).toContain('id="overview-display-card"');
-    expect(html).toContain('Use this tab as the big screen');
-    expect(html).toContain('turns the current tab into the big screen');
-    expect(html).toContain('signs you out of the operator console');
+    expect(html).toContain('Pair this tab as the big screen');
+    expect(html).toContain('Pair a dedicated big screen');
+    expect(html).toContain('private window, separate browser profile, or booth device');
     const flow = /async function connectBoothDisplay\(\):Promise<void>\{[\s\S]*?\n}/.exec(script)?.[0] ?? '';
     expect(flow).toContain("'/api/admin/arcade/display/connect'");
     expect(flow).toContain("'Content-Type':'application/json'");

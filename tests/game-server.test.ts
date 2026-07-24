@@ -302,6 +302,7 @@ describe('HttpServer voice routing seams', () => {
     await writeFile(LB, JSON.stringify([
       { name: 'Wrong Track Test', map: 'Neon City', carIndex: 0, finishT: 39, at: 1 },
       { name: 'Real Leader', map: 'Silver Lake', carIndex: 0, finishT: 33, at: 2 },
+      { name: 'Ada prior run', map: 'Silver Lake', carIndex: 0, finishT: 34, at: 2, enginePlayerId:'CTXLB:p1' },
       { name: 'Second Place History', map: 'Silver Lake', carIndex: 1, finishT: 36, at: 3 },
     ]));
     http = new HttpServer({
@@ -320,12 +321,61 @@ describe('HttpServer voice routing seams', () => {
 
     expect(ctx.selectedMap).toBe('Silver Lake');
     expect(ctx.allTimeBest).toEqual({ name: 'Real Leader', time: 33 });
-    expect(ctx.allTimeTop).toEqual(['Real Leader', 'Second Place History', 'Ada']);
-    expect(ctx.leaderboardTop?.slice(0, 2)).toEqual([{ name: 'Real Leader', time: 33 }, { name: 'Second Place History', time: 36 }]);
+    expect(ctx.allTimeTop).toEqual(['Real Leader', 'Ada prior run', 'Second Place History', 'Ada']);
+    expect(ctx.leaderboardTop?.slice(0, 2)).toEqual([{ name: 'Real Leader', time: 33 }, { name: 'Ada prior run', time: 34 }]);
     expect(ctx.leaderboardTop?.some(e => e.name === 'Ada' && e.time > 0)).toBe(true);
     expect(ctx.raceStandings?.[0]).toMatchObject({ name: 'Ada', place: 1, finished: true });
     expect(ctx.raceStandings?.[0]?.time).toBeGreaterThan(0);
     expect(ctx.myPlace).toBe(1);
     expect(ctx.myFinishTime).toBeGreaterThan(0);
+    expect(ctx.myCurrentTrackRank).toBe(1+[33,34,36].filter(time=>time<(ctx.myFinishTime??0)).length);
+    expect(ctx.currentTrackRankedRunCount).toBe(4);
+
+    const currentTime=ctx.myFinishTime!;
+    const cache=(http as unknown as {leaderboardEntriesCache:Array<{name:string;map:string;carIndex:number;finishT:number;at:number}>});
+    cache.leaderboardEntriesCache=Array.from({length:1000},(_,index)=>({
+      name:`History ${index}`,map:'Silver Lake',carIndex:0,finishT:currentTime+index+1,at:index,
+    }));
+    expect(http.hostContextForTest(room,res.playerId).currentTrackRankedRunCount).toBe(1000);
+    cache.leaderboardEntriesCache=Array.from({length:1000},(_,index)=>({
+      name:`Mixed history ${index}`,map:index===999?'Silver Lake':'Neon City',carIndex:0,finishT:currentTime+index+1,at:1000-index,
+    }));
+    expect(http.hostContextForTest(room,res.playerId).currentTrackRankedRunCount).toBe(1);
+    cache.leaderboardEntriesCache=[
+      {name:'Older tied run',map:'Silver Lake',carIndex:1,finishT:currentTime,at:1},
+    ];
+    const tied=http.hostContextForTest(room,res.playerId);
+    expect(tied.myCurrentTrackRank).toBe(1);
+    expect(tied.leaderboardTop?.[0]).toEqual({name:'Ada',time:currentTime});
+  });
+
+  it('does not publish a leaderboard cache entry when its durable write fails', async () => {
+    await mkdir('data', { recursive: true });
+    LB = `data/_test-host-lb-write-${process.pid}.json`;
+    await writeFile(LB, JSON.stringify([
+      { name: 'Durable Leader', map: 'Silver Lake', carIndex: 0, finishT: 20, at: 1 },
+    ]));
+    http = new HttpServer({
+      port: 0, publicBaseUrl: 'http://localhost', validateSignatures: false,
+      mapsPath: 'assets/maps/maps.json', leaderboardPath: LB,
+    });
+    await http.start();
+    const internals=http as unknown as {
+      game:GameServer;
+      leaderboardWrite:Promise<void>;
+      writeFileAtomic:(file:string,contents:string)=>Promise<void>;
+    };
+    internals.writeFileAtomic=async()=>{throw new Error('simulated write failure');};
+    const room=internals.game.getOrCreateRoom('FAILED-WRITE');
+    const racer=room.addPlayer('Phantom Run') as {playerId:string};
+    room.advance();room.selectCar(racer.playerId,0);room.advance();room.selectMap('Silver Lake');room.advance();
+    for(let i=0;i<2000&&room.phase!=='results';i++)internals.game.stepRoomForTest(room,0.1);
+    await internals.leaderboardWrite;
+
+    const observer=internals.game.getOrCreateRoom('OBSERVER');
+    const viewer=observer.addPlayer('Viewer') as {playerId:string};
+    observer.advance();observer.selectCar(viewer.playerId,0);observer.advance();observer.selectMap('Silver Lake');
+    const ctx=http.hostContextForTest(observer,viewer.playerId);
+    expect(ctx.allTimeTop).toEqual(['Durable Leader']);
   });
 });

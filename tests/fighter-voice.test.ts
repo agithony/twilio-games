@@ -9,7 +9,11 @@ describe('fighter voice session', () => {
   it('uses an authoritative station name without asking for it again', () => {
     const game=voiceGame();const ada=game.connect('CA-known','VOICE',undefined,'Ada');
     expect(game.room.state().players[0]?.name).toBe('Ada');
-    expect(ada.spoken.join(' ').toLowerCase()).not.toContain('what is your name');
+    const arrival=ada.spoken.join(' ').toLowerCase();
+    expect(arrival).toContain('ada');
+    expect(arrival).toMatch(/forward|back|punch|kick/);
+    expect(arrival).toContain('say start');
+    expect(arrival).not.toContain('what is your name');
   });
 
   it('drives the complete solo journey through intro, combat, victory, and rematch', () => {
@@ -180,7 +184,7 @@ describe('fighter voice session', () => {
     bia.prompt('Bia');
 
     expect(game.room.state().players.find(player => player.playerId === bia.playerId)?.name).toBe('Bia');
-    expect(bia.spoken.some(line => line.includes('Boas-vindas, Bia'))).toBe(true);
+    expect(bia.spoken.some(line => line.includes('Luta por Voz, Bia'))).toBe(true);
   });
 
   it('expands a finalized command burst after a low-latency interim command', () => {

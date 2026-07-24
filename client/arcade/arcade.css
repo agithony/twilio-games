@@ -122,6 +122,7 @@ input,select{width:100%;color:var(--th-text);background:var(--th-input);border:1
 .operator-page .settings-panel{padding:30px}
 .operator-page .messaging-panel{border-top:0}
 .player-recovery-panel{margin-top:14px}.player-recovery-item .meta{margin-top:5px}
+.admin-challenge-item .challenge-message{margin:7px 0;color:var(--th-text);font-weight:600}
 .overview-current-action{display:flex;align-items:center;justify-content:space-between;gap:24px;margin-top:16px;border-left:5px solid var(--th-red)}.overview-current-action h3{margin:0}.overview-current-action p:last-child{margin-bottom:0}.overview-current-action .button{flex:0 0 auto}@media(max-width:700px){.overview-current-action{align-items:stretch;flex-direction:column}}
 .operator-page label{font-size:.8rem;text-transform:none;letter-spacing:0}
 .operator-page input,.operator-page select{min-height:46px;border-radius:10px}

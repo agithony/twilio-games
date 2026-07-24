@@ -14,7 +14,9 @@ import {
   fetchPublicArcadeConfig,
   fetchPublicStation,
   rejectDisplayToken,
+  resolveStationQrImage,
   stationJoinUrl,
+  stationQrAsset,
   stationLaunchUrl,
   StationRequestError,
   subscribeToStation,
@@ -410,7 +412,7 @@ function renderEntryPolicyCopy(): void {
     ? locale === 'pt-BR' ? `Responda <b>${command}</b> na tela` : `Reply <b>${command}</b> at the screen`
     : locale === 'pt-BR' ? 'Fique pronto perto da tela' : 'Get ready near the shared screen';
   document.getElementById('joinTitle')!.textContent = copy.joinTitle;
-  (document.getElementById('joinQr') as HTMLCanvasElement).hidden = false;
+  (document.getElementById('joinQr') as HTMLImageElement).hidden = false;
 }
 
 async function refreshConfiguration(): Promise<void> {
@@ -441,16 +443,9 @@ async function refreshConfiguration(): Promise<void> {
     if(standaloneMode){renderStandaloneLauncher();show('standalone');}
     else if(current)render(current);
     if (!standaloneMode) {
-      await QRCode.toCanvas(
-        document.getElementById('joinQr') as HTMLCanvasElement,
-        stationJoinUrl(stationId, locale, joinBaseUrl),
-        { width: 520, margin: 1, errorCorrectionLevel: 'M', color: { dark: '#000D25', light: '#FFFFFF' } },
-      );
-      await QRCode.toCanvas(
-        document.getElementById('persistentJoinQr') as HTMLCanvasElement,
-        stationJoinUrl(stationId, locale, joinBaseUrl),
-        { width: 220, margin: 1, errorCorrectionLevel: 'M', color: { dark: '#000D25', light: '#FFFFFF' } },
-      );
+      const value=stationJoinUrl(stationId,locale,joinBaseUrl),asset=stationQrAsset(locale,stationId,joinBaseUrl);
+      const qr=await resolveStationQrImage(asset,()=>QRCode.toDataURL(value,{width:520,margin:1,errorCorrectionLevel:'M',color:{dark:'#000D25',light:'#FFFFFF'}}));
+      if(qr){(document.getElementById('joinQr') as HTMLImageElement).src=qr;(document.getElementById('persistentJoinQr') as HTMLImageElement).src=qr;}
     }
   } catch {
     connection.textContent = copy.reconnecting;

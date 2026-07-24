@@ -24,6 +24,7 @@ export interface PublicStation {
   } | null;
   results: readonly {displayName:string;rank:number|null;durationSeconds:number|null;won:boolean|null;completed:boolean;score:number|null}[];
   resultSource:'ENGINE'|'RECOVERY'|'LEGACY_UNAVAILABLE'|null;
+  resultsHeld:boolean;
 }
 
 export interface PublicArcadeConfig {
@@ -200,6 +201,27 @@ export function stationJoinUrl(stationId: string, locale: string, baseUrl?: stri
   url.searchParams.set('station', stationId);
   url.searchParams.set('locale', locale);
   return url.toString();
+}
+
+export function stationQrAsset(locale: string, stationId: string, baseUrl: string): string|null {
+  try{
+    if(stationId!=='ARCADE-01'||new URL(baseUrl).origin!=='https://twilio-games.salmontree-f71109fe.centralus.azurecontainerapps.io')return null;
+  }catch{return null;}
+  return locale.toLowerCase().startsWith('pt') ? '/brand/arcade-pt.png' : '/brand/arcade-en.png';
+}
+
+export async function resolveStationQrImage(customAsset: string|null, fallback: () => Promise<string>): Promise<string|null> {
+  if (customAsset) {
+    const loaded = await new Promise<boolean>(resolve => {
+      const probe = new Image();
+      probe.onload = () => resolve(true);
+      probe.onerror = () => resolve(false);
+      probe.src = customAsset;
+    });
+    if (loaded) return customAsset;
+  }
+  try { return await fallback(); }
+  catch { return null; }
 }
 
 export function stationLaunchUrl(

@@ -11,6 +11,7 @@ import {
   ARCADE_STATION_UPDATED_EVENT,
   type ArcadeEventHub,
 } from './arcade-events';
+
 import {
   ArcadeService,
   type StationMutationResult,
@@ -341,6 +342,10 @@ export class ArcadeStationRuntime {
           throw error;
         }
       }
+      if (aggregate.station.phase === 'RESULTS' && activeMatch) {
+        const held = await this.service.stationResultsHeld(activeMatch.id);
+        if (!this.enabled() || held) return;
+      }
       const scheduled = nextStationTransition(aggregate, this.config());
       if (!scheduled) return;
       const delay = scheduled.at - this.clock();
@@ -387,6 +392,12 @@ export class ArcadeStationRuntime {
       });
     }
     if (transition.phase === 'LOCKED') return this.service.requestStationLaunch(common);
+    if (transition.phase === 'RESULTS') {
+      const match=aggregate.station.activeMatchId?aggregate.matches[aggregate.station.activeMatchId]:undefined;
+      const result=await this.service.advanceStationResults(common);
+      if(match)this.onMatchRemoved?.(match.game,match.engineRoomCode);
+      return result;
+    }
     if (transition.phase === 'LAUNCHING') {
       const match = aggregate.station.activeMatchId
         ? aggregate.matches[aggregate.station.activeMatchId]
@@ -579,6 +590,10 @@ function nextStationTransition(
     const match = aggregate.station.activeMatchId ? aggregate.matches[aggregate.station.activeMatchId] : undefined;
     timestamp = match?.launchRequestedAt
       ? new Date(Date.parse(match.launchRequestedAt) + config.station.timings.launchTimeoutSeconds * 1000).toISOString()
+      : null;
+  } else if (aggregate.station.phase === 'RESULTS') {
+    timestamp = round.resultsAt
+      ? new Date(Date.parse(round.resultsAt) + config.station.timings.resultsSeconds * 1000).toISOString()
       : null;
   }
   if (!timestamp) return null;

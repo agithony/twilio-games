@@ -38,6 +38,7 @@ export type PublicStationProjection = Readonly<{
     score: number | null;
   }>[];
   resultSource: 'ENGINE' | 'RECOVERY' | 'LEGACY_UNAVAILABLE' | null;
+  resultsHeld: boolean;
 }>;
 
 export type PlayerStationProjection = Readonly<{
@@ -68,6 +69,7 @@ export type OperatorStationProjection = Readonly<{
     connected: boolean;
   }>[];
   recentControls: readonly ArcadeState['stationControlEvents'][number][];
+  resultsHeld: boolean;
 }>;
 
 export function emptyPublicStation(): PublicStationProjection {
@@ -89,6 +91,7 @@ export function emptyPublicStation(): PublicStationProjection {
     launch: null,
     results: [],
     resultSource: null,
+    resultsHeld: false,
   };
 }
 
@@ -182,6 +185,7 @@ export function projectPublicStation(
       }).sort((left, right) => (left.rank ?? Number.MAX_SAFE_INTEGER) - (right.rank ?? Number.MAX_SAFE_INTEGER))
       : [],
     resultSource: includeLaunch && aggregate.station.phase === 'RESULTS' ? match?.result?.source ?? null : null,
+    resultsHeld:Boolean(match&&state.stationControlEvents.some(event=>event.action==='HOLD_STATION_RESULTS'&&event.matchId===match.id)),
   };
 }
 
@@ -239,6 +243,7 @@ export function projectOperatorStation(
 ): OperatorStationProjection {
   const activeRound = aggregate.station.activeRoundId ? aggregate.rounds[aggregate.station.activeRoundId] : undefined;
   const round = activeRound ? withoutGameChoiceIdentities(activeRound) : null;
+  const match=aggregate.station.activeMatchId?aggregate.matches[aggregate.station.activeMatchId]??null:null;
   const resetReadyEntryIds = new Set(Object.values(state.idempotencyRecords)
     .filter(record => record.operation === 'RESET_TEST_PLAYER')
     .map(record => (record.result as { resetReadyEntryId?: unknown } | null)?.resetReadyEntryId)
@@ -254,7 +259,7 @@ export function projectOperatorStation(
   return {
     station: aggregate.station,
     round,
-    match: aggregate.station.activeMatchId ? aggregate.matches[aggregate.station.activeMatchId] ?? null : null,
+    match,
     readyEntries: Object.values(aggregate.readyEntries).filter(entry => !isResetHistory(entry)).sort(compareReady).map((entry, index) => ({
       id: entry.id,
       roundId: entry.roundId,
@@ -271,6 +276,7 @@ export function projectOperatorStation(
       .filter(event => event.stationId === aggregate.station.id)
       .slice(-20)
       .reverse(),
+    resultsHeld:Boolean(match&&state.stationControlEvents.some(event=>event.action==='HOLD_STATION_RESULTS'&&event.matchId===match.id)),
   };
 }
 

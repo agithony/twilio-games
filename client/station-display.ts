@@ -7,8 +7,10 @@ import {
   fetchPublicArcadeConfig,
   idempotencyKey,
   rejectDisplayToken,
+  resolveStationQrImage,
   StationRequestError,
   stationJoinUrl,
+  stationQrAsset,
   subscribeToStation,
   type PublicStation,
 } from './station-client';
@@ -44,10 +46,8 @@ export function createStationDisplay(): StationDisplay {
   for (const home of document.querySelectorAll<HTMLAnchorElement>('.game-home, #result a[href="/"]')) {
     home.href = homeUrl.toString();
   }
-  void QRCode.toCanvas(rail.qr, stationJoinUrl(stationId, locale, joinBaseUrl), {
-    width: 420, margin: 1, errorCorrectionLevel: 'M',
-    color: { dark: '#000D25', light: '#FFFFFF' },
-  });
+  const customQr=stationQrAsset(locale,stationId,joinBaseUrl);
+  void resolveStationQrImage(customQr,()=>QRCode.toDataURL(stationJoinUrl(stationId,locale,joinBaseUrl),{width:420,margin:1,errorCorrectionLevel:'M',color:{dark:'#000D25',light:'#FFFFFF'}})).then(value=>{if(value)rail.qr.src=value;});
   let railMode: 'auto' | 'always' | 'hidden' = 'auto';
   let configRefreshing = false;
   let configRefreshPending = false;
@@ -97,7 +97,9 @@ export function createStationDisplay(): StationDisplay {
       const sameLaunch = launch?.matchId === matchId && launch.generation === generation;
       rail.count.textContent = String(latest.station.nextReadyCount);
       rail.status.textContent = latest.station.phase === 'RESULTS'
-        ? locale === 'pt-BR' ? 'Resultados na tela · operador continua' : 'Results on screen · operator continues'
+        ? latest.station.resultsHeld
+          ?locale === 'pt-BR'?'Resultados mantidos pela cabine':'Results held by booth'
+          :locale === 'pt-BR'?'Resultados na tela · próxima rodada automática':'Results on screen · next round automatic'
         : latest.station.phase === 'PLAYING'
         ? locale === 'pt-BR' ? 'Partida ao vivo · próxima fila aberta' : 'Match live · next pool open'
         : latest.station.phase === 'LAUNCHING'
@@ -111,7 +113,7 @@ export function createStationDisplay(): StationDisplay {
       }
       if(latest.station.phase==='RESULTS'&&!engineResultsReady){
         if(resultsFallbackTimer===null)resultsFallbackTimer=setTimeout(()=>{
-          resultsFallbackTimer=null;if(!engineResultsReady&&latest?.station.phase==='RESULTS')renderResultsFallback(resultsFallback,latest.station.results,latest.station.resultSource);
+          resultsFallbackTimer=null;if(!engineResultsReady&&latest?.station.phase==='RESULTS')renderResultsFallback(resultsFallback,latest.station.results,latest.station.resultSource,latest.station.resultsHeld);
         },1000);
       }else if(latest.station.phase!=='RESULTS'||engineResultsReady){
         if(resultsFallbackTimer!==null)clearTimeout(resultsFallbackTimer);resultsFallbackTimer=null;resultsFallback.hidden=true;
@@ -170,7 +172,7 @@ function buildResultsFallback():HTMLElement{
   const root=document.createElement('section');root.className='station-results-fallback';root.hidden=true;root.setAttribute('aria-live','polite');return root;
 }
 
-function renderResultsFallback(root:HTMLElement,results:PublicStation['results'],source:PublicStation['resultSource']):void{
+function renderResultsFallback(root:HTMLElement,results:PublicStation['results'],source:PublicStation['resultSource'],held:boolean):void{
   root.replaceChildren();
   const eyebrow=document.createElement('p');eyebrow.className='station-results-eyebrow';eyebrow.textContent=locale==='pt-BR'?'RESULTADOS FINAIS':'FINAL RESULTS';
   const title=document.createElement('h1');title.textContent=locale==='pt-BR'?'Placar':'Scoreboard';root.append(eyebrow,title);
@@ -190,7 +192,9 @@ function renderResultsFallback(root:HTMLElement,results:PublicStation['results']
       :result.completed?(locale==='pt-BR'?'Concluído':'Complete'):'DNF';
     row.append(rank,name,time);root.append(row);
   }
-  const hold=document.createElement('p');hold.className='station-results-hold';hold.textContent=locale==='pt-BR'?'O operador continuará quando todos terminarem.':'Results will stay here until the operator continues.';root.append(hold);root.hidden=false;
+  const hold=document.createElement('p');hold.className='station-results-hold';hold.textContent=held
+    ?(locale==='pt-BR'?'A cabine manteve o placar na tela.':'The booth is holding the scoreboard on screen.')
+    :(locale==='pt-BR'?'A próxima rodada continuará automaticamente.':'The next round continues automatically.');root.append(hold);root.hidden=false;
 }
 
 async function acknowledge(
@@ -216,7 +220,7 @@ async function acknowledge(
 
 function buildRail(): {
   root: HTMLElement;
-  qr: HTMLCanvasElement;
+  qr: HTMLImageElement;
   count: HTMLElement;
   status: HTMLElement;
   instructions: HTMLElement;
@@ -228,12 +232,12 @@ function buildRail(): {
   root.innerHTML = `
     <div class="station-rail-brand"><img src="/brand/Twilio_Logo_Bug_White.svg" alt=""><strong>Twilio Games</strong></div>
     <div class="station-rail-copy"><span>${portuguese ? 'Próximo jogo' : 'Next game'}</span><h2>${portuguese ? 'Escaneie para entrar' : 'Scan to join'}</h2><p>${portuguese ? 'Comece pelo telefone e responda <b>MOEDA</b> quando estiver na tela.' : 'Start on your phone, then reply <b>COIN</b> when you are at the screen.'}</p></div>
-    <div class="station-rail-qr"><canvas aria-label="Join Twilio Games QR code"></canvas></div>
+    <div class="station-rail-qr"><img alt="Join Twilio Games QR code"></div>
     <div class="station-rail-count"><strong>0</strong><span>${portuguese ? 'prontos para o próximo' : 'ready next'}</span></div>
     <div class="station-rail-status" role="status">${portuguese ? 'Conectando' : 'Connecting to station'}</div>`;
   return {
     root,
-    qr: root.querySelector('canvas')!,
+    qr: root.querySelector('.station-rail-qr img')!,
     count: root.querySelector('.station-rail-count strong')!,
     status: root.querySelector('.station-rail-status')!,
     instructions: root.querySelector('.station-rail-copy p')!,

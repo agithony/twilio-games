@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { captureDisplayToken, displayTokenWasRejected, effectivePublicVisitorBaseUrl, fetchPublicStation, readDisplayToken, rejectDisplayToken, stationJoinUrl, stationLaunchUrl, storeDisplayToken, voiceNumberForLocale } from '../client/station-client';
+import { captureDisplayToken, displayTokenWasRejected, effectivePublicVisitorBaseUrl, fetchPublicStation, readDisplayToken, rejectDisplayToken, resolveStationQrImage, stationJoinUrl, stationLaunchUrl, stationQrAsset, storeDisplayToken, voiceNumberForLocale } from '../client/station-client';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -29,6 +29,25 @@ describe('public visitor URLs', () => {
     expect(stationJoinUrl('ARCADE-01', 'pt-BR', 'https://public.example/base')).toBe('https://public.example/join?station=ARCADE-01&locale=pt-BR');
   });
 
+  it('selects the uploaded locale-specific station QR asset', () => {
+    const production='https://twilio-games.salmontree-f71109fe.centralus.azurecontainerapps.io';
+    expect(stationQrAsset('en-US','ARCADE-01',production)).toBe('/brand/arcade-en.png');
+    expect(stationQrAsset('pt-BR','ARCADE-01',production)).toBe('/brand/arcade-pt.png');
+    expect(stationQrAsset('en-US','ARCADE-01','http://localhost:5173')).toBeNull();
+  });
+
+  it('falls back to a generated QR when an uploaded asset does not load', async () => {
+    class BrokenImage {
+      onload: (() => void)|null = null;
+      onerror: (() => void)|null = null;
+      set src(_value: string) { queueMicrotask(() => this.onerror?.()); }
+    }
+    vi.stubGlobal('Image', BrokenImage);
+    const fallback = vi.fn(async () => 'data:image/png;base64,fallback');
+    await expect(resolveStationQrImage('/brand/missing.png', fallback)).resolves.toBe('data:image/png;base64,fallback');
+    expect(fallback).toHaveBeenCalledOnce();
+  });
+
   it('propagates the effective visitor base to launched game pages', () => {
     const target = stationLaunchUrl({
       phase: 'LAUNCHING', revision: 1, activeGame: 'fighter', deadline: null,
@@ -36,6 +55,7 @@ describe('public visitor URLs', () => {
       launch: { game: 'fighter', route: '/fighter.html', roomCode: 'ROOM', matchId: 'MATCH', generation: 3 },
       results: [],
       resultSource: null,
+      resultsHeld: false,
     }, 'ARCADE-01', 'en-US', 'https://public.example/path');
     const url = new URL(target!);
     expect(url.searchParams.get('joinBaseUrl')).toBe('https://public.example');

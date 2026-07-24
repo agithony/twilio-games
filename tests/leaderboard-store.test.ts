@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { appendResults, topEntries, parseLeaderboard, type LeaderboardEntry } from '../shared/leaderboard-store';
+import { appendResults, topEntries, parseLeaderboard, parseLeaderboardStrict, type LeaderboardEntry } from '../shared/leaderboard-store';
 import type { RaceResult } from '../shared/types';
 
 const results = (rs: Partial<RaceResult>[]): RaceResult[] =>
@@ -8,6 +8,12 @@ const results = (rs: Partial<RaceResult>[]): RaceResult[] =>
     finished: r.finished ?? true }));
 
 describe('appendResults', () => {
+  it('distinguishes corrupt storage from an empty leaderboard', () => {
+    expect(parseLeaderboardStrict('')).toEqual([]);
+    expect(parseLeaderboardStrict('{ broken')).toBeNull();
+    expect(parseLeaderboard('{ broken')).toEqual([]);
+  });
+
   it('starts from empty and records finished racers with map + timestamp', () => {
     const out = appendResults('', { map: 'Silver Lake', results: results([{ name: 'Ada', finishT: 42.5 }]), at: 1000 });
     expect(out.ok).toBe(true);

@@ -173,11 +173,11 @@
           <article id="display-connect-panel" class="panel display-connect-panel" hidden>
             <div class="display-connect-body">
               <div>
-                <p class="eyebrow">Action required</p>
-                <h3>Connect the big screen before players start</h3>
-                <p id="display-connect-description">The booth connection lets this screen receive private room and launch details that are intentionally hidden from public visitors. This turns the current tab into the big screen, signs you out of the operator console, and opens the game screen. Normally you connect once when opening the booth tab; reloads and new games do not require it again. The authorization has no timer; Overview reports Not connected when the booth has not checked in for 20 seconds.</p>
+                <p class="eyebrow">One-time booth setup</p>
+                <h3>Pair a dedicated big screen</h3>
+                <p id="display-connect-description">Open a private window, separate browser profile, or booth device. Pair it once and leave it open as the shared display so signing out there does not interrupt this operator console.</p>
               </div>
-              <button id="connect-booth-display" class="button primary" type="button">Use this tab as the big screen</button>
+              <button id="connect-booth-display" class="button primary" type="button">Pair this tab as the big screen</button>
             </div>
           </article>
         </section>
@@ -218,9 +218,6 @@
             </section>
 
             <form id="station-controls" class="station-controls">
-              <label id="station-reason-field">Reason for this action
-                <input id="station-reason" required maxlength="200" autocomplete="off" placeholder="Add a short note for the activity log" />
-              </label>
               <div id="recruiting-control" class="station-action" hidden>
                 <button id="close-recruiting" class="button primary" type="button">Choose game now</button>
               </div>
@@ -244,7 +241,8 @@
                 <button id="emergency-complete" class="button danger" type="button">End game now</button>
               </div>
               <div id="results-control" class="station-action" hidden>
-                <button id="advance-results" class="button primary" type="button">Close results and continue</button>
+                <button id="advance-results" class="button primary" type="button">Continue now</button>
+                <button id="hold-results" class="button quiet" type="button">Hold results</button>
               </div>
               <div id="reset-control" class="station-action reset-danger-zone" hidden>
                 <button id="open-station-reset" class="button danger" type="button">Reset event flow</button>
@@ -262,15 +260,9 @@
                 <p class="eyebrow">Danger zone</p>
                 <h3 id="station-reset-title">Reset the event flow?</h3>
                 <p id="station-reset-warning" class="reset-warning">This ends the current game, removes everyone from the line, and returns any coins in use. This cannot be undone.</p>
-                <label>Reason for reset
-                  <input id="station-reset-reason" required maxlength="200" autocomplete="off" placeholder="Describe the emergency" />
-                </label>
-                <label>Type <code>RESET EVENT</code> to confirm
-                  <input id="station-reset-confirmation" required autocomplete="off" spellcheck="false" />
-                </label>
                 <div class="reset-dialog-actions">
                   <button id="cancel-station-reset" class="button quiet" type="button">Cancel</button>
-                  <button id="confirm-station-reset" class="button danger" type="submit" disabled>Reset event</button>
+                  <button id="confirm-station-reset" class="button danger" type="submit">Reset event</button>
                 </div>
               </form>
             </dialog>
@@ -449,7 +441,7 @@
                       <label>Game choice<input id="admin-timing-selection" type="number" min="5" max="180" /><small>Seconds</small></label>
                       <label>Get ready countdown<input id="admin-timing-locked" type="number" min="3" max="60" /><small>Seconds</small></label>
                       <label>Start timeout<input id="admin-timing-launch" type="number" min="10" max="180" /><small>Seconds</small></label>
-                      <label hidden>Legacy results timer<input id="admin-timing-results" type="number" min="3" max="120" /><small>Unused</small></label>
+                      <label>Results screen<input id="admin-timing-results" type="number" min="3" max="120" /><small>Seconds before continuing automatically</small></label>
                       <label>Join window after game<input id="admin-timing-postgame" type="number" min="10" max="300" /><small>Seconds</small></label>
                     </fieldset>
                   </details>
@@ -477,7 +469,7 @@
                   </div>
                   <label>Short ID<input id="admin-challenge-id" required maxlength="64" pattern="[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?" placeholder="product-tour" /></label>
                   <label>Title<input id="admin-challenge-title" required maxlength="200" placeholder="Explore product resources" /></label>
-                  <label class="wide">Message to players<input id="admin-challenge-message" maxlength="300" placeholder="Visit the Voice demo to earn another coin." /><small>Shown in the browser and in MORE/MAIS messaging replies.</small></label>
+                  <label class="wide">Message to players<input id="admin-challenge-message" maxlength="300" placeholder="Visit the Voice demo to earn another coin." /><small>Shown on the reward page opened from the MORE/MAIS link.</small></label>
                   <label class="challenge-url-field">Link players will open<input id="admin-challenge-url" required type="url" maxlength="2048" placeholder="https://www.example.com/products" /></label>
                   <label>Reward coins<input id="admin-challenge-reward" required type="number" min="1" max="100" step="1" value="1" /></label>
                   <label>Uses per player<input id="admin-challenge-claims" required type="number" min="1" max="100" step="1" value="1" /></label>

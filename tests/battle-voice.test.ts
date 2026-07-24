@@ -103,7 +103,12 @@ describe('BattleVoiceSession', () => {
     const {deps,log,said}=fakeDeps({snapshot:()=>battleSnap({phase:'lobby',myName:'Ada'})});
     const session=new BattleVoiceSession(deps);session.setAuthoritativeName('Ada');session.handleMessage(setup());
     expect(log).toContain('join 4821 Ada');
-    expect(said.join(' ').toLowerCase()).not.toContain('your name');
+    const arrival=said.join(' ').toLowerCase();
+    expect(arrival).toContain('ada');
+    expect(arrival).toContain('voice monsters');
+    expect(arrival).toMatch(/fight|attack/);
+    expect(arrival).toContain('say start');
+    expect(arrival).not.toContain('your name');
     session.handleMessage(prompt('call me Mallory'));
     expect(log).not.toContain('name Mallory');
   });
@@ -684,6 +689,16 @@ describe('BattleVoiceSession', () => {
     expect(line).toMatch(/Sparkmouse/i);
     expect(line).toMatch(/Embertail/i);
     expect(line).toMatch(/rematch/i);
+  });
+
+  it('explains automatic station results without promising that a held scoreboard will advance', () => {
+    const {deps,said}=fakeDeps({snapshot:()=>battleSnap({
+      phase:'results',myName:'Ada',myMonsterName:'Sparkmouse',foeName:'Bo',foeMonsterName:'Embertail',winnerName:'Ada',
+    })});
+    const session=new BattleVoiceSession(deps);session.setStationManaged(true);session.handleMessage(setup());said.length=0;
+    session.onBattleEvent({kind:'battle_over',winner:'a',winnerName:'Ada'});
+    expect(said.join(' ')).toMatch(/automatically.*unless the booth holds/i);
+    expect(said.join(' ')).not.toMatch(/say rematch/i);
   });
 
   it('names monsters correctly for a side-b caller (event sides are absolute)', () => {

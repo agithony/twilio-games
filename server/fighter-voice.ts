@@ -88,9 +88,11 @@ export class FighterVoiceSession {
           ? this.t('voice.returnedName', { name: snapshot.myName ?? '' }) : this.t('voice.returned'));
         this.speakContext(snapshot);
       } else {
-        this.deps.say(this.authoritativeName
-          ? this.t('voice.welcomeStart', { name: this.authoritativeName })
-          : this.t('voice.welcome'));
+        if(this.authoritativeName&&snapshot){
+          this.deps.say(this.t('voice.welcomeName',{name:this.authoritativeName}));
+          this.deps.say(this.t('voice.fightHelp'));
+          this.speakContext(snapshot);
+        }else this.deps.say(this.t('voice.welcome'));
       }
       return;
     }

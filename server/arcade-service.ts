@@ -3545,7 +3545,7 @@ export class ArcadeService {
       stationId, expectedRevision, reason: input.reason ?? null,
       occurredAt: input.occurredAt ?? null, authorizedBy: principal,
     }, (state, config, at) => {
-      if (config.arcade.mode === 'off' && principal.kind === 'operator') {
+      if (config.arcade.mode === 'off') {
         throw new ArcadeServiceError(
           'PAUSED_EVENT_RESET_REQUIRED',
           'the paused event flow must be reset before another game-control action',
@@ -3573,6 +3573,29 @@ export class ArcadeService {
       }
       return stationResult(updated);
     }));
+  }
+
+  holdStationResults(input: StationControlInput): Promise<StationMutationResult> {
+    const stationId=requireIdentifier(input.stationId,'stationId');
+    const expectedRevision=requirePositiveInteger(input.expectedRevision,'expectedRevision');
+    const principal=this.authorizeOperator(input.authorization,'STATION_ACTION_UNAUTHORIZED');
+    return this.publishStation(this.execute('HOLD_STATION_RESULTS',input.idempotencyKey,null,{
+      stationId,expectedRevision,reason:input.reason??null,authorizedBy:principal,
+    },(state,config,at)=>{
+      this.requireOn(config);
+      const before=this.requireStationAggregate(state,stationId);
+      if(before.station.revision!==expectedRevision)throw new ArcadeServiceError('STALE_STATION_REVISION','station revision changed');
+      if(before.station.phase!=='RESULTS'||!before.station.activeMatchId)throw new ArcadeServiceError('RESULTS_NOT_ACTIVE','station results are not active');
+      const updated={...before,station:Object.freeze({...before.station,revision:before.station.revision+1,updatedAt:at})};
+      this.persistStationAggregate(state,updated);
+      this.recordStationControlEvent(state,'HOLD_STATION_RESULTS',before,updated,principal,input.reason,at,config.version);
+      return stationResult(updated);
+    }));
+  }
+
+  async stationResultsHeld(matchIdInput:string):Promise<boolean>{
+    const matchId=requireIdentifier(matchIdInput,'matchId');
+    return (await this.store.read()).stationControlEvents.some(event=>event.action==='HOLD_STATION_RESULTS'&&event.matchId===matchId);
   }
 
   failStationLaunch(input: StationControlInput): Promise<StationMutationResult> {

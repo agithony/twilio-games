@@ -60,7 +60,7 @@ const CHATTY_GAP_MS = 2000;
 export interface AdapterDeps {
   findOrCreateRoom: (code: string) => RoomLike | null;
   /** Rebind a reconnecting Conversation Relay transport to its existing Racer player. */
-  resumePlayer?: (callSid: string, roomCode: string) => { playerId: string; lane: number } | null;
+  resumePlayer?: (callSid: string, roomCode: string) => { playerId: string; lane: number; resumed?: boolean; name?:string } | null;
   /** Speak a line to the caller (host wires this to a Relay `{type:'text'}` WS send). */
   say?: (text: string) => void;
   /** Register/unregister this adapter to receive its room's game events (greeting/countdown/result). */
@@ -169,20 +169,22 @@ export class ConversationRelayAdapter {
         if (!code) { console.log('[CR] no roomCode → unbound'); return; }
         const room = this.deps.findOrCreateRoom(code);
         if (!room) { console.log(`[CR] room ${code} not found → unbound`); return; }
-        const res = this.deps.resumePlayer?.(msg.callSid, code)
-          ?? room.addPlayer(this.authoritativeName ?? playerName(msg.from, this.commandLocale));
+        const resumed=this.deps.resumePlayer?.(msg.callSid,code)??null;
+        const res = resumed??room.addPlayer(this.authoritativeName ?? playerName(msg.from, this.commandLocale));
         if ('error' in res) {
           console.log(`[CR] addPlayer rejected: ${res.error} → unbound (caller cannot drive)`);
           this.deps.say?.(createTranslator(this.commandLocale, RACER_MESSAGES)('voice.roomFull'));
           return;
         }
+        if(!this.authoritativeName&&resumed?.name&&!/^(Racer|Piloto)(\s|$)/.test(resumed.name))this.authoritativeName=resumed.name.slice(0,50);
         this.room = room; this.playerId = res.playerId; this.roomCode = code;
         console.log(`[CR] bound caller to player ${res.playerId} lane ${res.lane} in room ${code}`);
         // Register for this room's game events + greet the caller. Send each greeting SENTENCE as its
         // own utterance so Relay TTS pauses naturally between them (one long string read run-on).
         this.deps.register?.(code, this);
-        const greetings = greetingLines(this.commandLocale);
-        for (const line of this.authoritativeName ? greetings.slice(0, -1) : greetings) this.deps.say?.(line);
+        if(this.authoritativeName)this.speakNamedArrival(resumed?.resumed===true);
+        else if(resumed?.resumed===true){const text=createTranslator(this.commandLocale,RACER_MESSAGES);this.deps.say?.(text('voice.returned'));if((this.deps.phaseOf?.(code)??'lobby')==='lobby')this.deps.say?.(text('voice.helpLobby'));else this.speakPhaseGuidance();}
+        else for(const line of greetingLines(this.commandLocale))this.deps.say?.(line);
         break;
       }
       case 'prompt': {
@@ -254,6 +256,26 @@ export class ConversationRelayAdapter {
       case 'unknown':
         return;
     }
+  }
+
+  private speakNamedArrival(resumed:boolean):void{
+    if(!this.authoritativeName||!this.roomCode)return;
+    const text=createTranslator(this.commandLocale,RACER_MESSAGES);
+    this.deps.say?.(text(resumed?'voice.returnedNamed':'voice.welcomeNamed',{name:this.authoritativeName}));
+    if(!resumed)this.deps.say?.(text('voice.controlsIntro'));
+    this.speakPhaseGuidance();
+  }
+
+  private speakPhaseGuidance():void{
+    if(!this.roomCode)return;
+    const text=createTranslator(this.commandLocale,RACER_MESSAGES);
+    const phase=this.deps.phaseOf?.(this.roomCode)??'lobby';
+    const key=phase==='car_select'?'voice.helpCar'
+      :phase==='map_select'?'voice.helpMap'
+      :phase==='racing'||phase==='countdown'?'voice.help'
+      :phase==='results'||phase==='finished'?(this.stationManaged?'voice.waitOperator':'voice.helpResults')
+      :'voice.helpLobbyNamed';
+    this.deps.say?.(text(key));
   }
 
   handleClose(preservePlayer = false): void {

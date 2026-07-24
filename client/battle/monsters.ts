@@ -296,6 +296,12 @@ function drainNext(): void {
     // "▶ Continue" prompt so the win lands, and wait for the player to acknowledge.
     if (state?.phase === 'results') {
       stationDisplay.markEngineResultsReady();
+      if (stationDisplay.active) {
+        awaitingContinue = false;
+        renderer.setEventBanner('');
+        renderOverlay();
+        return;
+      }
       awaitingContinue = true;
       renderer.setEventBanner(text('battle.continue', { winner: state.result?.winnerName ?? text('results.winner') }));
       renderOverlay();

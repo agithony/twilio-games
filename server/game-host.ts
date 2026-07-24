@@ -18,6 +18,8 @@ export interface HostContext {
   myCar: string | null;           // the caller's currently-picked car name, if any
   myPlace: number | null;         // during/after a race, the caller's place
   myFinishTime?: number | null;   // results screen: caller's finish time in seconds (null/0 = DNF/unknown)
+  myCurrentTrackRank?: number | null;
+  currentTrackRankedRunCount?: number;
   racerCount: number;
   nameLocked?: boolean;
   stationManaged?: boolean;
@@ -101,6 +103,9 @@ export function buildSystemPrompt(ctx: HostContext, locale: SupportedLocale = DE
   if (ctx.phase === 'results' || ctx.phase === 'finished') {
     if (ctx.myPlace === 1) lines.push('The caller won the race. Congratulate them warmly, but keep it calm and concise.');
     else lines.push(`The race is over — the caller finished ${ctx.myPlace ? `in place ${ctx.myPlace}` : 'the race'}. Encourage them to try again, without sounding disappointed or overly dramatic.`);
+    if(ctx.myCurrentTrackRank&&ctx.currentTrackRankedRunCount){
+      lines.push(`AUTHORITATIVE CURRENT-TRACK RANK: this run is number ${ctx.myCurrentTrackRank} out of ${ctx.currentTrackRankedRunCount} retained completed runs on ${ctx.selectedMap??'this track'}. Never calculate a different rank and never confuse it with place ${ctx.myPlace??'unknown'} in the current race.`);
+    }
     // A proactive RECAP + leaderboard OVERVIEW — this is the results screen, don't just wait silently.
     if (ctx.raceStandings && ctx.raceStandings.length > 0) {
       const order = ctx.raceStandings.slice(0, 5)
@@ -114,9 +119,9 @@ export function buildSystemPrompt(ctx: HostContext, locale: SupportedLocale = DE
     } else if (ctx.allTimeBest) {
       lines.push(`CURRENT TRACK LEADERBOARD (${ctx.selectedMap ?? 'this track'}): the record is ${ctx.allTimeBest.name} at ${ctx.allTimeBest.time.toFixed(2)} seconds. Use ONLY this track-specific leaderboard data when discussing high scores.`);
     }
-    lines.push(locale === 'pt-BR'
-      ? 'Depois, convide a pessoa para correr novamente dizendo "revanche" ou "correr de novo".'
-      : 'Then invite them to race again (say "rematch" or "go again").');
+    lines.push(ctx.stationManaged
+      ?(locale==='pt-BR'?'A próxima rodada continua automaticamente, a menos que a cabine segure o placar. Não convide para revanche.':'The next round continues automatically unless the booth holds the scoreboard. Do not invite a rematch.')
+      :(locale === 'pt-BR'?'Depois, convide a pessoa para correr novamente dizendo "revanche" ou "correr de novo".':'Then invite them to race again (say "rematch" or "go again").'));
   }
   lines.push('', locale === 'pt-BR'
     ? 'REGRAS: responda SOMENTE em português natural do Brasil. Nunca invente nem traduza nomes de carros ou pistas; use exatamente as listas acima. Não avance uma etapa antes de ela estar concluída. Não use emojis.'

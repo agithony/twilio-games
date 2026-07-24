@@ -568,7 +568,7 @@ export class ArcadeApi {
     launchGeneration: number;
     game: string;
     roomCode: string;
-  }): Promise<{ firstName: string | null } | null> {
+  }): Promise<{ firstName: string | null; terminal: boolean } | null> {
     if (!input.callSid || !input.readyEntryId || !input.matchId
       || !Number.isSafeInteger(input.launchGeneration) || input.launchGeneration < 1) return null;
     try {
@@ -580,7 +580,7 @@ export class ArcadeApi {
       const entry = state.stationReadyEntries[input.readyEntryId];
       const activeCall = entry ? this.stationVoiceCalls.get(entry.playerId) : undefined;
       const valid = config.arcade.mode !== 'off'
-        && Boolean(station && ['LAUNCHING', 'PLAYING'].includes(station.phase))
+        && Boolean(station && ['LAUNCHING', 'PLAYING', 'RESULTS'].includes(station.phase))
         && match?.id === input.matchId
         && match.launchGeneration === input.launchGeneration
         && match.game === input.game
@@ -595,7 +595,7 @@ export class ArcadeApi {
           ? state.messagingDrafts[entry.playerId]?.firstName?.trim()
           : '')
         || null;
-      return { firstName: firstName ? firstName.slice(0, 20) : null };
+      return { firstName: firstName ? firstName.slice(0, 20) : null, terminal: station!.phase === 'RESULTS' };
     } catch {
       return null;
     }
@@ -1992,6 +1992,7 @@ export class ArcadeApi {
     else if (action === 'launch') await resources.service.requestStationLaunch(common);
     else if (action === 'complete') await resources.service.completeStationMatch(common);
     else if (action === 'advance') await resources.service.advanceStationResults(common);
+    else if (action === 'hold') await resources.service.holdStationResults(common);
     else if (action === 'fail') await resources.service.failStationLaunch(common);
     else {
       await resources.service.resetStation(common);
@@ -2483,7 +2484,7 @@ function parseOperatorMatchRoute(pathname: string): { matchId: string } | null {
   return match ? { matchId: match[1]! } : null;
 }
 
-type OperatorStationAction = 'close' | 'select' | 'launch' | 'complete' | 'advance' | 'fail' | 'reset';
+type OperatorStationAction = 'close' | 'select' | 'launch' | 'complete' | 'advance' | 'hold' | 'fail' | 'reset';
 
 function parseOperatorStationRoute(pathname: string): OperatorStationAction | null {
   const routes: Readonly<Record<string, OperatorStationAction>> = {
@@ -2492,6 +2493,7 @@ function parseOperatorStationRoute(pathname: string): OperatorStationAction | nu
     '/api/admin/arcade/station/launch/request': 'launch',
     '/api/admin/arcade/station/match/complete': 'complete',
     '/api/admin/arcade/station/results/advance': 'advance',
+    '/api/admin/arcade/station/results/hold': 'hold',
     '/api/admin/arcade/station/launch/fail': 'fail',
     '/api/admin/arcade/station/reset': 'reset',
   };
@@ -2671,6 +2673,7 @@ function playerServiceError(serviceCode: string): { status: number; code: string
       return { status: 409, code: serviceCode, message: 'game challenge cannot be claimed' };
     case 'MATCH_NOT_READY':
     case 'MATCH_NOT_ACTIVE':
+    case 'RESULTS_NOT_ACTIVE':
     case 'MATCH_PARTICIPANTS_MISMATCH':
     case 'CABINET_CHANGED':
     case 'READY_POOL_FULL':

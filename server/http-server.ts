@@ -17,7 +17,7 @@ import { parseManifest } from '../shared/asset-manifest';
 import { mergeMapConfig } from '../shared/maps-store';
 import { seedMapsPlan } from './maps-seed';
 import { DEFAULT_ROOM } from '../shared/constants';
-import { appendResults, parseLeaderboard, topEntries, type LeaderboardEntry } from '../shared/leaderboard-store';
+import { appendResults, MAX_LEADERBOARD_HISTORY, parseLeaderboard, parseLeaderboardStrict, topEntries, type LeaderboardEntry } from '../shared/leaderboard-store';
 import { speechSafeText } from '../shared/speech-text';
 import { SmsConcierge, type ConciergeRoom } from './sms-concierge';
 import { OpenAiClient, NullLlmClient, type LlmClient, type LlmTurn } from './llm';
@@ -141,6 +141,7 @@ export class HttpServer {
   /** Cached leaderboard rows. Host context filters this by the room's selected map, so the AI answers
    *  with the same track-specific board shown on screen instead of a stale/global record. */
   private leaderboardEntriesCache: LeaderboardEntry[] = [];
+  private leaderboardLoaded = false;
   /** Serializes leaderboard writes so two near-simultaneous race finishes can't clobber each other. */
   private leaderboardWrite: Promise<void> = Promise.resolve();
   /** SMS concierge (per-phone onboarding + car/map selection). */
@@ -318,9 +319,11 @@ export class HttpServer {
     });
     this.battle.setOnRoomState((roomCode) => {
       const room = this.battle.findRoom(roomCode); if (room) this.analyticsObserver.battleState(room);
-      this.updateStationEngineLifecycle(
-        'monsters', roomCode, room?.phase, ['battle'], ['results'], room?.participantResults() ?? [],
-      );
+      if (room?.phase !== 'results' || room.canRematch) {
+        this.updateStationEngineLifecycle(
+          'monsters', roomCode, room?.phase, ['battle'], ['results'], room?.participantResults() ?? [],
+        );
+      }
       const set = this.battleVoice.get(roomCode);
       if (!set) return;
       for (const s of set) s.onBattleStateChanged();
@@ -333,7 +336,7 @@ export class HttpServer {
       const room = this.fighter.findRoom(roomCode); if (room) this.analyticsObserver.fighterState(room);
       const state = room?.state();
       const humanPlayers = state?.players.filter(player => !player.isAi) ?? [];
-      this.updateStationEngineLifecycle('fighter', roomCode, room?.phase, ['intro','countdown','fight'], ['victory', 'results'],
+      this.updateStationEngineLifecycle('fighter', roomCode, room?.phase, ['intro','countdown','fight','victory'], ['results'],
         humanPlayers.map((player, index) => ({
           enginePlayerId: player.playerId,
           rank: state?.result ? (player.side === state.result.winner ? 1 : 2) : index + 1,
@@ -442,8 +445,12 @@ export class HttpServer {
     };
     if (carNames.length) this.carNamesCache = carNames;
     // Refresh leaderboard rows for the AI host. Best-effort: a read failure keeps prior rows.
-    try {
-      this.leaderboardEntriesCache = parseLeaderboard(await readFile(this.leaderboardPath, 'utf8'));
+    if(!this.leaderboardLoaded)try {
+      await this.leaderboardWrite;
+      const entries = parseLeaderboardStrict(await readFile(this.leaderboardPath, 'utf8'));
+      if (entries === null) throw new Error('leaderboard storage is corrupt');
+      this.leaderboardEntriesCache = entries;
+      this.leaderboardLoaded=true;
     } catch { /* keep prior rows */ }
   }
 
@@ -494,8 +501,11 @@ export class HttpServer {
       try { existing = await readFile(this.leaderboardPath, 'utf8'); } catch { existing = ''; }
       const out = appendResults(existing, { map, results, at, identityNamespace: roomCode });
       if (!out.ok) { console.error('leaderboard append refused:', out.error); return; }
-      this.leaderboardEntriesCache = out.entries;
-      try { await this.writeFileAtomic(this.leaderboardPath, JSON.stringify(out.entries)); }
+      try {
+        await this.writeFileAtomic(this.leaderboardPath, JSON.stringify(out.entries));
+        this.leaderboardEntriesCache = out.entries;
+        this.leaderboardLoaded = true;
+      }
       catch (e) { console.error('leaderboard write failed:', (e as Error).message); }
     }).catch((e) => console.error('leaderboard persist error:', e));
   }
@@ -513,7 +523,11 @@ export class HttpServer {
     if (!targets.size && !enginePlayerIds.size) return Promise.resolve();
     const cleanup = this.leaderboardWrite.then(async () => {
       let entries: LeaderboardEntry[] = [];
-      try { entries = parseLeaderboard(await readFile(this.leaderboardPath, 'utf8')); }
+      try {
+        const parsed = parseLeaderboardStrict(await readFile(this.leaderboardPath, 'utf8'));
+        if (parsed === null) throw new Error('leaderboard storage is corrupt');
+        entries = parsed;
+      }
       catch (error) {
         if ((error as { code?: unknown }).code === 'ENOENT') return;
         throw error;
@@ -530,9 +544,9 @@ export class HttpServer {
         changed = true;
         return { ...entry, name: 'PLAYER' };
       });
-      if (!changed) return;
-      await this.writeFileAtomic(this.leaderboardPath, JSON.stringify(anonymized));
+      if(changed)await this.writeFileAtomic(this.leaderboardPath, JSON.stringify(anonymized));
       this.leaderboardEntriesCache = anonymized;
+      this.leaderboardLoaded = true;
     });
     this.leaderboardWrite = cleanup.catch(error => console.error('leaderboard reset cleanup failed:', error));
     return cleanup;
@@ -585,14 +599,17 @@ export class HttpServer {
         // DETERMINISTIC fast-path: in car/map select, if the caller CLEARLY picked one (a number or a
         // strong name match, not a question), act on it immediately — no LLM round-trip, and it works
         // even with the LLM disabled. This is what makes "two" / "the second one" reliably select.
-        const direct = this.directSelection(room, playerId, utterance, locale,stationManaged);
+        const direct = this.directSelection(room, playerId, utterance, locale,stationFirstName!==null);
         if (direct) return direct;
+        const context=this.hostContext(room,playerId,locale,stationFirstName!==null);
+        context.stationManaged=stationManaged;
+        if(utterance.trim().startsWith('(')&&['results','finished'].includes(room.phase))return this.racerResultsRecap(context,locale);
         // Portuguese gameplay is fully deterministic. Keep optional free-form LLM replies disabled
         // until a model-level locale guarantee exists, so an English response can never reach pt-BR TTS.
         if (locale === 'pt-BR') return null;
         if (!this.llm.enabled) return null;
         history.push({ role: 'user', content: utterance });
-        const reply = await hostTurn(this.llm, this.hostContext(room, playerId, locale, stationManaged), history, locale);
+        const reply = await hostTurn(this.llm, context, history, locale);
         if (reply) history.push({ role: 'assistant', content: reply });
         // Bound history so a long call doesn't grow unbounded (keep the last ~12 turns).
         if (history.length > 12) history.splice(0, history.length - 12);
@@ -701,6 +718,14 @@ export class HttpServer {
           stationReadyEntryId = readyEntryId;
           stationFirstName = identity.firstName;
           stationManaged = true;
+          const assignedGame = String(setup?.customParameters?.game ?? '').toLowerCase();
+          const assignedRoom = String(setup?.customParameters?.roomCode ?? '');
+          const racerPhase = assignedGame === 'racer' ? this.game.findRoom(assignedRoom)?.phase : undefined;
+          if ((identity.terminal || racerPhase === 'finished' || racerPhase === 'results')
+            && !this.hasResumableRacerVoiceCall(stationCallSid, assignedRoom)) {
+            ws.close(1008, 'finished station assignment');
+            return;
+          }
         }
         processFrame(raw);
       }).catch(() => ws.close(1011, 'voice setup failed'));
@@ -865,18 +890,24 @@ export class HttpServer {
     callSid: string,
     code: string,
     adapter: ConversationRelayAdapter,
-  ): { playerId: string; lane: number } | null {
+  ): { playerId: string; lane: number; resumed: true; name:string } | null {
     const sid = callSid.trim();
-    if (!sid) return null;
+    if (!this.hasResumableRacerVoiceCall(sid, code)) return null;
     const binding = this.racerVoiceCallBindings.get(sid);
-    const playerExists = this.game.findRoom(code)?.lobbyPlayers()
-      .some(player => player.playerId === binding?.playerId) === true;
-    if (!binding || binding.code !== code || !playerExists) return null;
+    if (!binding) return null;
+    const player = this.game.findRoom(code)!.lobbyPlayers()
+      .find(candidate => candidate.playerId === binding.playerId)!;
     if (binding.leaveTimer) clearTimeout(binding.leaveTimer);
     if (binding.activeAdapter && binding.activeAdapter !== adapter) binding.activeAdapter.handleClose(true);
     binding.activeAdapter = adapter;
     binding.leaveTimer = null;
-    return { playerId: binding.playerId, lane: 0 };
+    return { playerId: binding.playerId, lane: 0, resumed:true, name:player!.name };
+  }
+
+  private hasResumableRacerVoiceCall(callSid: string, code: string): boolean {
+    const binding = this.racerVoiceCallBindings.get(callSid.trim());
+    return Boolean(binding && binding.code === code && this.game.findRoom(code)?.lobbyPlayers()
+      .some(candidate => candidate.playerId === binding.playerId));
   }
 
   private scheduleRacerVoiceLeave(
@@ -1182,8 +1213,8 @@ export class HttpServer {
     // "no real name yet" so the host asks for one and displays what they actually say.
     const rawName = me?.name ?? '';
     const realName = !nameLocked&&/^(Racer|Piloto)(\s|$)/.test(rawName) ? null : rawName || null;
-    const board = this.leaderboardSummaryForMap(room.selectedMap, room.results());
     const myResult = room.results().find(r => r.playerId === playerId) ?? null;
+    const board = this.leaderboardSummaryForMap(room, playerId);
     return {
       phase: room.phase as HostContext['phase'],
       cars, maps, selectedMap: room.selectedMap ? localizedTrackName(locale, room.selectedMap) : null,
@@ -1191,6 +1222,8 @@ export class HttpServer {
       myCar: myCarIdx !== null ? localizedCarName(locale, room.carName(myCarIdx)) : null,
       myPlace: myResult?.place ?? null,
       myFinishTime: myResult && myResult.finished && myResult.finishT > 0 ? myResult.finishT : null,
+      myCurrentTrackRank: board.currentRunRank,
+      currentTrackRankedRunCount: board.rankedRunCount,
       racerCount: room.playerCount,
       nameLocked,
       stationManaged:nameLocked,
@@ -1244,26 +1277,46 @@ export class HttpServer {
     };
   }
 
-  private leaderboardSummaryForMap(map: string | null, currentResults: RaceResult[] = []): { top: { name: string; time: number }[]; topNames: string[]; bestName: string | null; bestTime: number | null } {
-    if (!map) return { top: [], topNames: [], bestName: null, bestTime: null };
+  private leaderboardSummaryForMap(room: Room, currentPlayerId: string): { top: { name: string; time: number }[]; topNames: string[]; bestName: string | null; bestTime: number | null; currentRunRank: number | null; rankedRunCount: number } {
+    const map=room.selectedMap,currentResults=room.results();
+    if (!map) return { top: [], topNames: [], bestName: null, bestTime: null, currentRunRank:null, rankedRunCount:0 };
     const currentEntries: LeaderboardEntry[] = currentResults
       .filter(r => r.finished && r.finishT > 0)
-      .map(r => ({ name: r.name, map, carIndex: r.carIndex, finishT: r.finishT, at: Number.MAX_SAFE_INTEGER }));
-    const ranked = topEntries([...currentEntries, ...this.leaderboardEntriesCache], { map, limit: 20 });
-    const seen = new Set<string>();
-    const top: LeaderboardEntry[] = [];
-    for (const entry of ranked) {
-      const key = `${entry.name}|${entry.finishT}`;
-      if (seen.has(key)) continue;
-      seen.add(key); top.push(entry);
-      if (top.length >= 5) break;
-    }
+      .map(r => ({name:r.name,map,carIndex:r.carIndex,finishT:r.finishT,at:Number.MAX_SAFE_INTEGER,
+        enginePlayerId:`${room.code}:${this.arcadeApi?.canonicalStationEnginePlayerId?.(r.playerId)??r.playerId}`}));
+    const duplicateRemoved=new Set<string>();
+    const historical=this.leaderboardEntriesCache.filter(entry=>{
+      const current=currentEntries.find(candidate=>candidate.enginePlayerId===entry.enginePlayerId&&Math.abs(candidate.finishT-entry.finishT)<0.001);
+      if(!current||!entry.enginePlayerId||duplicateRemoved.has(entry.enginePlayerId))return true;
+      duplicateRemoved.add(entry.enginePlayerId);return false;
+    });
+    const ranked=[...currentEntries,...historical].slice(0,MAX_LEADERBOARD_HISTORY)
+      .filter(entry=>entry.map===map)
+      .sort((left,right)=>left.finishT-right.finishT||right.at-left.at);
+    const top=ranked.slice(0,5);
+    const myCanonicalId=`${room.code}:${this.arcadeApi?.canonicalStationEnginePlayerId?.(currentPlayerId)??currentPlayerId}`;
+    const currentRun=ranked.find(entry=>entry.enginePlayerId===myCanonicalId&&entry.at===Number.MAX_SAFE_INTEGER);
+    const currentRunRank=currentRun?ranked.indexOf(currentRun)+1:null;
     return {
       top: top.map(e => ({ name: e.name, time: e.finishT })),
       topNames: top.map(e => e.name),
       bestName: top[0]?.name ?? null,
       bestTime: top[0]?.finishT ?? null,
+      currentRunRank,
+      rankedRunCount:ranked.length,
     };
+  }
+
+  private racerResultsRecap(context:HostContext,locale:SupportedLocale):string{
+    const rank=context.myCurrentTrackRank,count=context.currentTrackRankedRunCount??0,map=context.selectedMap??(locale==='pt-BR'?'esta pista':'this track');
+    if(locale==='pt-BR'){
+      const race=context.myPlace?`Você terminou esta corrida na posição ${context.myPlace}.`:'A corrida terminou.';
+      const board=rank&&count?`Seu tempo ficou em ${rank}º lugar entre ${count} corridas concluídas nesta pista, ${map}.`:`Veja a classificação da pista na tela.`;
+      return `${race} ${board} ${context.stationManaged?'A próxima rodada continua automaticamente, a menos que a cabine segure o placar.':'Diga revanche quando quiser correr novamente.'}`;
+    }
+    const race=context.myPlace?`You finished this race in place ${context.myPlace}.`:'The race is complete.';
+    const board=rank&&count?`Your run ranks number ${rank} out of ${count} completed runs all-time on ${map}.`:'Check the track leaderboard on the big screen.';
+    return `${race} ${board} ${context.stationManaged?'The next round continues automatically unless the booth holds the scoreboard.':'Say rematch when you want to race again.'}`;
   }
 
   /** Test seam for verifying voice host context. */

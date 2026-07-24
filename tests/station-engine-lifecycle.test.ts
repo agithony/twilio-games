@@ -5,6 +5,7 @@ import path from 'node:path';
 import type { ArcadeApi } from '../server/arcade-api';
 import { BattleServer } from '../server/battle-server';
 import { FighterServer } from '../server/fighter-server';
+import { FIGHTER_VICTORY_SECONDS } from '../server/fighter-room';
 import { HttpServer } from '../server/http-server';
 import { FIGHTER_INTRO_SECONDS } from '../shared/fighter-protocol';
 
@@ -12,6 +13,7 @@ let server: HttpServer | undefined;
 let directory: string | undefined;
 
 afterEach(async () => {
+  vi.useRealTimers();
   await server?.stop();
   server = undefined;
   if (directory) await rm(directory, { recursive: true, force: true });
@@ -126,7 +128,18 @@ describe('station engine room lifecycle', () => {
     fighter.voiceCommand(completeCode, completePlayer, 'forward');
     expect(started).toHaveBeenCalledTimes(2);
 
-    completeRoom.phase = 'victory';
+    completeRoom.tick(1);
+    const world = completeRoom.state().world!;
+    world.p1.x = 0; world.p2.x = 1; world.p2.health = 10;
+    completeRoom.command(completePlayer, 'kick');
+    completeRoom.tick(0.6);
+    fighter.voiceCommand(completeCode, completePlayer, 'forward');
+    expect(completeRoom.phase).toBe('victory');
+    expect(completed).not.toHaveBeenCalled();
+    completeRoom.tick(FIGHTER_VICTORY_SECONDS - 0.1);
+    fighter.voiceCommand(completeCode, completePlayer, 'forward');
+    expect(completed).not.toHaveBeenCalled();
+    completeRoom.tick(0.1);
     fighter.voiceCommand(completeCode, completePlayer, 'forward');
     fighter.voiceCommand(completeCode, completePlayer, 'forward');
     expect(completed).toHaveBeenCalledTimes(1);
@@ -137,6 +150,7 @@ describe('station engine room lifecycle', () => {
 
   it('completes a started Monsters battle once across duplicate result callbacks', async () => {
     const { battle, started, completed, abandoned } = await harness();
+    vi.useFakeTimers();
     const roomCode = 'MONSTER-COMPLETE';
     const ada = battle.voiceJoin(roomCode, 'Ada')!;
     const grace = battle.voiceJoin(roomCode, 'Grace')!;
@@ -157,6 +171,8 @@ describe('station engine room lifecycle', () => {
 
     expect(room.phase).toBe('results');
     expect(started).toHaveBeenCalledTimes(1);
+    expect(completed).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(room.rematchReadyInMs + 5);
     expect(completed).toHaveBeenCalledTimes(1);
     expect(completed).toHaveBeenCalledWith('monsters', roomCode, expect.any(Array));
     battle.voiceOpenFight(roomCode, ada);
