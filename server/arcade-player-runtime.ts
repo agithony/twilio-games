@@ -4,6 +4,7 @@ import type { PlayableArcadeGame } from '../shared/arcade-games';
 import type { ArcadeConfigStore } from './arcade-config-store';
 import {
   ARCADE_CONFIG_UPDATED_EVENT,
+  createArcadeReadyEntryAddedEvent,
   createArcadeStationUpdatedEvent,
   type ArcadeEventHub,
 } from './arcade-events';
@@ -294,6 +295,9 @@ export class ArcadePlayerRuntime {
           : null;
       },
       stationUpdated: revision => this.events.publish(createArcadeStationUpdatedEvent(revision)),
+      readyEntryAdded: event => this.events.publish(createArcadeReadyEntryAddedEvent(
+        event.revision, event.displayName, event.admission,
+      )),
       stationNotifications: this.outboundMessaging ? {
         enabled: this.outboundMessaging.enabled,
         callNumber: this.outboundMessaging.callNumber,

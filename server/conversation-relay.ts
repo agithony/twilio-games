@@ -122,6 +122,7 @@ export class ConversationRelayAdapter {
   private lastMenuPrompt: { kind: 'enter_car_select' | 'enter_map_select'; at: number } | null = null;
   onGameEvent(ev: GameEvent): void {
     this.clockMs += 50;   // events arrive on the ~20Hz broadcast; approx a wall clock for throttling
+    if ('spokenReplyPlayerId' in ev && ev.spokenReplyPlayerId === this.playerId) return;
     if (ev.kind === 'go' || ev.kind === 'countdown') {
       this.recapDone = false;
       this.myFinishPlace = null;

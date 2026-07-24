@@ -239,6 +239,20 @@ describe('ConversationRelayAdapter', () => {
     expect(said[1]!.toLowerCase()).toMatch(/track|course/);
   });
 
+  it('does not repeat the menu or car response already spoken to the initiating caller', () => {
+    const room = fakeRoom(); const said: string[] = [];
+    const a = new ConversationRelayAdapter({ findOrCreateRoom: () => room, say: (t) => said.push(t) });
+    a.handleMessage(JSON.stringify({ type:'setup', callSid:'CA1', customParameters:{ roomCode:'4821' } }));
+    said.length = 0;
+
+    a.onGameEvent({ kind:'enter_car_select', spokenReplyPlayerId:'p1' });
+    a.onGameEvent({ kind:'car_picked', playerId:'p1', name:'Me', car:'Roadster', spokenReplyPlayerId:'p1' });
+    a.onGameEvent({ kind:'enter_map_select', spokenReplyPlayerId:'someone-else' });
+
+    expect(said).toHaveLength(1);
+    expect(said[0]!.toLowerCase()).toMatch(/track|course/);
+  });
+
   it('allows the same menu prompt again after a later phase cycle', () => {
     const room = fakeRoom(); const said: string[] = [];
     const a = new ConversationRelayAdapter({ findOrCreateRoom: () => room, say: (t) => said.push(t) });

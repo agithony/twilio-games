@@ -58,6 +58,8 @@ export class ArcadeStationRuntime {
   private readonly terminalEngines = new Map<string, 'completed' | 'abandoned'>();
   private readonly engineResults = new Map<string, readonly StationEngineParticipantResult[]>();
   private readonly connectedReadyEntries = new Map<string, string>();
+  private readonly canonicalEngineIdByReadyEntry = new Map<string, string>();
+  private readonly canonicalEngineIdByCurrentId = new Map<string, string>();
   private started = false;
   private stopped = false;
   private recoverOnStart = true;
@@ -163,6 +165,8 @@ export class ArcadeStationRuntime {
 
   markParticipantConnected(readyEntryId: string, enginePlayerId = `legacy:${readyEntryId}`): void {
     this.connectedReadyEntries.set(readyEntryId, enginePlayerId);
+    const canonical = this.canonicalEngineIdByReadyEntry.get(readyEntryId);
+    if (canonical) this.canonicalEngineIdByCurrentId.set(enginePlayerId, canonical);
     this.enqueueReconcile();
   }
 
@@ -172,6 +176,10 @@ export class ArcadeStationRuntime {
 
   connectedParticipantIds(): ReadonlySet<string> {
     return new Set(this.connectedReadyEntries.keys());
+  }
+
+  canonicalEnginePlayerId(enginePlayerId: string): string {
+    return this.canonicalEngineIdByCurrentId.get(enginePlayerId) ?? enginePlayerId;
   }
 
   dropAdmittedEntry(input: {
@@ -312,16 +320,21 @@ export class ArcadeStationRuntime {
         && this.startedEngines.has(engineKey(activeMatch.game, activeMatch.engineRoomCode))
         && activeMatch.participantReadyEntryIds.every(id => this.connectedReadyEntries.has(id))) {
         try {
+          const enginePlayerIdsByReadyEntryId = Object.fromEntries(
+            activeMatch.participantReadyEntryIds.map(id => [id, this.connectedReadyEntries.get(id)!]),
+          );
           await this.service.startStationMatch({
             stationId: aggregate.station.id,
             expectedRevision: aggregate.station.revision,
             idempotencyKey: engineIdempotencyKey('start', activeMatch.id, activeMatch.launchGeneration),
             authorization: this.systemAuthorization(),
             reason: 'authoritative game engine started',
-            enginePlayerIdsByReadyEntryId: Object.fromEntries(
-              activeMatch.participantReadyEntryIds.map(id => [id, this.connectedReadyEntries.get(id)!]),
-            ),
+            enginePlayerIdsByReadyEntryId,
           });
+          for (const [readyEntryId, enginePlayerId] of Object.entries(enginePlayerIdsByReadyEntryId)) {
+            this.canonicalEngineIdByReadyEntry.set(readyEntryId, enginePlayerId);
+            this.canonicalEngineIdByCurrentId.set(enginePlayerId, enginePlayerId);
+          }
           continue;
         } catch (error) {
           if (isRevisionRace(error)) continue;

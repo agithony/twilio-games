@@ -177,7 +177,7 @@ connection.onState(next => {
   if (previousPhase === 'intro' && next.phase === 'countdown') endIntro(next);
   if (next.phase === 'loading') maybeSignalReady();
   if (phaseChanged && next.phase === 'fight') beginFight(next);
-  if (next.phase === 'results' && next.result) showResult(next.result.winner);
+  if (next.phase === 'results' && next.result) { stationDisplay.markEngineResultsReady(); showResult(next.result.winner); }
   else if (next.phase !== 'results') { result.hidden = true; setFightControlsEnabled(next.phase === 'fight'); }
   renderFlow();
 });

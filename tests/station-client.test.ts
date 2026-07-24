@@ -34,6 +34,8 @@ describe('public visitor URLs', () => {
       phase: 'LAUNCHING', revision: 1, activeGame: 'fighter', deadline: null,
       currentReadyCount: 2, nextReadyCount: 0, roster: [], games: [],
       launch: { game: 'fighter', route: '/fighter.html', roomCode: 'ROOM', matchId: 'MATCH', generation: 3 },
+      results: [],
+      resultSource: null,
     }, 'ARCADE-01', 'en-US', 'https://public.example/path');
     const url = new URL(target!);
     expect(url.searchParams.get('joinBaseUrl')).toBe('https://public.example');

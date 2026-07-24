@@ -88,9 +88,9 @@ export type ServerMessage =
   | { type: 'results'; roomCode: string; map: string | null; results: RaceResult[] }; // post-race scoreboard
 
 export type GameEvent =
-  | { kind: 'enter_car_select' }                          // flow reached car-select ("pick your ride")
-  | { kind: 'enter_map_select' }                          // flow reached map-select ("now the track")
-  | { kind: 'car_picked'; playerId: string; name: string; car: string }  // a player locked a car
+  | { kind: 'enter_car_select'; spokenReplyPlayerId?: string }  // flow reached car-select
+  | { kind: 'enter_map_select'; spokenReplyPlayerId?: string }  // flow reached map-select
+  | { kind: 'car_picked'; playerId: string; name: string; car: string; spokenReplyPlayerId?: string }  // a player locked a car
   | { kind: 'map_picked'; map: string }                   // the track was chosen
   | { kind: 'countdown'; n: number }
   | { kind: 'go' }

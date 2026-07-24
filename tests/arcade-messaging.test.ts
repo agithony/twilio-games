@@ -26,6 +26,7 @@ async function harness(
   chargePolicy: 'per_player' | 'free' = 'per_player',
   configure?: (value: Record<string, any>) => void,
   messagingProtection?: ArcadeMessagingProtectionOptions,
+  readyEntryAdded?: (event: Readonly<{revision:number;displayName:string;admission:'coin'|'ready'}>) => void,
 ) {
   const directory = await mkdtemp(path.join(tmpdir(), 'arcade-messaging-'));
   directories.push(directory);
@@ -45,6 +46,7 @@ async function harness(
     idGenerator: kind => `${kind}-${++sequence}`,
     challengeTokenSecret: TOKEN_SECRET,
     messagingProtection,
+    readyEntryAdded,
     operatorAuthorizer: authorization => authorization === OPERATOR_AUTH
       ? { kind: 'operator', subject: 'operator@twilio.com' }
       : null,
@@ -174,7 +176,22 @@ describe('Arcade messaging commands', () => {
     expect(h.store.snapshot().wallets[prose.playerId!]?.reservations.every(item => item.status === 'RELEASED')).toBe(true);
   });
 
-  it('returns personalized MORE links on SMS and WhatsApp and grants the configured reward after confirmation', async () => {
+  it('emits one display insertion cue only after a durable COIN admission', async () => {
+    const cues: Array<{revision:number;displayName:string;admission:'coin'|'ready'}> = [];
+    const h = await harness('coin_only', 'per_player', value => {
+      value.registration.termsAcknowledgementRequired = false;
+    }, undefined, event => cues.push(event));
+    await message(h.service, 'CUE-JOIN', 'JOIN');
+    await message(h.service, 'CUE-NAME', 'Ada');
+    expect(cues).toEqual([]);
+    await message(h.service, 'CUE-COIN', 'COIN');
+    await message(h.service, 'CUE-COIN', 'COIN');
+    expect(cues).toEqual([{ revision: 2, displayName: 'Ada', admission: 'coin' }]);
+    await message(h.service, 'CUE-STATUS', 'STATUS');
+    expect(cues).toHaveLength(1);
+  });
+
+  it('returns one MORE hub on SMS and WhatsApp and requires visiting each challenge before claiming', async () => {
     const h = await harness('coin_only', 'per_player', value => {
       value.registration.termsAcknowledgementRequired = false;
       value.coins.startingBalance = 1;
@@ -182,6 +199,10 @@ describe('Arcade messaging commands', () => {
         id: 'voice-docs', title: 'Voice docs', message: 'Explore the Voice docs to earn two more coins.',
         url: 'https://www.twilio.com/docs/voice', rewardCoins: 2, enabled: true,
         maxClaimsPerPlayer: 1, displayOrder: 0, startsAt: null, endsAt: null,
+      }, {
+        id: 'github', title: 'GitHub', message: 'Visit the repository.',
+        url: 'https://github.com/twilio', rewardCoins: 1, enabled: true,
+        maxClaimsPerPlayer: 1, displayOrder: 1, startsAt: null, endsAt: null,
       }];
     });
     await message(h.service, 'MORE-JOIN', 'JOIN');
@@ -191,17 +212,32 @@ describe('Arcade messaging commands', () => {
     const whatsapp = await message(h.service, 'MORE-WA', 'MORE', '+14155550199', 'whatsapp');
     for (const result of [sms, whatsapp]) {
       expect(result.command).toBe('MORE');
-      expect(result.reply).toContain('Explore the Voice docs to earn two more coins.');
-      expect(result.reply).toContain('Claim +2: http://localhost/challenge/?locale=en-US#');
+      expect(result.reply).toContain('2 challenges available to earn up to 3 coins');
+      expect(result.reply).toContain('http://localhost/challenge/?locale=en-US#');
+      expect(result.reply).not.toContain('MORE 2');
     }
     expect(await message(h.service, 'MORE-SMS', 'MORE')).toEqual(sms);
 
-    const link = /Claim \+2: (\S+)/.exec(sms.reply)?.[1];
+    const link = /(http:\/\/localhost\/challenge\/\?locale=en-US#\S+)/.exec(sms.reply)?.[1];
     expect(link).toBeTruthy();
     const token = decodeURIComponent(new URL(link!).hash.slice(1));
-    const claimed = await h.service.claimChallengeFromLink(token);
+    expect(await h.service.getChallengePortalStatus(token)).toMatchObject({
+      availableBalance: 1,
+      challenges: [
+        { id: 'voice-docs', message: 'Explore the Voice docs to earn two more coins.', action: 'visit' },
+        { id: 'github', action: 'visit' },
+      ],
+    });
+    await expect(h.service.claimChallengeFromPortal(token, 'voice-docs'))
+      .rejects.toMatchObject({ code: 'CHALLENGE_VISIT_REQUIRED' });
+    expect(await h.service.visitChallengeFromPortal(token, 'voice-docs')).toEqual({ destinationUrl: 'https://www.twilio.com/docs/voice' });
+    const claimed = await h.service.claimChallengeFromPortal(token, 'voice-docs');
     expect(claimed).toMatchObject({ rewardCoins: 2, availableBalance: 3 });
-    expect(await h.service.claimChallengeFromLink(token)).toEqual(claimed);
+    expect(await h.service.claimChallengeFromPortal(token, 'voice-docs')).toEqual(claimed);
+    expect((await h.service.getChallengePortalStatus(token)).challenges[0]).toMatchObject({ action: 'claimed' });
+    expect((await message(h.service, 'MORE-PAGED', 'MORE 2')).command).toBe('TEXT');
+    await h.service.visitChallengeFromPortal(token, 'github');
+    expect(await h.service.claimChallengeFromPortal(token, 'github')).toMatchObject({ availableBalance: 4 });
     expect((await message(h.service, 'MORE-NONE', 'MORE')).reply).toContain('No coin challenges are available');
   });
 

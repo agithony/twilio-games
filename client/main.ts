@@ -294,6 +294,7 @@ conn.onSelectState((m) => {
 // screen renders the same (board-included) view every broadcast → the dedup guard holds → no flicker.
 let lastBoard: { map: string | null; entries: GlobalEntry[] } | null = null;
 conn.onResults((m) => {
+  stationDisplay.markEngineResultsReady();
   stationEngineStateReady = true; maybeMarkStationReady();
   raceLive = false; flowPhase = 'results'; const epoch = ++flowEpoch; big.textContent = '';
   getMusicManager().switchContext('leaderboard');

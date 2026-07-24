@@ -277,6 +277,9 @@ export class GameServer {
 
   getOrCreateRoom(code: string): Room { return this.room(code); }
   findRoom(code: string): Room | undefined { return this.rooms.find(code); }
+  anonymizePlayer(roomCode: string, playerId: string): void {
+    const room = this.rooms.find(roomCode);if(!room)return;room.anonymizePlayer(playerId);this.pushLobby(roomCode);
+  }
 
   abortRoom(code: string): boolean {
     const room = this.rooms.find(code);
@@ -302,7 +305,7 @@ export class GameServer {
     room.selectCar(playerId, carIndex);
     this.pushLobby(roomCode);
     const who = room.lobbyPlayers().find(p => p.playerId === playerId);
-    this.emitEvent(roomCode, { kind: 'car_picked', playerId, name: who?.name ?? 'Racer', car: room.carName(carIndex) });
+    this.emitEvent(roomCode, { kind: 'car_picked', playerId, name: who?.name ?? 'Racer', car: room.carName(carIndex), spokenReplyPlayerId: playerId });
   }
   /** Set a caller's display name by voice (shows on the shared screen). */
   voiceSetName(roomCode: string, playerId: string, name: string): void {
@@ -326,7 +329,7 @@ export class GameServer {
     this.reapRoomIfEmpty(roomCode);
   }
   /** Advance the flow (lobby→car_select→map_select→race). Returns true if the phase actually changed. */
-  voiceAdvance(roomCode: string): boolean {
+  voiceAdvance(roomCode: string, spokenReplyPlayerId?: string): boolean {
     const room = this.rooms.find(roomCode); if (!room) return false;
     const before = room.phase;
     room.advance();
@@ -335,8 +338,8 @@ export class GameServer {
     if (after === 'countdown' || after === 'racing') this.broadcastItems(roomCode);
     else this.pushLobby(roomCode);
     if (after !== before) {
-      if (after === 'car_select') this.emitEvent(roomCode, { kind: 'enter_car_select' });
-      else if (after === 'map_select') this.emitEvent(roomCode, { kind: 'enter_map_select' });
+      if (after === 'car_select') this.emitEvent(roomCode, { kind: 'enter_car_select', spokenReplyPlayerId });
+      else if (after === 'map_select') this.emitEvent(roomCode, { kind: 'enter_map_select', spokenReplyPlayerId });
     }
     return after !== before;
   }
@@ -417,6 +420,7 @@ export class GameServer {
       // The final tick can queue finish/race_over and enter results before broadcastAll gets another
       // racing-phase pass. Flush those events here so voice callers hear the race-end recap.
       for (const ev of room.drainEvents()) this.emitEvent(room.code, ev);
+      this.pushLobby(room.code);
       this.reportFinishedOnce(room);
     }
   }

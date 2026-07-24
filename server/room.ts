@@ -107,6 +107,13 @@ export class Room {
     this.lobby.setPlayerInfo(playerId, clean);
   }
 
+  anonymizePlayer(playerId: string): void {
+    this.lobby.setPlayerInfo(playerId, { name: 'PLAYER' });
+    this.lastResults = this.lastResults.map(result => (
+      result.playerId === playerId ? { ...result, name: 'PLAYER' } : result
+    ));
+  }
+
   // ── Pre-race flow (delegates to Lobby) ─────────────────────────────────────────────────────────
   selectCar(playerId: string, carIndex: number): void { this.lobby.selectCar(playerId, carIndex); }
   /** Cast a map VOTE. voterId = the player casting it (so each player's vote is one; changing it

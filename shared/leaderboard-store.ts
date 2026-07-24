@@ -10,6 +10,7 @@ export interface LeaderboardEntry {
   carIndex: number;
   finishT: number;   // seconds from GO to the line (lower = better)
   at: number;        // epoch ms the race finished (passed in; this module never reads the clock)
+  enginePlayerId?: string;
 }
 
 export type AppendResult =
@@ -34,7 +35,8 @@ function isEntry(v: unknown): v is LeaderboardEntry {
   const e = v as Record<string, unknown>;
   return typeof e.name === 'string' && typeof e.map === 'string'
     && typeof e.finishT === 'number' && Number.isFinite(e.finishT)
-    && typeof e.carIndex === 'number' && typeof e.at === 'number';
+    && typeof e.carIndex === 'number' && typeof e.at === 'number'
+    && (e.enginePlayerId === undefined || typeof e.enginePlayerId === 'string');
 }
 
 /** Returns null (not []) when the existing file is corrupt, so callers can refuse to overwrite. */
@@ -49,14 +51,17 @@ function parseExistingStrict(json: string): LeaderboardEntry[] | null {
 
 /** Append one race's finished racers to the board. `at` is the timestamp (passed in, never read here). */
 export function appendResults(existingJson: string,
-  race: { map: string; results: RaceResult[]; at: number }): AppendResult {
+  race: { map: string; results: RaceResult[]; at: number; identityNamespace?: string }): AppendResult {
   if (typeof race.map !== 'string' || race.map.trim() === '') return { ok: false, error: 'missing map' };
   const existing = parseExistingStrict(existingJson);
   if (existing === null) return { ok: false, error: 'existing leaderboard is corrupt — refusing to overwrite' };
 
   const fresh: LeaderboardEntry[] = race.results
     .filter(r => r.finished && Number.isFinite(r.finishT) && r.finishT > 0)
-    .map(r => ({ name: r.name, map: race.map, carIndex: r.carIndex, finishT: r.finishT, at: race.at }));
+    .map(r => ({
+      name: r.name, map: race.map, carIndex: r.carIndex, finishT: r.finishT, at: race.at,
+      ...(race.identityNamespace ? { enginePlayerId: `${race.identityNamespace}:${r.playerId}` } : {}),
+    }));
 
   // Newest first, then cap. Keeping newest means the cap drops the oldest history.
   const entries = [...fresh, ...existing].slice(0, MAX_HISTORY);

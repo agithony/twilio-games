@@ -46,6 +46,9 @@ export class FighterServer {
   }
   getOrCreateRoom(code: string): FighterRoom { return this.room(canonicalRoomCode(code)); }
   findRoom(code: string): FighterRoom | undefined { return this.rooms.get(canonicalRoomCode(code)); }
+  anonymizePlayer(code: string, playerId: string): void {
+    code=canonicalRoomCode(code);const room=this.rooms.get(code);if(!room)return;room.setName(playerId,'PLAYER');this.pushState(code);
+  }
   abortRoom(code: string): boolean {
     code = canonicalRoomCode(code);
     if (!this.rooms.has(code)) return false;

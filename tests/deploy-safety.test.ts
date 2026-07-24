@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const workflow = readFileSync(new URL('../.github/workflows/deploy.yml', import.meta.url), 'utf8');
+const containerApp = readFileSync(new URL('../.github/containerapp.yaml', import.meta.url), 'utf8');
 
 describe('deployment rollback safety', () => {
   it('masks generated registry credentials before exporting them', () => {
@@ -76,5 +77,14 @@ describe('deployment rollback safety', () => {
     expect(workflow).toContain('--revision-weight "${NEW_REVISION}=100"');
     expect(workflow.indexOf('https://${REVISION_FQDN}${route}'))
       .toBeLessThan(workflow.indexOf('--revision-weight "${NEW_REVISION}=100"'));
+  });
+
+  it('declares and provisions the Dub secret before referencing it', () => {
+    expect(containerApp).toContain('- name: dub-api-key');
+    expect(containerApp).toContain('secretRef: dub-api-key');
+    expect(containerApp).toContain('secretRef: dub-folder-id');
+    expect(workflow).toContain('"dub-api-key=${DUB_API_KEY:-disabled}"');
+    expect(workflow).toContain('"dub-folder-id=${DUB_FOLDER_ID:-disabled}"');
+    expect(workflow).toContain('DUB_API_KEY and DUB_SHORT_DOMAIN must be configured together.');
   });
 });

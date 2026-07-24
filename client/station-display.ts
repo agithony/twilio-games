@@ -1,5 +1,6 @@
 import QRCode from 'qrcode';
 import { locale } from './i18n';
+import { createCoinInsertionPresenter } from './coin-insertion';
 import {
   captureDisplayToken,
   fetchPublicStation,
@@ -17,6 +18,7 @@ export interface StationDisplay {
   readonly active: boolean;
   readonly displayToken: string | null;
   markEngineReady(): void;
+  markEngineResultsReady(): void;
 }
 
 export function createStationDisplay(): StationDisplay {
@@ -27,10 +29,13 @@ export function createStationDisplay(): StationDisplay {
   const displayToken = captureDisplayToken();
   const joinBaseUrl = params.get('joinBaseUrl') ?? location.origin;
   if (!stationId || !matchId || !displayToken || !Number.isSafeInteger(generation) || generation < 1) {
-    return { active: false, displayToken, markEngineReady: () => undefined };
+    return { active: false, displayToken, markEngineReady: () => undefined, markEngineResultsReady: () => undefined };
   }
 
   const rail = buildRail();
+  const coinInsertion = createCoinInsertionPresenter();
+  const resultsFallback = buildResultsFallback();
+  document.body.append(resultsFallback);
   rail.root.hidden = true;
   document.body.appendChild(rail.root);
   const homeUrl = new URL('/', location.origin);
@@ -70,6 +75,8 @@ export function createStationDisplay(): StationDisplay {
   void refreshRailConfig();
 
   let engineReady = false;
+  let engineResultsReady = false;
+  let resultsFallbackTimer:ReturnType<typeof setTimeout>|null=null;
   let acknowledged = false;
   let latest: { station: PublicStation; etag: string } | null = null;
   let refreshing = false;
@@ -89,7 +96,9 @@ export function createStationDisplay(): StationDisplay {
       const launch = latest.station.launch;
       const sameLaunch = launch?.matchId === matchId && launch.generation === generation;
       rail.count.textContent = String(latest.station.nextReadyCount);
-      rail.status.textContent = latest.station.phase === 'PLAYING'
+      rail.status.textContent = latest.station.phase === 'RESULTS'
+        ? locale === 'pt-BR' ? 'Resultados na tela · operador continua' : 'Results on screen · operator continues'
+        : latest.station.phase === 'PLAYING'
         ? locale === 'pt-BR' ? 'Partida ao vivo · próxima fila aberta' : 'Match live · next pool open'
         : latest.station.phase === 'LAUNCHING'
           ? locale === 'pt-BR' ? 'Preparando o jogo' : 'Preparing game engine'
@@ -97,8 +106,15 @@ export function createStationDisplay(): StationDisplay {
       if (engineReady && sameLaunch && latest.station.phase === 'LAUNCHING' && !acknowledged) {
         await acknowledge(latest.etag, matchId, generation, displayToken);
         acknowledged = true;
-      } else if (!sameLaunch || !['LAUNCHING', 'PLAYING'].includes(latest.station.phase)) {
+      } else if (!sameLaunch || !['LAUNCHING', 'PLAYING', 'RESULTS'].includes(latest.station.phase)) {
         location.replace(homeUrl.toString());
+      }
+      if(latest.station.phase==='RESULTS'&&!engineResultsReady){
+        if(resultsFallbackTimer===null)resultsFallbackTimer=setTimeout(()=>{
+          resultsFallbackTimer=null;if(!engineResultsReady&&latest?.station.phase==='RESULTS')renderResultsFallback(resultsFallback,latest.station.results,latest.station.resultSource);
+        },1000);
+      }else if(latest.station.phase!=='RESULTS'||engineResultsReady){
+        if(resultsFallbackTimer!==null)clearTimeout(resultsFallbackTimer);resultsFallbackTimer=null;resultsFallback.hidden=true;
       }
     } catch (cause) {
       if (cause instanceof StationRequestError && [401, 403].includes(cause.status)) {
@@ -119,7 +135,7 @@ export function createStationDisplay(): StationDisplay {
   unsubscribe = subscribeToStation(() => {
     void refresh();
     void refreshRailConfig();
-  });
+  },event=>coinInsertion.show(event));
   polling = setInterval(() => void refresh(), 5_000);
   configPolling = setInterval(() => void refreshRailConfig(), 30_000);
   addEventListener('pagehide', () => {
@@ -136,6 +152,9 @@ export function createStationDisplay(): StationDisplay {
       engineReady = true;
       void refresh();
     },
+    markEngineResultsReady:()=>{
+      engineResultsReady=true;if(resultsFallbackTimer!==null)clearTimeout(resultsFallbackTimer);resultsFallbackTimer=null;resultsFallback.hidden=true;
+    },
   };
 
   function setRailVisible(visible: boolean): void {
@@ -145,6 +164,33 @@ export function createStationDisplay(): StationDisplay {
     document.body.classList.toggle('station-mode', visible);
     if(changed)dispatchEvent(new Event('resize'));
   }
+}
+
+function buildResultsFallback():HTMLElement{
+  const root=document.createElement('section');root.className='station-results-fallback';root.hidden=true;root.setAttribute('aria-live','polite');return root;
+}
+
+function renderResultsFallback(root:HTMLElement,results:PublicStation['results'],source:PublicStation['resultSource']):void{
+  root.replaceChildren();
+  const eyebrow=document.createElement('p');eyebrow.className='station-results-eyebrow';eyebrow.textContent=locale==='pt-BR'?'RESULTADOS FINAIS':'FINAL RESULTS';
+  const title=document.createElement('h1');title.textContent=locale==='pt-BR'?'Placar':'Scoreboard';root.append(eyebrow,title);
+  if(!results.length){
+    const unavailable=document.createElement('div');unavailable.className='station-results-unavailable';
+    unavailable.textContent=source==='RECOVERY'
+      ?(locale==='pt-BR'?'Partida interrompida. As moedas foram devolvidas.':'Match interrupted. Player coins were returned.')
+      :(locale==='pt-BR'?'Partida encerrada. Os detalhes não ficaram disponíveis após a recuperação.':'Match complete. Detailed results were unavailable after recovery.');
+    root.append(unavailable);
+  }
+  for(const result of results){
+    const row=document.createElement('div');row.className=`station-result-row${result.won?' winner':''}`;
+    const rank=document.createElement('strong');rank.textContent=result.rank===null?'—':`#${result.rank}`;
+    const name=document.createElement('span');name.textContent=result.displayName;
+    const time=document.createElement('time');time.textContent=result.durationSeconds!==null&&result.durationSeconds>0
+      ?`${result.durationSeconds.toFixed(2)}s`
+      :result.completed?(locale==='pt-BR'?'Concluído':'Complete'):'DNF';
+    row.append(rank,name,time);root.append(row);
+  }
+  const hold=document.createElement('p');hold.className='station-results-hold';hold.textContent=locale==='pt-BR'?'O operador continuará quando todos terminarem.':'Results will stay here until the operator continues.';root.append(hold);root.hidden=false;
 }
 
 async function acknowledge(

@@ -76,6 +76,9 @@ export class BattleServer {
     return r;
   }
   findRoom(code: string): BattleRoom | undefined { return this.rooms.get(code); }
+  anonymizePlayer(code: string, playerId: string): void {
+    const room=this.rooms.get(code);if(!room)return;room.anonymizePlayer(playerId);this.pushState(code);
+  }
   /** Live WS connections (displays + device players). The voice router uses this to auto-join a caller
    *  to Voice Monsters when its display is the one that's open. */
   get connectionCount(): number { return this.conns.size; }

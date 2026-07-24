@@ -22,6 +22,8 @@ export interface PublicStation {
     matchId: string;
     generation: number;
   } | null;
+  results: readonly {displayName:string;rank:number|null;durationSeconds:number|null;won:boolean|null;completed:boolean;score:number|null}[];
+  resultSource:'ENGINE'|'RECOVERY'|'LEGACY_UNAVAILABLE'|null;
 }
 
 export interface PublicArcadeConfig {
@@ -40,6 +42,13 @@ export interface PublicArcadeConfig {
     automaticSelection: { policy:'best_fit_rotation'|'round_robin'|'fixed_priority';order:readonly ('racer'|'monsters'|'fighter')[] };
     qrRail: 'auto'|'always'|'hidden';
   };
+}
+
+export interface StationAdmissionEvent {
+  type:'arcade_ready_entry_added';
+  revision:number;
+  displayName:string;
+  admission:'coin'|'ready';
 }
 
 export function voiceNumberForLocale(
@@ -211,11 +220,20 @@ export function stationLaunchUrl(
   return url.toString();
 }
 
-export function subscribeToStation(onUpdate: () => void): () => void {
+export function subscribeToStation(onUpdate: () => void, onAdmission?: (event:StationAdmissionEvent) => void): () => void {
   const source = new EventSource('/api/arcade/events');
   source.addEventListener('arcade_station_updated', onUpdate);
   source.addEventListener('arcade_config_updated', onUpdate);
   source.addEventListener('open', onUpdate);
+  source.addEventListener('arcade_ready_entry_added',event=>{
+    try{
+      const value=JSON.parse((event as MessageEvent<string>).data) as Partial<StationAdmissionEvent>;
+      if(value.type==='arcade_ready_entry_added'&&typeof value.revision==='number'
+        &&Number.isSafeInteger(value.revision)&&value.revision>0
+        &&typeof value.displayName==='string'&&value.displayName.trim().length>0&&value.displayName.length<=50
+        &&(value.admission==='coin'||value.admission==='ready'))onAdmission?.(value as StationAdmissionEvent);
+    }catch{/* Ignore malformed event payloads. */}
+  });
   return () => source.close();
 }
 

@@ -1,5 +1,6 @@
 export const ARCADE_CONFIG_UPDATED_EVENT = 'arcade_config_updated' as const;
 export const ARCADE_STATION_UPDATED_EVENT = 'arcade_station_updated' as const;
+export const ARCADE_READY_ENTRY_ADDED_EVENT = 'arcade_ready_entry_added' as const;
 
 export type ArcadeConfigUpdatedEvent = Readonly<{
   type: typeof ARCADE_CONFIG_UPDATED_EVENT;
@@ -11,7 +12,14 @@ export type ArcadeStationUpdatedEvent = Readonly<{
   revision: number;
 }>;
 
-export type ArcadeEvent = ArcadeConfigUpdatedEvent | ArcadeStationUpdatedEvent;
+export type ArcadeReadyEntryAddedEvent = Readonly<{
+  type: typeof ARCADE_READY_ENTRY_ADDED_EVENT;
+  revision: number;
+  displayName: string;
+  admission: 'coin' | 'ready';
+}>;
+
+export type ArcadeEvent = ArcadeConfigUpdatedEvent | ArcadeStationUpdatedEvent | ArcadeReadyEntryAddedEvent;
 export type ArcadeEventSubscriber = (event: ArcadeEvent) => void | Promise<void>;
 
 export interface ArcadeEventPublisher {
@@ -32,6 +40,18 @@ export function createArcadeStationUpdatedEvent(revision: number): ArcadeStation
   return Object.freeze({ type: ARCADE_STATION_UPDATED_EVENT, revision });
 }
 
+export function createArcadeReadyEntryAddedEvent(
+  revision: number,
+  displayNameInput: string,
+  admission: 'coin' | 'ready',
+): ArcadeReadyEntryAddedEvent {
+  if (!Number.isSafeInteger(revision) || revision < 1) throw new TypeError('ready entry event revision must be positive');
+  const displayName = displayNameInput.trim().slice(0, 50);
+  if (!displayName) throw new TypeError('ready entry event display name is required');
+  if (admission !== 'coin' && admission !== 'ready') throw new TypeError('ready entry event admission is invalid');
+  return Object.freeze({ type: ARCADE_READY_ENTRY_ADDED_EVENT, revision, displayName, admission });
+}
+
 export class ArcadeEventHub implements ArcadeEventPublisher {
   private readonly subscribers = new Set<ArcadeEventSubscriber>();
   private closed = false;
@@ -50,7 +70,9 @@ export class ArcadeEventHub implements ArcadeEventPublisher {
     // Rebuild each event so callers cannot attach internal state or actor fields.
     const safeEvent = event.type === ARCADE_CONFIG_UPDATED_EVENT
       ? createArcadeConfigUpdatedEvent(event.version)
-      : createArcadeStationUpdatedEvent(event.revision);
+      : event.type === ARCADE_STATION_UPDATED_EVENT
+        ? createArcadeStationUpdatedEvent(event.revision)
+        : createArcadeReadyEntryAddedEvent(event.revision, event.displayName, event.admission);
     for (const subscriber of [...this.subscribers]) {
       try {
         const result = subscriber(safeEvent);

@@ -94,6 +94,7 @@ export interface ArcadeServiceOptions {
   readonly publicBaseUrl?: string;
   readonly operatorAuthorizer?: ArcadeOperatorAuthorizer;
   readonly stationUpdated?: (revision: number) => void;
+  readonly readyEntryAdded?: (event: Readonly<{ revision: number; displayName: string; admission: 'coin' | 'ready' }>) => void;
   readonly stationNotifications?: ArcadeStationNotificationOptions;
   readonly newMutationsAllowed?: () => boolean;
   readonly messagingProtection?: ArcadeMessagingProtectionOptions;
@@ -320,6 +321,10 @@ export interface OperatorPlayerRecoveryItem {
   readonly availableBalance: number;
   readonly lastActivityAt: string;
   readonly lastReadyStatus: StationReadyEntry['status'] | null;
+  readonly registrationState: 'complete' | 'in_progress';
+  readonly canRestoreStartingBalance: boolean;
+  readonly canReset: boolean;
+  readonly blockedReason: string | null;
 }
 
 export interface OperatorPlayerRecoveryPage {
@@ -340,6 +345,31 @@ export interface ResetTestPlayerInput extends StationRevisionInput {
   readonly authorization: unknown;
   readonly reason: string;
   readonly deleteMemoryProfile?: (profileId: string) => Promise<void>;
+}
+
+export interface ResetInactivePlayerInput {
+  readonly playerId: string;
+  readonly idempotencyKey: string;
+  readonly authorization: unknown;
+  readonly reason: string;
+  readonly deleteMemoryProfile?: (profileId: string) => Promise<void>;
+  readonly isReadyEntryConnected?: (readyEntryId: string) => boolean;
+}
+
+export interface ResetInactivePlayerResult {
+  readonly reset: true;
+  readonly resetNameHashes: readonly string[];
+  readonly racers: readonly Readonly<{
+    game: 'racer' | 'monsters' | 'fighter';
+    roomCode: string;
+    enginePlayerId: string;
+    completedAt: string | null;
+    durationSeconds: number | null;
+  }>[];
+}
+
+export interface ResetTestPlayerResult extends ResetInactivePlayerResult {
+  readonly stationRevision: number;
 }
 
 export interface SelectStationGameInput extends StationControlInput {
@@ -396,6 +426,20 @@ export interface ProcessInboundStationMessageResult {
   readonly command: string;
   readonly locale: string;
   readonly stationRevision: number | null;
+  readonly challengeLink?: string;
+}
+
+export interface ChallengePortalItem {
+  readonly id: string;
+  readonly title: string;
+  readonly message: string | null;
+  readonly rewardCoins: number;
+  readonly action: 'visit' | 'claim' | 'claimed';
+}
+
+export interface ChallengePortalStatus {
+  readonly challenges: readonly ChallengePortalItem[];
+  readonly availableBalance: number;
 }
 
 export interface ArcadeMessagingStorageStatus {
@@ -582,6 +626,10 @@ function retiredPlayerHash(playerId: string): string {
   return createHash('sha256').update(`retired-player:${playerId}`).digest('hex');
 }
 
+function resetNameHash(name: string): string {
+  return createHash('sha256').update(`reset-name:${name.trim().toLocaleLowerCase()}`).digest('hex');
+}
+
 function isRetiredPlayer(state: ArcadeState, playerId: string): boolean {
   const hash = retiredPlayerHash(playerId);
   return Object.values(state.idempotencyRecords).some(record => (
@@ -734,7 +782,7 @@ const MESSAGING_COPY: Record<'en-US' | 'pt-BR', Record<MessagingCopyKey, string>
     wrongStation: 'That station code is stale. Scan the QR again or reply JOIN.',
     joinFirst: 'Reply JOIN to start',
     joined: 'You are in Twilio Games with {balance} coins.\n\nReply COIN when you are ready at the screen.\nHELP lists commands.',
-    help: 'Commands:\nCOIN or 🪙 to get ready\nMORE for coin challenge links\nSTATUS for your place and balance\nLEAVE to exit\nHELP for this list\n\nDuring game selection, reply with a game name or number.',
+    help: 'Commands:\nCOIN or 🪙 to get ready\nMORE for the coin challenge page\nSTATUS for your place and balance\nLEAVE to exit\nHELP for this list\n\nDuring game selection, reply with a game name or number.',
     status: 'Balance: {balance} coins.\nStation status: {status}.\n\n{next}',
     finishRegistration: 'Finish the quick intro first, then reply COIN.',
     notReady: 'You are not currently in the ready pool. Reply COIN when you are ready at the screen.',
@@ -742,7 +790,7 @@ const MESSAGING_COPY: Record<'en-US' | 'pt-BR', Record<MessagingCopyKey, string>
     cannotLeave: 'Your match is locked or playing. Ask the booth operator for help.',
     left: 'You left the ready pool.\nYour held coin is available again.\nReply COIN when you are ready to join again.',
     alreadyReady: 'You are already ready.\nWatch for game selection, then reply with the game name or number.\nReply STATUS for your place.',
-    noCoins: 'You do not have an available coin. Reply MORE for coin challenge links or ask the booth operator.',
+    noCoins: 'You do not have an available coin. Reply MORE for the coin challenge page or ask the booth operator.',
     poolFull: 'The ready pool is full right now. Try COIN again after the next game starts.',
     coinUnavailable: 'Coin insertion is not available under the current station policy.',
     coin: 'Coin inserted.\n\nYou are position {position}.\n\nBalance available: {balance}.\n\nWhen game voting opens, reply with: {choices}.\n\nStay near the screen; we will text assignment and call updates.',
@@ -773,7 +821,7 @@ const MESSAGING_COPY: Record<'en-US' | 'pt-BR', Record<MessagingCopyKey, string>
     wrongStation: 'Esse codigo de estacao expirou. Escaneie o QR novamente ou responda ENTRAR.',
     joinFirst: 'Responda ENTRAR para comecar',
     joined: 'Você entrou no Twilio Games com {balance} moedas.\n\nResponda MOEDA quando estiver na tela.\nAJUDA mostra os comandos.',
-    help: 'Comandos:\nMOEDA ou 🪙 para ficar pronto\nMAIS para links de desafios\nSTATUS para posicao e saldo\nSAIR para sair\nAJUDA para esta lista\n\nDurante a selecao de jogo, responda com o nome ou numero do jogo.',
+    help: 'Comandos:\nMOEDA ou 🪙 para ficar pronto\nMAIS para abrir a página de desafios\nSTATUS para posicao e saldo\nSAIR para sair\nAJUDA para esta lista\n\nDurante a selecao de jogo, responda com o nome ou numero do jogo.',
     status: 'Saldo: {balance} moedas.\nStatus na estacao: {status}.\n\n{next}',
     finishRegistration: 'Termine a apresentação rápida e depois responda MOEDA.',
     notReady: 'Voce nao esta na fila de jogadores prontos. Responda MOEDA quando estiver pronto na tela.',
@@ -781,7 +829,7 @@ const MESSAGING_COPY: Record<'en-US' | 'pt-BR', Record<MessagingCopyKey, string>
     cannotLeave: 'Sua partida está bloqueada ou em andamento. Fale com a equipe do estande.',
     left: 'Voce saiu da fila.\nSua moeda reservada esta disponivel novamente.\nResponda MOEDA quando quiser entrar de novo.',
     alreadyReady: 'Voce ja esta pronto.\nAguarde a selecao de jogo e responda com o nome ou numero do jogo.\nResponda STATUS para ver sua posicao.',
-    noCoins: 'Você não tem uma moeda disponível. Responda MAIS para receber links de desafios ou fale com a equipe.',
+    noCoins: 'Você não tem uma moeda disponível. Responda MAIS para abrir a página de desafios ou fale com a equipe.',
     poolFull: 'A fila está cheia agora. Tente MOEDA novamente quando a próxima partida começar.',
     coinUnavailable: 'A inserção de moeda não está disponível na política atual da estação.',
     coin: 'Moeda inserida.\n\nVoce esta na posicao {position}.\n\nSaldo disponivel: {balance}.\n\nQuando a votacao abrir, responda com: {choices}.\n\nFique perto da tela; enviaremos atualizacoes de selecao e chamada.',
@@ -866,11 +914,6 @@ function messagingGameChoiceOptions(config: ArcadeConfigSnapshot, locale: string
     .join(', ');
 }
 
-function messagingMorePage(value: string): number | null {
-  const match = /^(?:MORE|MAIS)(?:\s+([1-9][0-9]{0,2}))?$/.exec(value);
-  return match ? Number(match[1] ?? 1) : null;
-}
-
 function messagingCommand(value: string): 'COIN' | 'READY' | 'STATUS' | 'LEAVE' | 'HELP' | 'MORE' | 'TEXT' {
   if (value === 'COIN' || value === 'MOEDA') return 'COIN';
   const emoji = value.replace(/[\uFE0E\uFE0F]/gu, '');
@@ -879,7 +922,7 @@ function messagingCommand(value: string): 'COIN' | 'READY' | 'STATUS' | 'LEAVE' 
   if (value === 'STATUS' || value === 'ESTADO') return 'STATUS';
   if (value === 'LEAVE' || value === 'SAIR') return 'LEAVE';
   if (value === 'HELP' || value === 'AJUDA') return 'HELP';
-  if (messagingMorePage(value) !== null) return 'MORE';
+  if (value === 'MORE' || value === 'MAIS') return 'MORE';
   return 'TEXT';
 }
 
@@ -1127,7 +1170,7 @@ function stationNotificationContent(input: {
     }
     if (input.kind === 'STATION_RESULTS') {
       const balance = input.balance === null ? '' : `\nSaldo disponível: ${input.balance}.`;
-      const challenges = input.offerChallenges ? '\nSeu saldo acabou. Responda MAIS para receber links de desafios e ganhar mais moedas.' : '';
+      const challenges = input.offerChallenges ? '\nSeu saldo acabou. Responda MAIS para abrir uma página com todos os desafios e ganhar mais moedas.' : '';
       const result = input.rank === null ? '\nOs resultados estão na tela.'
         : input.won ? '\nVocê venceu!' : `\nVocê terminou em ${input.rank}º lugar.`;
       return {
@@ -1148,7 +1191,7 @@ function stationNotificationContent(input: {
   }
   if (input.kind === 'STATION_RESULTS') {
     const balance = input.balance === null ? '' : `\nAvailable balance: ${input.balance}.`;
-    const challenges = input.offerChallenges ? '\nYou used your last coin. Reply MORE for challenge links and earn more coins.' : '';
+    const challenges = input.offerChallenges ? '\nYou used your last coin. Reply MORE for one page with every available challenge.' : '';
     const result = input.rank === null ? '\nResults are on the screen.'
       : input.won ? '\nYou won!' : `\nYou finished in place ${input.rank}.`;
     return {
@@ -1159,17 +1202,32 @@ function stationNotificationContent(input: {
   return { body: "You're promoted for the next game.\nStay near the screen and wait for selection.", templateVariables: {} };
 }
 
-function availableEarningChallenges(config: ArcadeConfigSnapshot, wallet: WalletState, at: string) {
+function scheduledEarningChallenges(config: ArcadeConfigSnapshot, at: string) {
   if (!config.earning.enabled || config.coins.chargePolicy === 'free') return [];
   const now = Date.parse(at);
   return config.earning.challenges
     .filter(challenge => challenge.enabled
       && (challenge.startsAt === null || Date.parse(challenge.startsAt) <= now)
-      && (challenge.endsAt === null || now < Date.parse(challenge.endsAt))
-      && wallet.challengeClaims.filter(claim => claim.challengeId === challenge.id).length
-        < challenge.maxClaimsPerPlayer)
+      && (challenge.endsAt === null || now < Date.parse(challenge.endsAt)))
     .slice()
     .sort((left, right) => left.displayOrder - right.displayOrder || left.id.localeCompare(right.id));
+}
+
+function availableEarningChallenges(config: ArcadeConfigSnapshot, wallet: WalletState, at: string) {
+  return scheduledEarningChallenges(config, at).filter(challenge => (
+    wallet.challengeClaims.filter(claim => claim.challengeId === challenge.id).length
+      < challenge.maxClaimsPerPlayer
+  ));
+}
+
+const CHALLENGE_PORTAL_ID = 'challenge-portal';
+
+function challengePortalVisitKey(tokenJti: string, challengeId: string, configVersion: number): string {
+  return `challenge-visit:${createHash('sha256').update(`${tokenJti}:${challengeId}:${configVersion}`).digest('hex')}`;
+}
+
+function challengePortalClaimKey(tokenJti: string, challengeId: string): string {
+  return `challenge-claim:${createHash('sha256').update(`${tokenJti}:${challengeId}`).digest('hex')}`;
 }
 
 export class ArcadeService {
@@ -1181,6 +1239,7 @@ export class ArcadeService {
   private readonly publicBaseUrl: string;
   private readonly operatorAuthorizer: ArcadeOperatorAuthorizer;
   private readonly stationUpdated?: (revision: number) => void;
+  private readonly readyEntryAdded?: ArcadeServiceOptions['readyEntryAdded'];
   private readonly stationNotifications?: ArcadeStationNotificationOptions;
   private readonly newMutationsAllowed: () => boolean;
   private readonly messagingIdentityCapacity: number;
@@ -1220,6 +1279,7 @@ export class ArcadeService {
       this.publicBaseUrl = 'http://localhost';
       this.operatorAuthorizer = operatorAuthorizer ?? (() => null);
       this.stationUpdated = undefined;
+      this.readyEntryAdded = undefined;
       this.stationNotifications = undefined;
       this.newMutationsAllowed = () => true;
     } else {
@@ -1232,6 +1292,7 @@ export class ArcadeService {
       catch { throw new ArcadeServiceError('INVALID_DEPENDENCY', 'publicBaseUrl must be an absolute URL'); }
       this.operatorAuthorizer = optionsOrStore.operatorAuthorizer ?? (() => null);
       this.stationUpdated = optionsOrStore.stationUpdated;
+      this.readyEntryAdded = optionsOrStore.readyEntryAdded;
       this.stationNotifications = optionsOrStore.stationNotifications;
       this.newMutationsAllowed = optionsOrStore.newMutationsAllowed ?? (() => true);
     }
@@ -1297,9 +1358,6 @@ export class ArcadeService {
     }
     const state = await this.store.read();
     const config = this.config();
-    if (config.coins.chargePolicy === 'free') {
-      return { configVersion: config.version, startingBalance: 0, players: [], nextCursor: null };
-    }
     const addressesByPlayer = new Map<string, typeof state.channelAddresses[string][]>();
     for (const address of Object.values(state.channelAddresses)) {
       const addresses = addressesByPlayer.get(address.playerId) ?? [];
@@ -1329,16 +1387,13 @@ export class ArcadeService {
     for (const player of Object.values(state.players)) {
       if (player.id.startsWith('reset-player:') || retiredHashes.has(retiredPlayerHash(player.id))) continue;
       const wallet = own(state.wallets, player.id);
-      if (!wallet || !wallet.transactions.some(transaction => transaction.type === 'registration_grant')) continue;
-      const ledger = deriveLedger(wallet.transactions, wallet.reservations);
-      if (ledger.availableBalance !== 0 || ledger.reservedBalance !== 0
-        || wallet.reservations.some(reservation => reservation.status === 'ACTIVE')
-        || activeReadyPlayers.has(player.id) || activeQueuePlayers.has(player.id)) continue;
+      const ledger = wallet ? deriveLedger(wallet.transactions, wallet.reservations) : {
+        ledgerBalance: 0, reservedBalance: 0, availableBalance: 0,
+      };
       const addresses = addressesByPlayer.get(player.id) ?? [];
       const draft = own(state.messagingDrafts, player.id);
-      if (!player.lead && draft?.step !== 'COMPLETE') continue;
       const readyEntries = readyByPlayer.get(player.id) ?? [];
-      const activity = [player.updatedAt, wallet.wallet.updatedAt, draft?.updatedAt,
+      const activity = [player.updatedAt, wallet?.wallet.updatedAt, draft?.updatedAt,
         queueActivityByPlayer.get(player.id), ...addresses.map(address => address.lastSeenAt), ...readyEntries.map(entry => entry.readyAt)]
         .filter((value): value is string => Boolean(value))
         .sort((left, right) => Date.parse(right) - Date.parse(left))[0] ?? player.updatedAt;
@@ -1361,6 +1416,17 @@ export class ArcadeService {
           lastReadyStatus = entry.status;
         }
       }
+      const hasActiveReservation = wallet?.reservations.some(reservation => reservation.status === 'ACTIVE') === true;
+      const hasActiveAdmission = hasActiveReservation || activeReadyPlayers.has(player.id) || activeQueuePlayers.has(player.id);
+      const hasPendingMessage = Object.values(state.outboundNotifications).some(notification => (
+        (notification.playerId === player.id || addresses.some(address => address.id === notification.channelAddressId))
+        && ['PENDING', 'SENDING', 'RETRY_WAIT', 'ACCEPTED'].includes(notification.status)
+      ));
+      const registrationState = player.lead || draft?.step === 'COMPLETE' ? 'complete' : 'in_progress';
+      const canRestoreStartingBalance = config.coins.chargePolicy === 'per_player'
+        && config.coins.startingBalance > 0
+        && wallet?.transactions.some(transaction => transaction.type === 'registration_grant') === true
+        && ledger.availableBalance === 0 && ledger.reservedBalance === 0 && !hasActiveAdmission;
       const item = {
         playerId: player.id,
         displayName: player.lead?.firstName.trim() || draft?.firstName?.trim() || 'Unnamed player',
@@ -1368,6 +1434,10 @@ export class ArcadeService {
         availableBalance: ledger.availableBalance,
         lastActivityAt: activity,
         lastReadyStatus,
+        registrationState,
+        canRestoreStartingBalance,
+        canReset: !hasActiveAdmission && !hasPendingMessage,
+        blockedReason: hasActiveAdmission ? 'Active game or held coin' : hasPendingMessage ? 'Message delivery in progress' : null,
       } satisfies OperatorPlayerRecoveryItem;
       let low = 0, high = items.length;
       while (low < high) {
@@ -1789,6 +1859,84 @@ export class ArcadeService {
     });
   }
 
+  async getChallengePortalStatus(token: string): Promise<ChallengePortalStatus> {
+    const payload = this.authenticateChallengePortalToken(token);
+    const state = await this.store.read();
+    const config = this.config();
+    this.requireOn(config);
+    const wallet = this.requireWallet(state, payload.player);
+    const challenges = scheduledEarningChallenges(config, this.now()).map(challenge => {
+      const claims = wallet.challengeClaims.filter(claim => claim.challengeId === challenge.id).length;
+      const visited = own(state.idempotencyRecords, challengePortalVisitKey(payload.jti, challenge.id, config.version))
+        ?.operation === 'RECORD_CHALLENGE_VISIT';
+      const claimedWithLink = own(state.idempotencyRecords, challengePortalClaimKey(payload.jti, challenge.id))
+        ?.operation === 'CLAIM_CHALLENGE';
+      return {
+        id: challenge.id,
+        title: challenge.title,
+        message: challenge.message,
+        rewardCoins: challenge.rewardCoins,
+        action: claimedWithLink || claims >= challenge.maxClaimsPerPlayer ? 'claimed' : visited ? 'claim' : 'visit',
+      } satisfies ChallengePortalItem;
+    });
+    return { challenges, availableBalance: availableBalance(wallet) };
+  }
+
+  async visitChallengeFromPortal(token: string, challengeIdInput: string): Promise<{ destinationUrl: string }> {
+    const payload = this.authenticateChallengePortalToken(token);
+    const challengeId = requireIdentifier(challengeIdInput, 'challengeId');
+    const expectedConfigVersion = this.config().version;
+    return this.execute('RECORD_CHALLENGE_VISIT', challengePortalVisitKey(payload.jti, challengeId, expectedConfigVersion), payload.player, {
+      playerId: payload.player, challengeId, tokenJti: payload.jti, expectedConfigVersion,
+    }, (state, config, at) => {
+      this.requireOn(config);
+      this.requirePlayer(state, payload.player);
+      const challenge = scheduledEarningChallenges(config, at).find(candidate => candidate.id === challengeId);
+      if (!challenge) throw new ArcadeServiceError('CHALLENGE_UNAVAILABLE', 'challenge was not found');
+      return { destinationUrl: challenge.url };
+    }, config => {
+      if(config.version!==expectedConfigVersion)throw new ArcadeServiceError('CHALLENGE_VISIT_REQUIRED','challenge settings changed; try again');
+    });
+  }
+
+  async claimChallengeFromPortal(token: string, challengeIdInput: string): Promise<ChallengeClaimResult> {
+    const payload = this.authenticateChallengePortalToken(token);
+    const challengeId = requireIdentifier(challengeIdInput, 'challengeId');
+    return this.execute('CLAIM_CHALLENGE', challengePortalClaimKey(payload.jti, challengeId), payload.player, {
+      playerId: payload.player, challengeId, tokenJti: payload.jti,
+    }, (state, config, at) => {
+      this.requireOn(config);
+      const challenge = scheduledEarningChallenges(config, at).find(candidate => candidate.id === challengeId);
+      if (!challenge) throw new ArcadeServiceError('CHALLENGE_UNAVAILABLE', 'challenge was not found');
+      const visit = own(state.idempotencyRecords, challengePortalVisitKey(payload.jti, challengeId, config.version));
+      if (visit?.operation !== 'RECORD_CHALLENGE_VISIT') {
+        throw new ArcadeServiceError('CHALLENGE_VISIT_REQUIRED', 'visit the challenge before claiming its coins');
+      }
+      this.requirePlayer(state, payload.player);
+      const current = this.requireWallet(state, payload.player);
+      const claimId = this.id('challenge-claim');
+      const wallet = claimChallengeReward(current, {
+        claimId,
+        challengeId,
+        rewardCoins: challenge.rewardCoins,
+        maxClaimsPerPlayer: challenge.maxClaimsPerPlayer,
+        enabled: challenge.enabled,
+        startsAt: challenge.startsAt,
+        endsAt: challenge.endsAt,
+        transactionId: this.id('wallet-transaction'),
+        idempotencyKey: `${challengePortalClaimKey(payload.jti, challengeId)}:reward`,
+        createdAt: at,
+        configVersion: config.version,
+        requestMetadata: { source: 'messaging-challenge-portal', tokenJti: `${payload.jti}:${challengeId}` },
+      });
+      state.wallets[payload.player] = wallet;
+      return {
+        challengeId, claimId, rewardCoins: challenge.rewardCoins,
+        destinationUrl: challenge.url, availableBalance: availableBalance(wallet),
+      };
+    });
+  }
+
   async joinQueue(input: JoinArcadeQueueInput): Promise<QueueEntryResult> {
     const playerId = requireIdentifier(input.playerId, 'playerId');
     if (!GAMES.has(input.preferredGame)) {
@@ -2151,6 +2299,7 @@ export class ArcadeService {
       ...(conversationId ? { conversationId } : {}),
     };
     const requestFingerprint = fingerprint(payload);
+    let acceptedAdmission: Readonly<{ revision: number; displayName: string; admission: 'coin' | 'ready' }> | null = null;
     const pending = this.execute<ProcessInboundStationMessageResult>(
       'PROCESS_STATION_MESSAGE', input.idempotencyKey, null, payload,
       (state, config, at) => {
@@ -2191,6 +2340,7 @@ export class ArcadeService {
           command: string,
           reply: string,
           stationRevision: number | null = null,
+          challengeLink?: string,
         ): ProcessInboundStationMessageResult => {
           if (command === 'CAPACITY') pruneCapacityInboundMessages(state);
           else pruneInboundMessages(state);
@@ -2208,7 +2358,7 @@ export class ArcadeService {
             receivedAt: at,
             configVersion: config.version,
           };
-          return { reply, playerId, command, locale, stationRevision };
+          return { reply, playerId, command, locale, stationRevision, ...(challengeLink ? { challengeLink } : {}) };
         };
 
         if (join && join.stationId !== null && join.stationId !== stationId.toUpperCase()) {
@@ -2424,18 +2574,14 @@ export class ArcadeService {
         if (command === 'MORE') {
           const wallet = this.requireWallet(state, playerId);
           const available = availableEarningChallenges(config, wallet, at);
-          const page = messagingMorePage(normalizedCommand) ?? 1;
-          const challenge = available[page - 1];
-          if (!challenge) return finish(command, messagingCopy(locale, 'moreNone'));
+          if (!available.length) return finish(command, messagingCopy(locale, 'moreNone'));
           const portuguese = normalizeMessagingLocale(locale) === 'pt-BR';
-          const custom = challenge.message ?? (portuguese
-            ? `Visite ${challenge.title} para ganhar ${challenge.rewardCoins} moeda${challenge.rewardCoins === 1 ? '' : 's'}.`
-            : `Visit ${challenge.title} to earn ${challenge.rewardCoins} coin${challenge.rewardCoins === 1 ? '' : 's'}.`);
-          const link = this.challengeClaimLink(playerId, challenge.id, config.arcade.cabinetId, at, normalizeMessagingLocale(locale));
-          const next = page < available.length
-            ? `\n\n${messagingCopy(locale, 'morePage', { page: page + 1 })}`
-            : '';
-          return finish(command, `${custom}\n\nClaim +${challenge.rewardCoins}: ${link}${next}`);
+          const link = this.challengePortalLink(playerId, config.arcade.cabinetId, at, normalizeMessagingLocale(locale));
+          const total = available.reduce((sum, challenge) => sum + challenge.rewardCoins, 0);
+          const reply = portuguese
+            ? `Você tem ${available.length} desafio${available.length === 1 ? '' : 's'} disponível${available.length === 1 ? '' : 'is'} para ganhar até ${total} moeda${total === 1 ? '' : 's'}. Abra esta página, visite cada desafio e confirme cada recompensa:\n${link}`
+            : `You have ${available.length} challenge${available.length === 1 ? '' : 's'} available to earn up to ${total} coin${total === 1 ? '' : 's'}. Open this page, visit each challenge, then confirm each reward:\n${link}`;
+          return finish(command, reply, null, link);
         }
         const entry = Object.values(state.stationReadyEntries)
           .find(candidate => candidate.playerId === playerId && !['COMPLETED', 'LEFT'].includes(candidate.status));
@@ -2555,6 +2701,11 @@ export class ArcadeService {
             channelAddressId: address!.id,
             consentedAt: at,
           };
+          acceptedAdmission = {
+            revision: updated.station.revision,
+            displayName: player.lead?.firstName.trim() || draft?.firstName?.trim() || 'PLAYER READY',
+            admission: freePlay ? 'ready' : 'coin',
+          };
           const position = stationReadyPosition(updated, readyEntryId);
           const proactiveNotices = this.notificationsEnabled(address!.channel)
             && config.channels[address!.channel]
@@ -2577,6 +2728,7 @@ export class ArcadeService {
     );
     return pending.then(result => {
       if (result.stationRevision !== null) this.stationUpdated?.(result.stationRevision);
+      if (acceptedAdmission) this.readyEntryAdded?.(acceptedAdmission);
       return result;
     }).catch(error => {
       if (error instanceof ArcadeServiceError && error.code === 'MESSAGING_CAPACITY_EXHAUSTED') {
@@ -2600,7 +2752,8 @@ export class ArcadeService {
   insertStationCoin(input: InsertStationCoinInput): Promise<StationReadyResult> {
     const stationId = requireIdentifier(input.stationId, 'stationId');
     const playerId = requireIdentifier(input.playerId, 'playerId');
-    return this.publishStation(this.execute('INSERT_STATION_COIN', input.idempotencyKey, playerId, {
+    let acceptedAdmission: Readonly<{ revision: number; displayName: string; admission: 'coin' | 'ready' }> | null = null;
+    const pending = this.execute('INSERT_STATION_COIN', input.idempotencyKey, playerId, {
       stationId, playerId,
     }, (state, config, at) => {
       this.requireOn(config);
@@ -2627,6 +2780,14 @@ export class ArcadeService {
       state.wallets[playerId] = wallet;
       this.persistStationAggregate(state, updated);
       delete state.stationReadyChannels[readyEntryId];
+      const player = state.players[playerId]!;
+      acceptedAdmission = {
+        revision: updated.station.revision,
+        displayName: player.lead?.firstName.trim()
+          || state.messagingDrafts[playerId]?.firstName?.trim()
+          || 'PLAYER READY',
+        admission: reservationId === null ? 'ready' : 'coin',
+      };
       return {
         ...stationResult(updated),
         readyEntry: updated.readyEntries[readyEntryId]!,
@@ -2635,7 +2796,12 @@ export class ArcadeService {
           : wallet.reservations.find(candidate => candidate.id === reservationId)!,
         availableBalance: availableBalance(wallet),
       };
-    }));
+    });
+    return pending.then(result => {
+      this.stationUpdated?.(result.station.revision);
+      if (acceptedAdmission) this.readyEntryAdded?.(acceptedAdmission);
+      return result;
+    });
   }
 
   recordStationGameChoice(input: RecordStationGameChoiceInput): Promise<StationGameChoiceResult> {
@@ -2895,7 +3061,100 @@ export class ArcadeService {
     }));
   }
 
-  resetTestPlayer(input: ResetTestPlayerInput): Promise<{ reset: true; stationRevision: number }> {
+  resetInactivePlayer(input: ResetInactivePlayerInput): Promise<ResetInactivePlayerResult> {
+    const playerId = requireIdentifier(input.playerId, 'playerId');
+    const principal = this.authorizeOperator(input.authorization, 'STATION_ACTION_UNAUTHORIZED');
+    const reason = requireReason(input.reason);
+    const publishedRevisions: number[] = [];
+    const pending = this.execute('RESET_TEST_PLAYER', input.idempotencyKey, null, {
+      playerId, reason, authorizedBy: principal, source: 'player-directory',
+    }, async (state, _config, at) => {
+      const player = this.requirePlayer(state, playerId);
+      const wallet = own(state.wallets, playerId) ?? createWallet(playerId, player.createdAt);
+      const activeEntry = Object.values(state.stationReadyEntries).some(candidate => (
+        candidate.playerId === playerId && !['COMPLETED', 'LEFT'].includes(candidate.status)
+      ));
+      const connectedEntry = Object.values(state.stationReadyEntries).some(candidate => (
+        candidate.playerId === playerId && input.isReadyEntryConnected?.(candidate.id) === true
+      ));
+      const activeQueue = Object.values(state.queueEntries).some(candidate => (
+        candidate.playerId === playerId && !isTerminalQueueStatus(candidate.status)
+      ));
+      if (connectedEntry) throw new ArcadeServiceError('TEST_PLAYER_RESET_CONNECTED', 'hang up the player call before resetting');
+      if (activeEntry || activeQueue || wallet.reservations.some(reservation => reservation.status === 'ACTIVE')) {
+        throw new ArcadeServiceError('TEST_PLAYER_RESET_UNSAFE', 'player has an active game or held coin');
+      }
+      const addressIds = new Set(Object.values(state.channelAddresses)
+        .filter(address => address.playerId === playerId).map(address => address.id));
+      const targetNotifications = Object.values(state.outboundNotifications)
+        .filter(notification => notification.playerId === playerId || addressIds.has(notification.channelAddressId));
+      if (targetNotifications.some(notification => ['PENDING', 'SENDING', 'RETRY_WAIT', 'ACCEPTED'].includes(notification.status))) {
+        throw new ArcadeServiceError('TEST_PLAYER_RESET_MESSAGES_PENDING', 'wait for pending player messages to finish before resetting');
+      }
+      if (player.conversationProfileId) {
+        if (!input.deleteMemoryProfile) {
+          throw new ArcadeServiceError('CONVERSATION_MEMORY_RESET_UNAVAILABLE', 'Conversation Memory profile deletion is unavailable');
+        }
+        try { await input.deleteMemoryProfile(player.conversationProfileId); }
+        catch { throw new ArcadeServiceError('CONVERSATION_MEMORY_RESET_FAILED', 'Conversation Memory profile deletion failed'); }
+      }
+      const affectedStations = new Map<string, ArcadeStationAggregate>();
+      const resetNameHashes = [...new Set([
+        player.lead?.firstName,
+        player.lead ? `${player.lead.firstName} ${player.lead.lastName}` : null,
+        state.messagingDrafts[playerId]?.firstName,
+      ].filter((value): value is string => Boolean(value?.trim())).map(resetNameHash))];
+      const readyIds = new Set<string>();
+      for (const entry of Object.values(state.stationReadyEntries)) {
+        if (entry.playerId === playerId && !affectedStations.has(entry.stationId)) {
+          affectedStations.set(entry.stationId, this.requireStationAggregate(state, entry.stationId));
+        }
+        if (entry.playerId === playerId) readyIds.add(entry.id);
+      }
+      const racers: ResetInactivePlayerResult['racers'][number][] = [];
+      const seenEnginePlayers = new Set<string>();
+      for (const match of Object.values(state.stationMatches)) {
+        for (const [readyEntryId, enginePlayerId] of Object.entries(match.enginePlayerIdsByReadyEntryId)) {
+          const engineKey = `${match.game}:${match.engineRoomCode}:${enginePlayerId}`;
+          if (!readyIds.has(readyEntryId) || seenEnginePlayers.has(engineKey)) continue;
+          seenEnginePlayers.add(engineKey);
+          const participant = match.result?.participants.find(item => item.readyEntryId === readyEntryId);
+          racers.push({
+            game: match.game,
+            roomCode: match.engineRoomCode,
+            enginePlayerId,
+            completedAt: match.completedAt,
+            durationSeconds: participant?.durationSeconds ?? null,
+          });
+        }
+      }
+      const retired = this.retirePlayerState(state, player, wallet, addressIds, targetNotifications, at);
+      for (const [stationId, before] of affectedStations) {
+        const current = this.requireStationAggregate(state, stationId);
+        const updated = {
+          ...current,
+          station: Object.freeze({ ...current.station, revision: before.station.revision + 1, updatedAt: at }),
+        };
+        this.persistStationAggregate(state, updated);
+        this.recordStationControlEvent(state, 'RESET_TEST_PLAYER', before, updated, principal, reason, at, _config.version);
+        publishedRevisions.push(updated.station.revision);
+      }
+      return {
+        reset: true as const,
+        ...retired,
+        resetReason: reason,
+        resetBy: principal,
+        resetNameHashes,
+        racers,
+      };
+    }, undefined, true);
+    return pending.then(result => {
+      for (const revision of publishedRevisions) this.stationUpdated?.(revision);
+      return { reset: true as const, resetNameHashes: result.resetNameHashes, racers: result.racers };
+    });
+  }
+
+  resetTestPlayer(input: ResetTestPlayerInput): Promise<ResetTestPlayerResult> {
     const stationId = requireIdentifier(input.stationId, 'stationId');
     const readyEntryId = requireIdentifier(input.readyEntryId, 'readyEntryId');
     const expectedRevision = requirePositiveInteger(input.expectedRevision, 'expectedRevision');
@@ -3015,7 +3274,7 @@ export class ArcadeService {
       };
       delete state.players[player.id];
       state.wallets[tombstoneId] = {
-        wallet: { ...settledWallet.wallet, playerId: tombstoneId, updatedAt: at },
+        wallet: { ...settledWallet.wallet, playerId: tombstoneId },
         transactions: settledWallet.transactions.map(transaction => ({ ...transaction, playerId: tombstoneId })),
         reservations: settledWallet.reservations.map(reservation => ({ ...reservation, playerId: tombstoneId })),
         challengeClaims: settledWallet.challengeClaims.map(claim => ({ ...claim, playerId: tombstoneId })),
@@ -3074,6 +3333,26 @@ export class ArcadeService {
         state, 'RESET_TEST_PLAYER', before, updated, principal, reason, at, config.version,
       );
       publishedRevision = updated.station.revision;
+      const resetNameHashes = [...new Set([
+        player.lead?.firstName,
+        player.lead ? `${player.lead.firstName} ${player.lead.lastName}` : null,
+        draft?.firstName,
+      ].filter((value): value is string => Boolean(value?.trim())).map(resetNameHash))];
+      const playerReadyIds = new Set(playerEntries.map(candidate => candidate.id));
+      const racers: ResetInactivePlayerResult['racers'][number][] = [];
+      for (const match of Object.values(before.matches)) {
+        for (const [candidateReadyEntryId, enginePlayerId] of Object.entries(match.enginePlayerIdsByReadyEntryId)) {
+          if (!playerReadyIds.has(candidateReadyEntryId)) continue;
+          const participant = match.result?.participants.find(item => item.readyEntryId === candidateReadyEntryId);
+          racers.push({
+            game: match.game,
+            roomCode: match.engineRoomCode,
+            enginePlayerId,
+            completedAt: match.completedAt,
+            durationSeconds: participant?.durationSeconds ?? null,
+          });
+        }
+      }
       return {
         reset: true as const,
         stationRevision: updated.station.revision,
@@ -3082,11 +3361,18 @@ export class ArcadeService {
         retiredProfileHash: player.conversationProfileId
           ? createHash('sha256').update(`retired-profile:${player.conversationProfileId}`).digest('hex')
           : null,
+        resetNameHashes,
+        racers,
       };
     }, undefined, true);
     return pending.then(result => {
       if (publishedRevision > 0) this.stationUpdated?.(publishedRevision);
-      return result;
+      return {
+        reset: true as const,
+        stationRevision: result.stationRevision,
+        resetNameHashes: result.resetNameHashes ?? [],
+        racers: result.racers ?? [],
+      };
     });
   }
 
@@ -3315,7 +3601,7 @@ export class ArcadeService {
         throw new ArcadeServiceError('MATCH_NOT_ACTIVE', 'station has no restart recovery match');
       }
       const match = aggregate.matches[aggregate.station.activeMatchId]!;
-      const updated = reduceCompleteStationMatch(aggregate, { at, expectedRevision });
+      const updated = reduceCompleteStationMatch(aggregate, { at, expectedRevision, resultSource: 'RECOVERY' });
       for (const readyEntryId of match.participantReadyEntryIds) {
         const entry = aggregate.readyEntries[readyEntryId]!;
         if (entry.reservationId === null) continue;
@@ -3507,6 +3793,96 @@ export class ArcadeService {
     });
   }
 
+  private retirePlayerState(
+    state: ArcadeState,
+    player: ArcadePlayerRecord,
+    wallet: WalletState,
+    addressIds: ReadonlySet<string>,
+    targetNotifications: readonly ArcadeOutboundNotificationRecord[],
+    at: string,
+  ): Readonly<{ retiredPlayerHash: string; retiredProfileHash: string | null }> {
+    const tombstoneId = this.id('reset-player');
+    const draft = own(state.messagingDrafts, player.id);
+    const replacements = new Map<string, string>([[player.id, tombstoneId]]);
+    for (const value of [
+      player.conversationProfileId, player.crmLeadId, player.trustedDestination,
+      ...(player.lead ? Object.values(player.lead) : []),
+      ...(draft ? [draft.firstName, draft.lastName, draft.workEmail, draft.companyName] : []),
+    ]) if (value) replacements.set(value, '[reset]');
+    state.players[tombstoneId] = {
+      id: tombstoneId, createdAt: player.createdAt, updatedAt: at, lead: null,
+      preferredLocale: null, conversationProfileId: null, crmLeadId: null,
+      termsAcceptedAt: null, marketingConsent: false, trustedDestination: null,
+    };
+    delete state.players[player.id];
+    state.wallets[tombstoneId] = {
+      wallet: { ...wallet.wallet, playerId: tombstoneId },
+      transactions: wallet.transactions.map(transaction => ({
+        ...transaction,
+        playerId: tombstoneId,
+        metadata: scrubResetValue(transaction.metadata, replacements) as Readonly<Record<string, unknown>>,
+      })),
+      reservations: wallet.reservations.map(reservation => ({ ...reservation, playerId: tombstoneId })),
+      challengeClaims: wallet.challengeClaims.map(claim => ({
+        ...claim,
+        playerId: tombstoneId,
+        requestMetadata: scrubResetValue(claim.requestMetadata, replacements) as Readonly<Record<string, unknown>>,
+      })),
+      idempotencyRecords: wallet.idempotencyRecords.map(record => ({ ...record, playerId: tombstoneId })),
+    };
+    delete state.wallets[player.id];
+    delete state.messagingDrafts[player.id];
+    for (const [id, queueEntry] of Object.entries(state.queueEntries)) {
+      if (queueEntry.playerId === player.id) state.queueEntries[id] = { ...queueEntry, playerId: tombstoneId };
+    }
+    state.queueEvents = state.queueEvents.map(event => (
+      event.playerId === player.id ? { ...event, playerId: tombstoneId } : event
+    ));
+    for (const [id, readyEntry] of Object.entries(state.stationReadyEntries)) {
+      if (readyEntry.playerId !== player.id) continue;
+      state.stationReadyEntries[id] = { ...readyEntry, playerId: tombstoneId };
+      delete state.stationReadyChannels[id];
+    }
+    for (const [id, address] of Object.entries(state.channelAddresses)) {
+      if (address.playerId !== player.id) continue;
+      const addressPhone = resetPhoneNumber(state, `${tombstoneId}:${id}`);
+      replacements.set(address.normalizedAddress, '[reset]');
+      replacements.set(address.providerAddress, '[reset]');
+      state.channelAddresses[id] = {
+        ...address,
+        playerId: tombstoneId,
+        normalizedAddress: addressPhone,
+        providerAddress: address.channel === 'whatsapp' ? `whatsapp:${addressPhone}` : addressPhone,
+        preferredLocale: 'en-US',
+        lastSeenAt: at,
+      };
+    }
+    const notificationIds = new Set(targetNotifications.map(notification => notification.id));
+    for (const id of notificationIds) delete state.outboundNotifications[id];
+    for (const [id, event] of Object.entries(state.messagingAuditEvents)) {
+      if (notificationIds.has(event.notificationId)) delete state.messagingAuditEvents[id];
+    }
+    for (const [id, message] of Object.entries(state.inboundMessages)) {
+      if (message.channelAddressId && addressIds.has(message.channelAddressId)) {
+        state.inboundMessages[id] = { ...message, command: 'RESET', reply: 'Player reset by operator.' };
+      }
+    }
+    for (const [id, record] of Object.entries(state.idempotencyRecords)) {
+      if (record.playerId !== player.id && !containsResetPlayer(record.result, player.id)) continue;
+      state.idempotencyRecords[id] = {
+        ...record,
+        playerId: record.playerId === player.id ? tombstoneId : record.playerId,
+        result: scrubResetValue(record.result, replacements),
+      };
+    }
+    return {
+      retiredPlayerHash: retiredPlayerHash(player.id),
+      retiredProfileHash: player.conversationProfileId
+        ? createHash('sha256').update(`retired-profile:${player.conversationProfileId}`).digest('hex')
+        : null,
+    };
+  }
+
   private execute<Result>(
     operation: string,
     idempotencyKeyInput: string,
@@ -3596,6 +3972,30 @@ export class ArcadeService {
     link.searchParams.set('locale', locale);
     link.hash = token;
     return link.toString();
+  }
+
+  private challengePortalLink(playerId: string, audience: string, at: string, locale: 'en-US' | 'pt-BR'): string {
+    return this.challengeClaimLink(playerId, CHALLENGE_PORTAL_ID, audience, at, locale);
+  }
+
+  private authenticateChallengePortalToken(token: string): ArcadeChallengeTokenPayload {
+    if (typeof token !== 'string' || !token || Buffer.byteLength(token, 'utf8') > ARCADE_CHALLENGE_TOKEN_MAX_BYTES) {
+      throw new ArcadeServiceError('INVALID_CHALLENGE_TOKEN', 'a bounded signed challenge token is required');
+    }
+    try {
+      const payload = authenticateArcadeChallengeToken(token, this.challengeTokenSecret, {
+        audience: this.config().arcade.cabinetId,
+        now: Date.parse(this.now()) / 1000,
+      });
+      if (payload.challenge !== CHALLENGE_PORTAL_ID) {
+        throw new Error('challenge token is not a reward hub link');
+      }
+      return payload;
+    } catch (error) {
+      throw new ArcadeServiceError(
+        'INVALID_CHALLENGE_TOKEN', error instanceof Error ? error.message : 'challenge token verification failed',
+      );
+    }
   }
 
   private canStartNewMutations(): boolean {

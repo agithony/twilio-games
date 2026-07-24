@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   ARCADE_CONFIG_UPDATED_EVENT,
+  ARCADE_READY_ENTRY_ADDED_EVENT,
   ARCADE_STATION_UPDATED_EVENT,
   ArcadeEventHub,
   createArcadeConfigUpdatedEvent,
+  createArcadeReadyEntryAddedEvent,
   createArcadeStationUpdatedEvent,
 } from '../server/arcade-events';
 
@@ -41,6 +43,19 @@ describe('ArcadeEventHub', () => {
 
     expect(subscriber).toHaveBeenCalledWith(createArcadeStationUpdatedEvent(9));
     expect(subscriber.mock.calls[0]![0]).toEqual({ type: 'arcade_station_updated', revision: 9 });
+  });
+
+  it('publishes a privacy-scoped coin insertion event', () => {
+    const hub = new ArcadeEventHub();
+    const subscriber = vi.fn();hub.subscribe(subscriber);
+    hub.publish({
+      type: ARCADE_READY_ENTRY_ADDED_EVENT, revision: 10, displayName: 'Ada', admission: 'coin',
+      phone: '+14155550100', playerId: 'private-player',
+    } as never);
+    expect(subscriber).toHaveBeenCalledWith(createArcadeReadyEntryAddedEvent(10, 'Ada', 'coin'));
+    expect(subscriber.mock.calls[0]![0]).toEqual({
+      type: 'arcade_ready_entry_added', revision: 10, displayName: 'Ada', admission: 'coin',
+    });
   });
 
   it('isolates synchronous and asynchronous subscriber failures', async () => {

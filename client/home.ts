@@ -6,6 +6,7 @@ import { injectMusicToggle } from './music-toggle';
 import { applyDocumentLocale, injectLanguagePicker, locale } from './i18n';
 import { injectMagicHat } from './magic-hat';
 import { OPERATOR_ICON, updateThemeToggleIcon } from './icon-controls';
+import { createCoinInsertionPresenter } from './coin-insertion';
 import {
   captureDisplayToken,
   displayTokenWasRejected,
@@ -470,7 +471,8 @@ async function initialize(): Promise<void> {
   previewConnection?.addEventListener?.('change', syncPreviewPlayback);
   document.addEventListener('visibilitychange',syncPreviewPlayback);
   await refreshConfiguration();
-  subscribeToStation(() => { void refreshConfiguration().then(() => refresh()); });
+  const coinInsertion=createCoinInsertionPresenter();
+  subscribeToStation(() => { void refreshConfiguration().then(() => refresh()); },event=>coinInsertion.show(event));
   setInterval(() => void refresh(), 5_000);
   setInterval(() => void refreshConfiguration(), 30_000);
   setInterval(updateTimers, 250);

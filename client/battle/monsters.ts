@@ -192,6 +192,7 @@ conn.onState((incoming) => {
   }
   // Leaving results (rematch / reset) drops any pending continue-hold so it can't strand the stage.
   if (m.phase !== 'results') awaitingContinue = false;
+  else stationDisplay.markEngineResultsReady();
   // First time we enter a battle, spin up the 3D arena behind the GB overlay (lazy — no 3D in menus).
   // Pull the editor-authored config from /api/arena; fall back to sensible defaults on any failure.
   if (m.phase === 'battle' && !arenaLoaded) {
@@ -294,6 +295,7 @@ function drainNext(): void {
     // Battle just ended? Don't jump straight to the results modal — hold on the arena with a
     // "▶ Continue" prompt so the win lands, and wait for the player to acknowledge.
     if (state?.phase === 'results') {
+      stationDisplay.markEngineResultsReady();
       awaitingContinue = true;
       renderer.setEventBanner(text('battle.continue', { winner: state.result?.winnerName ?? text('results.winner') }));
       renderOverlay();

@@ -33,6 +33,8 @@ properties:
       - name: google-oauth-client-id
       - name: google-oauth-client-secret
       - name: openai-api-key
+      - name: dub-api-key
+      - name: dub-folder-id
       - name: acr-password
         value: ${ACR_PASSWORD}
     registries:
@@ -172,10 +174,8 @@ properties:
           # Direct signed webhooks own SMS/WhatsApp game commands; TAC enriches Conversation Memory.
           - name: ARCADE_TAC_ENABLED
             value: "true"
-          # ElevenLabs voiceId for Conversation Relay talk-back (greeting/countdown/result to callers).
-          # Empty → Relay's default voice (talk-back still speaks). Set to a high-energy sports-
-          # announcer voiceId from the ElevenLabs library for the racing vibe. Rendered via envsubst
-          # from the CR_TTS_VOICE repo variable (falls back to empty if unset).
+          # Optional ElevenLabs voiceId for Conversation Relay talk-back. Empty uses Relay's calmer
+          # default voice. Rendered from the CR_TTS_VOICE repository variable.
           - name: CR_TTS_VOICE
             value: "${CR_TTS_VOICE}"
           # Optional Portuguese-specific ElevenLabs voice. Empty uses Relay's pt-BR default.
@@ -187,6 +187,12 @@ properties:
             secretRef: openai-api-key
           - name: OPENAI_MODEL
             value: "${OPENAI_MODEL}"
+          - name: DUB_API_KEY
+            secretRef: dub-api-key
+          - name: DUB_FOLDER_ID
+            secretRef: dub-folder-id
+          - name: DUB_SHORT_DOMAIN
+            value: "${DUB_SHORT_DOMAIN}"
         volumeMounts:
           - volumeName: appdata
             mountPath: /app/appdata

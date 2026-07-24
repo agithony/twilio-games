@@ -1,5 +1,6 @@
 import { HttpServer } from './http-server';
 import { ArcadeApi } from './arcade-api';
+import { createDubLinkShortener } from './dub-link-shortener';
 import { ArcadeConfigStore } from './arcade-config-store';
 import { ArcadeEventHub } from './arcade-events';
 import { ArcadeTacGateway } from './arcade-tac-gateway';
@@ -112,6 +113,11 @@ const arcadeApi = new ArcadeApi({
     ? profileId => arcadeTacGateway.deleteProfile(profileId)
     : undefined,
   memoryProfileDeleted: profileId => arcadeTacGateway?.isProfileDeleted(profileId) === true,
+  shortenUrl: createDubLinkShortener({
+    apiKey: process.env.DUB_API_KEY === 'disabled' ? undefined : process.env.DUB_API_KEY,
+    domain: process.env.DUB_SHORT_DOMAIN,
+    folderId: process.env.DUB_FOLDER_ID === 'disabled' ? undefined : process.env.DUB_FOLDER_ID,
+  }),
   authorizeAdmin: request => {
     if (arcadeDevAdmin && isLoopbackAddress(request.socket.remoteAddress)
       && request.headers['x-arcade-dev-admin'] === 'true') {

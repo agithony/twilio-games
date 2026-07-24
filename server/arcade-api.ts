@@ -77,6 +77,17 @@ export interface ArcadeAdminPrincipal {
   readonly email: string;
 }
 
+export interface PlayerResetCleanupContext {
+  readonly nameHashes: readonly string[];
+  readonly racers: readonly Readonly<{
+    game: 'racer' | 'monsters' | 'fighter';
+    roomCode: string;
+    enginePlayerId: string;
+    completedAt: string | null;
+    durationSeconds: number | null;
+  }>[];
+}
+
 export interface ArcadeApiOptions {
   readonly configStore: ArcadeConfigStore;
   readonly events: ArcadeEventHub;
@@ -96,6 +107,7 @@ export interface ArcadeApiOptions {
   }) => void;
   readonly deleteMemoryProfile?: (profileId: string) => Promise<void>;
   readonly memoryProfileDeleted?: (profileId: string) => boolean;
+  readonly shortenUrl?: (url: string, key: string) => Promise<string | null>;
   readonly inboundMessagingRateLimits?: Readonly<{
     addressLimit?: number;
     addressWindowMs?: number;
@@ -137,6 +149,7 @@ export class ArcadeApi {
   private readonly messagingProfileNameReady?: ArcadeApiOptions['messagingProfileNameReady'];
   private readonly deleteMemoryProfile?: ArcadeApiOptions['deleteMemoryProfile'];
   private readonly memoryProfileDeleted?: ArcadeApiOptions['memoryProfileDeleted'];
+  private readonly shortenUrl?: ArcadeApiOptions['shortenUrl'];
   private readonly inboundMessagingRateLimits: Readonly<{
     addressLimit: number;
     addressWindowMs: number;
@@ -150,6 +163,7 @@ export class ArcadeApi {
   private readonly stationVoiceCalls = new Map<string, { callSid: string; readyEntryId: string }>();
   private readonly stationVoiceConnections = new Map<string, string>();
   private abortStationEngine: ((game: 'racer' | 'monsters' | 'fighter', roomCode: string) => void) | null = null;
+  private playerResetCleanup: ((context: PlayerResetCleanupContext) => Promise<void>) | null = null;
   private started = false;
   private stopped = false;
 
@@ -166,6 +180,7 @@ export class ArcadeApi {
     this.messagingProfileNameReady = options.messagingProfileNameReady;
     this.deleteMemoryProfile = options.deleteMemoryProfile;
     this.memoryProfileDeleted = options.memoryProfileDeleted;
+    this.shortenUrl = options.shortenUrl;
     this.now = options.now ?? Date.now;
     this.displayPresenceStartedAt = this.now();
     this.displayToken = Buffer.from(options.displayToken?.trim() ?? '', 'utf8');
@@ -235,6 +250,11 @@ export class ArcadeApi {
     return this.effectiveVoiceNumbers(this.configStore.getSnapshot());
   }
 
+  canonicalStationEnginePlayerId(enginePlayerId: string): string {
+    return this.playerRuntime?.getInitializedResources()?.station.canonicalEnginePlayerId(enginePlayerId)
+      ?? enginePlayerId;
+  }
+
   setStationAbortHandler(
     handler: (game: 'racer' | 'monsters' | 'fighter', roomCode: string) => void,
   ): void {
@@ -244,6 +264,10 @@ export class ArcadeApi {
     });
     const resources = this.playerRuntime?.getInitializedResources();
     if (resources) this.bindStationAbortHandler(resources);
+  }
+
+  setPlayerResetCleanupHandler(handler: (context: PlayerResetCleanupContext) => Promise<void>): void {
+    this.playerResetCleanup = handler;
   }
 
   private effectiveVoiceNumbers(
@@ -341,7 +365,7 @@ export class ArcadeApi {
     const resources = this.configStore.getStatus().degraded
       ? await runtime.getForCleanup()
       : await this.getActivePlayerResources();
-    const result = await resources.service.processInboundStationMessage({
+    let result = await resources.service.processInboundStationMessage({
       channel,
       normalizedAddress,
       providerAddress,
@@ -353,6 +377,27 @@ export class ArcadeApi {
       conversationProfileId,
       conversationId: input.conversationId,
     });
+    if (result.challengeLink && this.shortenUrl) {
+      const shortLink = await this.shortenUrl(result.challengeLink, `challenge-${key.slice(-32)}`);
+      if (shortLink) {
+        const reply = result.reply.replace(result.challengeLink, shortLink);
+        if (reply !== result.reply) {
+          const originalReply = result.reply;
+          result = { ...result, reply, challengeLink: shortLink };
+          await resources.store.transaction(state => {
+            const receipt = state.inboundMessages[key];
+            if (receipt?.reply === originalReply) state.inboundMessages[key] = { ...receipt, reply };
+            const record = state.idempotencyRecords[key];
+            if (record && record.operation === 'PROCESS_STATION_MESSAGE') {
+              const saved = record.result as Record<string, unknown>;
+              if (saved?.reply === originalReply) {
+                state.idempotencyRecords[key] = { ...record, result: { ...saved, reply, challengeLink: shortLink } };
+              }
+            }
+          });
+        }
+      }
+    }
     const pendingProfile = this.messagingProfilesByAddress.get(normalizedAddress);
     if (pendingProfile && pendingProfile !== conversationProfileId) {
       try {
@@ -720,6 +765,21 @@ export class ArcadeApi {
         return;
       }
 
+      if (pathname === '/api/arcade/challenge-portal/status') {
+        await this.handleChallengePortal(request, response, 'status');
+        return;
+      }
+
+      if (pathname === '/api/arcade/challenge-portal/visit') {
+        await this.handleChallengePortal(request, response, 'visit');
+        return;
+      }
+
+      if (pathname === '/api/arcade/challenge-portal/claim') {
+        await this.handleChallengePortal(request, response, 'claim');
+        return;
+      }
+
       const challengeRoute = parseChallengeRoute(pathname);
       if (challengeRoute) {
         if (challengeRoute.action === 'token') {
@@ -884,6 +944,12 @@ export class ArcadeApi {
       const playerBalanceRestore = parseOperatorPlayerBalanceRestoreRoute(pathname);
       if (playerBalanceRestore) {
         await this.handleOperatorPlayerBalanceRestore(request, response, playerBalanceRestore.playerId);
+        return;
+      }
+
+      const playerReset = parseOperatorPlayerResetRoute(pathname);
+      if (playerReset) {
+        await this.handleOperatorPlayerReset(request, response, playerReset.playerId);
         return;
       }
 
@@ -1217,6 +1283,37 @@ export class ArcadeApi {
     }, { 'Cache-Control': 'no-store' });
   }
 
+  private async handleChallengePortal(
+    request: http.IncomingMessage,
+    response: http.ServerResponse,
+    action: 'status' | 'visit' | 'claim',
+  ): Promise<void> {
+    this.requireMethod(request, ['POST']);
+    this.requireSameOrigin(request);
+    requireJsonContentType(request);
+    const body = action === 'status'
+      ? requireExactObject(await readJson(request, CHALLENGE_BODY_LIMIT), ['token'], [])
+      : requireExactObject(await readJson(request, CHALLENGE_BODY_LIMIT), ['token', 'challengeId'], []);
+    const token = String(body.token ?? '');
+    const forwarded = request.headers['x-forwarded-for'];
+    const forwardedValue = Array.isArray(forwarded) ? forwarded.at(-1) : forwarded;
+    const clientAddress = forwardedValue?.split(',').at(-1)?.trim().slice(0, 128)
+      || request.socket.remoteAddress || 'unknown';
+    this.enforceRate(`challenge-link-address:${clientAddress}`, 120, 60_000);
+    this.enforceRate(`challenge-link-token:${createHash('sha256').update(token).digest('hex')}`, 60, 60_000);
+    this.enforceProcessRate('challenge-link-process', 600, 60_000);
+    const resources = await this.getActivePlayerResources();
+    const result = action === 'status'
+      ? await resources.service.getChallengePortalStatus(token)
+      : action === 'visit'
+        ? await resources.service.visitChallengeFromPortal(token, String(body.challengeId ?? ''))
+        : await resources.service.claimChallengeFromPortal(token, String(body.challengeId ?? ''));
+    sendJson(response, 200, result, {
+      'Cache-Control': 'no-store, private',
+      'Referrer-Policy': 'no-referrer',
+    });
+  }
+
   private async handleChallengeLinkClaim(
     request: http.IncomingMessage,
     response: http.ServerResponse,
@@ -1230,8 +1327,8 @@ export class ArcadeApi {
     const forwardedValue = Array.isArray(forwarded) ? forwarded.at(-1) : forwarded;
     const clientAddress = forwardedValue?.split(',').at(-1)?.trim().slice(0, 128)
       || request.socket.remoteAddress || 'unknown';
-    this.enforceRate(`challenge-link-address:${clientAddress}`, 30, 60_000);
-    this.enforceRate(`challenge-link-token:${createHash('sha256').update(token).digest('hex')}`, 10, 60_000);
+    this.enforceRate(`legacy-challenge-address:${clientAddress}`, 30, 60_000);
+    this.enforceRate(`legacy-challenge-token:${createHash('sha256').update(token).digest('hex')}`, 10, 60_000);
     this.enforceProcessRate('challenge-link-process', 600, 60_000);
     const resources = await this.getActivePlayerResources();
     const result = await resources.service.claimChallengeFromLink(token);
@@ -1239,10 +1336,7 @@ export class ArcadeApi {
       destinationUrl: result.destinationUrl,
       availableBalance: result.availableBalance,
       rewardCoins: result.rewardCoins,
-    }, {
-      'Cache-Control': 'no-store, private',
-      'Referrer-Policy': 'no-referrer',
-    });
+    }, { 'Cache-Control': 'no-store, private', 'Referrer-Policy': 'no-referrer' });
   }
 
   private async handleJoinQueue(
@@ -1659,6 +1753,45 @@ export class ArcadeApi {
     sendJson(response, 200, result, { 'Cache-Control': 'no-store, private' });
   }
 
+  private async handleOperatorPlayerReset(
+    request: http.IncomingMessage,
+    response: http.ServerResponse,
+    playerId: string,
+  ): Promise<void> {
+    this.requireMethod(request, ['POST']);
+    const principal = this.requireAdmin(request);
+    this.requireSameOrigin(request);
+    requireJsonContentType(request);
+    const idempotencyKey = requireHeader(
+      request.headers['idempotency-key'], 'Idempotency-Key', PLAYER_IDEMPOTENCY_KEY_LIMIT,
+    );
+    const body = requireExactObject(await readJson(request, STATION_BODY_LIMIT), ['reason'], []);
+    const resources = await this.requirePlayerRuntime().getForCleanup();
+    const before = await resources.store.read();
+    const player = before.players[playerId];
+    const connected = resources.station.connectedParticipantIds();
+    if (player && Object.values(before.stationReadyEntries).some(entry => (
+      entry.playerId === playerId && connected.has(entry.id)
+    ))) throw new ArcadeHttpError(409, 'TEST_PLAYER_RESET_CONNECTED', 'Hang up the player call before resetting this player.');
+    const reset = await resources.service.resetInactivePlayer({
+      playerId,
+      reason: operatorReason(body.reason),
+      idempotencyKey: playerServiceKey(
+        `operator:${principal.email}`, `player-reset:${playerId}`, idempotencyKey,
+      ),
+      authorization: resources.operatorAuthorization(principal.email),
+      deleteMemoryProfile: this.deleteMemoryProfile,
+      isReadyEntryConnected: readyEntryId => resources.station.connectedParticipantIds().has(readyEntryId),
+    });
+    if (reset.resetNameHashes.length || reset.racers.length) {
+      await this.playerResetCleanup?.({ nameHashes: reset.resetNameHashes, racers: reset.racers });
+    }
+    for (const address of Object.values(before.channelAddresses)) {
+      if (address.playerId === playerId) this.messagingProfilesByAddress.delete(address.normalizedAddress);
+    }
+    sendJson(response, 200, { reset: true }, { 'Cache-Control': 'no-store, private' });
+  }
+
   private async handleOperatorStationCoinGrant(
     request: http.IncomingMessage,
     response: http.ServerResponse,
@@ -1767,7 +1900,10 @@ export class ArcadeApi {
     };
     if (aggregate.station.revision !== expectedRevision) {
       // Service idempotency can still replay a completed reset; a first stale request fails closed.
-      await resources.service.resetTestPlayer(resetInput);
+      const replay = await resources.service.resetTestPlayer(resetInput);
+      if (replay.resetNameHashes.length || replay.racers.length) {
+        await this.playerResetCleanup?.({ nameHashes: replay.resetNameHashes, racers: replay.racers });
+      }
       const replayState = await resources.store.read();
       const replayAggregate = stationAggregateFromState(replayState, stationId);
       if (!replayAggregate) throw new ArcadeHttpError(503, 'ARCADE_STATE_UNAVAILABLE', 'Twilio Games state is unavailable');
@@ -1790,7 +1926,10 @@ export class ArcadeApi {
       .some(candidate => candidate.playerId === player.id && connected.has(candidate.id))) {
       throw new ArcadeHttpError(409, 'TEST_PLAYER_RESET_CONNECTED', 'Hang up the player call before resetting this test player.');
     }
-    await resources.service.resetTestPlayer(resetInput);
+    const reset = await resources.service.resetTestPlayer(resetInput);
+    if (reset.resetNameHashes.length || reset.racers.length) {
+      await this.playerResetCleanup?.({ nameHashes: reset.resetNameHashes, racers: reset.racers });
+    }
     for (const address of Object.values(beforeState.channelAddresses)) {
       if (address.playerId === player.id) this.messagingProfilesByAddress.delete(address.normalizedAddress);
     }
@@ -2319,6 +2458,11 @@ function parseOperatorPlayerBalanceRestoreRoute(pathname: string): { playerId: s
   return match ? { playerId: match[1]!.replace(/%3A/ig, ':') } : null;
 }
 
+function parseOperatorPlayerResetRoute(pathname: string): { playerId: string } | null {
+  const match = /^\/api\/admin\/arcade\/players\/([A-Za-z0-9](?:(?:%3A)|[A-Za-z0-9:._-]){0,255})\/reset$/i.exec(pathname);
+  return match ? { playerId: match[1]!.replace(/%3A/ig, ':') } : null;
+}
+
 function parseOperatorStationCoinGrantRoute(pathname: string): { readyEntryId: string } | null {
   const match = /^\/api\/admin\/arcade\/station\/ready\/([A-Za-z0-9](?:(?:%3A)|[A-Za-z0-9:._-]){0,127})\/coins\/grant$/i.exec(pathname);
   return match ? { readyEntryId: match[1]!.replace(/%3A/ig, ':') } : null;
@@ -2513,6 +2657,10 @@ function playerServiceError(serviceCode: string): { status: number; code: string
       return { status: 409, code: serviceCode, message: 'player balance is no longer zero' };
     case 'PLAYER_BALANCE_RESTORE_UNAVAILABLE':
       return { status: 409, code: serviceCode, message: 'starting balance restoration is unavailable' };
+    case 'TEST_PLAYER_RESET_CONNECTED':
+      return { status: 409, code: serviceCode, message: 'Hang up the player call before resetting this player.' };
+    case 'CHALLENGE_VISIT_REQUIRED':
+      return { status: 409, code: serviceCode, message: 'Visit the challenge before claiming its coins.' };
     case 'MESSAGING_IDENTITY_REQUIRED':
       return { status: 409, code: serviceCode, message: 'join through SMS or WhatsApp before entering the ready pool' };
     case 'QUEUE_FULL':
@@ -2622,7 +2770,7 @@ async function readJson(request: http.IncomingMessage, maximumBytes: number): Pr
 function formatEvent(event: ArcadeEvent): string {
   const id = event.type === ARCADE_CONFIG_UPDATED_EVENT
     ? String(event.version)
-    : `station:${event.revision}`;
+    : event.type === 'arcade_ready_entry_added' ? `ready:${event.revision}` : `station:${event.revision}`;
   return `id: ${id}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
 }
 

@@ -41,8 +41,11 @@ body.station-mode .connection-status { right:calc(var(--station-rail-width) + 14
 .station-rail-count strong { display: block; font: 800 30px/1 'Twilio Sans Display', system-ui, sans-serif; }
 .station-rail-count span { color: #BABECC; font-size: 12px; }
 .station-rail-status { min-height: 34px; color: #9AA0B4; font: 12px/1.4 'Twilio Sans Mono', monospace; }
+.station-results-fallback{position:fixed;z-index:850;inset:0 var(--station-rail-width) 0 0;display:flex;flex-direction:column;justify-content:center;padding:clamp(28px,7vw,110px);color:#fff;background:radial-gradient(circle at 50% 20%,rgba(90,32,112,.65),transparent 42%),#000d25;font-family:'Twilio Sans Text',system-ui}.station-results-fallback[hidden]{display:none}.station-results-eyebrow{margin:0 0 8px;color:#fd7685;font:700 13px 'Twilio Sans Mono',monospace;letter-spacing:.14em}.station-results-fallback h1{margin:0 0 28px;font:800 clamp(48px,8vw,110px)/.85 'Twilio Sans Display',system-ui}.station-result-row{display:grid;grid-template-columns:80px 1fr auto;gap:18px;align-items:center;padding:16px 20px;border-top:1px solid #38425e;font-size:clamp(18px,2.3vw,30px)}.station-result-row.winner{border:1px solid #f7c948;border-radius:14px;color:#f7c948;background:rgba(247,201,72,.08)}.station-result-row strong{font-family:'Twilio Sans Display',system-ui}.station-result-row time{font-family:'Twilio Sans Mono',monospace}.station-results-hold{margin:26px 0 0;color:#babecd}
+.station-results-unavailable{padding:24px;border:1px dashed #59647f;border-radius:14px;color:#dde0e6;font-size:clamp(18px,2vw,26px)}
 
 @media (max-width: 700px) {
+  .station-results-fallback{inset:0 0 150px;padding:24px}.station-result-row{grid-template-columns:55px 1fr auto;padding:12px 8px}
   :root { --station-rail-width: 0px; }
   body.station-mode #app, body.station-mode #arena, body.station-mode .flow-overlay,
   body.station-mode #veil, body.station-mode .hud { right: 0; bottom:150px; }

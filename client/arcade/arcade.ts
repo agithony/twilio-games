@@ -25,7 +25,7 @@ interface OperatorStationView {
   readyEntries:Array<{id:string;roundId:string;displayName:string;originalReadyAt:string;status:string;overflowOrdinal:number|null;availableBalance:number;connected:boolean}>;
   recentControls:Array<{id:string;action:string;actorKind:'operator'|'system';actorSubject:string;reason:string;fromRevision:number;toRevision:number;occurredAt:string}>;
 }
-interface OperatorPlayerRecoveryItem {playerId:string;displayName:string;identities:Array<{channel:'sms'|'whatsapp'|'browser';maskedAddress:string}>;availableBalance:number;lastActivityAt:string;lastReadyStatus:string|null;}
+interface OperatorPlayerRecoveryItem {playerId:string;displayName:string;identities:Array<{channel:'sms'|'whatsapp'|'browser';maskedAddress:string}>;availableBalance:number;lastActivityAt:string;lastReadyStatus:string|null;registrationState:'complete'|'in_progress';canRestoreStartingBalance:boolean;canReset:boolean;blockedReason:string|null;}
 interface OperatorPlayerRecoveryPage {configVersion:number;startingBalance:number;players:OperatorPlayerRecoveryItem[];nextCursor:string|null;}
 interface MessagingFailedNotice { notificationId:string;kind:string;channel:'sms'|'whatsapp';status:'FAILED';attempts:number;maximumAttempts:number;lastErrorCode:string|null;lastErrorMessage:string|null;terminalReason:string|null;updatedAt:string;expiresAt:string;retryEligible:boolean;retryIneligibleReason:string|null; }
 interface AdminStatus { display:{configured:boolean;connected:boolean;checking:boolean;lastSeenAt:string|null;presenceTimeoutSeconds:number};messaging:{configured:boolean;enabled:boolean;started:boolean;lastError:string|null;channels:Record<'sms'|'whatsapp',boolean>;counts:Record<string,number>;recentFailures:MessagingFailedNotice[];onboarding:Record<'sms'|'whatsapp',boolean>;storage:{players:number;messagingIdentities:number;identityCapacity:number;remainingIdentityCapacity:number;channelAddresses:number;drafts:number;cleanupEligible:number;retentionDays:number;pruneBatchSize:number}|null}|null; }
@@ -87,6 +87,7 @@ el('cancel-admin-challenge').addEventListener('click',closeChallengeEditor);
 el<HTMLFormElement>('admin-challenge-form').addEventListener('submit',event=>void saveAdminChallenge(event));
 el('admin-logout').addEventListener('click', () => void switchAccount());
 el('connect-booth-display').addEventListener('click', () => void connectBoothDisplay());
+el('overview-action-button').addEventListener('click',openCurrentStationAction);
 el('refresh-players').addEventListener('click',()=>void refreshOperatorPlayers(false,true));
 el('load-more-players').addEventListener('click',()=>void refreshOperatorPlayers(true));
 el('close-recruiting').addEventListener('click',()=>void stationAction('close'));
@@ -887,6 +888,26 @@ function renderOperatorOverview():void{
   el('overview-game').textContent=!stationKnown?'Loading':!station?'Waiting for players':station.station.activeGame?gameName(station.station.activeGame):phaseName(station.station.phase);
   el('overview-game-detail').textContent=!stationKnown?'Checking live event':!station?'No active game flow':station.station.activeGame?phaseName(station.station.phase):'No game active';
   gameCard.dataset.state=phase&&['LOCKED','LAUNCHING','PLAYING','RESULTS'].includes(phase)?'active':'neutral';
+  const actionButton=el<HTMLButtonElement>('overview-action-button');
+  const paused=config?.arcade.mode==='off';
+  const preservedFlow=paused&&Boolean(station&&phase!=='ATTRACT');
+  const action=paused
+    ?preservedFlow
+      ?{title:'Paused flow needs attention',description:'The current players and game state are preserved. Open Live event to reset that flow before reopening.',label:'Review preserved flow',disabled:false}
+      :{title:'Event paused',description:'Open Setup when you are ready to reopen the event.',label:'Open setup',disabled:false}
+    :phase==='RECRUITING'
+      ?{title:'Ready to choose the game?',description:'End joining now and move directly to player voting. New arrivals wait for the following game.',label:'Choose game now',disabled:false}
+      :phase==='GAME_SELECTION'
+        ?{title:'Confirm the next game',description:'Review player votes, select the game, and lock this group in.',label:'Confirm game',disabled:false}
+        :phase==='LOCKED'
+          ?{title:'Players are confirmed',description:'Start the selected game when the big screen and players are ready.',label:'Start game',disabled:false}
+          :phase==='RESULTS'
+            ?{title:'Results are staying on screen',description:'Let players read the scoreboard and hear the recap. Continue only when the booth is ready.',label:'Close results when ready',disabled:false}
+            :phase==='PLAYING'||phase==='LAUNCHING'
+              ?{title:phase==='PLAYING'?'Game in progress':'Game is starting',description:'Open Live event to monitor players and recovery controls.',label:'View live game',disabled:false}
+              :{title:'Waiting for the first player',description:'The start-now control appears here as soon as someone inserts a coin.',label:'Choose game after a player joins',disabled:true};
+  el('overview-action-title').textContent=action.title;el('overview-action-description').textContent=action.description;
+  actionButton.textContent=action.label;actionButton.disabled=action.disabled;actionButton.dataset.target=paused&&!preservedFlow?'setup':'live-event';
 
   const activeRoundIds=new Set([station?.station.activeRoundId,station?.station.nextRoundId].filter((id):id is string=>Boolean(id)));
   const playerCount=station?.readyEntries.filter(entry=>entry.status!=='LEFT'&&activeRoundIds.has(entry.roundId)).length??0;
@@ -913,6 +934,15 @@ function renderOperatorOverview():void{
     ? 'The booth connection lets this screen receive private room and launch details that are intentionally hidden from public visitors. This turns the current tab into the big screen, signs you out of the operator console, and opens the game screen. Normally you connect once when opening the booth tab; reloads and new games do not require it again. The authorization has no timer; Overview reports Not connected when the booth has not checked in for 20 seconds.'
     : 'Big-screen security is not configured in this deployment. Ask a deployment administrator to configure ARCADE_DISPLAY_TOKEN before opening the event.';
   show('display-connect-panel',displayKnown&&!displayConnected&&!display?.checking);
+}
+
+function openCurrentStationAction():void{
+  const button=el<HTMLButtonElement>('overview-action-button'),target=button.dataset.target==='setup'?'setup':'live-event';
+  activateOperatorTab(target,true,true);
+  if(target==='setup')return;
+  const phase=state.operatorStation?.station.phase;
+  const control=phase==='RECRUITING'?'close-recruiting':phase==='GAME_SELECTION'?'select-station-game':phase==='LOCKED'?'request-launch':phase==='RESULTS'?'advance-results':phase==='PLAYING'?'emergency-complete':null;
+  if(control)window.setTimeout(()=>el<HTMLButtonElement>(control).focus(),0);
 }
 
 function isDisplayConnected(display:AdminStatus['display']|undefined):boolean{
@@ -992,22 +1022,38 @@ async function refreshOperatorPlayers(append=false,force=false):Promise<void>{
 
 function renderOperatorPlayers():void{
   const panel=el('player-recovery-panel'),host=el('player-recovery-list'),page=state.operatorPlayers;
-  panel.hidden=state.adminConfig?.coins.chargePolicy==='free';host.replaceChildren();
+  panel.hidden=false;host.replaceChildren();
   const players=page?.players??[];
   el('player-recovery-count').textContent=`${players.length} ${players.length===1?'player':'players'}`;
-  if(!players.length){const empty=document.createElement('div');empty.className='empty';empty.textContent='No inactive zero-coin players need help.';host.append(empty);}
+  if(!players.length){const empty=document.createElement('div');empty.className='empty';empty.textContent='No player records yet.';host.append(empty);}
   for(const player of players){
     const item=document.createElement('div');item.className='list-item player-recovery-item';
     const copy=document.createElement('div'),title=document.createElement('h4'),meta=document.createElement('div');
     title.textContent=player.displayName;meta.className='meta';
     const identities=player.identities.map(identity=>`${identity.channel==='sms'?'Text':identity.channel==='whatsapp'?'WhatsApp':'Browser'} · ${identity.maskedAddress}`).join(' · ');
-    meta.textContent=`${identities} · ${player.availableBalance} coins · Last activity ${formatTimestamp(player.lastActivityAt)}${player.lastReadyStatus?` · ${phaseName(player.lastReadyStatus)}`:''}`;
+    const identityLabel=identities||'No linked phone';
+    meta.textContent=`${identityLabel} · ${player.availableBalance} coins · ${player.registrationState==='complete'?'Registration complete':'Sign-up in progress'} · Last activity ${formatTimestamp(player.lastActivityAt)}${player.lastReadyStatus?` · ${phaseName(player.lastReadyStatus)}`:''}`;
     copy.append(title,meta);
     const actions=document.createElement('div');actions.className='operator-actions';
-    const restore=document.createElement('button');restore.type='button';restore.className='button primary';restore.textContent=`Restore to ${page?.startingBalance??0} coin${page?.startingBalance===1?'':'s'}`;restore.addEventListener('click',()=>void restorePlayerBalance(player,restore));actions.append(restore);
+    if(player.canRestoreStartingBalance){const restore=document.createElement('button');restore.type='button';restore.className='button primary';restore.textContent=`Restore to ${page?.startingBalance??0} coin${page?.startingBalance===1?'':'s'}`;restore.addEventListener('click',()=>void restorePlayerBalance(player,restore));actions.append(restore);}
+    const reset=document.createElement('button');reset.type='button';reset.className='button danger';reset.textContent='Reset everything';reset.disabled=!player.canReset;reset.title=player.blockedReason??'Remove name, phone link, coins, sign-up progress, and Conversation Memory';reset.addEventListener('click',()=>void resetPlayerData(player,reset));actions.append(reset);
     item.append(copy,actions);host.append(item);
   }
   el<HTMLButtonElement>('load-more-players').hidden=!page?.nextCursor;
+}
+
+async function resetPlayerData(player:OperatorPlayerRecoveryItem,button:HTMLButtonElement):Promise<void>{
+  if(!player.canReset)return;
+  const response=await requestOperatorReason('Reset everything',`Reset ${player.displayName}. Their name, phone/browser identity, coins, sign-up progress, and Conversation Memory profile will be retired. Their next JOIN starts from scratch.`);
+  if(!response||!window.confirm(`Reset EVERYTHING for ${player.displayName}? Their next JOIN will be treated as a brand-new player.`))return;
+  button.disabled=true;button.textContent='Resetting...';
+  try{
+    await api(`/api/admin/arcade/players/${encodeURIComponent(player.playerId)}/reset`,{
+      method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':crypto.randomUUID()},body:JSON.stringify({reason:response.reason}),
+    });
+    setNotice(`${player.displayName} was fully reset. Their next JOIN will ask for their name and create a fresh wallet.`,'success');
+    await Promise.all([refreshOperatorPlayers(false,true),refreshOperatorStation()]);
+  }catch(error){showError(error);}finally{button.disabled=false;button.textContent='Reset everything';}
 }
 
 async function restorePlayerBalance(player:OperatorPlayerRecoveryItem,button:HTMLButtonElement):Promise<void>{

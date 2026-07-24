@@ -159,15 +159,17 @@ describe('Arcade station outbound outbox', () => {
       .find(item => item.kind === 'STATION_RESULTS' && item.locale === 'en-US')!;
     expect(resultNotice.body).toContain('Your Voice Fighter match is complete');
     expect(resultNotice.body).not.toContain('Available balance');
-    expect(resultNotice.body).toContain('Reply MORE for challenge links');
+    expect(resultNotice.body).toContain('Reply MORE for one page with every available challenge');
     expect(resultNotice.templateVariables).toEqual({ '1': 'Voice Fighter' });
     expect(Object.values(h.store.snapshot().outboundNotifications)
       .filter(item => item.kind === 'STATION_RESULTS' && item.channel === 'whatsapp')
       .every(item => item.templateContentSid === null)).toBe(true);
     const recovery = await h.service.listPlayersNeedingCoins();
-    expect(recovery).toMatchObject({ startingBalance: 1, players: [{ availableBalance: 0 }, { availableBalance: 0 }] });
+    const restorable = recovery.players.filter(player => player.canRestoreStartingBalance);
+    expect(recovery.startingBalance).toBe(1);
+    expect(restorable).toMatchObject([{ availableBalance: 0 }, { availableBalance: 0 }]);
     expect(JSON.stringify(recovery)).not.toContain('+1415555010');
-    const target = recovery.players[0]!;
+    const target = restorable[0]!;
     const restoreInput = {
       playerId: target.playerId, expectedConfigVersion: recovery.configVersion,
       idempotencyKey: 'restore-zero-player', authorization: AUTHORIZATION, reason: 'help attendee replay',
@@ -184,7 +186,7 @@ describe('Arcade station outbound outbox', () => {
         configuredStartingBalance: 1, previousAvailableBalance: 0,
       }) }),
     ]);
-    expect((await h.service.listPlayersNeedingCoins()).players).toHaveLength(1);
+    expect((await h.service.listPlayersNeedingCoins()).players.filter(player => player.canRestoreStartingBalance)).toHaveLength(1);
     await h.service.advanceStationResults({
       stationId: 'ARCADE-01', expectedRevision: results.station.revision,
       idempotencyKey: 'advance', authorization: AUTHORIZATION,

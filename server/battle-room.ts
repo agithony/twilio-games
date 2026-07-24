@@ -99,6 +99,15 @@ export class BattleRoom {
     if (s && info.name) s.name = info.name.slice(0, 20);
   }
 
+  anonymizePlayer(playerId: string): void {
+    const index = this.slots.findIndex(slot => slot.id === playerId);
+    if (index < 0) return;
+    this.slots[index]!.name = 'PLAYER';
+    if (this._result?.winner === (index === 0 ? 'a' : 'b')) {
+      this._result = { ...this._result, winnerName: 'PLAYER' };
+    }
+  }
+
   /** Pick a monster during monster_select (validated against the roster). */
   selectMonster(playerId: string, monsterId: string): void {
     if (this._phase !== 'monster_select') return;

@@ -296,9 +296,9 @@ export class Screens {
       + '#' + (global ? `${global.map}:` + global.entries.map(e => `${e.name}:${e.finishT}`).join(',') : 'nob');
     if (this.unchanged(key)) return;
     const rows = results.map((r) => {
-      const win = r.place === 1;
+      const win = r.place === 1 && r.finished && r.finishT > 0;
       const accent = PLACE_COLOR[r.place - 1] ?? 'var(--cyan)';
-      const time = r.finished ? this.formatSeconds(r.finishT) : this.text('screen.results.dnf');
+      const time = r.finished && r.finishT > 0 ? this.formatSeconds(r.finishT) : this.text('screen.results.dnf');
       return `
         <div class="res-row${win ? ' win' : ''}">
           <div class="place" style="color:${accent};font-size:${win ? '30px' : '22px'}">${this.placeLabel(r.place)}</div>

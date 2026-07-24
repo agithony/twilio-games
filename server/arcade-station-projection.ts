@@ -29,6 +29,15 @@ export type PublicStationProjection = Readonly<{
     matchId: string;
     generation: number;
   }> | null;
+  results: readonly Readonly<{
+    displayName: string;
+    rank: number | null;
+    durationSeconds: number | null;
+    won: boolean | null;
+    completed: boolean;
+    score: number | null;
+  }>[];
+  resultSource: 'ENGINE' | 'RECOVERY' | 'LEGACY_UNAVAILABLE' | null;
 }>;
 
 export type PlayerStationProjection = Readonly<{
@@ -78,6 +87,8 @@ export function emptyPublicStation(): PublicStationProjection {
       choices: 0,
     })),
     launch: null,
+    results: [],
+    resultSource: null,
   };
 }
 
@@ -157,6 +168,20 @@ export function projectPublicStation(
         generation: match.launchGeneration,
       }
       : null,
+    results: includeLaunch && aggregate.station.phase === 'RESULTS' && match?.result
+      ? match.result.participants.map((participant, index) => {
+        const entry = aggregate.readyEntries[participant.readyEntryId];
+        return {
+          displayName: entry ? displayName(state, entry.playerId, index) : `PLAYER ${index + 1}`,
+          rank: participant.rank,
+          durationSeconds: participant.durationSeconds,
+          won: participant.won,
+          completed: participant.completed,
+          score: participant.score,
+        };
+      }).sort((left, right) => (left.rank ?? Number.MAX_SAFE_INTEGER) - (right.rank ?? Number.MAX_SAFE_INTEGER))
+      : [],
+    resultSource: includeLaunch && aggregate.station.phase === 'RESULTS' ? match?.result?.source ?? null : null,
   };
 }
 

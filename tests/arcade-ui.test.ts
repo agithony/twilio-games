@@ -20,6 +20,8 @@ const monsters = readFileSync(new URL('../client/battle/monsters.ts', import.met
 const fighter = readFileSync(new URL('../client/fighter/fighter.ts', import.meta.url), 'utf8');
 const musicToggle = readFileSync(new URL('../client/music-toggle.ts', import.meta.url), 'utf8');
 const iconControls = readFileSync(new URL('../client/icon-controls.ts', import.meta.url), 'utf8');
+const coinInsertion = readFileSync(new URL('../client/coin-insertion.ts', import.meta.url), 'utf8');
+const coinInsertionCss = readFileSync(new URL('../client/coin-insertion.css', import.meta.url), 'utf8');
 const stationGameSelect = /<select id="station-game">[\s\S]*?<\/select>/.exec(html)?.[0] ?? '';
 
 describe('Arcade browser UI', () => {
@@ -373,7 +375,7 @@ describe('Arcade browser UI', () => {
     expect(script).toContain("window.confirm(`Reset ${entry.displayName}? This cannot be undone.`)");
   });
 
-  it('shows inactive zero-coin players independently from the live ready roster', () => {
+  it('shows an all-mode player directory with independent restore and full-reset actions', () => {
     for (const id of ['player-recovery-panel','player-recovery-count','player-recovery-list','load-more-players']) {
       expect(html).toContain(`id="${id}"`);
     }
@@ -381,7 +383,29 @@ describe('Arcade browser UI', () => {
     expect(script).toContain('/restore-starting-balance`');
     expect(script).toContain("'If-Match':`\"arcade-config-${page.configVersion}\"`");
     expect(script).toContain("requestOperatorReason('Restore starting coins'");
+    expect(html).toContain('Player directory');
+    expect(script).toContain("reset.textContent='Reset everything'");
+    expect(script).toContain('/reset`,{');
+    expect(script).toContain('player.canRestoreStartingBalance');
+    expect(script).toContain('player.canReset');
     expect(script).not.toContain('restore-starting-balance`,{amount');
+  });
+
+  it('puts the current booth action on the default operator overview', () => {
+    for(const id of ['overview-current-action','overview-action-title','overview-action-description','overview-action-button'])expect(html).toContain(`id="${id}"`);
+    expect(script).toContain("phase==='RECRUITING'");
+    expect(script).toContain("label:'Choose game now'");
+    expect(script).toContain("label:'Close results when ready'");
+  });
+
+  it('shows a one-shot arcade coin insertion cue on home and active game displays', () => {
+    expect(homeScript).toContain('createCoinInsertionPresenter');
+    expect(stationDisplay).toContain('createCoinInsertionPresenter');
+    expect(stationClient).toContain("source.addEventListener('arcade_ready_entry_added'");
+    expect(coinInsertion).toContain("event.admission==='coin'?'COIN ACCEPTED':'READY CONFIRMED'");
+    expect(coinInsertion).not.toMatch(/new Audio|\.play\(|AudioContext/);
+    expect(coinInsertionCss).toContain('@keyframes coin-drop');
+    expect(coinInsertionCss).toContain('@media(prefers-reduced-motion:reduce)');
   });
 
   it('does not wire browser speech synthesis into the Voice Racer display', () => {
@@ -397,8 +421,11 @@ describe('Arcade browser UI', () => {
     expect(stationClient).not.toContain("url.searchParams.get('displayToken')");
     expect(stationClient).not.toContain("url.searchParams.set('displayToken'");
     expect(stationDisplay).not.toContain("homeUrl.searchParams.set('displayToken'");
-    expect(stationDisplay).toContain("!['LAUNCHING', 'PLAYING'].includes(latest.station.phase)");
-    expect(stationDisplay).not.toContain("['LAUNCHING', 'PLAYING', 'RESULTS']");
+    expect(stationDisplay).toContain("!['LAUNCHING', 'PLAYING', 'RESULTS'].includes(latest.station.phase)");
+    expect(stationDisplay).toContain("latest.station.phase === 'RESULTS'");
+    expect(stationDisplay).toContain("if(latest.station.phase==='RESULTS'&&!engineResultsReady)");
+    expect(stationDisplay).toContain('Detailed results were unavailable after recovery.');
+    expect(racerMain).toContain('stationDisplay.markEngineResultsReady()');
     expect(homeScript).not.toContain("url.searchParams.set('displayToken'");
     expect(fighter).not.toContain("params.get('hostToken')");
     expect(fighter).toContain("pageUrl.searchParams.delete('hostToken')");

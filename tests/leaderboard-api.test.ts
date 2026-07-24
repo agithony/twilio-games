@@ -14,7 +14,7 @@ function makeServer() {
 }
 
 const seed = [
-  { name: 'A', map: 'Silver Lake', carIndex: 0, finishT: 50, at: 1 },
+  { name: 'A', map: 'Silver Lake', carIndex: 0, finishT: 50, at: 1, enginePlayerId: 'ROOM:p1' },
   { name: 'B', map: 'Silver Lake', carIndex: 1, finishT: 40, at: 2 },
   { name: 'C', map: 'Neon City',  carIndex: 2, finishT: 30, at: 3 },
 ];
@@ -25,6 +25,7 @@ describe('leaderboard API', () => {
     srv = makeServer(); const port = await srv.start();
     const data = await (await fetch(`http://127.0.0.1:${port}/api/leaderboard`)).json();
     expect(data.entries.map((e: any) => e.name)).toEqual(['C', 'B', 'A']);   // 30, 40, 50
+    expect(JSON.stringify(data)).not.toContain('enginePlayerId');
   });
 
   it('GET ?map= filters to one track', async () => {

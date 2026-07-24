@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import WebSocket from 'ws';
@@ -57,6 +57,7 @@ async function harness(options: {
   outboundTransport?: ArcadeMessagingTransport;
   deleteMemoryProfile?: (profileId: string) => Promise<void>;
   now?: () => number;
+  shortenUrl?: (url: string, key: string) => Promise<string | null>;
   inboundMessagingRateLimits?: {
     addressLimit?: number;
     addressWindowMs?: number;
@@ -112,6 +113,7 @@ async function harness(options: {
     messagingCapabilities: { sms: Boolean(smsNumber), whatsapp: Boolean(whatsappNumber) },
     inboundMessagingRateLimits: options.inboundMessagingRateLimits,
     deleteMemoryProfile: options.deleteMemoryProfile,
+    shortenUrl: options.shortenUrl,
     now: options.now,
     authorizeAdmin: request => {
       const header = request.headers['x-test-arcade-admin'];
@@ -982,7 +984,8 @@ describe('Arcade API', () => {
       action: 'RESET_STATION', actorKind: 'operator', actorSubject: 'admin@twilio.com',
       reason: 'physical cabinet emergency',
     });
-    expect((await reset()).status).toBe(200);
+    const firstReset = await reset();
+    expect(firstReset.status, await firstReset.clone().text()).toBe(200);
     expect(await displayClosed).toBe(4002);
     expect(await api.validateStationVoiceSetup({
       callSid: 'CA-reset', readyEntryId: voiceRoute!.readyEntryId!,
@@ -1102,7 +1105,9 @@ describe('Arcade API', () => {
     const listed = await fetch(`${baseUrl}/api/admin/arcade/players`, { headers: ADMIN_HEADER });
     expect(listed.status).toBe(200);
     const page = await listed.json() as Record<string, any>;
-    expect(page).toMatchObject({ startingBalance: 1, players: [{ displayName: 'Ada', availableBalance: 0 }] });
+    expect(page).toMatchObject({ startingBalance: 1, players: [{
+      displayName: 'Ada', availableBalance: 0, canRestoreStartingBalance: true, canReset: true,
+    }] });
     expect(JSON.stringify(page)).not.toContain('+14155550177');
     const playerId = page.players[0].playerId as string;
     const endpoint = `${baseUrl}/api/admin/arcade/players/${encodeURIComponent(playerId)}/restore-starting-balance`;
@@ -1116,7 +1121,41 @@ describe('Arcade API', () => {
     });
     expect(restored.status).toBe(200);
     expect(await restored.json()).toMatchObject({ restored: true, amountGranted: 1, availableBalance: 1 });
+    const afterRestore = await (await fetch(`${baseUrl}/api/admin/arcade/players`, { headers: ADMIN_HEADER })).json() as Record<string, any>;
+    expect(afterRestore.players).toMatchObject([{ playerId, availableBalance: 1, canRestoreStartingBalance: false, canReset: true }]);
+    const beforeResetState = resources.store.snapshot();
+    const readyEntryId = Object.values(beforeResetState.stationReadyEntries).find(entry => entry.playerId === playerId)!.id;
+    const resetMatch = Object.values(beforeResetState.stationMatches)
+      .find(match => Boolean(match.enginePlayerIdsByReadyEntryId[readyEntryId]))!;
+    const enginePlayerId = `${resetMatch.engineRoomCode}:${resetMatch.enginePlayerIdsByReadyEntryId[readyEntryId]!}`;
+    await writeFile(path.join(directory!, 'leaderboard.json'), JSON.stringify([
+      { name: 'Ada', map: 'Silver Lake', carIndex: 0, finishT: 12.5, at: 1, enginePlayerId },
+      { name: 'Other', map: 'Silver Lake', carIndex: 1, finishT: 14, at: 2 },
+    ]));
+    const resetEndpoint = `${baseUrl}/api/admin/arcade/players/${encodeURIComponent(playerId)}/reset`;
+    const reset = () => fetch(resetEndpoint, {
+      method: 'POST', headers: {
+        ...ADMIN_HEADER, Origin: 'http://localhost', 'Content-Type': 'application/json',
+        'Idempotency-Key': 'reset-historical-player',
+      }, body: JSON.stringify({ reason: 'start attendee from scratch' }),
+    });
+    expect((await fetch(resetEndpoint)).status).toBe(405);
+    const historicalReset = await reset();
+    expect(historicalReset.status, await historicalReset.clone().text()).toBe(200);
+    expect((await reset()).status).toBe(200);
     expect((await (await fetch(`${baseUrl}/api/admin/arcade/players`, { headers: ADMIN_HEADER })).json() as Record<string, any>).players).toEqual([]);
+    const stationAfterReset = await (await fetch(`${baseUrl}/api/admin/arcade/station`, { headers: ADMIN_HEADER })).json() as Record<string, any>;
+    expect(stationAfterReset.recentControls[0]).toMatchObject({
+      action: 'RESET_TEST_PLAYER', actorSubject: 'admin@twilio.com', reason: 'start attendee from scratch',
+    });
+    expect(JSON.parse(await readFile(path.join(directory!, 'leaderboard.json'), 'utf8'))).toEqual([
+      { name: 'PLAYER', map: 'Silver Lake', carIndex: 0, finishT: 12.5, at: 1, enginePlayerId },
+      { name: 'Other', map: 'Silver Lake', carIndex: 1, finishT: 14, at: 2 },
+    ]);
+    expect(await send('SM-RESTORE-NEW-JOIN', 'JOIN')).toContain('first name');
+    const newState = resources.store.snapshot();
+    expect(newState.players[playerId]).toBeUndefined();
+    expect(Object.values(newState.channelAddresses).some(address => address.playerId === playerId)).toBe(false);
   });
 
   it('routes signed-provider SMS commands through durable Arcade messaging when enabled', async () => {
@@ -1878,8 +1917,12 @@ describe('Arcade API', () => {
     expect(after.status).toBe(401);
   });
 
-  it('claims a messaging challenge link without a browser player cookie', async () => {
-    const { baseUrl, api, playerRuntime } = await harness({ playerMode: 'coin_only' });
+  it('serves a shortened visit-first messaging challenge hub without a browser player cookie', async () => {
+    let portalDestination = '';
+    const { baseUrl, api, playerRuntime } = await harness({
+      playerMode: 'coin_only',
+      shortenUrl: async url => { portalDestination = url; return 'https://go.example/reward'; },
+    });
     const send = (providerMessageId: string, body: string) => api.processMessagingWebhook({
       from: '+14155550188', body, providerMessageId,
     });
@@ -1887,26 +1930,31 @@ describe('Arcade API', () => {
     await send('SM-LINK-NAME', 'Ada');
     await send('SM-LINK-TERMS', 'YES');
     const more = await send('SM-LINK-MORE', 'MORE');
-    const link = /Claim \+1: (\S+)/.exec(more ?? '')?.[1];
-    expect(link).toContain('/challenge/?locale=en-US#');
-    const token = decodeURIComponent(new URL(link!).hash.slice(1));
-    const endpoint = `${baseUrl}/api/arcade/challenges/redeem`;
+    expect(more).toContain('https://go.example/reward');
+    expect(portalDestination).toContain('/challenge/?locale=en-US#');
+    expect(await send('SM-LINK-MORE', 'MORE')).toBe(more);
+    const token = decodeURIComponent(new URL(portalDestination).hash.slice(1));
+    const statusEndpoint = `${baseUrl}/api/arcade/challenge-portal/status`;
 
-    expect((await fetch(endpoint)).status).toBe(405);
-    expect((await fetch(endpoint, {
+    expect((await fetch(statusEndpoint)).status).toBe(405);
+    expect((await fetch(statusEndpoint, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }),
     })).status).toBe(403);
-    const claim = () => fetch(endpoint, {
+    const post = (action: 'status'|'visit'|'claim', challengeId?: string) => fetch(`${baseUrl}/api/arcade/challenge-portal/${action}`, {
       method: 'POST',
       headers: { Origin: 'http://localhost', 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token }),
+      body: JSON.stringify({ token, ...(challengeId ? { challengeId } : {}) }),
     });
-    const first = await claim();
+    expect(await (await post('status')).json()).toMatchObject({ challenges: [{ id: 'voice-docs', action: 'visit' }] });
+    expect((await post('claim', 'voice-docs')).status).toBe(409);
+    expect(await (await post('visit', 'voice-docs')).json()).toEqual({ destinationUrl: 'https://www.twilio.com/docs/voice' });
+    const first = await post('claim', 'voice-docs');
     expect(first.status).toBe(200);
-    expect(await first.json()).toEqual({
+    expect(await first.json()).toMatchObject({
       destinationUrl: 'https://www.twilio.com/docs/voice', availableBalance: 2, rewardCoins: 1,
     });
-    expect((await claim()).status).toBe(200);
+    expect((await post('claim', 'voice-docs')).status).toBe(200);
+    expect(await (await post('status')).json()).toMatchObject({ challenges: [{ id: 'voice-docs', action: 'claimed' }] });
     const state = (await playerRuntime.getActive()).store.snapshot();
     expect(Object.values(state.wallets).flatMap(wallet => wallet.challengeClaims)).toHaveLength(1);
   });

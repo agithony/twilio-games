@@ -162,6 +162,14 @@
             <a id="overview-messaging-card" class="overview-card" href="#messages" data-operator-target="messages"><span>Messaging</span><strong id="overview-messaging">Loading</strong><small id="overview-messaging-detail">Checking delivery</small></a>
             <article id="overview-display-card" class="overview-card"><span>Big screen</span><strong id="overview-display">Loading</strong><small id="overview-display-detail">Checking booth connection</small></article>
           </div>
+          <article id="overview-current-action" class="panel overview-current-action">
+            <div>
+              <p class="eyebrow">Current action</p>
+              <h3 id="overview-action-title">Checking the live event</h3>
+              <p id="overview-action-description">The next available booth control will appear here.</p>
+            </div>
+            <button id="overview-action-button" class="button primary" type="button">Open live controls</button>
+          </article>
           <article id="display-connect-panel" class="panel display-connect-panel" hidden>
             <div class="display-connect-body">
               <div>
@@ -295,10 +303,10 @@
           </article>
           <article id="player-recovery-panel" class="panel player-recovery-panel">
             <div class="panel-heading">
-              <div><p class="eyebrow">Player support</p><h2>Players needing coins</h2></div>
+              <div><p class="eyebrow">Player support</p><h2>Player directory</h2></div>
               <span id="player-recovery-count" class="badge neutral">0 players</span>
             </div>
-            <p>These registered players have zero available coins and no active game or held coin.</p>
+            <p>Find past and current players. Inactive players can be reset completely so their next JOIN asks for their name and creates a fresh wallet.</p>
             <div id="player-recovery-list" class="ready-list"></div>
             <div class="operator-actions">
               <button id="refresh-players" class="button quiet" type="button">Refresh players</button>

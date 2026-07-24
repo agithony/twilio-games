@@ -1,7 +1,7 @@
 import http from 'http';
 import path from 'node:path';
 import zlib from 'node:zlib';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { readFile, writeFile, readdir, rename, mkdir, stat } from 'node:fs/promises';
 import { WebSocketServer, WebSocket } from 'ws';
@@ -35,7 +35,7 @@ import { AnalyticsStore, validDate } from './analytics-store';
 import { AnalyticsObserver } from './analytics-observer';
 import { analyticsPdf } from './analytics-pdf';
 import { GoogleAnalyticsAuth } from './google-analytics-auth';
-import type { ArcadeApi } from './arcade-api';
+import type { ArcadeApi, PlayerResetCleanupContext } from './arcade-api';
 import type { ArcadeTacGateway } from './arcade-tac-gateway';
 import { DEFAULT_LOCALE, SUPPORTED_LOCALES, resolveLocale, type SupportedLocale } from '../shared/i18n/locales';
 import { RACER_MESSAGES } from '../shared/i18n/racer';
@@ -130,8 +130,7 @@ export class HttpServer {
   private readonly smsNumber: string;
   private readonly whatsappNumber: string;
   /** ElevenLabs voiceId for Conversation Relay talk-back (greeting/countdown/result). From the
-   *  CR_TTS_VOICE env; empty → Relay's default voice (talk-back text still sends, just in the default
-   *  voice). A high-energy announcer voiceId is the intended default set in deploy config. */
+   *  CR_TTS_VOICE env; empty uses Relay's calmer default voice. */
   private readonly crVoice: string;
   private readonly voiceRelayToken: string;
   private readonly defaultLocale: SupportedLocale;
@@ -269,6 +268,7 @@ export class HttpServer {
     this.battle = new BattleServer({ server: this.server, displayToken: opts.fighterDisplayToken });
     this.fighter = new FighterServer({ server: this.server, displayToken: opts.fighterDisplayToken ?? process.env.FIGHTER_DISPLAY_TOKEN });
     this.arcadeApi?.setStationAbortHandler?.((game, roomCode) => this.abortStationEngine(game, roomCode));
+    this.arcadeApi?.setPlayerResetCleanupHandler?.(context => this.cleanupResetPlayerHistory(context));
     const allowBrowserPlayer = (roomCode: string) => !this.arcadeApi?.isStationEngineRoom(roomCode);
     this.game.setBrowserPlayerAdmission(allowBrowserPlayer);
     this.battle.setBrowserPlayerAdmission(allowBrowserPlayer);
@@ -289,15 +289,19 @@ export class HttpServer {
     this.roomConfigTimer = setInterval(() => void this.refreshRoomConfig(), 5000);
     // Persist each finished race onto the global leaderboard (serialized, atomic).
     this.game.setOnRaceFinished((room) => {
-      this.persistRaceResults(room.selectedMap, room.results());
+      const persistedResults = room.results().map(result => ({
+        ...result,
+        playerId: this.arcadeApi?.canonicalStationEnginePlayerId?.(result.playerId) ?? result.playerId,
+      }));
+      this.persistRaceResults(room.selectedMap, persistedResults, room.code);
       this.analyticsObserver.raceFinished(room);
       this.arcadeApi?.stationEngineCompleted('racer', room.code, room.results().map(result => ({
         enginePlayerId: result.playerId,
         rank: result.place,
-        completed: result.finished,
-        won: result.place === 1,
+        completed: result.finished && result.finishT > 0,
+        won: result.finishT > 0 ? result.place === 1 : false,
         score: null,
-        durationSeconds: result.finishT,
+        durationSeconds: result.finishT > 0 ? result.finishT : null,
       })));
     });
     // Fan a room's game events out to any voice callers in it (greeting/countdown/go/finish talk-back).
@@ -481,19 +485,57 @@ export class HttpServer {
 
   /** Append one finished race's standings to the persistent global leaderboard (serialized + atomic).
    *  Best-effort: a write failure is logged, never thrown (a race result is not worth crashing over). */
-  private persistRaceResults(map: string | null, results: import('../shared/types').RaceResult[]): void {
+  private persistRaceResults(map: string | null, results: import('../shared/types').RaceResult[], roomCode: string): void {
     if (!map || results.length === 0) return;
     const at = Date.now();
     // Chain onto the previous write so concurrent finishes serialize (read-modify-write safety).
     this.leaderboardWrite = this.leaderboardWrite.then(async () => {
       let existing = '';
       try { existing = await readFile(this.leaderboardPath, 'utf8'); } catch { existing = ''; }
-      const out = appendResults(existing, { map, results, at });
+      const out = appendResults(existing, { map, results, at, identityNamespace: roomCode });
       if (!out.ok) { console.error('leaderboard append refused:', out.error); return; }
       this.leaderboardEntriesCache = out.entries;
       try { await this.writeFileAtomic(this.leaderboardPath, JSON.stringify(out.entries)); }
       catch (e) { console.error('leaderboard write failed:', (e as Error).message); }
     }).catch((e) => console.error('leaderboard persist error:', e));
+  }
+
+  private cleanupResetPlayerHistory(context: PlayerResetCleanupContext): Promise<void> {
+    const targets = new Set(context.nameHashes);
+    const enginePlayerIds = new Set(context.racers
+      .filter(racer => racer.game === 'racer')
+      .map(racer => `${racer.roomCode}:${racer.enginePlayerId}`));
+    for (const racer of context.racers) {
+      if (racer.game === 'racer') this.game.anonymizePlayer(racer.roomCode,racer.enginePlayerId);
+      else if (racer.game === 'monsters') this.battle.anonymizePlayer(racer.roomCode,racer.enginePlayerId);
+      else this.fighter.anonymizePlayer(racer.roomCode,racer.enginePlayerId);
+    }
+    if (!targets.size && !enginePlayerIds.size) return Promise.resolve();
+    const cleanup = this.leaderboardWrite.then(async () => {
+      let entries: LeaderboardEntry[] = [];
+      try { entries = parseLeaderboard(await readFile(this.leaderboardPath, 'utf8')); }
+      catch (error) {
+        if ((error as { code?: unknown }).code === 'ENOENT') return;
+        throw error;
+      }
+      let changed = false;
+      const anonymized = entries.map(entry => {
+        const exactEngine = entry.enginePlayerId !== undefined && enginePlayerIds.has(entry.enginePlayerId);
+        const legacyRun = entry.enginePlayerId === undefined
+          && targets.has(createHash('sha256').update(`reset-name:${entry.name.trim().toLocaleLowerCase()}`).digest('hex'))
+          && context.racers.some(racer => racer.completedAt !== null && racer.durationSeconds !== null
+            && Math.abs(entry.at - Date.parse(racer.completedAt)) <= 60_000
+            && Math.abs(entry.finishT - racer.durationSeconds) < 0.001);
+        if (!exactEngine && !legacyRun) return entry;
+        changed = true;
+        return { ...entry, name: 'PLAYER' };
+      });
+      if (!changed) return;
+      await this.writeFileAtomic(this.leaderboardPath, JSON.stringify(anonymized));
+      this.leaderboardEntriesCache = anonymized;
+    });
+    this.leaderboardWrite = cleanup.catch(error => console.error('leaderboard reset cleanup failed:', error));
+    return cleanup;
   }
 
   /** Run an SMS handler serialized per phone number (chained promises keyed by `from`). */
@@ -1086,7 +1128,7 @@ export class HttpServer {
       if (isRacerAdvanceWord(utterance, locale)) {
         const me = room.lobbyPlayers().find(p => p.playerId === playerId);
         if ((me?.carIndex ?? null) === null) return text('voice.pickCarFirst');
-        return this.game.voiceAdvance(room.code) ? text('voice.onTrack') : null;
+        return this.game.voiceAdvance(room.code, playerId) ? text('voice.onTrack') : null;
       }
       return null;
     }
@@ -1094,7 +1136,7 @@ export class HttpServer {
       const i = clearSelectionIndex(utterance, mapChoices, locale);
       if (i === null) {
         if (!isRacerAdvanceWord(utterance, locale)) return null;
-        const ok = this.game.voiceAdvance(room.code);
+        const ok = this.game.voiceAdvance(room.code, playerId);
         return ok ? text('voice.goRace') : text('voice.pickTrackFirst');
       }
       this.game.voiceSelectMap(room.code, room.mapChoices[i]!, playerId);
@@ -1105,7 +1147,7 @@ export class HttpServer {
     if (isRacerAdvanceWord(utterance, locale)) {
       const me = room.lobbyPlayers().find(p => p.playerId === playerId);
       // (car_select is handled by its own branch above; reaching here means lobby/map_select/results.)
-      const ok = this.game.voiceAdvance(room.code);
+      const ok = this.game.voiceAdvance(room.code, playerId);
       if (!ok) return null;
       // room.phase is now the NEW phase we advanced INTO — describe that screen.
       const landed = String(room.phase);
@@ -1193,8 +1235,11 @@ export class HttpServer {
         if (room.phase === 'car_select' && (meNow?.carIndex ?? null) === null) {
           return text('voice.pickCarFirst');
         }
-        const ok = this.game.voiceAdvance(room.code);
-        return ok ? text('voice.goRace') : null;
+        const ok = this.game.voiceAdvance(room.code, playerId);
+        if(!ok)return null;
+        return room.phase==='car_select'?text('voice.chooseCar')
+          :room.phase==='map_select'?text('voice.onTrack')
+          :text('voice.goRace');
       },
     };
   }
@@ -1802,7 +1847,7 @@ export class HttpServer {
       try { entries = parseLeaderboard(await readFile(this.leaderboardPath, 'utf8')); } catch { entries = []; }
       const top = topEntries(entries, { map, limit });
       res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-      res.end(JSON.stringify({ entries: top }));
+      res.end(JSON.stringify({ entries: top.map(({ enginePlayerId: _enginePlayerId, ...entry }) => entry) }));
       return;
     }
     // ---- private activation analytics (daily anonymous aggregates, no transcripts or phone data) ----
@@ -2060,7 +2105,7 @@ export class HttpServer {
   }
 }
 
-const RELAY_CHUNK_GAP_MS = 420;
+const RELAY_CHUNK_GAP_MS = 700;
 const relayQueues = new WeakMap<WebSocket, { tail: Promise<void>; lastAt: number; generation: number }>();
 
 function sendRelayText(ws: WebSocket, text: string, locale: SupportedLocale = DEFAULT_LOCALE): void {
