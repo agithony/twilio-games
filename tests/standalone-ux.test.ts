@@ -14,14 +14,14 @@ describe('standalone and station display UX', () => {
     expect(css).not.toContain('.game-card.focused');
   });
 
-  it('uses paired display auth for standalone Fighter routing without loading station state', () => {
+  it('does not require station pairing for the standalone launcher', () => {
     const home = readClient('home.ts');
     const fighter = readClient('fighter/fighter.ts');
     const refresh = /async function refresh\(\)[\s\S]*?\n}/.exec(home)?.[0] ?? '';
     expect(refresh.indexOf('if (standaloneMode)')).toBeLessThan(refresh.indexOf('fetchPublicStation(displayToken)'));
     expect(refresh).toMatch(/if \(standaloneMode\) \{[\s\S]*?return;/);
-    expect(home).toContain('validateStandaloneDisplay()');
-    expect(home).toContain('standaloneDisplayAuthorized&&config.channels.voice');
+    expect(home).not.toContain('validateStandaloneDisplay()');
+    expect(home).toContain('config.channels.voice&&Boolean(bootstrap.voiceNumbers?.[locale])');
     expect(fighter).toContain('connection.setDisplayAuth(roomCode, isDisplay ? stationDisplay.displayToken : null)');
     expect(fighter).not.toContain("params.get('hostToken')");
     expect(fighter).toContain("pageUrl.searchParams.delete('hostToken')");

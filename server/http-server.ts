@@ -358,14 +358,23 @@ export class HttpServer {
     this.voiceWss = new WebSocketServer({ noServer: true });
     this.server.on('upgrade', (req, socket, head) => {
       const path = (req.url ?? '').split('?')[0];
+      const standaloneDisplay = this.standaloneVoiceEnabled
+        && new URL(req.url ?? '/', 'http://localhost').searchParams.get('display') === '1'
+        && !(this.arcadeApi?.requiresStationVoiceAssignment() ?? false);
       if (path === '/voice') {
         this.voiceWss.handleUpgrade(req, socket, head, (ws) => this.onVoiceConnection(ws));
       } else if (path === '/game') {
-        this.game.handleUpgrade(req, socket, head);
+        this.game.handleUpgrade(req, socket, head, ws => {
+          if (standaloneDisplay) this.registerStandaloneDisplay('racer', ws);
+        });
       } else if (path === '/battle') {
-        this.battle.handleUpgrade(req, socket, head);
+        this.battle.handleUpgrade(req, socket, head, ws => {
+          if (standaloneDisplay) this.registerStandaloneDisplay('battle', ws);
+        });
       } else if (path === '/fighter') {
-        this.fighter.handleUpgrade(req, socket, head);
+        this.fighter.handleUpgrade(req, socket, head, ws => {
+          if (standaloneDisplay) this.registerStandaloneDisplay('fighter', ws);
+        });
       } else {
         socket.destroy();
       }

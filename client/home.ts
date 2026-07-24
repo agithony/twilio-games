@@ -140,7 +140,6 @@ let refreshPending = false;
 let launched = '';
 let displayToken = captureDisplayToken();
 let displayTokenRejected = !displayToken && displayTokenWasRejected();
-let standaloneDisplayAuthorized = false;
 let standaloneMode = false;
 let joinBaseUrl = location.origin;
 let qrRailMode: 'auto' | 'always' | 'hidden' = 'auto';
@@ -431,10 +430,9 @@ async function refreshConfiguration(): Promise<void> {
     }> = fetch('/api/config', { cache: 'no-store' })
       .then(async response => response.ok ? await response.json() : {})
       .catch(() => ({}));
-    const [config, bootstrap, displayAuthorized] = await Promise.all([
+    const [config, bootstrap] = await Promise.all([
       fetchPublicArcadeConfig(),
       bootstrapRequest,
-      validateStandaloneDisplay(),
     ]);
     joinBaseUrl = effectivePublicVisitorBaseUrl(bootstrap.publicBaseUrl);
     standaloneMode = config.arcade.mode === 'off';
@@ -442,8 +440,7 @@ async function refreshConfiguration(): Promise<void> {
     freePlay = config.coins.chargePolicy === 'free';
     smsAvailable = config.channels.sms && Boolean(bootstrap.smsNumber);
     whatsappAvailable = config.channels.whatsapp && Boolean(bootstrap.whatsappNumber);
-    standaloneDisplayAuthorized = displayAuthorized;
-    enabledGames = standaloneDisplayAuthorized&&config.channels.voice&&Boolean(bootstrap.voiceNumbers?.[locale])?new Set(Object.entries(config.station.games)
+    enabledGames = config.channels.voice&&Boolean(bootstrap.voiceNumbers?.[locale])?new Set(Object.entries(config.station.games)
       .filter(([, settings]) => settings.enabled)
       .map(([game]) => game)):new Set();
     stationId = config.arcade.cabinetId;
@@ -461,22 +458,6 @@ async function refreshConfiguration(): Promise<void> {
   } finally {
     configuring = false;
     if (configurationPending) { configurationPending = false; void refreshConfiguration(); }
-  }
-}
-
-async function validateStandaloneDisplay(): Promise<boolean> {
-  if (!displayToken || displayTokenRejected) return false;
-  try {
-    await fetchPublicStation(displayToken);
-    displayTokenRejected = false;
-    return true;
-  } catch (cause) {
-    if (cause instanceof StationRequestError && [401, 403].includes(cause.status)) {
-      rejectDisplayToken(displayToken);
-      displayToken = null;
-      displayTokenRejected = true;
-    }
-    return false;
   }
 }
 

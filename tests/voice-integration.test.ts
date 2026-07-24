@@ -77,11 +77,7 @@ describe('voice integration (fake Conversation Relay client)', () => {
     const port=await srv.start();
     const display=new WebSocket(`ws://127.0.0.1:${port}/battle?display=1`);
     await new Promise<void>(resolve=>display.on('open',resolve));
-    const unauthenticated=await fetch(`http://127.0.0.1:${port}/voice/incoming`,{
-      method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'CallSid=CA-spoofed&From=%2B14155550199',
-    });
-    expect(await unauthenticated.text()).not.toContain('<ConversationRelay');
-    display.send(JSON.stringify({type:'spectate',roomCode:'4821',displayToken:DISPLAY_TOKEN}));
+    display.send(JSON.stringify({type:'spectate',roomCode:'4821'}));
     await wait(30);
     const attendee=new WebSocket(`ws://127.0.0.1:${port}/game`);
     await new Promise<void>(resolve=>attendee.on('open',resolve));
