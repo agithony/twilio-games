@@ -690,6 +690,9 @@ export class HttpServer {
       try {
         const frame = JSON.parse(raw);
         const type = frame?.type;
+        if (type === 'error') {
+          console.error(`[CR] relay error: ${String(frame?.description ?? 'unknown error').slice(0, 300)}`);
+        }
         const roomCode = adapter.boundRoomCode;
         const racerResultsPrompt = type === 'prompt' && route === 'racer'
           && roomCode !== null && ['results', 'finished'].includes(this.game.findRoom(roomCode)?.phase ?? '');
@@ -788,11 +791,12 @@ export class HttpServer {
         processFrame(raw);
       }).catch(() => ws.close(1011, 'voice setup failed'));
     });
-    ws.on('close', () => {
+    ws.on('close', (code, reason) => {
       socketClosed = true;
       disposeRelayQueue(ws);
       this.voiceSockets.delete(ws);
-      console.log('[CR] voice WebSocket closed');
+      const detail = reason.toString().trim().slice(0, 160);
+      console.log(`[CR] voice WebSocket closed code=${code}${detail ? ` reason=${detail}` : ''}`);
       if (stationCallSid && stationReadyEntryId) {
         this.arcadeApi?.stationVoiceParticipantDisconnected(stationCallSid, stationReadyEntryId, stationConnectionId);
       }
@@ -1743,6 +1747,10 @@ export class HttpServer {
         }
       }
       const callSid = (params['CallSid'] ?? params['callSid'] ?? '').trim();
+      const sessionStatus = (params['SessionStatus'] ?? 'unknown').trim().slice(0, 40);
+      const errorCode = (params['ErrorCode'] ?? '').trim().slice(0, 20);
+      const errorMessage = (params['ErrorMessage'] ?? '').trim().replace(/\s+/g, ' ').slice(0, 300);
+      console.log(`[CR] session ended call=${callSid.slice(0, 8) || 'unknown'} status=${sessionStatus}${errorCode ? ` error=${errorCode}` : ''}${errorMessage ? ` message=${errorMessage}` : ''}`);
       this.arcadeApi?.stationVoiceCallEnded(callSid);
       this.endRacerVoiceCall(callSid); this.endBattleVoiceCall(callSid); this.endFighterVoiceCall(callSid);
       res.writeHead(200, VOICE_XML_HEADERS).end(twimlHangup());
