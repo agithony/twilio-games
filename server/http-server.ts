@@ -10,7 +10,7 @@ import { GameServer } from './game-server';
 import { BattleServer } from './battle-server';
 import { FighterServer } from './fighter-server';
 import { ConversationRelayAdapter } from './conversation-relay';
-import { twimlConnectRelay, twimlMessage, twimlEmpty, twimlSayAndHangup } from './twiml';
+import { twimlConnectRelay, twimlHangup, twimlMessage, twimlEmpty, twimlSayAndHangup } from './twiml';
 import { validateTwilioSignature } from './twilio-signature';
 import { ManifestStore } from './manifest-store';
 import { parseManifest } from '../shared/asset-manifest';
@@ -60,8 +60,8 @@ const FIGHTER_VOICE_RECONNECT_GRACE_MS = 30_000;
 const RACER_VOICE_RECONNECT_GRACE_MS = 30_000;
 const VOICE_XML_HEADERS = { 'Content-Type': 'text/xml; charset=utf-8' } as const;
 const VOICE_UNAVAILABLE_MESSAGES: Record<SupportedLocale, string> = {
-  'en-US': 'Twilio Games is currently paused or unavailable. Please try again when the event is open. Goodbye.',
-  'pt-BR': 'O Twilio Games está pausado ou indisponível no momento. Tente novamente quando o evento estiver aberto. Até logo.',
+  'en-US': 'Twilio Games voice play is unavailable right now. Please ask booth staff for help. Goodbye.',
+  'pt-BR': 'Os jogos por voz do Twilio Games não estão disponíveis agora. Peça ajuda à equipe. Até logo.',
 };
 
 function runtimeFighterMaps(maps: FighterMapEntry[]): FighterMapEntry[] {
@@ -164,9 +164,7 @@ export class HttpServer {
   private racerVoiceCallBindings = new Map<string, RacerVoiceCallBinding>();
   private fighterVoice = new Map<string, Set<FighterVoiceSession>>();
   private fighterVoiceCallBindings = new Map<string, FighterVoiceCallBinding>();
-  private lastGameWsAt = 0;
-  private lastBattleWsAt = 0;
-  private lastFighterWsAt = 0;
+  private standaloneDisplays = new Map<'racer'|'battle'|'fighter',Map<WebSocket,number>>();
   private fighterMaps: FighterMapEntry[] = FIGHTER_MAPS;
   private readonly fighterMapsPath: string;
   private readonly bundledFighterMapsPath: string;
@@ -268,12 +266,18 @@ export class HttpServer {
     // racer's continuous-sim GameServer). Mounted on the same HTTP host so one number serves both.
     this.battle = new BattleServer({ server: this.server, displayToken: opts.fighterDisplayToken });
     this.fighter = new FighterServer({ server: this.server, displayToken: opts.fighterDisplayToken ?? process.env.FIGHTER_DISPLAY_TOKEN });
-    this.arcadeApi?.setStationAbortHandler?.((game, roomCode) => this.abortStationEngine(game, roomCode));
+    this.arcadeApi?.setStationAbortHandler?.((game, roomCode, removal) => {
+      if (removal === 'retire') this.retireStationEngine(game, roomCode);
+      else this.abortStationEngine(game, roomCode);
+    });
     this.arcadeApi?.setPlayerResetCleanupHandler?.(context => this.cleanupResetPlayerHistory(context));
     const allowBrowserPlayer = (roomCode: string) => !this.arcadeApi?.isStationEngineRoom(roomCode);
     this.game.setBrowserPlayerAdmission(allowBrowserPlayer);
     this.battle.setBrowserPlayerAdmission(allowBrowserPlayer);
     this.fighter.setBrowserPlayerAdmission(allowBrowserPlayer);
+    this.game.setOnDisplayAuthenticated(ws => this.registerStandaloneDisplay('racer', ws));
+    this.battle.setOnDisplayAuthenticated(ws => this.registerStandaloneDisplay('battle', ws));
+    this.fighter.setOnDisplayAuthenticated(ws => this.registerStandaloneDisplay('fighter', ws));
     // Feed newly-created rooms the selectable cars (manifest) + maps (maps.json). Reads are async
     // and the provider is sync, so keep a cache refreshed at startup + on an interval; rooms read
     // the cache. Empty until the first refresh resolves (rooms then reconfigure on next create).
@@ -357,13 +361,10 @@ export class HttpServer {
       if (path === '/voice') {
         this.voiceWss.handleUpgrade(req, socket, head, (ws) => this.onVoiceConnection(ws));
       } else if (path === '/game') {
-        this.lastGameWsAt = Date.now();
         this.game.handleUpgrade(req, socket, head);
       } else if (path === '/battle') {
-        this.lastBattleWsAt = Date.now();
         this.battle.handleUpgrade(req, socket, head);
       } else if (path === '/fighter') {
-        this.lastFighterWsAt = Date.now();
         this.fighter.handleUpgrade(req, socket, head);
       } else {
         socket.destroy();
@@ -423,6 +424,26 @@ export class HttpServer {
       }
       this.fighter.abortRoom(roomCode);
     }
+    this.activeStationEngines.delete(`${game}:${roomCode}`);
+  }
+
+  private retireStationEngine(game: 'racer' | 'monsters' | 'fighter', roomCode: string): void {
+    const sockets = [...this.voiceSockets].filter(([, boundRoom]) => boundRoom() === roomCode);
+    const endCalls = () => {
+      for (const [socket, boundRoom] of sockets) {
+        if (boundRoom() === roomCode) endRelayAfterPlayback(socket);
+      }
+    };
+    if (game === 'racer') {
+      const settled = Promise.all([...this.voiceAdapters.get(roomCode) ?? []]
+        .map(adapter => adapter.whenSpeechSettled()));
+      void Promise.race([settled, sleep(RELAY_SPEECH_SETTLE_TIMEOUT_MS)]).then(endCalls);
+    } else {
+      endCalls();
+    }
+    if (game === 'racer') this.game.abortRoom(roomCode);
+    else if (game === 'monsters') this.battle.abortRoom(roomCode);
+    else this.fighter.abortRoom(roomCode);
     this.activeStationEngines.delete(`${game}:${roomCode}`);
   }
 
@@ -688,6 +709,12 @@ export class HttpServer {
     ws.on('message', d => {
       const raw = d.toString();
       frameQueue = frameQueue.then(async () => {
+        if (handleRelayPlaybackEvent(ws, raw)) return;
+        const relayState = relayQueues.get(ws);
+        if (relayState?.ending || relayState?.ended) {
+          if (relayState.ending && isRelayInterrupt(raw)) clearRelayTextQueue(ws);
+          return;
+        }
         let setup: Record<string, any> | null = null;
         try {
           const parsed = JSON.parse(raw) as unknown;
@@ -732,6 +759,7 @@ export class HttpServer {
     });
     ws.on('close', () => {
       socketClosed = true;
+      disposeRelayQueue(ws);
       this.voiceSockets.delete(ws);
       console.log('[CR] voice WebSocket closed');
       if (stationCallSid && stationReadyEntryId) {
@@ -762,16 +790,25 @@ export class HttpServer {
     } catch { /* fall through to auto-detect */ }
     // Auto-detect: route to the game whose screen most recently opened. This avoids a stale tab for one
     // game stealing calls while the other game is currently on the projector.
-    return this.recentVoiceGame();
+    return this.recentVoiceGame()??'racer';
   }
 
-  private recentVoiceGame(): 'racer' | 'battle' | 'fighter' {
+  private recentVoiceGame(): 'racer' | 'battle' | 'fighter'|null {
     const live: { game: 'racer' | 'battle' | 'fighter'; at: number }[] = [];
-    if (this.game.connectionCount > 0) live.push({ game: 'racer', at: this.lastGameWsAt });
-    if (this.battle.connectionCount > 0) live.push({ game: 'battle', at: this.lastBattleWsAt });
-    if (this.fighter.connectionCount > 0) live.push({ game: 'fighter', at: this.lastFighterWsAt });
+    for(const [game,connections] of this.standaloneDisplays){
+      const configuredGame=game==='battle'?'monsters':game;
+      if(!connections.size||this.arcadeApi?.standaloneGameEnabled?.(configuredGame)===false)continue;
+      live.push({game,at:Math.max(...connections.values())});
+    }
     live.sort((a, b) => b.at - a.at);
-    return live[0]?.game ?? 'racer';
+    return live[0]?.game ?? null;
+  }
+
+  private registerStandaloneDisplay(game:'racer'|'battle'|'fighter',ws:WebSocket):void{
+    let connections=this.standaloneDisplays.get(game);
+    if(!connections){connections=new Map();this.standaloneDisplays.set(game,connections);}
+    connections.set(ws,Date.now());
+    ws.once('close',()=>{connections!.delete(ws);if(!connections!.size)this.standaloneDisplays.delete(game);});
   }
 
   private recentVoiceLocale(game: 'racer' | 'battle' | 'fighter', roomCode: string): SupportedLocale {
@@ -1580,7 +1617,7 @@ export class HttpServer {
         VOICE_UNAVAILABLE_MESSAGES[unavailableLocale], unavailableLocale,
       );
       let eventRoutingActive = this.arcadeApi?.requiresStationVoiceAssignment() ?? false;
-      if (!eventRoutingActive && !this.standaloneVoiceEnabled) {
+      if (!eventRoutingActive && (!this.standaloneVoiceEnabled || this.arcadeApi?.standaloneVoiceAvailable?.() === false)) {
         res.writeHead(200, VOICE_XML_HEADERS).end(unavailableXml);
         return;
       }
@@ -1599,7 +1636,7 @@ export class HttpServer {
       if (eventRoutingActive && !this.arcadeApi!.requiresStationVoiceAssignment()) {
         eventRoutingActive = false;
         stationRoute = null;
-        if (!this.standaloneVoiceEnabled) {
+        if (!this.standaloneVoiceEnabled || this.arcadeApi?.standaloneVoiceAvailable?.() === false) {
           res.writeHead(200, VOICE_XML_HEADERS).end(unavailableXml);
           return;
         }
@@ -1607,7 +1644,7 @@ export class HttpServer {
       if (!stationRoute && eventRoutingActive) {
         const xml = twimlSayAndHangup(
           dialedLocale === 'pt-BR'
-            ? 'Voce nao esta em uma partida ativa do Twilio Games. Responda STATUS na mensagem do jogo para receber ajuda.'
+            ? 'Você não está em uma partida ativa do Twilio Games. Responda STATUS na mensagem do jogo para receber ajuda.'
             : 'You are not assigned to an active Twilio Games match. Reply STATUS to the game message for help.',
           dialedLocale ?? this.defaultLocale,
         );
@@ -1617,7 +1654,7 @@ export class HttpServer {
       if (stationRoute && !stationRoute.admitted) {
         const xml = twimlSayAndHangup(
           dialedLocale === 'pt-BR'
-            ? 'Este telefone nao esta na partida ativa. Responda STATUS na mensagem do jogo para receber ajuda.'
+            ? 'Este telefone não está na partida ativa. Responda STATUS na mensagem do jogo para receber ajuda.'
             : 'This phone is not assigned to the active match. Reply STATUS to the Twilio Games message for help.',
           dialedLocale ?? this.defaultLocale,
         );
@@ -1629,6 +1666,7 @@ export class HttpServer {
       const voiceGame = stationRoute
         ? stationRoute.game === 'monsters' ? 'battle' : stationRoute.game
         : this.recentVoiceGame();
+      if(!voiceGame){res.writeHead(200,VOICE_XML_HEADERS).end(unavailableXml);return;}
       const voiceLocale = dialedLocale ?? this.recentVoiceLocale(voiceGame, roomCode);
       const xml = twimlConnectRelay({
         wsUrl: `${this.publicBaseUrl.replace(/^http/, 'ws')}/voice`,
@@ -1674,7 +1712,7 @@ export class HttpServer {
       const callSid = (params['CallSid'] ?? params['callSid'] ?? '').trim();
       this.arcadeApi?.stationVoiceCallEnded(callSid);
       this.endRacerVoiceCall(callSid); this.endBattleVoiceCall(callSid); this.endFighterVoiceCall(callSid);
-      res.writeHead(204).end();
+      res.writeHead(200, VOICE_XML_HEADERS).end(twimlHangup());
       return;
     }
     if (req.method === 'POST' && path === '/tac/webhook') {
@@ -1728,8 +1766,13 @@ export class HttpServer {
       const messageSid = params['MessageSid'] ?? '';
       // Media (MMS) isn't supported — reply politely without invoking the state machine.
       if ((parseInt(params['NumMedia'] ?? '0', 10) || 0) > 0) {
+        const knownLocale=await this.arcadeApi?.messagingLocaleForAddress?.(from)??null;
+        const mediaReply = knownLocale === 'pt-BR' || (knownLocale === null
+          && (/^\s*ENTRAR(?:\s|$)/i.test(smsBody) || from.replace(/^whatsapp:/i, '').startsWith('+55')))
+          ? 'Só consigo ler respostas em texto. Envie sua resposta por escrito ou responda AJUDA para ver os comandos.'
+          : 'I can read text replies only. Send your answer as text, or reply HELP for the game commands.';
         res.writeHead(200, { 'Content-Type': 'text/xml' }).end(
-          twimlMessage('Images are not supported. Reply with the car or map number from the screen.'));
+          twimlMessage(mediaReply));
         return;
       }
       if (!from) { res.writeHead(200, { 'Content-Type': 'text/xml' }).end(twimlEmpty()); return; }
@@ -2159,16 +2202,33 @@ export class HttpServer {
 }
 
 const RELAY_CHUNK_GAP_MS = 700;
-const relayQueues = new WeakMap<WebSocket, { tail: Promise<void>; lastAt: number; generation: number }>();
+const RELAY_END_TIMEOUT_MS = 20_000;
+const RELAY_SPEECH_SETTLE_TIMEOUT_MS = 10_000;
+type RelayQueue = {
+  tail: Promise<void>;
+  lastAt: number;
+  generation: number;
+  pendingPlayback: string[];
+  ending: boolean;
+  ended: boolean;
+  endTimer: ReturnType<typeof setTimeout> | null;
+};
+const relayQueues = new WeakMap<WebSocket, RelayQueue>();
+
+function relayQueue(ws: WebSocket): RelayQueue {
+  let queue = relayQueues.get(ws);
+  if (!queue) {
+    queue = { tail: Promise.resolve(), lastAt: 0, generation: 0, pendingPlayback: [], ending: false, ended:false, endTimer: null };
+    relayQueues.set(ws, queue);
+  }
+  return queue;
+}
 
 function sendRelayText(ws: WebSocket, text: string, locale: SupportedLocale = DEFAULT_LOCALE): void {
   const chunks = relayTextChunks(text, locale);
   if (!chunks.length || ws.readyState !== ws.OPEN) return;
-  let queue = relayQueues.get(ws);
-  if (!queue) {
-    queue = { tail: Promise.resolve(), lastAt: 0, generation: 0 };
-    relayQueues.set(ws, queue);
-  }
+  const queue = relayQueue(ws);
+  if(queue.ending||queue.ended)return;
   const generation = queue.generation;
   queue.tail = queue.tail.then(async () => {
     for (const token of chunks) {
@@ -2178,6 +2238,7 @@ function sendRelayText(ws: WebSocket, text: string, locale: SupportedLocale = DE
       if (generation !== queue.generation) return;
       if (ws.readyState !== ws.OPEN) return;
       ws.send(JSON.stringify({ type: 'text', token, last: true, lang: locale }));
+      queue.pendingPlayback.push(token);
       queue.lastAt = Date.now();
     }
   }).catch(() => {
@@ -2193,6 +2254,65 @@ function clearRelayTextQueue(ws: WebSocket): void {
   queue.generation++;
   queue.tail = Promise.resolve();
   queue.lastAt = 0;
+  queue.pendingPlayback = [];
+  maybeEndRelay(ws, queue);
+}
+
+function handleRelayPlaybackEvent(ws: WebSocket, raw: string): boolean {
+  let message: unknown;
+  try { message = JSON.parse(raw); } catch { return false; }
+  const info = message as { type?: unknown; name?: unknown; value?: unknown };
+  if (info.type !== 'info' || info.name !== 'tokensPlayed') return false;
+  const queue = relayQueues.get(ws);
+  if (!queue) return true;
+  const index=queue.pendingPlayback.indexOf(String(info.value??''));
+  if(index>=0)queue.pendingPlayback.splice(index,1);
+  maybeEndRelay(ws, queue);
+  return true;
+}
+
+function isRelayInterrupt(raw: string): boolean {
+  try { return JSON.parse(raw)?.type === 'interrupt'; }
+  catch { return false; }
+}
+
+function endRelayAfterPlayback(ws: WebSocket): void {
+  const queue = relayQueue(ws);
+  if (queue.ending||queue.ended) return;
+  queue.ending = true;
+  void queue.tail.then(() => {
+    if(!queue.ending)return;
+    queue.endTimer = setTimeout(() => sendRelayEnd(ws, queue), RELAY_END_TIMEOUT_MS);
+    queue.endTimer.unref?.();
+    maybeEndRelay(ws, queue);
+  });
+}
+
+function maybeEndRelay(ws: WebSocket, queue: RelayQueue): void {
+  if (!queue.ending || queue.pendingPlayback.length > 0) return;
+  void queue.tail.then(() => {
+    if (queue.ending && queue.pendingPlayback.length === 0) sendRelayEnd(ws, queue);
+  });
+}
+
+function sendRelayEnd(ws: WebSocket, queue: RelayQueue): void {
+  if (!queue.ending||queue.ended) return;
+  queue.ending = false;
+  queue.ended=true;
+  queue.generation++;
+  queue.tail=Promise.resolve();
+  queue.pendingPlayback=[];
+  if (queue.endTimer) clearTimeout(queue.endTimer);
+  queue.endTimer = null;
+  if (ws.readyState === ws.OPEN) {
+    ws.send(JSON.stringify({ type: 'end', handoffData: JSON.stringify({ reasonCode: 'match-complete' }) }));
+  }
+}
+
+function disposeRelayQueue(ws: WebSocket): void {
+  const queue = relayQueues.get(ws);
+  if (queue?.endTimer) clearTimeout(queue.endTimer);
+  relayQueues.delete(ws);
 }
 
 export function relayTextChunks(text: string, locale: SupportedLocale = DEFAULT_LOCALE): string[] {

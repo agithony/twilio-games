@@ -61,7 +61,7 @@ let playerRefreshTimer:number|null=null;
 let playerRefreshGeneration=0;
 let editingChallengeId:string|null=null;
 let modeFormDirty=false;
-let pendingOpenSettings:{version:number;settings:Record<string,unknown>;mode:Exclude<ArcadeMode,'off'>}|null=null;
+let pendingOpenSettings:{version:number;settings:Record<string,unknown>;mode:ArcadeMode}|null=null;
 let stationActionSaving=false;
 let stationResetIdempotencyKey:string|null=null;
 let stationResetEtag:string|null=null;
@@ -252,7 +252,7 @@ function localizePlayerPage():void{
   const countryNames:Record<string,string>={US:'Estados Unidos',BR:'Brasil',CA:'Canadá',MX:'México',GB:'Reino Unido',IE:'Irlanda',DE:'Alemanha',FR:'França',ES:'Espanha',IT:'Itália',NL:'Países Baixos',SE:'Suécia',PL:'Polônia',IN:'Índia',SG:'Singapura',JP:'Japão',KR:'Coreia do Sul',AU:'Austrália',NZ:'Nova Zelândia',ZA:'África do Sul',AE:'Emirados Árabes Unidos'};
   const countrySelect=document.querySelector<HTMLSelectElement>('[name="countryCode"]')!;countrySelect.options[0]!.textContent='Escolha uma opção';for(const option of [...countrySelect.options].slice(1))option.textContent=countryNames[option.value]??option.textContent;
   document.querySelector<HTMLElement>('#balance-hero span')!.textContent='Moedas disponíveis';document.querySelector<HTMLElement>('#balance-hero small')!.textContent='PRONTAS PARA JOGAR';
-  document.querySelector<HTMLElement>('#off-panel .eyebrow')!.textContent='Jogos pausados';document.querySelector<HTMLElement>('#off-panel h2')!.textContent='Nenhum jogo vai começar agora.';document.querySelector<HTMLElement>('#off-panel p:last-child')!.textContent='Volte em breve ou pergunte ao anfitrião quando começa o próximo jogo.';
+  document.querySelector<HTMLElement>('#off-panel .eyebrow')!.textContent='Jogo independente';document.querySelector<HTMLElement>('#off-panel h2')!.textContent='Escolha um jogo na tela principal.';document.querySelector<HTMLElement>('#off-panel p:last-child')!.textContent='Abra a sala do jogo, escaneie o QR da ligação e use sua voz como controle.';
   document.querySelector<HTMLElement>('#player-panel .eyebrow')!.textContent='Você entrou';
   document.querySelector<HTMLElement>('#player-panel p')!.textContent='Este telefone está conectado ao seu passe de jogo. Tudo pronto.';
   document.querySelector<HTMLElement>('#challenge-panel .eyebrow')!.textContent='Quer jogar de novo?';
@@ -309,14 +309,22 @@ async function refreshPlayer(): Promise<void> {
 function renderMode(): void {
   const mode = state.config?.arcade.mode ?? 'off';
   modeBadge.textContent = playerPortuguese
-    ? ({off:'Pausado',coin_only:'Entrada por mensagem',lead_capture:'Aberto'} as Record<ArcadeMode,string>)[mode]
-    : ({off:'Paused',coin_only:'Message entry',lead_capture:'Open'} as Record<ArcadeMode,string>)[mode];
-  modeBadge.className = `badge ${mode === 'off' ? 'off' : 'active'}`;
+    ? ({off:'Jogo independente',coin_only:'Entrada por mensagem',lead_capture:'Cadastro completo'} as Record<ArcadeMode,string>)[mode]
+    : ({off:'Standalone play',coin_only:'Messaging entry',lead_capture:'Lead capture entry'} as Record<ArcadeMode,string>)[mode];
+  modeBadge.className = 'badge active';
   show('off-panel', mode === 'off');
 }
 
 function renderPlayer(): void {
   const mode = state.config?.arcade.mode ?? 'off';
+  const configuredVoiceNumbers=state.config?.channels.voiceNumbers;
+  const standaloneNumbers=effectiveVoiceNumbers(
+    configuredVoiceNumbers?.['en-US']??'',configuredVoiceNumbers?.['pt-BR']??'',
+  );
+  const standaloneAvailable=Boolean(state.config?.channels.voice
+    &&standaloneNumbers[playerPortuguese?'pt-BR':'en-US']
+    &&Object.values(state.config.station.games).some(game=>game.enabled));
+  modeBadge.className=`badge ${mode==='off'&&!standaloneAvailable?'off':'active'}`;
   const freePlay = state.config?.coins.chargePolicy === 'free';
   const startingBalance=freePlay?0:state.config?.coins.startingBalance??0;
   const registered = Boolean(state.player?.registered || mode === 'coin_only');
@@ -333,16 +341,20 @@ function renderPlayer(): void {
     ? playerText(`${state.player.firstName}, you're ready.`,`Tudo pronto, ${state.player.firstName}.`)
     : playerText("You're ready to play.",'Você está pronto para jogar.');
   el('hero-title').innerHTML=mode==='off'
-    ? playerText('Games are <span>paused.</span>','Os jogos estão <span>pausados.</span>')
+    ? standaloneAvailable?playerText('Choose a game and <span>play by voice.</span>','Escolha um jogo e <span>jogue por voz.</span>'):playerText('Voice play is <span>unavailable.</span>','Os jogos por voz estão <span>indisponíveis.</span>')
     : freePlay
       ? playerText('Ready when <span>you are.</span>','Pronto quando <span>você estiver.</span>')
       : playerText('Your next game is <span>one coin away.</span>','Seu próximo jogo está a <span>uma moeda.</span>');
   el('hero-lede').textContent=mode==='off'
-    ? playerText('The event is not accepting players right now.','O evento não está aceitando jogadores agora.')
+    ? standaloneAvailable?playerText('Open a lobby on the big screen, scan its call QR, and start playing.','Abra uma sala na tela principal, escaneie o QR da ligação e comece a jogar.'):playerText('Please ask booth staff for help.','Peça ajuda à equipe.')
     : freePlay
       ? playerText('Join the next game, then keep an eye on the big screen.','Entre no próximo jogo e acompanhe a tela grande.')
       : playerText('Use a coin to join the next game, then watch the big screen.','Use uma moeda para entrar no próximo jogo e acompanhe a tela grande.');
   show('balance-hero',mode!=='off'&&registered&&!freePlay);
+  if(mode==='off'){
+    document.querySelector<HTMLElement>('#off-panel h2')!.textContent=standaloneAvailable?playerText('Choose a game on the big screen.','Escolha um jogo na tela principal.'):playerText('Voice play is unavailable right now.','Os jogos por voz não estão disponíveis agora.');
+    document.querySelector<HTMLElement>('#off-panel p:last-child')!.textContent=standaloneAvailable?playerText('Open a game lobby, scan its call QR, and use your voice as the controller.','Abra a sala do jogo, escaneie o QR da ligação e use sua voz como controle.'):playerText('Please ask booth staff for help.','Peça ajuda à equipe.');
+  }
   el<HTMLButtonElement>('registration-submit').textContent=startingBalance===0
     ? playerText('Continue','Continuar')
     : startingBalance===1
@@ -648,7 +660,7 @@ async function saveMode(event:Event):Promise<void>{
   if(postGame.channels.includes('sms')&&!el<HTMLInputElement>('admin-sms').checked){setNotice('Turn on Text message before using it for result messages.','error');return;}
   if(postGame.channels.includes('whatsapp')&&!el<HTMLInputElement>('admin-whatsapp').checked){setNotice('Turn on WhatsApp before using it for result messages.','error');return;}
   station.timings={recruitingSeconds:numberField('admin-timing-recruiting'),hardDeadlineSeconds:numberField('admin-timing-hard'),selectionSeconds:numberField('admin-timing-selection'),lockedSeconds:numberField('admin-timing-locked'),launchTimeoutSeconds:numberField('admin-timing-launch'),resultsSeconds:numberField('admin-timing-results'),postGameRecruitingSeconds:numberField('admin-timing-postgame')};
-  if(config.arcade.mode==='off'&&selectedMode!=='off'&&state.operatorStation&&state.operatorStation.station.phase!=='ATTRACT'){
+  if(config.arcade.mode!==selectedMode&&state.operatorStation&&state.operatorStation.station.phase!=='ATTRACT'){
     await queueOpenAfterReset(version,settings,selectedMode);return;
   }
   setBusy(form,true);
@@ -656,12 +668,12 @@ async function saveMode(event:Event):Promise<void>{
     await updateConfig(version,settings);setModeFormDirty(false);
     if(!await refreshAll(false)){setNotice('Settings were saved, but the console could not reload them. Refresh before making another change.','error');return;}
     if(state.adminConfig?.arcade.mode!==selectedMode)throw new Error('The saved event status could not be confirmed. Refresh before trying again.');
-    setNotice(selectedMode==='off'?'Settings saved. The event is paused.':'Settings saved. The event is open.','success');
+    setNotice(selectedMode==='off'?'Settings saved. Standalone play is active.':'Settings saved. The messaging event is active.','success');
   }catch(error){
     if(error instanceof ApiError&&error.status===412){setModeFormDirty(false);await refreshOperatorConfiguration();setNotice('Someone else saved changes first. The latest settings are now loaded; review them before saving again.','error');}
     else if(error instanceof ApiError&&error.code==='ACTIVE_STATION_CONFIG_LOCKED'){
-      if(config.arcade.mode==='off'&&selectedMode!=='off')await queueOpenAfterReset(version,settings,selectedMode);
-      else setNotice(config.arcade.mode==='off'?'A paused event flow is still preserved. Reset it from Live event before changing these settings; no settings were changed.':'The live event is using these settings. Pause the event before changing them; no settings were changed.','error');
+      if(config.arcade.mode!==selectedMode)await queueOpenAfterReset(version,settings,selectedMode);
+      else setNotice(config.arcade.mode==='off'?'A previous event queue is still preserved. Reset it from Live event before changing these settings; no settings were changed.':'The live messaging event is using these settings. Switch to Standalone play before changing them; no settings were changed.','error');
     }
     else showError(error);
   }finally{setBusy(form,false);}
@@ -669,14 +681,14 @@ async function saveMode(event:Event):Promise<void>{
 
 async function discardModeChanges():Promise<void>{pendingOpenSettings=null;setModeFormDirty(false);await refreshOperatorConfiguration(true);setNotice('Unsaved event setting changes were discarded.','success');}
 
-async function queueOpenAfterReset(version:number,settings:Record<string,unknown>,mode:Exclude<ArcadeMode,'off'>):Promise<void>{
+async function queueOpenAfterReset(version:number,settings:Record<string,unknown>,mode:ArcadeMode):Promise<void>{
   if(!state.operatorStation||state.operatorStation.station.phase==='ATTRACT')await refreshOperatorStation().catch(()=>undefined);
   if(!state.operatorStation||state.operatorStation.station.phase==='ATTRACT'||!state.operatorStationEtag){
     setNotice('The saved event flow changed. Refresh the console, review the live event, and try opening again.','error');return;
   }
   pendingOpenSettings={version,settings,mode};
   activateOperatorTab('live-event');openStationReset(true);
-  setNotice('Confirm the reset to clear the paused flow and save the Open settings.');
+  setNotice('Confirm the reset to clear the previous event queue and save the new player journey.');
 }
 
 function setModeFormDirty(dirty:boolean):void{
@@ -850,24 +862,22 @@ function renderRuntimeSummary():void{
   const voiceReady=Boolean(voiceNumbers['en-US']&&voiceNumbers['pt-BR']);
   const gamesReady=['racer','monsters','fighter'].some(game=>el<HTMLInputElement>(`admin-game-${game}`).checked);
   const entryReady=modeSelect.value==='lead_capture'||remoteReady;
-  const status=modeSelect.value==='off'?'Paused':voice&&voiceReady&&gamesReady&&entryReady?'Ready to open':'Needs setup';
+  const status=modeSelect.value==='off'?(voice&&voiceReady&&gamesReady?'Standalone ready':'Needs setup'):voice&&voiceReady&&gamesReady&&entryReady?'Ready to open':'Needs setup';
   el('runtime-summary').textContent=status;
-  el('settings-open-blocker').hidden=!(state.adminConfig?.arcade.mode==='off'&&modeSelect.value!=='off'&&state.operatorStation&&state.operatorStation.station.phase!=='ATTRACT');
+  el('settings-open-blocker').hidden=!(state.adminConfig?.arcade.mode!==modeSelect.value&&state.operatorStation&&state.operatorStation.station.phase!=='ATTRACT');
   el('voice-number-fields').hidden=!voice;
   el('lead-capture-summary').textContent=modeSelect.value==='lead_capture'
-    ? 'Lead capture is on for browser and messaging entry.'
+    ? 'Full lead capture is on for browser and messaging entry.'
     : modeSelect.value==='coin_only'
       ? 'Lead capture is off. Messaging entry collects first name only.'
-      : state.operatorStation&&state.operatorStation.station.phase!=='ATTRACT'
-        ? 'Lead capture is off. Pausing preserves the current event flow and its players.'
-        : 'Lead capture is off. The event is paused and no new player details are collected.';
+      : 'Standalone play skips messaging entry and lead capture.';
   el('lead-capture-fields').textContent=modeSelect.value==='lead_capture'
     ? 'Browser entry collects first and last name, work email, company, phone number, country or region, terms acknowledgement when required, and optional marketing consent. Messaging entry uses the sender phone and asks for first and last name, work email, company, and country or region. It asks for terms only when required and never asks for marketing consent.'
     : modeSelect.value==='coin_only'
       ? 'First name is collected for the game display. No lead form is created; the messaging address and game activity are used to run the session.'
       : state.operatorStation&&state.operatorStation.station.phase!=='ATTRACT'
-        ? 'Pausing freezes the current event flow and stops its timers without removing players or coins. Use Reset event flow before reopening.'
-        : 'Players cannot enter while the event is paused, so no new player information is collected.';
+        ? 'Players can use standalone game lobbies now. The prior event queue remains preserved until you use Reset event flow.'
+        : 'Players choose a game from the home screen, then scan that game lobby QR and call. No messaging registration is collected.';
   el('sms-status').textContent=capabilityStatus(sms,smsNumber);
   el('whatsapp-status').textContent=capabilityStatus(whatsapp,whatsappNumber);
   el('voice-number-status').textContent=voice
@@ -884,9 +894,11 @@ function renderOperatorOverview():void{
   if(!operatorView)return;
   const config=state.adminConfig,station=state.operatorStation,messaging=state.adminStatus?.messaging,display=state.adminStatus?.display;
   const eventCard=el<HTMLAnchorElement>('overview-event-card');
-  el('overview-event').textContent=!config?'Loading':config.arcade.mode==='off'?'Paused':'Open';
-  el('overview-event-detail').textContent=!config?'Checking settings':config.arcade.mode==='lead_capture'?'Lead capture on':config.arcade.mode==='coin_only'?'Messaging entry':'Not accepting players';
-  eventCard.dataset.state=!config?'neutral':config.arcade.mode==='off'?'attention':'active';
+  const standaloneNumbers=config?effectiveVoiceNumbers(config.channels.voiceNumbers['en-US']??'',config.channels.voiceNumbers['pt-BR']??''):null;
+  const standaloneReady=Boolean(config?.channels.voice&&standaloneNumbers?.['en-US']&&standaloneNumbers['pt-BR']&&Object.values(config.station.games).some(game=>game.enabled));
+  el('overview-event').textContent=!config?'Loading':config.arcade.mode==='off'?'Standalone':config.arcade.mode==='lead_capture'?'Lead capture':'Messaging entry';
+  el('overview-event-detail').textContent=!config?'Checking settings':config.arcade.mode==='lead_capture'?'Full registration before play':config.arcade.mode==='coin_only'?'Text first, then call':'Choose a game, then call';
+  eventCard.dataset.state=!config?'neutral':config.arcade.mode==='off'&&!standaloneReady?'attention':'active';
 
   const gameCard=el<HTMLAnchorElement>('overview-game-card'),phase=station?.station.phase,stationKnown=state.operatorStationEtag!==null;
   el('overview-game').textContent=!stationKnown?'Loading':!station?'Waiting for players':station.station.activeGame?gameName(station.station.activeGame):phaseName(station.station.phase);
@@ -897,8 +909,8 @@ function renderOperatorOverview():void{
   const preservedFlow=paused&&Boolean(station&&phase!=='ATTRACT');
   const action=paused
     ?preservedFlow
-      ?{title:'Paused flow needs attention',description:'The current players and game state are preserved. Open Live event to reset that flow before reopening.',label:'Review preserved flow',disabled:false}
-      :{title:'Event paused',description:'Open Setup when you are ready to reopen the event.',label:'Open setup',disabled:false}
+      ?{title:'Standalone play is active',description:'Players can choose games directly. A previous event queue is preserved in the background until you reset it.',label:'Review previous queue',disabled:false}
+      :{title:'Standalone play is active',description:'Players choose a game on the home screen, then scan its lobby QR and call to play by voice.',label:'Review standalone setup',disabled:false}
     :phase==='RECRUITING'
       ?{title:'Ready to choose the game?',description:'End joining now and move directly to player voting. New arrivals wait for the following game.',label:'Choose game now',disabled:false}
       :phase==='GAME_SELECTION'
@@ -971,9 +983,10 @@ function effectiveVoiceNumbers(
 ):Record<'en-US'|'pt-BR',string|null>{
   if(english||portuguese)return{'en-US':validPhoneNumber(english),'pt-BR':validPhoneNumber(portuguese)};
   const deployed=state.deployment?.voiceNumbers;
+  const deployedMapPresent=Boolean(deployed&&('en-US' in deployed||'pt-BR' in deployed));
   return{
-    'en-US':validPhoneNumber(deployed?.['en-US']??state.deployment?.phoneNumber),
-    'pt-BR':validPhoneNumber(deployed?.['pt-BR']??state.deployment?.phoneNumber),
+    'en-US':validPhoneNumber(deployed?.['en-US']??(deployedMapPresent?null:state.deployment?.phoneNumber)),
+    'pt-BR':validPhoneNumber(deployed?.['pt-BR']??(deployedMapPresent?null:state.deployment?.phoneNumber)),
   };
 }
 
@@ -1163,30 +1176,31 @@ function cancelStationReset():void{
   stationResetEtag=null;
   const dialog=el<HTMLDialogElement>('station-reset-dialog');if(dialog.open)dialog.close();
   setStationResetCopy(false);
-  if(wasOpening){focusOperatorTab('setup');setNotice('The event remains paused. No settings were changed.');}
+  if(wasOpening){focusOperatorTab('setup');setNotice(`The current ${state.adminConfig?.arcade.mode==='off'?'Standalone play':'messaging event'} remains active. No settings were changed.`);}
 }
 
 function setStationResetCopy(forOpening:boolean):void{
-  el('station-reset-title').textContent=forOpening?'Reset the flow and open the event?':'Reset the event flow?';
+  const standalone=forOpening&&pendingOpenSettings?.mode==='off';
+  el('station-reset-title').textContent=forOpening?(standalone?'Reset the event queue and use Standalone play?':'Reset the previous queue and start the new event?'):'Reset the event flow?';
   el('station-reset-warning').textContent=forOpening
-    ? 'The paused flow cannot be resumed as a new event. Resetting removes everyone from the line, returns any coins in use, and then saves your Open settings. This cannot be undone.'
+    ? `Resetting removes everyone from the current line, returns any coins in use, and then ${standalone?'switches to Standalone play':'starts the new player journey'}. This cannot be undone.`
     : 'This ends the current game, removes everyone from the line, and returns any coins in use. This cannot be undone.';
-  el<HTMLButtonElement>('confirm-station-reset').textContent=forOpening?'Reset flow and open event':'Reset event';
+  el<HTMLButtonElement>('confirm-station-reset').textContent=forOpening?(standalone?'Reset queue and use Standalone':'Reset queue and start event'):'Reset event';
 }
 
 async function saveOpenAfterReset(openSettings:NonNullable<typeof pendingOpenSettings>):Promise<void>{
   let saved=false;
   try{
     await updateConfig(openSettings.version,openSettings.settings);saved=true;setModeFormDirty(false);
-    if(!await refreshAll(false)){focusOperatorTab('setup');setNotice('The event flow was reset and the Open settings were saved, but the console could not reload them. Refresh before making another change.','error');return;}
+    if(!await refreshAll(false)){focusOperatorTab('setup');setNotice('The previous queue was reset and the new player journey was saved, but the console could not reload it. Refresh before making another change.','error');return;}
     focusOperatorTab('setup');
-    if(state.adminConfig?.arcade.mode!==openSettings.mode)throw new Error('The Open status could not be confirmed after resetting the event flow.');
-    setNotice('Event flow reset and Open settings saved. The event is now open.','success');
+    if(state.adminConfig?.arcade.mode!==openSettings.mode)throw new Error('The new player journey could not be confirmed after resetting the previous queue.');
+    setNotice(openSettings.mode==='off'?'Previous queue reset. Standalone play is active.':'Previous queue reset. The new messaging event is active.','success');
   }catch(error){
     focusOperatorTab('setup');
     if(error instanceof ApiError&&error.status===412){setModeFormDirty(false);await refreshOperatorConfiguration(true);setNotice('The event flow was reset, but settings changed in another operator session. Review the latest settings before opening.','error');return;}
     const detail=error instanceof ApiError?error.message:error instanceof Error?error.message:'Unknown error';
-    setNotice(saved?`The event flow was reset and the Open settings were saved, but the result could not be confirmed. Refresh before making another change. ${detail}`:`The event flow was reset, but the Open settings were not saved. Review the draft and save again. ${detail}`,'error');
+    setNotice(saved?`The previous queue was reset and the new player journey was saved, but the result could not be confirmed. Refresh before making another change. ${detail}`:`The previous queue was reset, but the new player journey was not saved. Review the draft and save again. ${detail}`,'error');
   }
 }
 
@@ -1330,7 +1344,7 @@ function renderStationControls(phase:StationPhase):void{
   const gameSelect=el<HTMLSelectElement>('station-game');
   for(const option of [...gameSelect.options])option.disabled=!state.adminConfig?.station.games[option.value as PlayableGame].enabled;
   if(gameSelect.selectedOptions[0]?.disabled)gameSelect.value=[...gameSelect.options].find(option=>!option.disabled)?.value??'';
-  el('station-control-help').textContent=paused&&actionable?'The event is paused and this flow is frozen. Reset the event flow before reopening.':phase==='ATTRACT'?'Waiting for players. Actions appear when the event begins.':phase==='RECRUITING'?'Choose game now skips the remaining countdown. New arrivals wait for the following game.':phase==='LAUNCHING'?'The game is connecting to the big screen. Cancel only if it cannot start.':phase==='PLAYING'?'End the game here only if it cannot finish on its own.':phase==='RESULTS'?(state.operatorStation?.resultsHeld?'Results are held until you continue.':`Results continue automatically after ${state.adminConfig?.station.timings.resultsSeconds??10} seconds.`):'Only actions available right now are shown.';
+  el('station-control-help').textContent=paused&&actionable?'Standalone play is active. This previous event queue is preserved until you reset it.':phase==='ATTRACT'?'Waiting for players. Actions appear when the event begins.':phase==='RECRUITING'?'Choose game now skips the remaining countdown. New arrivals wait for the following game.':phase==='LAUNCHING'?'The game is connecting to the big screen. Cancel only if it cannot start.':phase==='PLAYING'?'End the game here only if it cannot finish on its own.':phase==='RESULTS'?(state.operatorStation?.resultsHeld?'Results are held until you continue.':`Results continue automatically after ${state.adminConfig?.station.timings.resultsSeconds??10} seconds.`):'Only actions available right now are shown.';
 }
 
 function controlActionName(value:string):string{
@@ -1352,7 +1366,7 @@ function stationDeadline(view=state.operatorStation):string|null{
 
 function renderStationDeadline():void{
   const output=el('station-deadline'),deadline=stationDeadline();
-  if(state.adminConfig?.arcade.mode==='off'){output.textContent='Paused';output.removeAttribute('title');return;}
+  if(state.adminConfig?.arcade.mode==='off'){output.textContent='Standalone';output.removeAttribute('title');return;}
   if(!deadline){output.textContent='None';output.removeAttribute('title');return;}
   const seconds=Math.ceil((Date.parse(deadline)-Date.now())/1000);output.title=formatTimestamp(deadline);
   if(seconds<=0){output.textContent=`Elapsed · ${formatTimestamp(deadline)}`;return;}

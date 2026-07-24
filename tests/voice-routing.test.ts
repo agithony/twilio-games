@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import WebSocket from 'ws';
 import type { ArcadeApi } from '../server/arcade-api';
 import { HttpServer } from '../server/http-server';
 import type { SupportedLocale } from '../shared/i18n/locales';
@@ -10,6 +11,7 @@ type StationVoiceRoute = Awaited<ReturnType<ArcadeApi['stationVoiceRoute']>>;
 
 let server: HttpServer | undefined;
 let directory: string | undefined;
+const DISPLAY_TOKEN = 'test-standalone-display-token';
 
 afterEach(async () => {
   await server?.stop();
@@ -26,6 +28,7 @@ async function harness(options: {
   route?: StationVoiceRoute;
   routeError?: Error;
   standaloneVoiceEnabled?: boolean;
+  voiceAvailable?: boolean;
   authToken?: string;
   additionalAuthTokens?: readonly string[];
 }) {
@@ -48,6 +51,8 @@ async function harness(options: {
     }),
     voiceLocaleForNumber,
     stationVoiceRoute,
+    standaloneVoiceAvailable:vi.fn(()=>options.voiceAvailable??true),
+    standaloneGameEnabled:vi.fn(()=>true),
   } as unknown as ArcadeApi;
   server = new HttpServer({
     port: 0,
@@ -57,6 +62,7 @@ async function harness(options: {
     validateSignatures: Boolean(options.authToken),
     arcadeApi,
     standaloneVoiceEnabled: options.standaloneVoiceEnabled ?? false,
+    fighterDisplayToken: DISPLAY_TOKEN,
     analyticsPath: path.join(directory, 'analytics.json'),
     manifestPath: path.join(directory, 'manifest.json'),
     mapsPath: path.join(directory, 'maps.json'),
@@ -92,8 +98,8 @@ async function incomingCall(port: number, input: {
 
 describe('Arcade Voice routing', () => {
   it.each([
-    ['en-US', 'Twilio Games is currently paused or unavailable. Please try again when the event is open. Goodbye.'],
-    ['pt-BR', 'O Twilio Games está pausado ou indisponível no momento. Tente novamente quando o evento estiver aberto. Até logo.'],
+    ['en-US', 'Twilio Games voice play is unavailable right now. Please ask booth staff for help. Goodbye.'],
+    ['pt-BR', 'Os jogos por voz do Twilio Games não estão disponíveis agora. Peça ajuda à equipe. Até logo.'],
   ] as const)('returns localized Say and Hangup while event mode is off (%s)', async (locale, message) => {
     const { port, stationVoiceRoute } = await harness({ active: false, locale });
     const response = await incomingCall(port);
@@ -138,16 +144,45 @@ describe('Arcade Voice routing', () => {
     expect(xml).not.toContain('<ConversationRelay');
   });
 
-  it('allows explicit standalone Voice routing without consulting retained station state', async () => {
+  it('does not bypass disabled Voice when an event pauses during call routing', async () => {
+    const route: NonNullable<StationVoiceRoute> = {
+      game: 'racer', roomCode: 'JUST-PAUSED', matchId: 'paused-match', launchGeneration: 3,
+      admitted: true, readyEntryId: 'paused-ready-entry',
+    };
+    const { port } = await harness({
+      active: true, activeChecks: [true, false], route,
+      standaloneVoiceEnabled: true, voiceAvailable: false,
+    });
+    const display = new WebSocket(`ws://127.0.0.1:${port}/game`);
+    await new Promise<void>((resolve, reject) => {
+      display.once('open', resolve);
+      display.once('error', reject);
+    });
+    display.send(JSON.stringify({ type: 'spectate', roomCode: '4821', displayToken: DISPLAY_TOKEN }));
+    await new Promise(resolve => setTimeout(resolve, 20));
+
+    const xml = await (await incomingCall(port)).text();
+    expect(xml).toContain('<Hangup />');
+    expect(xml).not.toContain('<ConversationRelay');
+    display.close();
+  });
+
+  it('requires an open shared display before standalone Voice routing', async () => {
     const { port, stationVoiceRoute } = await harness({
       active: false, standaloneVoiceEnabled: true,
     });
     const xml = await (await incomingCall(port)).text();
 
     expect(stationVoiceRoute).not.toHaveBeenCalled();
-    expect(xml).toContain('<Connect');
-    expect(xml).toContain('<ConversationRelay');
-    expect(xml).toContain('<Parameter name="roomCode" value="4821"');
+    expect(xml).toContain('voice play is unavailable');
+    expect(xml).not.toContain('<ConversationRelay');
+  });
+
+  it('respects the operator Voice channel setting in standalone play', async()=>{
+    const {port}=await harness({active:false,standaloneVoiceEnabled:true,voiceAvailable:false});
+    const xml=await(await incomingCall(port)).text();
+    expect(xml).toContain('voice play is unavailable');
+    expect(xml).not.toContain('<ConversationRelay');
   });
 
   it('keeps active-event admitted station routing unchanged', async () => {
@@ -175,7 +210,7 @@ describe('Arcade Voice routing', () => {
     const xml = await response.text();
 
     expect(response.status).toBe(200);
-    expect(xml).toContain('O Twilio Games está pausado ou indisponível no momento.');
+    expect(xml).toContain('Os jogos por voz do Twilio Games não estão disponíveis agora.');
     expect(xml).toContain('<Hangup />');
     expect(xml).not.toContain('<ConversationRelay');
     expect(errorLog).toHaveBeenCalledWith('[voice] station routing failed:', 'state read failed');

@@ -12,7 +12,7 @@ import { ArcadePlayerSessionService } from './arcade-player-session';
 import { ArcadeChallengeTokenService } from './arcade-challenge-token';
 import { ArcadeService } from './arcade-service';
 import { ArcadeStateStore, type ArcadeStationNotificationKind } from './arcade-state-store';
-import { ArcadeStationRuntime } from './arcade-station-runtime';
+import { ArcadeStationRuntime, type StationMatchRemoval } from './arcade-station-runtime';
 import {
   ArcadeMessagingRuntime,
   type ArcadeMessagingRuntimeStatus,
@@ -94,7 +94,7 @@ export class ArcadePlayerRuntime {
   private observedConfigVersion = 0;
   private failedConfigVersion: number | null = null;
   private messagingActivated = false;
-  private stationMatchRemoved: ((game: PlayableArcadeGame, roomCode: string) => void) | null = null;
+  private stationMatchRemoved: ((game: PlayableArcadeGame, roomCode: string, removal: StationMatchRemoval) => void) | null = null;
 
   constructor(options: ArcadePlayerRuntimeOptions) {
     this.configStore = options.configStore;
@@ -213,7 +213,7 @@ export class ArcadePlayerRuntime {
   }
 
   setStationMatchRemovedHandler(
-    handler: (game: PlayableArcadeGame, roomCode: string) => void,
+    handler: (game: PlayableArcadeGame, roomCode: string, removal: StationMatchRemoval) => void,
   ): void {
     this.stationMatchRemoved = handler;
     this.resources?.station.setMatchRemovedHandler(handler);
@@ -323,7 +323,7 @@ export class ArcadePlayerRuntime {
       enabled: () => this.configStore.getSnapshot().arcade.mode !== 'off',
       config: () => this.configStore.getSnapshot(),
       roomCodeSecret: () => roomCodeSecret,
-      onMatchRemoved: (game, roomCode) => this.stationMatchRemoved?.(game, roomCode),
+      onMatchRemoved: (game, roomCode, removal) => this.stationMatchRemoved?.(game, roomCode, removal),
     });
     const messaging = new ArcadeMessagingRuntime({
       store,

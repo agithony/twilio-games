@@ -101,12 +101,13 @@ describe('Arcade messaging commands', () => {
     const h = await harness('coin_only');
     const joined = await message(h.service, 'SM001', 'JOIN ARCADE-01 LANG en-US');
     expect(joined.reply).toContain('first name');
+    expect(joined.reply).toContain('1/2:');
     expect((await message(h.service, 'SM002', 'COIN')).reply).toBe(joined.reply);
     expect(await h.service.getStation('ARCADE-01')).toBeNull();
     expect((await message(h.service, 'SM003', 'Ada')).reply).toContain('Reply YES');
-    expect((await message(h.service, 'SM004', 'YES')).reply).toContain('Thanks, Ada');
+    expect((await message(h.service, 'SM004', 'YES')).reply).toContain("You're set, Ada");
     const status = await message(h.service, 'SM005', 'STATUS');
-    expect(status.reply).toContain('Balance: 2');
+    expect(status.reply).toContain('Game coins: 2');
     expect(await message(h.service, 'SM001', 'JOIN ARCADE-01 LANG en-US')).toEqual(joined);
 
     const whatsapp = await message(
@@ -114,10 +115,10 @@ describe('Arcade messaging commands', () => {
     );
     expect(whatsapp.playerId).toBe(joined.playerId);
     const coin = await message(h.service, 'SM007', 'COIN');
-    expect(coin.reply).toContain('position 1');
-    expect(coin.reply).toContain('When game voting opens, reply with: 1 = Voice Racer, 2 = Voice Monsters, 3 = Voice Fighter');
-    expect(coin.reply.split('\n')).toHaveLength(3);
-    expect(coin.reply).toContain('Watch the screen');
+    expect(coin.reply).toContain("You're #1");
+    expect(coin.reply).toContain('Save the number on screen');
+    expect(coin.reply.split('\n')).toHaveLength(2);
+    expect(coin.reply).toContain('Watch the big screen');
     expect(coin.reply).not.toContain('we will text');
     expect(await message(h.service, 'SM007', 'COIN')).toEqual(coin);
 
@@ -131,7 +132,7 @@ describe('Arcade messaging commands', () => {
     await expect(message(h.service, 'SM007', 'LEAVE')).rejects.toMatchObject({ code: 'IDEMPOTENCY_CONFLICT' });
 
     const left = await message(h.service, 'SM008', 'LEAVE');
-    expect(left.reply).toContain('held coin is available again');
+    expect(left.reply).toContain('your coin is back');
     expect(h.store.snapshot().wallets[joined.playerId!]?.reservations[0]?.status).toBe('RELEASED');
   });
 
@@ -143,13 +144,14 @@ describe('Arcade messaging commands', () => {
       const from = channel === 'sms' ? '+14155550231' : '+14155550232';
       const joined = await message(h.service, `${channel}-JOIN`, 'JOIN', from, channel);
       expect(joined.reply).toContain('first name');
+      expect(joined.reply).toContain('1/1:');
       expect((await message(h.service, `${channel}-COIN-EARLY`, 'COIN', from, channel)).reply)
         .toBe(joined.reply);
       expect(await h.service.getStation('ARCADE-01')).toBeNull();
       expect((await message(h.service, `${channel}-NAME`, 'Ada', from, channel)).reply)
-        .toContain('Thanks, Ada');
+        .toContain("You're set, Ada");
       expect((await message(h.service, `${channel}-COIN`, 'COIN', from, channel)).reply)
-        .toContain('position 1');
+        .toContain("You're #1");
       const state = h.store.snapshot();
       expect(state.players[joined.playerId!]?.lead).toBeNull();
       expect(state.messagingDrafts[joined.playerId!]?.firstName).toBe('Ada');
@@ -168,7 +170,7 @@ describe('Arcade messaging commands', () => {
       const channel = index % 2 === 0 ? 'sms' : 'whatsapp';
       const result = await message(h.service, `EMOJI-COIN-${index}`, emoji, '+14155550199', channel);
       expect(result.command).toBe('COIN');
-      expect(result.reply).toContain('When game voting opens');
+      expect(result.reply).toContain('Save the number on screen');
       await message(h.service, `EMOJI-LEAVE-${index}`, 'LEAVE', '+14155550199', channel);
     }
     const prose = await message(h.service, 'EMOJI-PROSE', 'here is a 🪙');
@@ -212,7 +214,7 @@ describe('Arcade messaging commands', () => {
     const whatsapp = await message(h.service, 'MORE-WA', 'MORE', '+14155550199', 'whatsapp');
     for (const result of [sms, whatsapp]) {
       expect(result.command).toBe('MORE');
-      expect(result.reply).toContain('2 challenges available to earn up to 3 coins');
+      expect(result.reply).toContain('Earn up to 3 more game coins');
       expect(result.reply).toContain('http://localhost/challenge/?locale=en-US#');
       expect(result.reply).not.toContain('MORE 2');
     }
@@ -238,7 +240,7 @@ describe('Arcade messaging commands', () => {
     expect((await message(h.service, 'MORE-PAGED', 'MORE 2')).command).toBe('TEXT');
     await h.service.visitChallengeFromPortal(token, 'github');
     expect(await h.service.claimChallengeFromPortal(token, 'github')).toMatchObject({ availableBalance: 4 });
-    expect((await message(h.service, 'MORE-NONE', 'MORE')).reply).toContain('No coin challenges are available');
+    expect((await message(h.service, 'MORE-NONE', 'MORE')).reply).toContain('No bonus challenges are live');
   });
 
   it('prompts legacy unnamed coin-only players before their next ready entry', async () => {
@@ -254,8 +256,8 @@ describe('Arcade messaging commands', () => {
     });
     expect((await message(h.service, 'legacy-COIN-EARLY', 'COIN')).reply).toContain('first name');
     expect(await h.service.getStation('ARCADE-01')).toBeNull();
-    expect((await message(h.service, 'legacy-NAME', 'Ada')).reply).toContain('Thanks, Ada');
-    expect((await message(h.service, 'legacy-COIN', 'COIN')).reply).toContain('Coin inserted');
+    expect((await message(h.service, 'legacy-NAME', 'Ada')).reply).toContain("You're set, Ada");
+    expect((await message(h.service, 'legacy-COIN', 'COIN')).reply).toContain('COIN IN');
   });
 
   it('finishes legacy terms before asking for a name and still permits an unnamed active player to leave', async () => {
@@ -266,9 +268,12 @@ describe('Arcade messaging commands', () => {
         ...state.messagingDrafts[joined.playerId!]!, step: 'TERMS', firstName: null,
       };
     });
-    expect((await message(terms.service, 'legacy-terms-YES', 'YES')).reply).toContain('first name');
+    expect((await message(terms.service, 'legacy-terms-PROMPT', 'HELP')).reply).toContain('1/2:');
+    const afterTerms = await message(terms.service, 'legacy-terms-YES', 'YES');
+    expect(afterTerms.reply).toContain('2/2:');
+    expect(afterTerms.reply).toContain('first name');
     expect(terms.store.snapshot().players[joined.playerId!]?.termsAcceptedAt).not.toBeNull();
-    expect((await message(terms.service, 'legacy-terms-NAME', 'Ada')).reply).toContain('Thanks, Ada');
+    expect((await message(terms.service, 'legacy-terms-NAME', 'Ada')).reply).toContain("You're set, Ada");
 
     await message(terms.service, 'legacy-active-COIN', 'COIN');
     await terms.store.transaction(state => {
@@ -276,7 +281,7 @@ describe('Arcade messaging commands', () => {
         ...state.messagingDrafts[joined.playerId!]!, step: 'COMPLETE', firstName: null,
       };
     });
-    expect((await message(terms.service, 'legacy-active-LEAVE', 'LEAVE')).reply).toContain('left the ready pool');
+    expect((await message(terms.service, 'legacy-active-LEAVE', 'LEAVE')).reply).toContain('out of the next-game line');
     expect(terms.store.snapshot().wallets[joined.playerId!]?.reservations[0]?.status).toBe('RELEASED');
   });
 
@@ -338,7 +343,7 @@ describe('Arcade messaging commands', () => {
     expect((await message(h.service, 'SM106', 'Analytical Engines')).reply).toContain('country');
     expect((await message(h.service, 'SM107', 'US')).reply).toContain('Reply YES');
     const registered = await message(h.service, 'SM108', 'YES');
-    expect(registered.reply).toContain('Registration complete');
+    expect(registered.reply).toContain('Player ready');
 
     const player = h.store.snapshot().players[joined.playerId!];
     expect(player?.lead).toMatchObject({
@@ -346,7 +351,7 @@ describe('Arcade messaging commands', () => {
       companyName: 'Analytical Engines', phoneNumber: '+14155550199', countryCode: 'US',
     });
     expect(h.store.snapshot().wallets[joined.playerId!]?.wallet.cachedBalance).toBe(2);
-    expect((await message(h.service, 'SM109', 'COIN')).reply).toContain('Coin inserted');
+    expect((await message(h.service, 'SM109', 'COIN')).reply).toContain('COIN IN');
   });
 
   it('restores provider deduplication and registration progress after restart', async () => {
@@ -375,16 +380,16 @@ describe('Arcade messaging commands', () => {
     const joined = await message(h.service, 'SM301', 'JOIN ARCADE-01 LANG en-US');
     expect(joined.reply).toContain('first name');
     expect((await message(h.service, 'SM302', 'Ada')).reply).toContain('Reply YES');
-    expect((await message(h.service, 'SM303', 'YES')).reply).toContain('Thanks, Ada');
+    expect((await message(h.service, 'SM303', 'YES')).reply).toContain("You're set, Ada");
     const ready = await message(h.service, 'SM304', 'READY');
-    expect(ready.reply).toContain('ready in position 1');
-    expect(ready.reply).toContain('Watch the screen');
+    expect(ready.reply).toContain("YOU'RE READY");
+    expect(ready.reply).toContain('Save the number on screen');
     expect(ready.reply).not.toContain('we will text');
     expect(h.store.snapshot().wallets[joined.playerId!]?.transactions).toEqual([]);
     expect(h.store.snapshot().wallets[joined.playerId!]?.reservations).toEqual([]);
     expect(Object.values(h.store.snapshot().stationReadyEntries)[0]?.reservationId).toBeNull();
     expect((await message(h.service, 'SM305', 'STATUS')).reply)
-      .toBe('Station status: READY.\nWatch for game selection, then reply with the game name or number.');
+      .toBe("You're #1 in line for the next game.\nWatch the big screen. When VOTE appears, reply with the game number.");
   });
 
   it('requires a fresh JOIN after the cabinet changes', async () => {
@@ -394,10 +399,10 @@ describe('Arcade messaging commands', () => {
     await message(h.service, 'SM402B', 'YES');
     h.setCabinet('ARCADE-02');
     expect((await message(h.service, 'SM403', 'STATUS', '+14155550199', 'sms', 'ARCADE-02')).reply)
-      .toBe('Reply JOIN to start');
+      .toBe('Start by text, then play by voice. Reply JOIN.');
     expect((await message(
       h.service, 'SM404', 'JOIN ARCADE-02 LANG en-US', '+14155550199', 'sms', 'ARCADE-02',
-    )).reply).toContain('Reply COIN');
+    )).reply).toContain('reply COIN');
   });
 
   it('reconciles persisted drafts when station mode changes', async () => {
@@ -417,10 +422,10 @@ describe('Arcade messaging commands', () => {
     expect((await message(leadToCoin.service, 'SM-MODE-103', 'JOIN ARCADE-01 LANG en-US')).reply)
       .toContain('Reply YES');
     expect((await message(leadToCoin.service, 'SM-MODE-104', 'READY')).reply)
-      .toBe('Reply YES to accept the participation terms shown on the join page.');
+      .toContain('Reply YES to accept');
     await message(leadToCoin.service, 'SM-MODE-105', 'YES');
     expect((await message(leadToCoin.service, 'SM-MODE-106', 'READY')).reply)
-      .toContain('ready in position 1');
+      .toContain("YOU'RE READY");
   });
 
   it('does not record terms acceptance when acknowledgement is disabled', async () => {
@@ -431,25 +436,25 @@ describe('Arcade messaging commands', () => {
     await message(h.service, 'SM502', 'Ada');
     await message(h.service, 'SM503', 'Lovelace');
     await message(h.service, 'SM504', 'ada@example.com');
-    await message(h.service, 'SM505', 'Analytical Engines');
-    expect((await message(h.service, 'SM506', 'US')).reply).toContain('Registration complete');
+    expect((await message(h.service, 'SM505', 'Analytical Engines')).reply).toContain('5/5:');
+    expect((await message(h.service, 'SM506', 'US')).reply).toContain('Player ready');
     expect(h.store.snapshot().players[joined.playerId!]?.termsAcceptedAt).toBeNull();
   });
 
   it('keeps registration commands and invalid answers on the exact current prompt', async () => {
     const h = await harness('lead_capture');
     const joined = await message(h.service, 'SM-PROMPT-001', 'JOIN');
-    expect(joined.reply).toBe('What is your first name? Reply with your first name only.');
+    expect(joined.reply).toBe("Let's create your player. 1/6: What first name should appear on the big screen?");
     for (const [index, command] of ['HELP', 'STATUS', 'COIN', 'READY', 'LEAVE'].entries()) {
       expect((await message(h.service, `SM-PROMPT-${index + 2}`, command)).reply).toBe(joined.reply);
     }
     expect((await message(h.service, 'SM-PROMPT-010', 'Racer')).reply).toContain('last name');
     expect((await message(h.service, 'SM-PROMPT-011', 'Fighter')).reply).toContain('work email');
     const emailPrompt = (await message(h.service, 'SM-PROMPT-012', 'not-an-email')).reply;
-    expect(emailPrompt).toBe('What is your work email? Reply in the format name@company.com.');
+    expect(emailPrompt).toBe('3/6: What is your work email? Example: name@company.com');
     expect((await message(h.service, 'SM-PROMPT-013', 'HELP')).reply).toBe(emailPrompt);
     await message(h.service, 'SM-PROMPT-014', 'voice@example.com');
-    expect((await message(h.service, 'SM-PROMPT-015', 'Monsters')).reply).toContain('country code');
+    expect((await message(h.service, 'SM-PROMPT-015', 'Monsters')).reply).toContain('two letters');
     await message(h.service, 'SM-PROMPT-016', 'US');
     await message(h.service, 'SM-PROMPT-017', 'YES');
     expect(h.store.snapshot().players[joined.playerId!]?.lead).toMatchObject({
@@ -486,23 +491,22 @@ describe('Arcade messaging commands', () => {
     await message(h.service, 'SM-CHOICE-002', 'Ada');
     await message(h.service, 'SM-CHOICE-002B', 'YES');
     expect((await message(h.service, 'SM-CHOICE-003', 'RACER')).reply)
-      .toContain('Game selection opens after recruiting');
+      .toContain("Voting hasn't opened yet");
     const coin = await message(h.service, 'SM-CHOICE-004', 'COIN');
-    expect(coin.reply).toContain('When game voting opens, reply with: 1 = Voice Racer, 2 = Voice Monsters, 3 = Voice Fighter');
+    expect(coin.reply).toContain('Watch the big screen');
     const recruiting = await h.service.getStation('ARCADE-01');
     await h.service.closeStationRecruiting({
       stationId: 'ARCADE-01', expectedRevision: recruiting!.station.revision,
       idempotencyKey: 'message-choice-close', authorization: h.operatorAuthorization,
     });
     const votePrompt = await message(h.service, 'SM-CHOICE-004B', 'COIN');
-    expect(votePrompt.reply).toContain('Vote now by replying with: 1 = Voice Racer, 2 = Voice Monsters, 3 = Voice Fighter');
+    expect(votePrompt.reply).toContain('VOTING IS OPEN! Reply 1 Voice Racer, 2 Voice Monsters, 3 Voice Fighter');
     const first = await message(h.service, 'SM-CHOICE-005', '1');
-    expect(first.reply).toContain('Choice saved: Voice Racer');
-    expect(first.reply).toContain('1 = Voice Racer, 2 = Voice Monsters, 3 = Voice Fighter');
+    expect(first.reply).toContain('VOTE LOCKED: Voice Racer');
     const changed = await message(h.service, 'SM-CHOICE-006', 'VOICE MONSTERS');
-    expect(changed.reply).toContain('Choice saved: Voice Monsters');
+    expect(changed.reply).toContain('VOTE LOCKED: Voice Monsters');
     expect((await message(h.service, 'SM-CHOICE-007', '4')).reply)
-      .toContain('Reply with one of: 1 = Voice Racer, 2 = Voice Monsters, 3 = Voice Fighter');
+      .toContain("That option isn't on the big screen. Reply 1 Voice Racer, 2 Voice Monsters, 3 Voice Fighter");
     const state = h.store.snapshot();
     const entry = Object.values(state.stationReadyEntries).find(candidate => candidate.playerId === joined.playerId)!;
     expect(state.stationRounds[entry.roundId]?.gameChoicesByReadyEntryId).toEqual({ [entry.id]: 'monsters' });
@@ -530,12 +534,12 @@ describe('Arcade messaging commands', () => {
     h.setNow(deadline);
     const exact = await message(h.service, 'SM-CLOSED-EXACT', 'RACER', englishFrom);
     expect(exact.reply).toBe(
-      'Game selection is closed.\nWatch the screen for the chosen game and your next instruction.',
+      "Voting is closed. Watch the big screen; we'll tell you if you're in and when it's time to call.",
     );
     h.setNow(deadline + 1);
     const late = await message(h.service, 'SM-CLOSED-LATE', '2', portugueseFrom);
     expect(late.reply).toBe(
-      'A escolha do jogo ja terminou.\nAcompanhe a tela para ver o jogo escolhido e a proxima instrucao.',
+      'A votação terminou. Acompanhe a tela; avisaremos se você entrou e quando será hora de ligar.',
     );
     expect(h.store.snapshot().stations['ARCADE-01']?.revision).toBe(selecting.station.revision);
     expect(h.store.snapshot().inboundMessages[providerKey('SM-CLOSED-EXACT', englishFrom)]?.reply)
@@ -585,7 +589,7 @@ describe('Arcade messaging commands', () => {
     });
     const joined = await message(h.service, 'SM701', 'JOIN ARCADE-01 LANG en-US');
     expect(joined.playerId).toBe('browser-player');
-    expect(joined.reply).toContain('2 coins');
+    expect(joined.reply).toContain('Game coins: 2');
     expect(h.store.snapshot().players['browser-player']?.lead?.firstName).toBe('Browser');
     expect(Object.keys(h.store.snapshot().players)).toEqual(['browser-player']);
     expect(Object.values(h.store.snapshot().channelAddresses)).toEqual([
@@ -632,7 +636,7 @@ describe('Arcade messaging commands', () => {
     });
 
     const second = await message(h.service, 'SM-REP-004', 'COIN');
-    expect(second.reply).toContain('do not have an available coin');
+    expect(second.reply).toContain("You're out of game coins");
     const wallet = h.store.snapshot().wallets[joined.playerId!]!;
     expect(wallet.transactions.filter(transaction => transaction.type === 'operator_grant'))
       .toHaveLength(0);
@@ -705,7 +709,7 @@ describe('Arcade messaging commands', () => {
     const rejected = await message(h.service, 'SM-CAP-003', 'JOIN ARCADE-01', '+14155550203');
 
     expect(rejected).toMatchObject({ playerId: null, command: 'CAPACITY' });
-    expect(rejected.reply).toContain('temporarily at capacity');
+    expect(rejected.reply).toContain("can't start another phone session");
     expect(await message(h.service, 'SM-CAP-003', 'JOIN ARCADE-01', '+14155550203'))
       .toEqual(rejected);
     const state = h.store.snapshot();

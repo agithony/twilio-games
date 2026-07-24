@@ -141,6 +141,9 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); c
 /* ───────── Lobby JOIN FLOW: scan QR → call number → enter room code (DTMF) ───────── */
 /* QR on top, the numbered steps stacked UNDERNEATH it (vertical column). */
 .join-flow { display: flex; flex-direction: column; align-items: center; gap: 22px; }
+.join-flow-message { max-width:520px; padding:22px 26px; border:1px solid rgba(239,34,58,.55); border-radius:16px; background:rgba(239,34,58,.1); text-align:center; }
+.join-flow-message strong { display:block; color:var(--red); font-family:var(--display); font-size:24px; letter-spacing:.08em; }
+.join-flow-message span { display:block; margin-top:8px; color:var(--ink); font-family:var(--text); font-size:18px; line-height:1.35; }
 .join-qrs { display: flex; align-items: flex-start; justify-content: center; gap: 18px; flex-wrap: wrap; }
 /* QR panel — white card so a dark-on-transparent QR stays scannable on the dark theme. */
 .join-qr { display: flex; flex-direction: column; align-items: center; gap: 10px; }

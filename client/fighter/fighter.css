@@ -31,6 +31,9 @@ button { font: inherit; }
 .join-steps li { display:flex; align-items:center; gap:10px; padding:8px 10px; background:rgba(255,255,255,.05); border-radius:10px; }
 .join-steps b { display:grid; place-items:center; width:25px; height:25px; flex:none; border-radius:50%; background:#ef223a; font:13px TwilioDisplay,sans-serif; }
 .join-steps span { font-size:12px; color:#dce1ec; }
+.station-call-card { display:grid; gap:8px; align-content:center; padding:20px; border:1px solid rgba(239,34,58,.7); border-radius:14px; background:rgba(239,34,58,.12); text-align:center; }
+.station-call-card strong { color:#ff7586; font:22px TwilioDisplay,sans-serif; letter-spacing:.08em; }
+.station-call-card span { color:#f5f7fb; font-size:14px; line-height:1.4; }
 .player-list { padding:0; }
 .player-list h2 { margin: 0 0 12px; font: 18px TwilioDisplay,sans-serif; text-transform: uppercase; }
 .player-chip { display: flex; justify-content: space-between; margin-top: 7px; padding: 12px; border-left: 3px solid #ef223a; background: rgba(255,255,255,.05); }

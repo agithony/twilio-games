@@ -168,9 +168,9 @@ properties:
             secretRef: arcade-display-token
           - name: ARCADE_STATE_PATH
             value: /app/data/arcade-state.json
-          # Mode-off production calls receive paused TwiML instead of standalone Conversation Relay.
+          # Allow authenticated shared displays to receive standalone calls while event mode is off.
           - name: ARCADE_STANDALONE_VOICE_ENABLED
-            value: "false"
+            value: "true"
           # Direct signed webhooks own SMS/WhatsApp game commands; TAC enriches Conversation Memory.
           - name: ARCADE_TAC_ENABLED
             value: "true"

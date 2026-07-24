@@ -232,10 +232,33 @@ describe('ConversationRelayAdapter', () => {
 
     a.onGameEvent({ kind:'finish', playerId:'p1', name:'Me', place:1 });
     a.onGameEvent({ kind:'race_over' });
-    await new Promise(r => setTimeout(r, 0));
+    await a.whenSpeechSettled();
 
     expect(said.join(' ').toLowerCase()).toMatch(/first place|congrat|won/);
     expect(said.join(' ').toLowerCase()).toContain('leaderboard');
+  });
+
+  it('waits for an in-flight race-over recap before reporting speech settled', async () => {
+    const room = fakeRoom(); const said: string[] = [];
+    let resolveRecap!: (value: string) => void;
+    const recap = new Promise<string>(resolve => { resolveRecap = resolve; });
+    const a = new ConversationRelayAdapter({
+      findOrCreateRoom: () => room,
+      say: text => said.push(text),
+      converse: async () => recap,
+    });
+    a.handleMessage(JSON.stringify({ type:'setup', callSid:'CA1', customParameters:{ roomCode:'4821' } }));
+    said.length = 0;
+    a.onGameEvent({ kind:'race_over' });
+
+    let settled = false;
+    const waiting = a.whenSpeechSettled().then(() => { settled = true; });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    resolveRecap('Photo finish. What a race!');
+    await waiting;
+
+    expect(said).toEqual(['Photo finish. What a race!']);
   });
 
   it('does not speak repeated menu-entry prompts back to back', () => {

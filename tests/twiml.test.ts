@@ -74,6 +74,9 @@ describe('twimlConnectRelay', () => {
     expect(xml).toContain('interruptSensitivity="medium"');
     expect(xml).toContain('ignoreBackchannel="true"');
   });
+  it('subscribes to playback completion for graceful call retirement', () => {
+    expect(xml).toContain('events="tokens-played"');
+  });
   it('emits ElevenLabs tts + welcome greeting when a voice is configured', () => {
     const x = twimlConnectRelay({
       wsUrl: 'wss://x.test/voice', sessionEndedUrl: 'https://x.test/e', roomCode: 'ABCD',

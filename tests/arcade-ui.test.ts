@@ -55,6 +55,7 @@ describe('Arcade browser UI', () => {
     expect(home).toContain('id="standaloneView"');
     expect(homeScript).toContain("show('standalone')");
     expect(homeScript).toContain("if(standaloneMode){renderStandaloneLauncher();show('standalone');}");
+    expect(homeScript).toContain('PLAYABLE_ARCADE_GAMES.filter(game=>enabledGames.has(game.id))');
     for (const video of ['vr-demo.mp4','vm-demo.mp4','vf-demo.mp4']) expect(homeScript).toContain(video);
     expect(homeScript).not.toContain('Arcade station mode is off');
     expect(homeScript).not.toContain('Joining unavailable');
@@ -437,10 +438,19 @@ describe('Arcade browser UI', () => {
     expect(fighter).not.toContain("params.get('hostToken')");
     expect(fighter).toContain("pageUrl.searchParams.delete('hostToken')");
     expect(racerMain).toContain('isDisplay && !stationDisplay.active');
+    expect(racerMain).toContain('locale, stationDisplay.active');
+    expect(racerMain).toContain("/game${isDisplay?'?display=1':''}");
+    expect(racerScreens).toContain("this.stationManaged ? 'station' : 'standalone'");
+    expect(racerScreens).toContain("screen.lobby.stationTitle");
     expect(monsters).toContain('!isDisplay || stationDisplay.active');
     expect(monsters).toContain('if (stationDisplay.active) {');
+    expect(monsters).toContain('stationDisplay.active\n    ? `<div class="vm-station-call"');
+    expect(monsters).toContain("/battle${isDisplay?'?display=1':''}");
     expect(fighter).toContain('if (stationDisplay.active) return');
+    expect(fighter).toContain('stationDisplay.active\n      ? `<div class="station-call-card"');
+    expect(fighter).toContain("/fighter${isDisplay?'?display=1':''}");
     expect(stationDisplay).not.toContain('if (rail.root.hidden === !visible) return');
+    expect(stationDisplay).toContain("latest?.station.phase==='PLAYING'||latest?.station.phase==='RESULTS'");
     expect(stationDisplayCss).toContain('.station-rail[hidden] { display:none !important; }');
     expect(racerMain).toContain('watchVoiceNumber(locale');
     expect(monsters).toContain('watchVoiceNumber(locale');
@@ -514,9 +524,9 @@ describe('Arcade browser UI', () => {
   });
 
   it('makes lead capture mode and collected fields explicit while keeping entry cost separate', () => {
-    expect(html).toContain('Paused - lead capture off');
-    expect(html).toContain('Open - lead capture off');
-    expect(html).toContain('Open - lead capture on');
+    expect(html).toContain('Standalone play - choose and call');
+    expect(html).toContain('Messaging entry - first name only');
+    expect(html).toContain('Lead capture entry - full registration');
     expect(html).toContain('id="lead-capture-summary"');
     expect(html).toContain('>Entry cost<');
     expect(script).toContain('Browser entry collects first and last name, work email, company, phone number, country or region');
@@ -527,19 +537,20 @@ describe('Arcade browser UI', () => {
     expect(script).toContain('termsAcknowledgementRequired');
     expect(script).toContain('Messaging entry collects first name only');
     expect(script).toContain('First name is collected for the game display. No lead form is created');
-    expect(script).toContain('Pausing freezes the current event flow and stops its timers without removing players or coins');
-    expect(script).toContain("output.textContent='Paused'");
-    expect(script).toContain('The event is paused and this flow is frozen. Reset the event flow before reopening.');
+    expect(script).toContain('Standalone play skips messaging entry and lead capture');
+    expect(script).toContain("output.textContent='Standalone'");
+    expect(script).toContain('Standalone play is active. This previous event queue is preserved until you reset it.');
     expect(script).toContain("state.adminConfig?.arcade.mode!=='off'&&entry.status==='ADMITTED'");
     expect(html).toContain('id="settings-open-blocker"');
-    expect(html).toContain('Saving an Open status will ask you to reset that flow');
+    expect(html).toContain('Changing the player journey resets the active event flow.');
+    expect(script).toContain("state.adminConfig?.arcade.mode!==modeSelect.value");
     expect(script).toContain("error.code==='ACTIVE_STATION_CONFIG_LOCKED'");
-    expect(script).toContain("config.arcade.mode==='off'&&selectedMode!=='off'");
+    expect(script).toContain('config.arcade.mode!==selectedMode');
     expect(script).toContain('await queueOpenAfterReset(version,settings,selectedMode)');
     expect(script).toContain('await saveOpenAfterReset(openSettings)');
-    expect(script).toContain("setNotice('Event flow reset and Open settings saved. The event is now open.'");
-    expect(script).toContain('The live event is using these settings. Pause the event before changing them');
-    expect(script).toContain('A paused event flow is still preserved. Reset it from Live event before changing these settings');
+    expect(script).toContain("openSettings.mode==='off'?'Previous queue reset. Standalone play is active.'");
+    expect(script).toContain('The live messaging event is using these settings. Switch to Standalone play before changing them');
+    expect(script).toContain('A previous event queue is still preserved. Reset it from Live event before changing these settings');
     expect(script).toContain('Settings were saved, but the console could not reload them.');
     expect(script).toContain("refreshAll(false)");
   });
@@ -551,13 +562,11 @@ describe('Arcade browser UI', () => {
     expect(script).toContain("ATTRACT:'Waiting for players'");
   });
 
-  it('keeps the paused host instruction only in the localized player panel', () => {
+  it('explains standalone play in the localized player panel', () => {
     expect(script).toContain("renderPlayer();startPlayerUpdates();setNotice('')");
-    expect(script).toContain("playerText('The event is not accepting players right now.','O evento não está aceitando jogadores agora.')");
-    expect(html).toContain('Check back soon or ask the host when the next game begins.');
-    expect(script).toContain("'Volte em breve ou pergunte ao anfitrião quando começa o próximo jogo.'");
-    expect(script).not.toContain('Games are paused. Ask the host');
-    expect(script).not.toContain('Os jogos estão pausados. Pergunte ao anfitrião');
+    expect(script).toContain("playerText('Open a lobby on the big screen, scan its call QR, and start playing.'");
+    expect(html).toContain('Open a game lobby, scan its call QR, and use your voice as the controller.');
+    expect(script).toContain("'Abra a sala do jogo, escaneie o QR da ligação e use sua voz como controle.'");
     expect(css).toContain('.notice:empty{display:none}');
   });
 

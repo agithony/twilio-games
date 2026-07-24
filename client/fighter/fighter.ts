@@ -70,10 +70,11 @@ if (pageUrl.searchParams.has('hostToken')) {
   history.replaceState(history.state, '', `${pageUrl.pathname}${pageUrl.search}${pageUrl.hash}`);
 }
 const params = pageUrl.searchParams;
+const isDisplay = params.get('display') === '1';
 const roomCode = params.get('room') || DEFAULT_ROOM;
 const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-const connection = new FighterConnection(`${wsProtocol}//${location.host}/fighter`, locale);
-connection.setDisplayAuth(roomCode, stationDisplay.active ? stationDisplay.displayToken : null);
+const connection = new FighterConnection(`${wsProtocol}//${location.host}/fighter${isDisplay?'?display=1':''}`, locale);
+connection.setDisplayAuth(roomCode, isDisplay ? stationDisplay.displayToken : null);
 
 const arenaSize = () => ({ width: Math.max(1, arena.clientWidth || innerWidth), height: Math.max(1, arena.clientHeight || innerHeight) });
 const initialArenaSize = arenaSize();
@@ -247,7 +248,13 @@ function renderFlow(): void {
   lastOverlayKey = key;
   lastPhase = state.phase;
   if (state.phase === 'lobby') {
-    overlay.innerHTML = `<section class="flow-panel lobby-panel"><div class="lobby-head"><h1>${t('app.title')}</h1><p>${t('lobby.tagline')}</p></div><div class="lobby-layout"><div class="qr-card">${phoneQr ? `<img src="${escapeHtml(phoneQr)}" alt="${t('lobby.qrAlt')}">` : ''}<strong>${t('lobby.scanToJoin')}</strong><span>${escapeHtml(phoneNumber)}</span></div><div class="lobby-center"><h2>${t('lobby.getStarted')}</h2><ol class="join-steps"><li><b>1</b><span>${t('lobby.step1')}</span></li><li><b>2</b><span>${t('lobby.step2')}</span></li><li><b>3</b><span>${t('lobby.step3')}</span></li></ol><div class="player-list"><h2>${t(state.players.length ? 'lobby.challengers' : 'lobby.title')}</h2>${state.players.length ? state.players.map(playerChip).join('') : `<p>${t('lobby.waitingFirst')}</p>`}</div></div><aside class="how-to"><h2>${t('lobby.howToFight')}</h2><p>${t('lobby.rules')}</p><div class="instruction-grid"><span><b>${t('command.forward')}</b> ${t('instruction.forward')}</span><span><b>${t('command.back')}</b> ${t('instruction.back')}</span><span><b>${t('command.jump')}</b> ${t('instruction.jump')}</span><span><b>${t('command.punch')}</b> ${t('instruction.punch')}</span><span><b>${t('command.kick')}</b> ${t('instruction.kick')}</span><span><b>${t('command.block')}</b> ${t('instruction.block')}</span></div><p class="voice-tip">${t('lobby.voiceTip')}</p></aside></div><div class="flow-actions lobby-actions">${stationDisplay.active ? '' : `<button id="local-join">${t(playerId ? 'lobby.playingHere' : 'lobby.pressP')}</button>`}<button id="flow-next" ${state.players.length && isHost ? '' : 'disabled'}>${t('lobby.chooseFighters')}</button></div>${isHost ? '' : `<p class="flow-hint">${t('lobby.viewOnly')}</p>`}</section>`;
+    const joinCard=stationDisplay.active
+      ? `<div class="station-call-card"><strong>${t('lobby.stationTitle')}</strong><span>${t('lobby.stationBody')}</span></div>`
+      : `<div class="qr-card">${phoneQr ? `<img src="${escapeHtml(phoneQr)}" alt="${t('lobby.qrAlt')}">` : ''}<strong>${t('lobby.scanToJoin')}</strong><span>${escapeHtml(phoneNumber)}</span></div>`;
+    const steps=stationDisplay.active
+      ? ['lobby.stationStep1','lobby.stationStep2','lobby.stationStep3'] as const
+      : ['lobby.step1','lobby.step2','lobby.step3'] as const;
+    overlay.innerHTML = `<section class="flow-panel lobby-panel"><div class="lobby-head"><h1>${t('app.title')}</h1><p>${t(stationDisplay.active?'lobby.stationTagline':'lobby.tagline')}</p></div><div class="lobby-layout">${joinCard}<div class="lobby-center"><h2>${t('lobby.getStarted')}</h2><ol class="join-steps">${steps.map((step,index)=>`<li><b>${index+1}</b><span>${t(step)}</span></li>`).join('')}</ol><div class="player-list"><h2>${t(state.players.length ? 'lobby.challengers' : 'lobby.title')}</h2>${state.players.length ? state.players.map(playerChip).join('') : `<p>${t('lobby.waitingFirst')}</p>`}</div></div><aside class="how-to"><h2>${t('lobby.howToFight')}</h2><p>${t('lobby.rules')}</p><div class="instruction-grid"><span><b>${t('command.forward')}</b> ${t('instruction.forward')}</span><span><b>${t('command.back')}</b> ${t('instruction.back')}</span><span><b>${t('command.jump')}</b> ${t('instruction.jump')}</span><span><b>${t('command.punch')}</b> ${t('instruction.punch')}</span><span><b>${t('command.kick')}</b> ${t('instruction.kick')}</span><span><b>${t('command.block')}</b> ${t('instruction.block')}</span></div><p class="voice-tip">${t('lobby.voiceTip')}</p></aside></div><div class="flow-actions lobby-actions">${stationDisplay.active ? '' : `<button id="local-join">${t(playerId ? 'lobby.playingHere' : 'lobby.pressP')}</button>`}<button id="flow-next" ${state.players.length && isHost ? '' : 'disabled'}>${t('lobby.chooseFighters')}</button></div>${isHost ? '' : `<p class="flow-hint">${t('lobby.viewOnly')}</p>`}</section>`;
   } else if (state.phase === 'fighter_select') {
     const allPicked = state.players.length > 0 && state.players.every(player => player.fighterId);
     overlay.innerHTML = selectScreen(t('select.fighterTitle'), t('select.fighterDescription'), roster.map((fighter, index) => {

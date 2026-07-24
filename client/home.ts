@@ -39,6 +39,7 @@ const copy = locale === 'pt-BR' ? {
   standaloneEyebrow: 'Jogos de festa controlados por voz · com tecnologia Twilio',
   standaloneTitle: 'Jogue com sua <span>voz.</span>',
   standaloneDescription: 'Com tecnologia Twilio ConversationRelay. Sua voz é o controle.',
+  standaloneUnavailable: 'Os jogos por voz não estão disponíveis agora. Peça ajuda à equipe.',
   comingSoon: 'Em breve',
   triviaTitle: 'Quiz por Voz', karaokeTitle: 'Karaokê por Voz',
   triviaPreview: 'Perguntas rápidas, respostas em voz alta e rodadas para todos.',
@@ -74,6 +75,7 @@ const copy = locale === 'pt-BR' ? {
   standaloneEyebrow: 'Voice-controlled party games · powered by Twilio',
   standaloneTitle: 'Play with your <span>voice.</span>',
   standaloneDescription: 'Powered by Twilio Conversation Relay. Your voice is the controller.',
+  standaloneUnavailable: 'Voice games are unavailable right now. Please ask booth staff for help.',
   comingSoon: 'Coming soon',
   triviaTitle: 'Voice Trivia', karaokeTitle: 'Voice Karaoke',
   triviaPreview: 'Quick questions, spoken answers, and rounds built for everyone.',
@@ -115,6 +117,7 @@ const lockedGame = document.getElementById('lockedGame')!;
 const gameCards = document.getElementById('gameCards')!;
 const phaseEyebrow = document.getElementById('phaseEyebrow')!;
 const standaloneGames = document.getElementById('standaloneGames')!;
+let standaloneGamesKey='__unset__';
 const selectionVideos = {
   racer: '/video/vr-demo.mp4', monsters: '/video/vm-demo.mp4', fighter: '/video/vf-demo.mp4',
 } as const;
@@ -137,6 +140,7 @@ let refreshPending = false;
 let launched = '';
 let displayToken = captureDisplayToken();
 let displayTokenRejected = !displayToken && displayTokenWasRejected();
+let standaloneDisplayAuthorized = false;
 let standaloneMode = false;
 let joinBaseUrl = location.origin;
 let qrRailMode: 'auto' | 'always' | 'hidden' = 'auto';
@@ -189,8 +193,10 @@ function buildGameCard(impact: PublicStation['games'][number]): HTMLElement {
 }
 
 function renderStandaloneLauncher(): void {
-  if (standaloneGames.childElementCount > 0) return;
-  standaloneGames.append(...PLAYABLE_ARCADE_GAMES.map(game => {
+  const key=[...enabledGames].sort().join(',');if(key===standaloneGamesKey)return;standaloneGamesKey=key;standaloneGames.replaceChildren();
+  const games=PLAYABLE_ARCADE_GAMES.filter(game=>enabledGames.has(game.id));
+  if(!games.length){const message=document.createElement('p');message.className='standalone-unavailable';message.textContent=copy.standaloneUnavailable;standaloneGames.append(message);return;}
+  standaloneGames.append(...games.map(game => {
     const link = document.createElement('a');
     const url = new URL(game.route, location.origin);
     url.searchParams.set('display', '1');url.searchParams.set('room', '4821');url.searchParams.set('locale', locale);
@@ -421,12 +427,14 @@ async function refreshConfiguration(): Promise<void> {
   try {
     const bootstrapRequest: Promise<{
       publicBaseUrl?: string; smsNumber?: string; whatsappNumber?: string;
+      voiceNumbers?: Partial<Record<'en-US' | 'pt-BR', string | null>>;
     }> = fetch('/api/config', { cache: 'no-store' })
       .then(async response => response.ok ? await response.json() : {})
       .catch(() => ({}));
-    const [config, bootstrap] = await Promise.all([
+    const [config, bootstrap, displayAuthorized] = await Promise.all([
       fetchPublicArcadeConfig(),
       bootstrapRequest,
+      validateStandaloneDisplay(),
     ]);
     joinBaseUrl = effectivePublicVisitorBaseUrl(bootstrap.publicBaseUrl);
     standaloneMode = config.arcade.mode === 'off';
@@ -434,9 +442,10 @@ async function refreshConfiguration(): Promise<void> {
     freePlay = config.coins.chargePolicy === 'free';
     smsAvailable = config.channels.sms && Boolean(bootstrap.smsNumber);
     whatsappAvailable = config.channels.whatsapp && Boolean(bootstrap.whatsappNumber);
-    enabledGames = new Set(Object.entries(config.station.games)
+    standaloneDisplayAuthorized = displayAuthorized;
+    enabledGames = standaloneDisplayAuthorized&&config.channels.voice&&Boolean(bootstrap.voiceNumbers?.[locale])?new Set(Object.entries(config.station.games)
       .filter(([, settings]) => settings.enabled)
-      .map(([game]) => game));
+      .map(([game]) => game)):new Set();
     stationId = config.arcade.cabinetId;
     qrRailMode=config.station.qrRail;
     renderEntryPolicyCopy();
@@ -452,6 +461,22 @@ async function refreshConfiguration(): Promise<void> {
   } finally {
     configuring = false;
     if (configurationPending) { configurationPending = false; void refreshConfiguration(); }
+  }
+}
+
+async function validateStandaloneDisplay(): Promise<boolean> {
+  if (!displayToken || displayTokenRejected) return false;
+  try {
+    await fetchPublicStation(displayToken);
+    displayTokenRejected = false;
+    return true;
+  } catch (cause) {
+    if (cause instanceof StationRequestError && [401, 403].includes(cause.status)) {
+      rejectDisplayToken(displayToken);
+      displayToken = null;
+      displayTokenRejected = true;
+    }
+    return false;
   }
 }
 

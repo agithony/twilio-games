@@ -48,9 +48,9 @@
     <main id="dashboard" class="dashboard">
       <section class="column">
         <article id="off-panel" class="panel accent-panel" hidden>
-          <p class="eyebrow">Games paused</p>
-          <h2>Nothing is starting right now.</h2>
-          <p>Check back soon or ask the host when the next game begins.</p>
+          <p class="eyebrow">Standalone play</p>
+          <h2>Choose a game on the big screen.</h2>
+          <p>Open a game lobby, scan its call QR, and use your voice as the controller.</p>
         </article>
 
         <article id="registration-panel" class="panel" hidden>
@@ -365,7 +365,7 @@
                   <section class="settings-section settings-experience">
                     <div class="settings-section-heading"><span>01</span><div><h4>Event</h4><p>Choose how players enter and whether coins are used.</p></div></div>
                     <div class="settings-fields two-up">
-                      <label>Event status<select id="admin-mode"><option value="off">Paused - lead capture off</option><option value="coin_only">Open - lead capture off</option><option value="lead_capture">Open - lead capture on</option></select></label>
+                      <label>Player journey<select id="admin-mode"><option value="off">Standalone play - choose and call</option><option value="coin_only">Messaging entry - first name only</option><option value="lead_capture">Lead capture entry - full registration</option></select></label>
                       <label>Entry cost<select id="admin-charge-policy"><option value="per_player">One coin per player</option><option value="free">No coins required</option></select></label>
                       <label id="starting-coins-field">Coins after sign-up<input id="admin-starting-coins" type="number" min="1" max="100" step="1" required /><small>These coins are available immediately.</small></label>
                       <div class="lead-capture-info">
@@ -376,8 +376,8 @@
                         </details>
                       </div>
                       <div id="settings-open-blocker" class="settings-open-blocker" hidden>
-                        <b>A paused game flow is still preserved.</b>
-                        <span>Saving an Open status will ask you to reset that flow before the event starts.</span>
+                        <b>Changing the player journey resets the active event flow.</b>
+                        <span>Saving a different journey will ask you to confirm the reset before changing any settings.</span>
                         <button id="review-preserved-flow" class="button secondary" type="button">Review live event</button>
                       </div>
                     </div>

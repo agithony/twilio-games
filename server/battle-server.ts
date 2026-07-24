@@ -43,6 +43,7 @@ export class BattleServer {
   private onRoomState: ((roomCode: string) => void) | null = null;
   private allowBrowserPlayer: (roomCode: string) => boolean = () => true;
   private readonly displayToken: string;
+  private onDisplayAuthenticated: ((ws: WebSocket) => void) | null = null;
 
   constructor(opts: { port?: number; server?: HttpServer; heartbeatMs?: number; displayToken?: string }) {
     this.port = opts.port;
@@ -54,11 +55,12 @@ export class BattleServer {
   setOnRoomEvents(fn: (roomCode: string, events: BattleEvent[]) => void): void { this.onRoomEvents = fn; }
   setOnRoomState(fn: (roomCode: string) => void): void { this.onRoomState = fn; }
   setBrowserPlayerAdmission(fn: (roomCode: string) => boolean): void { this.allowBrowserPlayer = fn; }
+  setOnDisplayAuthenticated(fn: (ws: WebSocket) => void): void { this.onDisplayAuthenticated = fn; }
 
   // ── lifecycle: standalone vs mounted (parallels GameServer) ─────────────────────────────────────
   attach(_server: HttpServer): void { this.wss = new WebSocketServer({ noServer: true }); }
-  handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer): void {
-    this.wss!.handleUpgrade(req, socket, head, (ws) => this.onConnection(ws));
+  handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer, connected?: (ws:WebSocket)=>void): void {
+    this.wss!.handleUpgrade(req, socket, head, (ws) => {connected?.(ws);this.onConnection(ws);});
   }
   start(): Promise<number> {
     return new Promise((resolve) => {
@@ -165,6 +167,7 @@ export class BattleServer {
         }
         conn.stationDisplay = stationDisplay;
         conn.hostAuthorized = !stationDisplay || msg.displayToken === this.displayToken;
+        if (this.displayToken && msg.displayToken === this.displayToken) this.onDisplayAuthenticated?.(conn.ws);
         this.room(msg.roomCode);
         conn.roomCode = msg.roomCode;   // display / spectator: no slot
         this.pushState(msg.roomCode);

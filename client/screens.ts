@@ -56,7 +56,8 @@ export class Screens {
   private selfPlaying = false;
 
   constructor(host: HTMLElement, private cb: ScreensCallbacks,
-              private locale: SupportedLocale = DEFAULT_LOCALE) {
+              private locale: SupportedLocale = DEFAULT_LOCALE,
+              private stationManaged = false) {
     this.text = createTranslator(locale, RACER_MESSAGES);
     this.root = document.createElement('div');
     this.root.id = 'screens';
@@ -159,7 +160,7 @@ export class Screens {
     this.show(); this.phase = 'lobby';
     this.lastLobby = { roomCode, players };
     void roomCode;   // no longer shown — calls bind straight to the single game (instant join)
-    if (this.unchanged(`lobby:${this.selfPlaying ? 'P' : 'p'}:${this.phoneNumber}:${this.phoneQr ? 'phoneqr' : 'nophoneqr'}:${this.arcadeQr ? 'coin' : 'nocoin'}:${this.boostThumb ? 'orb' : 'noorb'}:${this.rosterKey(players)}`)) return;
+    if (this.unchanged(`lobby:${this.stationManaged ? 'station' : 'standalone'}:${this.selfPlaying ? 'P' : 'p'}:${this.phoneNumber}:${this.phoneQr ? 'phoneqr' : 'nophoneqr'}:${this.arcadeQr ? 'coin' : 'nocoin'}:${this.boostThumb ? 'orb' : 'noorb'}:${this.rosterKey(players)}`)) return;
     const n = players.length;
     const sub = n === 0 ? this.text('screen.lobby.emptySubtitle')
       : this.text(n === 1 ? 'screen.lobby.oneRacer' : 'screen.lobby.manyRacers', { count: n });
@@ -171,24 +172,34 @@ export class Screens {
     const foot = n === 0
       ? `<span>${this.text('screen.lobby.everyoneCanJoin')}</span>`
       : `<span>${this.text('screen.lobby.sayStart')}</span>`;
+    const joinFlow = this.stationManaged
+      ? `<div class="join-flow station-call-flow">
+          <div class="join-flow-message"><strong>${this.text('screen.lobby.stationTitle')}</strong><span>${this.text('screen.lobby.stationBody')}</span></div>
+          <ol class="join-steps">
+            <li><span class="step-n">1</span> <span class="step-t">${this.text('screen.lobby.stationStep1')}</span></li>
+            <li><span class="step-n">2</span> <span class="step-t">${this.text('screen.lobby.stationStep2')}</span></li>
+            <li><span class="step-n">3</span> <span class="step-t">${this.text('screen.lobby.stationStep3')}</span></li>
+          </ol>
+        </div>`
+      : `<div class="join-flow">
+          <div class="join-qrs">
+            <div class="join-qr">
+              ${this.phoneQr ? `<img src="${this.phoneQr}" alt="${this.text('screen.lobby.qrAlt')}">` : ''}
+              <div class="join-qr-cap">${this.text('screen.lobby.qrCaption')}</div>
+            </div>
+            ${this.arcadeQr ? `<div class="join-qr coin-qr"><img src="${this.arcadeQr}" alt="${this.text('screen.lobby.coinQrAlt')}"><div class="join-qr-cap">${this.text('screen.lobby.coinQrCaption')}</div></div>` : ''}
+          </div>
+          <ol class="join-steps">
+            <li><span class="step-n">1</span> <span class="step-t">${this.text('screen.lobby.scanStep')}</span></li>
+            <li><span class="step-n">2</span> <span class="step-t">${this.text('screen.lobby.callStep')} ${num}</span></li>
+            <li><span class="step-n">3</span> <span class="step-t">${this.text('screen.lobby.joinStep')}</span></li>
+          </ol>
+        </div>`;
     this.root.innerHTML = `
       ${this.head(this.text('screen.lobby.title'), sub)}
       <div class="scr-center lobby-grid">
         <div class="lobby-main">
-          <div class="join-flow">
-            <div class="join-qrs">
-              <div class="join-qr">
-                ${this.phoneQr ? `<img src="${this.phoneQr}" alt="${this.text('screen.lobby.qrAlt')}">` : ''}
-                <div class="join-qr-cap">${this.text('screen.lobby.qrCaption')}</div>
-              </div>
-              ${this.arcadeQr ? `<div class="join-qr coin-qr"><img src="${this.arcadeQr}" alt="${this.text('screen.lobby.coinQrAlt')}"><div class="join-qr-cap">${this.text('screen.lobby.coinQrCaption')}</div></div>` : ''}
-            </div>
-            <ol class="join-steps">
-              <li><span class="step-n">1</span> <span class="step-t">${this.text('screen.lobby.scanStep')}</span></li>
-              <li><span class="step-n">2</span> <span class="step-t">${this.text('screen.lobby.callStep')} ${num}</span></li>
-              <li><span class="step-n">3</span> <span class="step-t">${this.text('screen.lobby.joinStep')}</span></li>
-            </ol>
-          </div>
+          ${joinFlow}
           ${this.chips(players)}
           <div class="scr-foot">${foot}</div>
         </div>

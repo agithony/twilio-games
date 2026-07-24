@@ -216,7 +216,7 @@ The application runs locally without Twilio or OpenAI credentials. Configure the
 | `ARCADE_CONFIG_DIRECTORY` | Persistent Arcade configuration and audit directory | `data/` |
 | `ARCADE_SIGNING_SECRET` | Exactly 64 hexadecimal characters used to derive player-session and challenge-token keys when station mode is enabled | Not read while station mode is `off` |
 | `ARCADE_STATE_PATH` | Persistent player, wallet, and queue state | `data/arcade-state.json` |
-| `ARCADE_STANDALONE_VOICE_ENABLED` | Allows mode-off calls to use recent-display standalone Relay routing when set to `true` | `false` in production; `true` outside production |
+| `ARCADE_STANDALONE_VOICE_ENABLED` | Allows standalone-mode calls to join the game currently open on the shared display | `false` in production; `true` otherwise |
 | `ARCADE_DEV_ADMIN` | Explicit local-only admin bypass used by `dev:arcade:server`; ignored in production | `false` |
 | `ARCADE_TAC_ENABLED` | Enables the active-event TAC lifecycle gateway; the local Arcade script disables it for credential-free testing | Enabled in production |
 | `TWILIO_ACCOUNT_SID`, `TWILIO_API_KEY`, `TWILIO_API_SECRET` | TAC, Conversation Memory, and outbound Messaging credentials from the primary SMS/WhatsApp account | Required by the production workflow |

@@ -38,7 +38,7 @@ const name = params.get('name') ?? text('player.default');
 
 const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
 const wsUrl = params.get('ws')
-  ?? `${wsProto}://${location.host}/battle`;
+  ?? `${wsProto}://${location.host}/battle${isDisplay?'?display=1':''}`;
 
 const overlay = document.getElementById('overlay')!;
 const stageEl = document.getElementById('stage')!;
@@ -446,19 +446,16 @@ function lobbyHtml(): string {
   const num = phoneNumber
     ? `<a class="vm-num" href="tel:${esc(phoneNumber)}">${esc(phoneNumber)}</a>`
     : `<span class="vm-num vm-num-unset">${text('lobby.phoneUnset')}</span>`;
+  const join = stationDisplay.active
+    ? `<div class="vm-station-call"><strong>${text('lobby.stationTitle')}</strong><span>${text('lobby.stationBody')}</span>
+        <ol class="vm-join-steps"><li><span class="vm-step-n">1</span> ${text('lobby.stationStep1')}</li><li><span class="vm-step-n">2</span> ${text('lobby.stationStep2')}</li><li><span class="vm-step-n">3</span> ${text('lobby.stationStep3')}</li></ol></div>`
+    : `<div class="vm-join">
+        <div class="vm-join-qr">${phoneQr ? `<img src="${esc(phoneQr)}" alt="${text('lobby.qrAlt')}">` : ''}<div class="vm-join-cap">${text('lobby.scanToJoin')}</div></div>
+        <ol class="vm-join-steps"><li><span class="vm-step-n">1</span> ${text('lobby.stepScan')}</li><li><span class="vm-step-n">2</span> ${text('lobby.stepCall', { number: num })}</li><li><span class="vm-step-n">3</span> ${text('lobby.stepBattle')}</li></ol>
+      </div>`;
   const left = `
     <div class="vm-lobby-main">
-      <div class="vm-join">
-        <div class="vm-join-qr">
-          ${phoneQr ? `<img src="${esc(phoneQr)}" alt="${text('lobby.qrAlt')}">` : ''}
-          <div class="vm-join-cap">${text('lobby.scanToJoin')}</div>
-        </div>
-        <ol class="vm-join-steps">
-          <li><span class="vm-step-n">1</span> ${text('lobby.stepScan')}</li>
-          <li><span class="vm-step-n">2</span> ${text('lobby.stepCall', { number: num })}</li>
-          <li><span class="vm-step-n">3</span> ${text('lobby.stepBattle')}</li>
-        </ol>
-      </div>
+      ${join}
       <div class="vm-chips">${chips}</div>
       ${action}
     </div>`;

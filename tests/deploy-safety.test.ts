@@ -87,4 +87,8 @@ describe('deployment rollback safety', () => {
     expect(workflow).toContain('"dub-folder-id=${DUB_FOLDER_ID:-disabled}"');
     expect(workflow).toContain('DUB_API_KEY and DUB_SHORT_DOMAIN must be configured together.');
   });
+
+  it('keeps production standalone game calls enabled', () => {
+    expect(containerApp).toMatch(/name: ARCADE_STANDALONE_VOICE_ENABLED\s+value: "true"/);
+  });
 });

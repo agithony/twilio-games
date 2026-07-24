@@ -56,8 +56,10 @@ const stationDisplay = createStationDisplay();
 // Game WebSocket URL. Production is same-origin; local Vite proxies /game to GAME_SERVER_URL.
 // An explicit ?ws= override still wins for edge setups.
 const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
-const wsOverride = new URLSearchParams(location.search).get('ws');
-const url = wsOverride ?? `${wsProto}://${location.host}/game`;
+const pageParams = new URLSearchParams(location.search);
+const isDisplay = pageParams.get('display') === '1';
+const wsOverride = pageParams.get('ws');
+const url = wsOverride ?? `${wsProto}://${location.host}/game${isDisplay?'?display=1':''}`;
 const conn = new GameConnection(url, locale);
 const input = new KeyboardAdapter();
 const assets = new AssetLoader();
@@ -136,12 +138,11 @@ lobbyEl.style.display = 'none';   // legacy overlay retired; the Screens overlay
 const screens = new Screens(document.getElementById('app')!, {
   onAdvance: () => { if (!stationDisplay.active || flowPhase !== 'results') conn.advance(); },
   onBack: () => conn.back(),
-}, locale);
+}, locale, stationDisplay.active);
 
 const roomCode = new URLSearchParams(location.search).get('room') ?? DEFAULT_ROOM;
 const name = new URLSearchParams(location.search).get('name') ?? text('player.you');
 const urlMap = new URLSearchParams(location.search).get('map');   // legacy/manual override (?map=)
-const isDisplay = new URLSearchParams(location.search).get('display') === '1';
 // Garage / car viewer: ?garage=1 shows one car at a time (← → to cycle models) at its real
 // per-level size, so you can inspect/test cars without starting a race. No server needed.
 const isGarage = new URLSearchParams(location.search).get('garage') === '1';

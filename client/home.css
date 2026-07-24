@@ -68,6 +68,7 @@ html[data-theme="light"] .brand-lockup img, html[data-theme="light"] .countdown-
 .standalone-heading p { max-width:720px;margin:0;color:var(--th-dim);font-size:clamp(14px,1.3vw,18px);line-height:1.4; }
 .standalone-catalog { flex:1 1 auto;min-height:0;display:grid;grid-template-rows:minmax(0,1fr) auto;gap:clamp(10px,1.5vh,16px); }
 .standalone-games { min-height:0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:clamp(10px,1.5vw,18px); }
+.standalone-unavailable{grid-column:1/-1;padding:28px;border:1px solid var(--th-border);border-radius:16px;background:var(--th-card);color:var(--th-text);font-size:18px;text-align:center}
 .standalone-game { position:relative;min-height:0;overflow:hidden;border:1px solid var(--th-border);border-radius:22px;color:#fff;background:radial-gradient(circle at 75% 20%,#38425E 0,transparent 38%),#080C18;text-decoration:none;box-shadow:0 18px 45px var(--th-panel-shadow);isolation:isolate; }
 .standalone-game video { position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:-2;transition:transform .35s ease,filter .35s ease; }
 .standalone-game::after { content:'';position:absolute;inset:0;z-index:-1;background:linear-gradient(180deg,rgba(0,13,37,.08) 28%,rgba(0,13,37,.92) 100%); }

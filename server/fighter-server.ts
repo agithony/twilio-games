@@ -7,7 +7,7 @@ import { parseFighterClientMessage, type FighterServerMessage } from '../shared/
 import type { FighterCommand, FighterEvent } from '../shared/fighter-world';
 import { DEFAULT_LOCALE, type SupportedLocale } from '../shared/i18n/locales';
 
-interface Conn { ws: WebSocket; roomCode?: string; playerId?: string; sessionId?: string; display?: boolean; hostAuthorized?: boolean; locale?: SupportedLocale; }
+interface Conn { ws: WebSocket; roomCode?: string; playerId?: string; sessionId?: string; display?: boolean; hostAuthorized?: boolean; displayAuthenticated?: boolean; locale?: SupportedLocale; }
 interface Session {
   roomCode: string; playerId: string; conn: Conn | null; timer: ReturnType<typeof setTimeout> | null;
   display: boolean; wasHost: boolean;
@@ -29,6 +29,7 @@ export class FighterServer {
   private allowBrowserPlayer: (roomCode: string) => boolean = () => true;
 
   private readonly displayToken: string;
+  private onDisplayAuthenticated: ((ws: WebSocket) => void) | null = null;
 
   constructor(opts: { server: HttpServer; displayToken?: string }) {
     this.displayToken = opts.displayToken?.trim() ?? '';
@@ -36,10 +37,11 @@ export class FighterServer {
     this.loop = setInterval(() => this.tick(), 50);
     (this.loop as { unref?: () => void }).unref?.();
   }
-  handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer): void {
-    this.wss.handleUpgrade(req, socket, head, ws => this.onConnection(ws));
+  handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer, connected?: (ws:WebSocket)=>void): void {
+    this.wss.handleUpgrade(req, socket, head, ws => {connected?.(ws);this.onConnection(ws);});
   }
   get connectionCount(): number { return this.conns.size; }
+  setOnDisplayAuthenticated(fn: (ws: WebSocket) => void): void { this.onDisplayAuthenticated = fn; }
   preferredLocale(roomCode?: string, fallback: SupportedLocale = DEFAULT_LOCALE): SupportedLocale {
     const matching = [...this.conns].filter(conn => (!roomCode || conn.roomCode === roomCode) && conn.locale);
     return matching.find(conn => conn.display)?.locale ?? matching[0]?.locale ?? fallback;
@@ -127,7 +129,7 @@ export class FighterServer {
       if (!this.displayToken || msg.token !== this.displayToken) {
         this.send(conn, { type: 'error', code: 'bad_display_auth', message: 'Invalid display token.' }); return;
       }
-      conn.hostAuthorized = true;
+      conn.hostAuthorized = true; conn.displayAuthenticated = true;
       if (conn.roomCode === code && conn.display && !this.hosts.has(code)) { this.hosts.set(code, conn); this.pushHostIdentity(code); }
       return;
     }
@@ -141,6 +143,7 @@ export class FighterServer {
         this.send(conn, { type: 'error', code: 'bad_display_auth', message: 'Invalid display token.' }); return;
       }
       conn.roomCode = code; conn.display = true; conn.hostAuthorized = !stationDisplay || conn.hostAuthorized === true; this.room(code);
+      if (conn.displayAuthenticated) this.onDisplayAuthenticated?.(conn.ws);
       if (!this.hosts.has(code) && conn.hostAuthorized) this.hosts.set(code, conn);
       this.pushHostIdentity(code); this.pushState(code); return;
     }

@@ -102,7 +102,7 @@ async function createThreeReadyPlayers(h: Awaited<ReturnType<typeof harness>>): 
     const ready = await inbound(
       h.service, `SM-COIN-${index}`, locale === 'pt-BR' ? 'MOEDA' : 'COIN', from,
     );
-    if (index === 0) expect(ready.reply).toContain('we will text assignment and call updates');
+    if (index === 0) expect(ready.reply).toContain("we'll text you a number to call");
   }
 }
 
@@ -157,9 +157,9 @@ describe('Arcade station outbound outbox', () => {
     });
     const resultNotice = Object.values(h.store.snapshot().outboundNotifications)
       .find(item => item.kind === 'STATION_RESULTS' && item.locale === 'en-US')!;
-    expect(resultNotice.body).toContain('Your Voice Fighter match is complete');
-    expect(resultNotice.body).not.toContain('Available balance');
-    expect(resultNotice.body).toContain('Reply MORE for one page with every available challenge');
+    expect(resultNotice.body).toContain('Voice Fighter complete!');
+    expect(resultNotice.body).toContain('controlled the big screen by phone call');
+    expect(resultNotice.body).toContain('Reply MORE to complete a challenge');
     expect(resultNotice.templateVariables).toEqual({ '1': 'Voice Fighter' });
     expect(Object.values(h.store.snapshot().outboundNotifications)
       .filter(item => item.kind === 'STATION_RESULTS' && item.channel === 'whatsapp')

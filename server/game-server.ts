@@ -72,6 +72,7 @@ export class GameServer {
   private started = new WeakSet<Room>();
   private allowBrowserPlayer: (roomCode: string) => boolean = () => true;
   private readonly displayToken: string;
+  private onDisplayAuthenticated: ((ws: WebSocket) => void) | null = null;
 
   constructor(opts: { port?: number; server?: HttpServer; broadcastHz?: number; displayToken?: string }) {
     this.port = opts.port;
@@ -92,6 +93,7 @@ export class GameServer {
   setOnRaceStarted(fn: (room: Room) => void): void { this.onRaceStarted = fn; }
   setOnRaceAbandoned(fn: (room: Room) => void): void { this.onRaceAbandoned = fn; }
   setBrowserPlayerAdmission(fn: (roomCode: string) => boolean): void { this.allowBrowserPlayer = fn; }
+  setOnDisplayAuthenticated(fn: (ws: WebSocket) => void): void { this.onDisplayAuthenticated = fn; }
 
   /** Register a hook fired with a room's game events each broadcast — for the voice talk-back layer. */
   setOnRoomEvents(fn: (roomCode: string, events: GameEvent[]) => void): void {
@@ -119,10 +121,10 @@ export class GameServer {
   }
 
   /** Route a /game upgrade from the owning http server into this game's WebSocketServer. */
-  handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer): void {
+  handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer, connected?: (ws:WebSocket)=>void): void {
     const path = (req.url ?? '').split('?')[0];
     if (path !== '/game') { socket.destroy(); return; }
-    this.wss!.handleUpgrade(req, socket, head, (ws) => this.onConnection(ws));
+    this.wss!.handleUpgrade(req, socket, head, (ws) => {connected?.(ws);this.onConnection(ws);});
   }
 
   start(): Promise<number> {
@@ -256,6 +258,7 @@ export class GameServer {
         }
         conn.stationDisplay = stationDisplay;
         conn.hostAuthorized = !stationDisplay || msg.displayToken === this.displayToken;
+        if (this.displayToken && msg.displayToken === this.displayToken) this.onDisplayAuthenticated?.(conn.ws);
         this.room(msg.roomCode);
         conn.roomCode = msg.roomCode;   // no playerId: receives broadcasts, occupies no slot
         this.pushLobby(msg.roomCode);   // send the display the current select/lobby state immediately

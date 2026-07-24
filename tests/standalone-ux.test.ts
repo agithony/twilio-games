@@ -14,13 +14,15 @@ describe('standalone and station display UX', () => {
     expect(css).not.toContain('.game-card.focused');
   });
 
-  it('does not use captured station auth for a standalone Fighter display', () => {
+  it('uses paired display auth for standalone Fighter routing without loading station state', () => {
     const home = readClient('home.ts');
     const fighter = readClient('fighter/fighter.ts');
     const refresh = /async function refresh\(\)[\s\S]*?\n}/.exec(home)?.[0] ?? '';
     expect(refresh.indexOf('if (standaloneMode)')).toBeLessThan(refresh.indexOf('fetchPublicStation(displayToken)'));
     expect(refresh).toMatch(/if \(standaloneMode\) \{[\s\S]*?return;/);
-    expect(fighter).toContain('stationDisplay.active ? stationDisplay.displayToken : null');
+    expect(home).toContain('validateStandaloneDisplay()');
+    expect(home).toContain('standaloneDisplayAuthorized&&config.channels.voice');
+    expect(fighter).toContain('connection.setDisplayAuth(roomCode, isDisplay ? stationDisplay.displayToken : null)');
     expect(fighter).not.toContain("params.get('hostToken')");
     expect(fighter).toContain("pageUrl.searchParams.delete('hostToken')");
     expect(fighter).not.toContain("t('lobby.room', { room: roomCode })");
@@ -44,7 +46,8 @@ describe('standalone and station display UX', () => {
     expect(home).toContain("station.phase==='ATTRACT'||station.phase==='RECRUITING'||station.phase==='RESULTS'");
     expect(home).toContain("station.phase === 'RESULTS' ? station.nextReadyCount : station.currentReadyCount");
     expect(home).toContain("document.getElementById('persistentJoinQr')");
-    expect(stationDisplay).toContain("setRailVisible(railMode !== 'hidden')");
+    expect(stationDisplay).toContain("if(railMode==='always')return true");
+    expect(stationDisplay).toContain("latest?.station.phase==='PLAYING'||latest?.station.phase==='RESULTS'");
   });
 
   it('requires a challenge visit before explicit reward confirmation', () => {

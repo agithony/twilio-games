@@ -241,6 +241,13 @@ describe('Arcade API', () => {
       voiceNumbers: localized.channels.voiceNumbers,
     });
 
+    const display = new WebSocket(`${baseUrl.replace('http:', 'ws:')}/game?display=1`);
+    await new Promise<void>((resolve, reject) => {
+      display.once('open', resolve);
+      display.once('error', reject);
+    });
+    display.send(JSON.stringify({ type: 'spectate', roomCode: '4821', displayToken: DISPLAY_TOKEN }));
+    await new Promise(resolve => setTimeout(resolve, 20));
     const voice = await fetch(`${baseUrl}/voice/incoming`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -251,6 +258,7 @@ describe('Arcade API', () => {
     const xml = await voice.text();
     expect(xml).toContain('transcriptionLanguage="pt-BR"');
     expect(xml).toContain('name="commandLocale" value="pt-BR"');
+    display.close();
 
     localized.channels.voiceNumbers['pt-BR'] = null;
     await store.update({
@@ -513,7 +521,7 @@ describe('Arcade API', () => {
     await reader.cancel();
   });
 
-  it('pauses an active station without mutating it and requires reset before reopening', async () => {
+  it('requires resetting an active event before switching player journeys', async () => {
     const { baseUrl, store, playerRuntime } = await harness({ playerMode: 'coin_only' });
     const resources = await playerRuntime.getActive();
     await resources.service.identifyCoinOnly({
@@ -560,55 +568,17 @@ describe('Arcade API', () => {
     expect(await mixedResponse.json()).toMatchObject({
       error: {
         code: 'ACTIVE_STATION_CONFIG_LOCKED',
-        message: expect.stringContaining('Pause the event in a separate update'),
+        message: expect.stringContaining('Reset the active event flow'),
       },
     });
     expect(store.getSnapshot()).toMatchObject({ version: 2, arcade: { mode: 'coin_only' } });
     expect(resources.store.snapshot()).toEqual(activeState);
 
-    const pauseResponse = await updateConfig(baseUrl, settings('off'), {
-      etag: '"arcade-config-2"', key: 'pause-only',
+    const standaloneBlocked = await updateConfig(baseUrl, settings('off'), {
+      etag: '"arcade-config-2"', key: 'standalone-before-reset',
     });
-    expect(pauseResponse.status).toBe(200);
-    expect(await pauseResponse.json()).toMatchObject({ version: 3, arcade: { mode: 'off' } });
-    expect(resources.store.snapshot()).toEqual(activeState);
-    expect(await (await fetch(`${baseUrl}/api/arcade/station/public`)).json()).toMatchObject({
-      phase: 'ATTRACT', revision: 0, currentReadyCount: 0, roster: [], launch: null,
-    });
-
-    const pausedAction = await fetch(`${baseUrl}/api/admin/arcade/station/results/advance`, {
-      method: 'POST',
-      headers: {
-        ...ADMIN_HEADER,
-        Origin: 'http://localhost',
-        'Content-Type': 'application/json',
-        'If-Match': `"arcade-station-${coin.station.revision}"`,
-        'Idempotency-Key': 'paused-action-bypass',
-      },
-      body: JSON.stringify({ reason: 'must not bypass paused reset' }),
-    });
-    expect(pausedAction.status).toBe(409);
-    expect(await pausedAction.json()).toMatchObject({
-      error: { code: 'PAUSED_EVENT_RESET_REQUIRED' },
-    });
-    await expect(resources.service.advanceStationResults({
-      stationId: 'ARCADE-01',
-      expectedRevision: coin.station.revision,
-      idempotencyKey: 'paused-service-race',
-      authorization: resources.operatorAuthorization('operator@twilio.com'),
-    })).rejects.toMatchObject({ code: 'PAUSED_EVENT_RESET_REQUIRED' });
-
-    const reopenBlocked = await updateConfig(baseUrl, settings('coin_only'), {
-      etag: '"arcade-config-3"', key: 'reopen-before-reset',
-    });
-    expect(reopenBlocked.status).toBe(409);
-    expect(await reopenBlocked.json()).toMatchObject({
-      error: {
-        code: 'ACTIVE_STATION_CONFIG_LOCKED',
-        message: expect.stringContaining('reset the event flow before reopening'),
-      },
-    });
-    expect(store.getSnapshot()).toMatchObject({ version: 3, arcade: { mode: 'off' } });
+    expect(standaloneBlocked.status).toBe(409);
+    expect(await standaloneBlocked.json()).toMatchObject({error:{code:'ACTIVE_STATION_CONFIG_LOCKED'}});
     expect(resources.store.snapshot()).toEqual(activeState);
 
     const reset = await fetch(`${baseUrl}/api/admin/arcade/station/reset`, {
@@ -620,13 +590,22 @@ describe('Arcade API', () => {
         'If-Match': `"arcade-station-${coin.station.revision}"`,
         'Idempotency-Key': 'pause-reset',
       },
-      body: JSON.stringify({ reason: 'clear paused round before reopening' }),
+      body: JSON.stringify({ reason: 'clear current event before standalone play' }),
     });
     expect(reset.status).toBe(200);
     expect(await reset.json()).toMatchObject({ station: { phase: 'ATTRACT' }, round: null, match: null });
 
+    const standalone = await updateConfig(baseUrl, settings('off'), {
+      etag: '"arcade-config-2"', key: 'standalone-after-reset',
+    });
+    expect(standalone.status).toBe(200);
+    expect(await standalone.json()).toMatchObject({ version: 3, arcade: { mode: 'off' } });
+    expect(await (await fetch(`${baseUrl}/api/arcade/station/public`)).json()).toMatchObject({
+      phase: 'ATTRACT', revision: 0, currentReadyCount: 0, roster: [], launch: null,
+    });
+
     const reopened = await updateConfig(baseUrl, settings('coin_only'), {
-      etag: '"arcade-config-3"', key: 'reopen-after-reset',
+      etag: '"arcade-config-3"', key: 'messaging-after-standalone',
     });
     expect(reopened.status).toBe(200);
     expect(await reopened.json()).toMatchObject({ version: 4, arcade: { mode: 'coin_only' } });
@@ -1204,9 +1183,9 @@ describe('Arcade API', () => {
     expect(joined.status).toBe(200);
     expect(await joined.text()).toContain('first name');
     expect(await (await send('SM-ARCADE-2', 'Ada')).text()).toContain('Reply YES');
-    expect(await (await send('SM-ARCADE-3', 'YES')).text()).toContain('Thanks, Ada');
-    expect(await (await send('SM-ARCADE-4', 'COIN')).text()).toContain('Coin inserted');
-    expect(await (await send('SM-ARCADE-5', 'STATUS')).text()).toContain('Station status: READY');
+    expect(await (await send('SM-ARCADE-3', 'YES')).text()).toContain('You&apos;re set, Ada');
+    expect(await (await send('SM-ARCADE-4', 'COIN')).text()).toContain('COIN IN');
+    expect(await (await send('SM-ARCADE-5', 'STATUS')).text()).toContain('#1 in line for the next game');
     expect(await (await send('SM-ARCADE-1', 'JOIN ARCADE-01 LANG en-US')).text()).toContain('first name');
     expect(await api.processMessagingWebhook({
       from: '+14155550199', body: 'JOIN ARCADE-01 LANG en-US', providerMessageId: 'SM-ARCADE-1',
@@ -1366,7 +1345,7 @@ describe('Arcade API', () => {
     });
     expect(await api.processMessagingWebhook({
       from: '+14155550199', body: 'COIN', providerMessageId: 'SM-RETRY-COIN',
-    })).toContain('we will text assignment and call updates');
+    })).toContain("we'll text you a number to call");
     const resources = await playerRuntime.getActive();
     const recruiting = await resources.service.getStation('ARCADE-01');
     const selecting = await resources.service.closeStationRecruiting({
@@ -1621,6 +1600,64 @@ describe('Arcade API', () => {
     expect(await api.stationVoiceRoute('+14155550199', 'CA-retained-mode-off')).toBeNull();
     expect(playerRuntime.getStatus().initialized).toBe(false);
     expect((await fetch(`${baseUrl}/healthz`)).status).toBe(200);
+  });
+
+  it('persists standalone locale and provider replays without creating player identities', async () => {
+    const { baseUrl, store, playerRuntime, api } = await harness();
+    const portuguese = {
+      from: '+14155550199', body: 'LANG pt-BR', providerMessageId: 'SM-STANDALONE-PT',
+    };
+    const firstReply = await api.processMessagingWebhook(portuguese);
+    expect(firstReply).toContain('jogo independente');
+    expect(await api.processMessagingWebhook(portuguese)).toBe(firstReply);
+    expect(await api.processMessagingWebhook({
+      from: portuguese.from, body: 'oi', providerMessageId: 'SM-STANDALONE-PT-2',
+    })).toContain('jogo independente');
+
+    expect(await api.processMessagingWebhook({
+      from: '+5511999999999', body: 'LANG en-US', providerMessageId: 'SM-STANDALONE-EN',
+    })).toContain('Standalone play is active');
+    const mms = await fetch(`${baseUrl}/sms`, {
+      method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        From: '+5511999999999', Body: '', MessageSid: 'SM-STANDALONE-MMS', NumMedia: '1',
+      }),
+    });
+    expect(await mms.text()).toContain('I can read text replies only');
+
+    const cleanupStore = await playerRuntime.getStateStoreForCleanup();
+    const state = cleanupStore.snapshot();
+    expect(Object.keys(state.players)).toHaveLength(0);
+    expect(Object.keys(state.inboundMessages)).toHaveLength(3);
+    expect(Object.keys(state.idempotencyRecords).filter(key => key.startsWith('standalone-locale:'))).toHaveLength(2);
+
+    const staleAt = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000).toISOString();
+    await cleanupStore.transaction(draft => {
+      for (const [id, message] of Object.entries(draft.inboundMessages)) {
+        if (message.command === 'STANDALONE') draft.inboundMessages[id] = { ...message, receivedAt: staleAt };
+      }
+      for (const [id, record] of Object.entries(draft.idempotencyRecords)) {
+        if (id.startsWith('standalone-locale:')) draft.idempotencyRecords[id] = { ...record, createdAt: staleAt };
+      }
+    });
+    expect(await api.processMessagingWebhook({
+      from: portuguese.from, body: 'hello', providerMessageId: 'SM-STANDALONE-PRUNE',
+    })).toContain('Standalone play is active');
+    const pruned = cleanupStore.snapshot();
+    expect(Object.values(pruned.inboundMessages).map(message => message.providerMessageId))
+      .toEqual(['SM-STANDALONE-PRUNE']);
+    expect(Object.keys(pruned.idempotencyRecords).filter(id => id.startsWith('standalone-locale:')))
+      .toHaveLength(1);
+
+    const englishOnly = settings('off') as Record<string, any>;
+    englishOnly.channels.voiceNumbers = { 'en-US': '+18555993809', 'pt-BR': null };
+    await store.update({
+      expectedVersion: 1, idempotencyKey: 'standalone-english-only',
+      updatedBy: 'test@twilio.com', settings: englishOnly as ArcadeConfigSettings,
+    });
+    expect(await api.processMessagingWebhook({
+      from: '+5511888888888', body: 'LANG pt-BR', providerMessageId: 'SM-STANDALONE-NO-PT',
+    })).toContain('não estão disponíveis');
   });
 
   it('reports degraded health when enabled player state cannot initialize', async () => {

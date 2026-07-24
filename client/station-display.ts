@@ -57,7 +57,7 @@ export function createStationDisplay(): StationDisplay {
     try {
       const config = await fetchPublicArcadeConfig();
       railMode = config.station.qrRail;
-      setRailVisible(railMode !== 'hidden');
+      setRailVisible(railShouldShow());
       rail.instructions.innerHTML = config.coins.chargePolicy === 'free'
         ? locale === 'pt-BR'
           ? 'Comece pelo telefone e responda <b>PRONTO</b> quando estiver na tela.'
@@ -92,7 +92,7 @@ export function createStationDisplay(): StationDisplay {
     refreshing = true;
     try {
       latest = await fetchPublicStation(displayToken);
-      setRailVisible(railMode !== 'hidden');
+      setRailVisible(railShouldShow());
       const launch = latest.station.launch;
       const sameLaunch = launch?.matchId === matchId && launch.generation === generation;
       rail.count.textContent = String(latest.station.nextReadyCount);
@@ -165,6 +165,12 @@ export function createStationDisplay(): StationDisplay {
     rail.root.hidden = !visible;
     document.body.classList.toggle('station-mode', visible);
     if(changed)dispatchEvent(new Event('resize'));
+  }
+
+  function railShouldShow():boolean{
+    if(railMode==='hidden')return false;
+    if(railMode==='always')return true;
+    return latest?.station.phase==='PLAYING'||latest?.station.phase==='RESULTS';
   }
 }
 

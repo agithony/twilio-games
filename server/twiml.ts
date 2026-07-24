@@ -18,6 +18,11 @@ export function twimlEmpty(): string {
 <Response></Response>`;
 }
 
+export function twimlHangup(): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<Response><Hangup /></Response>`;
+}
+
 export function twimlSayAndHangup(text: string, locale: SupportedLocale = DEFAULT_LOCALE): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response><Say language="${esc(LOCALE_PROFILES[locale].ttsLanguage)}">${esc(text)}</Say><Hangup /></Response>`;
@@ -80,7 +85,7 @@ export function twimlConnectRelay(opts: {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Connect action="${esc(opts.sessionEndedUrl)}">
-    <ConversationRelay url="${esc(opts.wsUrl)}"${ttsAttrs} transcriptionProvider="Deepgram" speechModel="flux" partialPrompts="true" transcriptionLanguage="${esc(profile.transcriptionLanguage)}" ttsLanguage="${esc(profile.ttsLanguage)}" interruptible="speech" reportInputDuringAgentSpeech="speech" interruptSensitivity="medium" ignoreBackchannel="true" dtmfDetection="true" hints="${hints}" speechTimeout="600" eotThreshold="0.6" welcomeGreeting="${greeting}">
+    <ConversationRelay url="${esc(opts.wsUrl)}"${ttsAttrs} transcriptionProvider="Deepgram" speechModel="flux" partialPrompts="true" transcriptionLanguage="${esc(profile.transcriptionLanguage)}" ttsLanguage="${esc(profile.ttsLanguage)}" interruptible="speech" reportInputDuringAgentSpeech="speech" interruptSensitivity="medium" ignoreBackchannel="true" dtmfDetection="true" hints="${hints}" speechTimeout="600" eotThreshold="0.6" events="tokens-played" welcomeGreeting="${greeting}">
       <Parameter name="roomCode" value="${esc(opts.roomCode)}" />${gameParam}${readyEntryParam}${matchParams}${relayTokenParam}${localeParams}
     </ConversationRelay>
   </Connect>

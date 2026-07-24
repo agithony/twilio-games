@@ -51,11 +51,12 @@ describe('home preview media and standalone catalog', () => {
     expect(html.indexOf('id="standaloneGames"')).toBeLessThan(html.indexOf('class="standalone-future"'));
   });
 
-  it('builds standalone video nodes only once and never requests autoplay', () => {
+  it('rebuilds standalone videos only when enabled games change and never requests autoplay', () => {
     const launcher = /function renderStandaloneLauncher\(\): void \{[\s\S]*?\n\}/.exec(home)?.[0] ?? '';
-    expect(launcher).toContain('if (standaloneGames.childElementCount > 0) return;');
+    expect(launcher).toContain("const key=[...enabledGames].sort().join(',')");
+    expect(launcher).toContain('if(key===standaloneGamesKey)return;');
+    expect(launcher).toContain('standaloneGames.replaceChildren();');
     expect(launcher).toContain('standaloneGames.append(');
-    expect(launcher).not.toContain('replaceChildren');
     expect(`${html}\n${home}`).not.toMatch(/\bautoplay\b/i);
   });
 

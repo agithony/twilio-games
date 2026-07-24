@@ -118,6 +118,7 @@ export class ConversationRelayAdapter {
   private lastChattyAt = -1e9;
   private clockMs = 0;   // advanced from event cadence; monotonic enough for throttling
   private recapDone = false;   // one proactive results recap per race (reset on a new countdown/go)
+  private pendingSpeech = new Set<Promise<void>>();
   private myFinishPlace: number | null = null;
   private lastMenuPrompt: { kind: 'enter_car_select' | 'enter_map_select'; at: number } | null = null;
   onGameEvent(ev: GameEvent): void {
@@ -147,9 +148,12 @@ export class ConversationRelayAdapter {
       if (this.deps.converse && this.roomCode) {
         const epoch = ++this.turnEpoch;
         const prompt = createTranslator(this.commandLocale, RACER_MESSAGES)('voice.raceOverPrompt');
-        void this.deps.converse(this.roomCode, this.playerId, prompt, this.commandLocale)
+        let speech!: Promise<void>;
+        speech = this.deps.converse(this.roomCode, this.playerId, prompt, this.commandLocale)
           .then(reply => { if (epoch === this.turnEpoch) this.deps.say?.(reply || raceOverLine(this.myFinishPlace, this.commandLocale)); })
-          .catch(() => { this.deps.say?.(raceOverLine(this.myFinishPlace, this.commandLocale)); });
+          .catch(() => { this.deps.say?.(raceOverLine(this.myFinishPlace, this.commandLocale)); })
+          .finally(() => this.pendingSpeech.delete(speech));
+        this.pendingSpeech.add(speech);
         return;
       }
       this.deps.say?.(raceOverLine(this.myFinishPlace, this.commandLocale));
@@ -157,6 +161,10 @@ export class ConversationRelayAdapter {
     }
     const line = lineForEvent(ev, this.playerId, this.lineSeq, this.commandLocale);
     if (line) { this.lineSeq++; this.deps.say?.(line); }
+  }
+
+  async whenSpeechSettled(): Promise<void> {
+    await Promise.allSettled([...this.pendingSpeech]);
   }
 
   handleMessage(raw: string): void {

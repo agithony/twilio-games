@@ -28,12 +28,14 @@ import {
   ArcadePlayerRuntime,
   ArcadePlayerRuntimeError,
 } from './arcade-player-runtime';
+import type { StationMatchRemoval } from './arcade-station-runtime';
 import {
   ArcadePlayerSessionError,
   type ArcadePlayerSessionService,
 } from './arcade-player-session';
 import { ArcadeRateLimiter } from './arcade-rate-limiter';
 import {
+  ARCADE_MESSAGING_RETENTION_MS,
   ArcadeServiceError,
   type ArcadeOperatorQueueStatus,
   type ArcadeQueueStatus,
@@ -72,6 +74,7 @@ const DEFAULT_MESSAGING_ADDRESS_LIMIT = 30;
 const DEFAULT_MESSAGING_ADDRESS_WINDOW_MS = 10 * 60_000;
 const DEFAULT_MESSAGING_PROCESS_LIMIT = 600;
 const DEFAULT_MESSAGING_PROCESS_WINDOW_MS = 60_000;
+const STANDALONE_MESSAGING_MAX_RECORDS = 5_000;
 
 export interface ArcadeAdminPrincipal {
   readonly email: string;
@@ -162,7 +165,7 @@ export class ArcadeApi {
   private unsubscribeStationCache: (() => void) | null = null;
   private readonly stationVoiceCalls = new Map<string, { callSid: string; readyEntryId: string }>();
   private readonly stationVoiceConnections = new Map<string, string>();
-  private abortStationEngine: ((game: 'racer' | 'monsters' | 'fighter', roomCode: string) => void) | null = null;
+  private abortStationEngine: ((game: 'racer' | 'monsters' | 'fighter', roomCode: string, removal: StationMatchRemoval) => void) | null = null;
   private playerResetCleanup: ((context: PlayerResetCleanupContext) => Promise<void>) | null = null;
   private started = false;
   private stopped = false;
@@ -250,17 +253,50 @@ export class ArcadeApi {
     return this.effectiveVoiceNumbers(this.configStore.getSnapshot());
   }
 
+  standaloneVoiceAvailable(): boolean {
+    const config = this.configStore.getSnapshot();
+    return config.channels.voice
+      && Object.values(config.station.games).some(game => game.enabled)
+      && Object.values(this.effectiveVoiceNumbers(config)).some(number => number !== null);
+  }
+  standaloneGameEnabled(game: 'racer' | 'monsters' | 'fighter'): boolean {
+    return this.configStore.getSnapshot().station.games[game].enabled;
+  }
+
+  async messagingLocaleForAddress(providerAddress: string): Promise<'en-US' | 'pt-BR' | null> {
+    if (!this.playerRuntime) return null;
+    const channel = providerAddress.toLowerCase().startsWith('whatsapp:') ? 'whatsapp' : 'sms';
+    const normalizedAddress = providerAddress.replace(/^whatsapp:/i, '').trim();
+    if (!normalizedAddress) return null;
+    const state = await this.playerRuntime.getStateStoreForCleanup()
+      .then(store => store.read())
+      .catch(() => null);
+    const locale = Object.values(state?.channelAddresses ?? {}).find(address => (
+      address.channel === channel && address.normalizedAddress === normalizedAddress
+    ))?.preferredLocale;
+    if (locale === 'en-US' || locale === 'pt-BR') return locale;
+    const localeKey = `standalone-locale:${createHash('sha256')
+      .update(`${channel}:${normalizedAddress}`)
+      .digest('hex')}`;
+    const remembered = state?.idempotencyRecords[localeKey];
+    const rememberedLocale = remembered?.operation === 'PROCESS_STATION_MESSAGE'
+      && Date.parse(remembered.createdAt) >= this.now() - ARCADE_MESSAGING_RETENTION_MS
+      ? (remembered.result as { locale?: unknown }).locale
+      : null;
+    return rememberedLocale === 'en-US' || rememberedLocale === 'pt-BR' ? rememberedLocale : null;
+  }
+
   canonicalStationEnginePlayerId(enginePlayerId: string): string {
     return this.playerRuntime?.getInitializedResources()?.station.canonicalEnginePlayerId(enginePlayerId)
       ?? enginePlayerId;
   }
 
   setStationAbortHandler(
-    handler: (game: 'racer' | 'monsters' | 'fighter', roomCode: string) => void,
+    handler: (game: 'racer' | 'monsters' | 'fighter', roomCode: string, removal: StationMatchRemoval) => void,
   ): void {
     this.abortStationEngine = handler;
-    this.playerRuntime?.setStationMatchRemovedHandler((game, roomCode) => {
-      this.abortLiveStationEngine(game, roomCode);
+    this.playerRuntime?.setStationMatchRemovedHandler((game, roomCode, removal) => {
+      this.removeLiveStationEngine(game, roomCode, removal);
     });
     const resources = this.playerRuntime?.getInitializedResources();
     if (resources) this.bindStationAbortHandler(resources);
@@ -307,28 +343,34 @@ export class ArcadeApi {
       || !input.providerMessageId || input.providerMessageId.length > 256) {
       throw new ArcadeHttpError(400, 'INVALID_PROVIDER_MESSAGE', 'messaging provider identity is invalid');
     }
-    const language = /\bLANG\s+(pt(?:-BR)?|en(?:-US)?)\b/i.exec(input.body)?.[1]
+    const explicitLanguage = /\bLANG\s+(pt(?:-BR)?|en(?:-US)?)\b/i.exec(input.body)?.[1]
       ?? (/^\s*ENTRAR(?:\s|$)/i.test(input.body) ? 'pt-BR' : null)
-      ?? (/^\s*JOIN(?:\s|$)/i.test(input.body) ? 'en-US' : null)
-      ?? input.recalledLocale ?? 'en-US';
+      ?? (/^\s*JOIN(?:\s|$)/i.test(input.body) ? 'en-US' : null);
+    let language = explicitLanguage ?? input.recalledLocale ?? 'en-US';
     const key = `provider:${createHash('sha256')
       .update(input.providerMessageId)
       .digest('hex')}`;
-    if (this.playerRuntime) {
-      const store = await this.playerRuntime.getStateStoreForCleanup();
-      const receipt = (await store.read()).inboundMessages[key];
+    const requestFingerprint = createHash('sha256').update(JSON.stringify({
+      body: input.body.trim(), channel,
+      ...(input.conversationId ? { conversationId: input.conversationId } : {}),
+      ...(conversationProfileId ? { conversationProfileId } : {}),
+      normalizedAddress, providerAddress, providerMessageId: input.providerMessageId,
+    })).digest('hex');
+    const fallbackFingerprint = createHash('sha256').update(JSON.stringify({
+      body: input.body.trim(), channel, normalizedAddress, providerAddress,
+      providerMessageId: input.providerMessageId,
+    })).digest('hex');
+    const standaloneLocaleKey = `standalone-locale:${createHash('sha256')
+      .update(`${channel}:${normalizedAddress}`)
+      .digest('hex')}`;
+    const stateStore = this.playerRuntime
+      ? await this.playerRuntime.getStateStoreForCleanup()
+      : null;
+    if (stateStore) {
+      const storedState = await stateStore.read();
+      const receipt = storedState.inboundMessages[key];
       if (receipt) {
-        const requestFingerprint = createHash('sha256').update(JSON.stringify({
-          body: input.body.trim(), channel,
-          ...(input.conversationId ? { conversationId: input.conversationId } : {}),
-          ...(conversationProfileId ? { conversationProfileId } : {}),
-          normalizedAddress, providerAddress, providerMessageId: input.providerMessageId,
-        })).digest('hex');
         if (receipt.requestFingerprint !== requestFingerprint) {
-          const fallbackFingerprint = createHash('sha256').update(JSON.stringify({
-            body: input.body.trim(), channel, normalizedAddress, providerAddress,
-            providerMessageId: input.providerMessageId,
-          })).digest('hex');
           if (!input.conversationProfileId && !input.conversationId
             && receipt.requestFingerprint === fallbackFingerprint) return receipt.reply;
           if ((!input.conversationProfileId && !input.conversationId)
@@ -340,6 +382,20 @@ export class ArcadeApi {
           return null;
         }
         return receipt.reply;
+      }
+      if(!explicitLanguage&&!input.recalledLocale){
+        const knownAddress=Object.values(storedState.channelAddresses).find(address=>(
+          address.channel===channel&&address.normalizedAddress===normalizedAddress
+        ));
+        if (knownAddress) language = knownAddress.preferredLocale;
+        else {
+          const remembered = storedState.idempotencyRecords[standaloneLocaleKey];
+          const rememberedLocale = remembered?.operation === 'PROCESS_STATION_MESSAGE'
+            && Date.parse(remembered.createdAt) >= this.now() - ARCADE_MESSAGING_RETENTION_MS
+            ? (remembered.result as { locale?: unknown }).locale
+            : null;
+          if (rememberedLocale === 'en-US' || rememberedLocale === 'pt-BR') language = rememberedLocale;
+        }
       }
     }
     const addressRate = this.rateLimiter.consume(
@@ -354,11 +410,59 @@ export class ArcadeApi {
       this.inboundMessagingRateLimits.processWindowMs,
     );
     if (!processRate.allowed) return messagingRateLimitReply(language);
-    if (config.arcade.mode === 'off') return null;
+    if (config.arcade.mode === 'off') {
+      const locale = String(language).toLowerCase().startsWith('pt') ? 'pt-BR' : 'en-US';
+      const standaloneAvailable = config.channels.voice
+        && Object.values(config.station.games).some(game => game.enabled)
+        && this.effectiveVoiceNumbers(config)[locale] !== null;
+      const reply = standaloneAvailable
+        ? locale === 'pt-BR'
+          ? 'O jogo independente está ativo. Escolha um jogo na tela principal e escaneie o QR da sala para ligar e jogar por voz.'
+          : "Standalone play is active. Choose a game on the big screen, then scan that lobby's call QR to play by voice."
+        : locale === 'pt-BR'
+          ? 'Os jogos por voz não estão disponíveis agora. Peça ajuda à equipe.'
+          : 'Voice games are unavailable right now. Please ask booth staff for help.';
+      if (stateStore) {
+        const at = new Date(this.now()).toISOString();
+        const localeFingerprint = createHash('sha256')
+          .update(JSON.stringify({ channel, normalizedAddress, locale }))
+          .digest('hex');
+        await stateStore.transaction(state => {
+          pruneStandaloneMessagingState(state, this.now());
+          if (!state.inboundMessages[key]) {
+            state.idempotencyRecords[key] = {
+              key, operation: 'PROCESS_STATION_MESSAGE', playerId: null,
+              fingerprint: requestFingerprint, result: { reply }, configVersion: config.version,
+              createdAt: at,
+            };
+            state.inboundMessages[key] = {
+              id: key, providerMessageId: input.providerMessageId, channelAddressId: null,
+              requestFingerprint, command: 'STANDALONE', reply, receivedAt: at,
+              configVersion: config.version,
+            };
+          }
+          state.idempotencyRecords[standaloneLocaleKey] = {
+            key: standaloneLocaleKey, operation: 'PROCESS_STATION_MESSAGE', playerId: null,
+            fingerprint: localeFingerprint, result: { locale }, configVersion: config.version,
+            createdAt: at,
+          };
+          const knownAddress = Object.values(state.channelAddresses).find(address => (
+            address.channel === channel && address.normalizedAddress === normalizedAddress
+          ));
+          if (knownAddress) {
+            state.channelAddresses[knownAddress.id] = { ...knownAddress, preferredLocale: locale, lastSeenAt: at };
+            const player = state.players[knownAddress.playerId];
+            if (player) state.players[player.id] = { ...player, preferredLocale: locale, updatedAt: at };
+          }
+        });
+      }
+      return reply;
+    }
     if (!config.channels[channel]) {
+      const portuguese = String(language).toLowerCase().startsWith('pt');
       return channel === 'whatsapp'
-        ? 'WhatsApp is not enabled for this Twilio Games station.'
-        : 'SMS is not enabled for this Twilio Games station.';
+        ? portuguese ? 'O WhatsApp não está disponível agora. Use SMS ou escaneie o QR na tela principal.' : "WhatsApp isn't available right now. Use SMS or scan the QR on the big screen."
+        : portuguese ? 'O SMS não está disponível agora. Use WhatsApp ou escaneie o QR na tela principal.' : "SMS isn't available right now. Use WhatsApp or scan the QR on the big screen.";
     }
     this.requireStationRuntimeCapabilities(config);
     const runtime = this.requirePlayerRuntime();
@@ -868,18 +972,17 @@ export class ArcadeApi {
             });
             this.validateStationAdmissionConfig(requested);
             const changesMode = requested.arcade.mode !== current.arcade.mode;
-            const pausesActiveMode = current.arcade.mode !== 'off' && requested.arcade.mode === 'off';
             const changesLockedStationPolicy = requested.arcade.cabinetId !== current.arcade.cabinetId
               || requested.coins.chargePolicy !== current.coins.chargePolicy
               || JSON.stringify(requested.channels) !== JSON.stringify(current.channels)
               || JSON.stringify(requested.station) !== JSON.stringify(current.station);
             const hasActiveStation = state
               && Object.values(state.stations).some(station => station.phase !== 'ATTRACT');
-            if (hasActiveStation && (changesLockedStationPolicy || (changesMode && !pausesActiveMode))) {
+            if (hasActiveStation && (changesLockedStationPolicy || changesMode)) {
               throw new ArcadeHttpError(
                 409,
                 'ACTIVE_STATION_CONFIG_LOCKED',
-                'Pause the event in a separate update, then reset the event flow before reopening or changing its policy',
+                'Reset the active event flow before switching player journeys or changing its policy',
               );
             }
             return this.configStore.update({
@@ -1999,7 +2102,11 @@ export class ArcadeApi {
       await resources.station.flush();
     }
     if (activeMatch && ['complete', 'advance', 'fail', 'reset'].includes(action)) {
-      this.abortLiveStationEngine(activeMatch.game, activeMatch.engineRoomCode);
+      this.removeLiveStationEngine(
+        activeMatch.game,
+        activeMatch.engineRoomCode,
+        action === 'advance' ? 'retire' : 'abort',
+      );
       await this.refreshStationRoomCache();
     }
 
@@ -2249,8 +2356,8 @@ export class ArcadeApi {
   private bindStationAbortHandler(
     resources: NonNullable<ReturnType<ArcadePlayerRuntime['getInitializedResources']>>,
   ): void {
-    resources.station.setMatchRemovedHandler((game, roomCode) => {
-      this.abortLiveStationEngine(game, roomCode);
+    resources.station.setMatchRemovedHandler((game, roomCode, removal) => {
+      this.removeLiveStationEngine(game, roomCode, removal);
     });
   }
 
@@ -2258,9 +2365,22 @@ export class ArcadeApi {
     game: 'racer' | 'monsters' | 'fighter',
     roomCode: string,
   ): void {
-    this.abortStationEngine?.(game, roomCode);
+    this.removeLiveStationEngine(game, roomCode, 'abort');
+  }
+
+  private removeLiveStationEngine(
+    game: 'racer' | 'monsters' | 'fighter',
+    roomCode: string,
+    removal: StationMatchRemoval,
+  ): void {
+    this.abortStationEngine?.(game, roomCode, removal);
     this.stationRoomCodes.delete(roomCode);
+    const station = this.playerRuntime?.getInitializedResources()?.station;
+    for (const readyEntryId of this.stationVoiceConnections.keys()) {
+      station?.markParticipantDisconnected(readyEntryId);
+    }
     this.stationVoiceCalls.clear();
+    this.stationVoiceConnections.clear();
   }
 
   private requirePlayerSession(
@@ -2775,6 +2895,33 @@ function formatEvent(event: ArcadeEvent): string {
     ? String(event.version)
     : event.type === 'arcade_ready_entry_added' ? `ready:${event.revision}` : `station:${event.revision}`;
   return `id: ${id}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
+}
+
+function pruneStandaloneMessagingState(state: ArcadeState, now: number): void {
+  const cutoff = now - ARCADE_MESSAGING_RETENTION_MS;
+  const receipts = Object.values(state.inboundMessages)
+    .filter(message => message.command === 'STANDALONE')
+    .sort((left, right) => Date.parse(left.receivedAt) - Date.parse(right.receivedAt)
+      || left.id.localeCompare(right.id));
+  const expiredReceipts = receipts.filter(message => Date.parse(message.receivedAt) < cutoff);
+  const retainedReceipts = receipts.filter(message => Date.parse(message.receivedAt) >= cutoff);
+  const excessReceipts = retainedReceipts.slice(
+    0, Math.max(0, retainedReceipts.length - STANDALONE_MESSAGING_MAX_RECORDS + 1),
+  );
+  for (const message of [...expiredReceipts, ...excessReceipts]) {
+    delete state.inboundMessages[message.id];
+    delete state.idempotencyRecords[message.id];
+  }
+
+  const localeRecords = Object.entries(state.idempotencyRecords)
+    .filter(([key]) => key.startsWith('standalone-locale:'))
+    .sort(([, left], [, right]) => Date.parse(left.createdAt) - Date.parse(right.createdAt));
+  const expiredLocales = localeRecords.filter(([, record]) => Date.parse(record.createdAt) < cutoff);
+  const retainedLocales = localeRecords.filter(([, record]) => Date.parse(record.createdAt) >= cutoff);
+  const excessLocales = retainedLocales.slice(
+    0, Math.max(0, retainedLocales.length - STANDALONE_MESSAGING_MAX_RECORDS + 1),
+  );
+  for (const [key] of [...expiredLocales, ...excessLocales]) delete state.idempotencyRecords[key];
 }
 
 function sendJson(

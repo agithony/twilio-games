@@ -2,8 +2,10 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { HttpServer } from '../server/http-server';
 import type { ArcadeTacGateway } from '../server/arcade-tac-gateway';
 import twilio from 'twilio';
+import WebSocket from 'ws';
 
 let srv: HttpServer;
+const DISPLAY_TOKEN = 'test-standalone-display-token';
 afterEach(async () => { await srv?.stop(); });
 
 function makeServer() {
@@ -38,7 +40,7 @@ describe('SMS concierge API', () => {
   it('rejects MMS politely', async () => {
     srv = makeServer(); const port = await srv.start();
     const r = await sms(port, '+15551114444', '', { NumMedia: '1' });
-    expect(r.xml.toLowerCase()).toMatch(/not supported/);
+    expect(r.xml.toLowerCase()).toContain('text replies only');
   });
 
   it('keeps the direct reply fallback while accepting Conversation Orchestrator events', async () => {
@@ -59,7 +61,7 @@ describe('SMS concierge API', () => {
     const inbound = await sms(port, '+15551115555', 'JOIN ARCADE-01');
     expect(inbound.xml).toContain('<Message>');
     const mms = await sms(port, '+15551115555', '', { NumMedia: '1' });
-    expect(mms.xml).toContain('Images are not supported');
+    expect(mms.xml).toContain('I can read text replies only');
 
     const payload = { eventType: 'COMMUNICATION_CREATED', data: { id: 'comm-1' } };
     const response = await fetch(`http://127.0.0.1:${port}/tac/webhook`, {
@@ -84,6 +86,7 @@ describe('SMS concierge API', () => {
     srv=new HttpServer({
       port:0,publicBaseUrl:'http://localhost',authToken:primaryToken,
       additionalAuthTokens:[portugueseToken],validateSignatures:true,
+      fighterDisplayToken:DISPLAY_TOKEN,
     });
     const port=await srv.start();
     const smsParams={From:'+551155555555',Body:'4821',MessageSid:'SM-secondary'};
@@ -95,6 +98,13 @@ describe('SMS concierge API', () => {
     });
     expect(smsResponse.status).toBe(403);
 
+    const display = new WebSocket(`ws://127.0.0.1:${port}/game?display=1`);
+    await new Promise<void>((resolve, reject) => {
+      display.once('open', resolve);
+      display.once('error', reject);
+    });
+    display.send(JSON.stringify({type:'spectate',roomCode:'4821',displayToken:DISPLAY_TOKEN}));
+    await new Promise(resolve=>setTimeout(resolve,20));
     const voiceParams={From:'+5511999999999',To:'+551155555555',CallSid:'CA-secondary'};
     const voiceUrl='http://localhost/voice/incoming';
     const voiceSignature=twilio.getExpectedTwilioSignature(portugueseToken,voiceUrl,voiceParams);
@@ -104,5 +114,6 @@ describe('SMS concierge API', () => {
     });
     expect(voiceResponse.status).toBe(200);
     expect(await voiceResponse.text()).toContain('<ConversationRelay');
+    display.close();
   });
 });

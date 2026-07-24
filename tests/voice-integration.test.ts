@@ -6,14 +6,144 @@ let srv: HttpServer;
 afterEach(async () => { await srv?.stop(); });
 const wait = (ms: number) => new Promise(r => setTimeout(r, ms));
 const closeWs = (ws: WebSocket) => { if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) ws.close(); };
+const DISPLAY_TOKEN = 'test-standalone-display-token';
 
 describe('voice integration (fake Conversation Relay client)', () => {
-  it('inherits Twilio STT and TTS locale from the active display room', async () => {
+  it('retires a station voice session after queued speech plays without a WebSocket failure', async () => {
     srv = new HttpServer({ port: 0, publicBaseUrl: 'http://localhost', validateSignatures: false });
     const port = await srv.start();
-    const display = new WebSocket(`ws://127.0.0.1:${port}/game`);
+    const voice = new WebSocket(`ws://127.0.0.1:${port}/voice`);
+    let closeCode: number | null = null;
+    voice.on('close', code => { closeCode = code; });
+    const receivedTypes:string[]=[];
+    const ended = new Promise<Record<string, unknown>>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('Relay end message was not received')), 8_000);
+      voice.on('message', data => {
+        const message = JSON.parse(data.toString()) as Record<string, unknown>;
+        receivedTypes.push(String(message.type));
+        if (message.type === 'text') {
+          voice.send(JSON.stringify({ type: 'info', name: 'tokensPlayed', value: message.token }));
+        } else if (message.type === 'end') {
+          clearTimeout(timeout);
+          resolve(message);
+        }
+      });
+    });
+    await new Promise<void>(resolve => voice.on('open', resolve));
+    voice.send(JSON.stringify({ type: 'setup', callSid: 'CA-retire', customParameters: { roomCode: 'RETIRE' } }));
+    await wait(50);
+
+    (srv as unknown as { retireStationEngine(game:'racer',roomCode:string):void })
+      .retireStationEngine('racer', 'RETIRE');
+    voice.send(JSON.stringify({type:'prompt',voicePrompt:'help',last:true}));
+    const message = await ended;
+
+    expect(JSON.parse(String(message.handoffData))).toEqual({ reasonCode: 'match-complete' });
+    expect(receivedTypes.at(-1)).toBe('end');
+    expect(closeCode).toBeNull();
+    voice.send(JSON.stringify({type:'prompt',voicePrompt:'say something else',last:true}));
+    await wait(100);
+    expect(receivedTypes.at(-1)).toBe('end');
+    closeWs(voice);
+  });
+
+  it('ends graceful retirement promptly when the caller interrupts queued speech', async () => {
+    srv = new HttpServer({ port: 0, publicBaseUrl: 'http://localhost', validateSignatures: false });
+    const port = await srv.start();
+    const voice = new WebSocket(`ws://127.0.0.1:${port}/voice`);
+    const ended = new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('Relay end waited for the fallback timeout')), 2_000);
+      voice.on('message', data => {
+        const message = JSON.parse(data.toString()) as Record<string, unknown>;
+        if (message.type === 'end') { clearTimeout(timeout); resolve(); }
+      });
+    });
+    await new Promise<void>(resolve => voice.on('open', resolve));
+    voice.send(JSON.stringify({ type: 'setup', callSid: 'CA-interrupt', customParameters: { roomCode: 'INTERRUPT' } }));
+    await wait(50);
+
+    (srv as unknown as { retireStationEngine(game:'racer',roomCode:string):void })
+      .retireStationEngine('racer', 'INTERRUPT');
+    voice.send(JSON.stringify({ type:'interrupt', utteranceUntilInterrupt:'Welcome', durationUntilInterruptMs:100 }));
+    await ended;
+    closeWs(voice);
+  });
+
+  it('routes standalone calls from the explicit shared display, not a later attendee socket', async () => {
+    srv = new HttpServer({
+      port:0,publicBaseUrl:'http://localhost',validateSignatures:false,standaloneVoiceEnabled:true,
+      fighterDisplayToken:DISPLAY_TOKEN,
+    });
+    const port=await srv.start();
+    const display=new WebSocket(`ws://127.0.0.1:${port}/battle?display=1`);
+    await new Promise<void>(resolve=>display.on('open',resolve));
+    const unauthenticated=await fetch(`http://127.0.0.1:${port}/voice/incoming`,{
+      method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'CallSid=CA-spoofed&From=%2B14155550199',
+    });
+    expect(await unauthenticated.text()).not.toContain('<ConversationRelay');
+    display.send(JSON.stringify({type:'spectate',roomCode:'4821',displayToken:DISPLAY_TOKEN}));
+    await wait(30);
+    const attendee=new WebSocket(`ws://127.0.0.1:${port}/game`);
+    await new Promise<void>(resolve=>attendee.on('open',resolve));
+
+    const response=await fetch(`http://127.0.0.1:${port}/voice/incoming`,{
+      method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'CallSid=CA-standalone&From=%2B14155550199',
+    });
+    const xml=await response.text();
+    expect(xml).toContain('<Parameter name="game" value="monsters"');
+    closeWs(attendee);closeWs(display);
+  });
+
+  it('does not treat Fighter display authentication as presence until the screen spectates', async () => {
+    srv = new HttpServer({
+      port:0,publicBaseUrl:'http://localhost',validateSignatures:false,standaloneVoiceEnabled:true,
+      fighterDisplayToken:DISPLAY_TOKEN,
+    });
+    const port=await srv.start();
+    const fighter=new WebSocket(`ws://127.0.0.1:${port}/fighter`);
+    await new Promise<void>((resolve,reject)=>{fighter.once('open',resolve);fighter.once('error',reject);});
+    fighter.send(JSON.stringify({type:'spectate',roomCode:'4821'}));
+    await wait(30);
+
+    const before=await fetch(`http://127.0.0.1:${port}/voice/incoming`,{
+      method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'CallSid=CA-fighter-auth&From=%2B14155550199',
+    });
+    expect(await before.text()).not.toContain('<ConversationRelay');
+
+    fighter.send(JSON.stringify({type:'display_auth',roomCode:'4821',token:DISPLAY_TOKEN}));
+    fighter.send(JSON.stringify({type:'spectate',roomCode:'4821'}));
+    await wait(30);
+    const after=await fetch(`http://127.0.0.1:${port}/voice/incoming`,{
+      method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'CallSid=CA-fighter-display&From=%2B14155550199',
+    });
+    expect(await after.text()).toContain('<Parameter name="game" value="fighter"');
+    closeWs(fighter);
+  });
+
+  it('returns explicit hangup TwiML after Conversation Relay ends', async () => {
+    srv = new HttpServer({ port: 0, publicBaseUrl: 'http://localhost', validateSignatures: false });
+    const port = await srv.start();
+    const response = await fetch(`http://127.0.0.1:${port}/voice/session-ended`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'CallSid=CA-ended&SessionStatus=ended',
+    });
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toContain('text/xml');
+    expect(await response.text()).toContain('<Hangup />');
+  });
+
+  it('inherits Twilio STT and TTS locale from the active display room', async () => {
+    srv = new HttpServer({
+      port: 0, publicBaseUrl: 'http://localhost', validateSignatures: false,
+      fighterDisplayToken: DISPLAY_TOKEN,
+    });
+    const port = await srv.start();
+    const display = new WebSocket(`ws://127.0.0.1:${port}/game?display=1`);
     await new Promise<void>(resolve => display.on('open', resolve));
-    display.send(JSON.stringify({ type: 'spectate', roomCode: '8552', locale: 'pt-BR' }));
+    display.send(JSON.stringify({
+      type: 'spectate', roomCode: '8552', locale: 'pt-BR', displayToken: DISPLAY_TOKEN,
+    }));
     await wait(30);
 
     try {

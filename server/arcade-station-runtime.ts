@@ -18,6 +18,7 @@ import {
 } from './arcade-service';
 
 type Timer = ReturnType<typeof setTimeout>;
+export type StationMatchRemoval = 'retire' | 'abort';
 
 export interface ArcadeStationRuntimeOptions {
   readonly service: ArcadeService;
@@ -31,7 +32,7 @@ export interface ArcadeStationRuntimeOptions {
   readonly setTimer?: (callback: () => void, delayMs: number) => Timer;
   readonly clearTimer?: (timer: Timer) => void;
   readonly onError?: (error: unknown) => void;
-  readonly onMatchRemoved?: (game: PlayableArcadeGame, roomCode: string) => void;
+  readonly onMatchRemoved?: (game: PlayableArcadeGame, roomCode: string, removal: StationMatchRemoval) => void;
 }
 
 type ScheduledTransition = Readonly<{
@@ -51,7 +52,7 @@ export class ArcadeStationRuntime {
   private readonly setTimer: (callback: () => void, delayMs: number) => Timer;
   private readonly clearTimer: (timer: Timer) => void;
   private readonly onError?: (error: unknown) => void;
-  private onMatchRemoved?: (game: PlayableArcadeGame, roomCode: string) => void;
+  private onMatchRemoved?: (game: PlayableArcadeGame, roomCode: string, removal: StationMatchRemoval) => void;
   private timer: Timer | null = null;
   private unsubscribe: (() => void) | null = null;
   private pending: Promise<void> = Promise.resolve();
@@ -80,7 +81,7 @@ export class ArcadeStationRuntime {
     this.onMatchRemoved = options.onMatchRemoved;
   }
 
-  setMatchRemovedHandler(handler: (game: PlayableArcadeGame, roomCode: string) => void): void {
+  setMatchRemovedHandler(handler: (game: PlayableArcadeGame, roomCode: string, removal: StationMatchRemoval) => void): void {
     this.onMatchRemoved = handler;
   }
 
@@ -281,7 +282,7 @@ export class ArcadeStationRuntime {
               authorization: this.systemAuthorization(),
               reason: 'recover persisted station after process restart',
             });
-            if (match) this.onMatchRemoved?.(match.game, match.engineRoomCode);
+            if (match) this.onMatchRemoved?.(match.game, match.engineRoomCode, 'abort');
             continue;
           } catch (error) {
             if (isRevisionRace(error)) continue;
@@ -398,7 +399,7 @@ export class ArcadeStationRuntime {
     if (transition.phase === 'RESULTS') {
       const match=aggregate.station.activeMatchId?aggregate.matches[aggregate.station.activeMatchId]:undefined;
       const result=await this.service.advanceStationResults(common);
-      if(match)this.onMatchRemoved?.(match.game,match.engineRoomCode);
+      if(match)this.onMatchRemoved?.(match.game,match.engineRoomCode,'retire');
       return result;
     }
     if (transition.phase === 'LAUNCHING') {
@@ -419,7 +420,7 @@ export class ArcadeStationRuntime {
         });
       }
       const result = await this.service.failStationLaunch(common);
-      if (match) this.onMatchRemoved?.(match.game, match.engineRoomCode);
+      if (match) this.onMatchRemoved?.(match.game, match.engineRoomCode, 'abort');
       return result;
     }
     return Promise.reject(new Error(`unsupported scheduled station phase ${transition.phase}`));
@@ -458,7 +459,7 @@ export class ArcadeStationRuntime {
           ? 'game engine ended before all launch participants connected'
           : 'game engine abandoned before launch completed',
       }).then(result => {
-        this.onMatchRemoved?.(match.game, match.engineRoomCode);
+        this.onMatchRemoved?.(match.game, match.engineRoomCode, 'abort');
         return result;
       });
     }
@@ -496,6 +497,9 @@ export class ArcadeStationRuntime {
       idempotencyKey: engineIdempotencyKey('abandoned', match.id, match.launchGeneration),
       authorization: this.systemAuthorization(),
       reason: 'authoritative game engine abandoned active match',
+    }).then(result => {
+      this.onMatchRemoved?.(match.game, match.engineRoomCode, 'abort');
+      return result;
     });
   }
 

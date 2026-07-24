@@ -36,7 +36,7 @@ async function harness(configure?: (input: Record<string, any>) => void) {
   let enabled = true;
   let sequence = 0;
   let scheduled: { handle: NodeJS.Timeout; callback: () => void; delayMs: number } | null = null;
-  const removedMatches: Array<{ game: string; roomCode: string }> = [];
+  const removedMatches: Array<{ game: string; roomCode: string; removal: 'retire'|'abort' }> = [];
   const runtimeErrors: unknown[] = [];
   const service = new ArcadeService({
     store,
@@ -69,7 +69,7 @@ async function harness(configure?: (input: Record<string, any>) => void) {
       clearTimeout(handle);
       if (scheduled?.handle === handle) scheduled = null;
     },
-    onMatchRemoved: (game, roomCode) => removedMatches.push({ game, roomCode }),
+    onMatchRemoved: (game, roomCode, removal) => removedMatches.push({ game, roomCode, removal }),
     onError: error => runtimeErrors.push(error),
   });
   return {
@@ -144,7 +144,7 @@ describe('ArcadeStationRuntime', () => {
     h.fire();
     await runtime.flush();
     expect((await h.service.getStation('expo'))?.station.phase).toBe('ATTRACT');
-    expect(h.removedMatches).toContainEqual({game:'racer',roomCode:activeMatch.engineRoomCode});
+    expect(h.removedMatches).toContainEqual({game:'racer',roomCode:activeMatch.engineRoomCode,removal:'retire'});
     await runtime.stop();
   });
 
@@ -285,7 +285,7 @@ describe('ArcadeStationRuntime', () => {
     await restarted.flush();
     expect((await h.service.getStation('expo'))?.station.phase).toBe('RECRUITING');
     expect((await h.service.getWalletStatus('p1'))?.reservedBalance).toBe(1);
-    expect(h.removedMatches).toEqual([{ game: 'racer', roomCode: '4821' }]);
+    expect(h.removedMatches).toEqual([{ game: 'racer', roomCode: '4821', removal: 'abort' }]);
     await restarted.stop();
   });
 
@@ -350,7 +350,7 @@ describe('ArcadeStationRuntime', () => {
     await runtime.markEngineCompleted('racer', '4821');
     expect((await h.service.getStation('expo'))?.station.phase).toBe('RECRUITING');
     expect((await h.service.getWalletStatus('p1'))).toMatchObject({ reservedBalance: 1, availableBalance: 1 });
-    expect(h.removedMatches).toEqual([{ game: 'racer', roomCode: '4821' }]);
+    expect(h.removedMatches).toEqual([{ game: 'racer', roomCode: '4821', removal: 'abort' }]);
     await runtime.stop();
   });
 
@@ -381,7 +381,7 @@ describe('ArcadeStationRuntime', () => {
     await runtime.markEngineStarted('racer', '4821');
     await runtime.flush();
     expect((await h.service.getStation('expo'))?.station.phase).toBe('RECRUITING');
-    expect(h.removedMatches).toEqual([{ game: 'racer', roomCode: '4821' }]);
+    expect(h.removedMatches).toEqual([{ game: 'racer', roomCode: '4821', removal: 'abort' }]);
     await runtime.stop();
   });
 
