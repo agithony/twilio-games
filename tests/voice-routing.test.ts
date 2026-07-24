@@ -185,12 +185,12 @@ describe('Arcade Voice routing', () => {
     expect(xml).not.toContain('<ConversationRelay');
   });
 
-  it('keeps active-event admitted station routing unchanged', async () => {
+  it.each(['en-US', 'pt-BR'] as const)('keeps active-event admitted Monsters routing within Flux keyterm limits (%s)', async locale => {
     const route: NonNullable<StationVoiceRoute> = {
       game: 'monsters', roomCode: 'EVENT-ROOM', matchId: 'match-1', launchGeneration: 4,
       admitted: true, readyEntryId: 'ready-1',
     };
-    const { port, stationVoiceRoute } = await harness({ active: true, route });
+    const { port, stationVoiceRoute } = await harness({ active: true, route, locale });
     const xml = await (await incomingCall(port, { callSid: 'CA-active' })).text();
 
     expect(stationVoiceRoute).toHaveBeenCalledWith('+14155550199', 'CA-active');
@@ -199,6 +199,11 @@ describe('Arcade Voice routing', () => {
     expect(xml).toContain('<Parameter name="game" value="monsters"');
     expect(xml).toContain('<Parameter name="matchId" value="match-1"');
     expect(xml).toContain('<Parameter name="launchGeneration" value="4"');
+    const hints = / hints="([^"]*)"/.exec(xml)?.[1] ?? '';
+    const terms = hints.split(', ').filter(Boolean);
+    expect(terms).toHaveLength(100);
+    expect(new Set(terms.map(term => term.toLowerCase())).size).toBe(terms.length);
+    expect(terms).toEqual(expect.arrayContaining(locale === 'pt-BR' ? ['lutar', 'dois'] : ['fight', 'two']));
   });
 
   it('returns unavailable TwiML when active station routing fails', async () => {
