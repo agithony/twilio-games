@@ -189,6 +189,7 @@ describe('ConversationRelayAdapter', () => {
     const arrival=said.join(' ').toLowerCase();
     expect(arrival).toContain('ada');
     expect(arrival).toContain('voice racer');
+    expect(arrival).toContain('conversation relay');
     expect(arrival).toMatch(/left|right/);
     expect(arrival).toContain('say start');
     expect(arrival).not.toContain('your name');
@@ -267,8 +268,24 @@ describe('ConversationRelayAdapter', () => {
     adapter.setStationManaged(true);
     adapter.handleMessage(JSON.stringify({type:'setup',callSid:'CA-station',customParameters:{roomCode:'4821'}}));
     said.length=0;adapter.onGameEvent({kind:'race_over'});await adapter.whenSpeechSettled();
-    expect(said.join(' ')).toMatch(/Twilio Games instructions.*join the line again/i);
+    expect(said.join(' ')).toMatch(/results.*display.*thanks for playing.*check your messages/i);
     expect(said.join(' ')).not.toMatch(/rematch|try again|run it back/i);
+  });
+
+  it('replays mandatory station results after an interruption', async () => {
+    const room=fakeRoom();const said:string[]=[];let recaps=0;
+    const adapter=new ConversationRelayAdapter({
+      findOrCreateRoom:()=>room,phaseOf:()=> 'results',say:text=>said.push(text),
+      converse:async()=>{recaps++;return 'You finished second. Ada leads Silver Lake. Thanks for playing!';},
+    });
+    adapter.setStationManaged(true);
+    adapter.handleMessage(JSON.stringify({type:'setup',callSid:'CA-station',customParameters:{roomCode:'4821'}}));
+    adapter.onGameEvent({kind:'race_over'});
+    await adapter.whenSpeechSettled();
+    adapter.handleMessage(JSON.stringify({type:'interrupt',utteranceUntilInterrupt:'You finished',durationUntilInterruptMs:100}));
+    await adapter.whenSpeechSettled();
+    expect(recaps).toBe(2);
+    expect(said.filter(line=>/finished second/i.test(line))).toHaveLength(2);
   });
 
   it('does not speak repeated menu-entry prompts back to back', () => {

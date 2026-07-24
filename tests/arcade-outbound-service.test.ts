@@ -158,7 +158,8 @@ describe('Arcade station outbound outbox', () => {
     const resultNotice = Object.values(h.store.snapshot().outboundNotifications)
       .find(item => item.kind === 'STATION_RESULTS' && item.locale === 'en-US')!;
     expect(resultNotice.body).toContain('Voice Fighter complete!');
-    expect(resultNotice.body).toContain('controlled the big screen by phone call');
+    expect(resultNotice.body).not.toContain('controlled the big screen');
+    expect(resultNotice.body).toContain('\n\nCheck the scoreboard on the display.');
     expect(resultNotice.body).toContain('Reply MORE to complete a challenge');
     expect(resultNotice.templateVariables).toEqual({ '1': 'Voice Fighter' });
     expect(Object.values(h.store.snapshot().outboundNotifications)

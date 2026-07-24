@@ -95,6 +95,7 @@ export interface ArcadeServiceOptions {
   readonly operatorAuthorizer?: ArcadeOperatorAuthorizer;
   readonly stationUpdated?: (revision: number) => void;
   readonly readyEntryAdded?: (event: Readonly<{ revision: number; displayName: string; admission: 'coin' | 'ready' }>) => void;
+  readonly outboundNotificationAdded?: () => void;
   readonly stationNotifications?: ArcadeStationNotificationOptions;
   readonly newMutationsAllowed?: () => boolean;
   readonly messagingProtection?: ArcadeMessagingProtectionOptions;
@@ -779,61 +780,61 @@ type MessagingCopyKey = 'wrongStation' | 'joinFirst' | 'joined' | 'help' | 'stat
 
 const MESSAGING_COPY: Record<'en-US' | 'pt-BR', Record<MessagingCopyKey, string>> = {
   'en-US': {
-    wrongStation: 'That QR is from an earlier round. Scan the QR on the big screen again, or reply JOIN.',
+    wrongStation: 'That QR is from an earlier round. Scan the QR on the display again, or reply JOIN.',
     joinFirst: 'Start by text, then play by voice. Reply JOIN.',
-    joined: "Welcome to Twilio Games!\nGame coins: {balance}.\nAt the big screen, reply COIN to line up. If selected, we'll text you when to call.",
-    help: "TWILIO GAMES\nCOIN - line up for the next game\nSTATUS - see your spot and coins\nMORE - earn more game coins\nLEAVE - leave the line\n\nWhen VOTE appears, reply with a game number. If selected, we'll text you a number to call, then your voice controls the big screen.",
+    joined: "Welcome to Twilio Games!\n\nGame coins: {balance}.\n\nAt the display, reply COIN to line up. If selected, we'll text you when to call.",
+    help: "TWILIO GAMES\n\nCOIN - line up for the next game\nSTATUS - see your spot and coins\nMORE - earn more game coins\nLEAVE - leave the line\n\nWhen VOTE appears, reply with a game number. If selected, we'll text you a number to call, then your voice controls the display.",
     status: '{status}\nGame coins: {balance}.\n{next}',
     finishRegistration: 'Finish setting up your player first, then reply COIN.',
-    notReady: "You're not lined up yet. At the big screen, reply COIN.",
-    registered: "Player ready! Game coins: {balance}.\nAt the big screen, reply COIN. If selected, we'll tell you when to call and play by voice.",
+    notReady: "You're not lined up yet. At the display, reply COIN.",
+    registered: "Player ready!\n\nGame coins: {balance}.\n\nAt the display, reply COIN. If selected, we'll tell you when to call and play by voice.",
     cannotLeave: "Your game is already being prepared or is live. Show this message to booth staff if you need help.",
     left: "You're out of the next-game line, and your coin is back. Reply COIN whenever you want to line up again.",
-    alreadyReady: "You're already in line. Watch the big screen for voting, or reply STATUS to see your spot.",
+    alreadyReady: "You're already in line. Watch the display for voting, or reply STATUS to see your spot.",
     noCoins: "You're out of game coins, but you can earn another play. Reply MORE for the challenge page.",
     poolFull: 'The next-game line is full. Stay nearby and try COIN again when the current game starts.',
     coinUnavailable: "Coins aren't being used in this session. Reply READY to line up.",
-    coin: "COIN IN!\nYou're #{position} for the next game. Coins left: {balance}.\nStay near the big screen while the current game finishes; voting and the next countdown will appear there.\nWhen VOTE appears, reply {choices}.\nIf selected, we'll text you a number to call, then your voice controls the big screen.",
-    coinScreen: "COIN IN! You're #{position}. Coins left: {balance}.\nSave {callNumber}. Stay near while the current game finishes. Watch the big screen for the next countdown, and call that number when it says you're up.",
-    joinedFree: "Welcome to Twilio Games!\nAt the big screen, reply READY to line up. If selected, we'll text you when to call.",
-    helpFree: "TWILIO GAMES\nREADY - line up for the next game\nSTATUS - see your spot\nLEAVE - leave the line\n\nWhen VOTE appears, reply with a game number. If selected, we'll text you a number to call, then your voice controls the big screen.",
+    coin: "COIN IN!\n\nYou're #{position} for the next game. Coins left: {balance}.\n\nStay near the display while the current game finishes; voting and the next countdown will appear there.\n\nWhen VOTE appears, reply {choices}.\n\nIf selected, we'll text you a number to call, then your voice controls the display.",
+    coinScreen: "COIN IN! You're #{position}. Coins left: {balance}.\n\nSave {callNumber}. Stay near while the current game finishes. Watch the display for the next countdown, and call that number when it says you're up.",
+    joinedFree: "Welcome to Twilio Games!\n\nAt the display, reply READY to line up. If selected, we'll text you when to call.",
+    helpFree: "TWILIO GAMES\n\nREADY - line up for the next game\nSTATUS - see your spot\nLEAVE - leave the line\n\nWhen VOTE appears, reply with a game number. If selected, we'll text you a number to call, then your voice controls the display.",
     statusFree: '{status}\n{next}',
     finishRegistrationFree: 'Finish setting up your player first, then reply READY.',
-    registeredFree: "Player ready! At the big screen, reply READY. If selected, we'll tell you when to call and play by voice.",
+    registeredFree: "Player ready!\n\nAt the display, reply READY. If selected, we'll tell you when to call and play by voice.",
     leftFree: "You're out of the next-game line. Reply READY whenever you want to line up again.",
     poolFullFree: 'The next-game line is full. Stay nearby and try READY again when the current game starts.',
-    readyFree: "YOU'RE READY!\nYou're #{position} for the next game.\nStay near the big screen while the current game finishes; voting and the next countdown will appear there.\nWhen VOTE appears, reply {choices}.\nIf selected, we'll text you a number to call, then your voice controls the big screen.",
-    readyFreeScreen: "YOU'RE READY! You're #{position}.\nSave {callNumber}. Stay near while the current game finishes. Watch the big screen for the next countdown, and call that number when it says you're up.",
-    notReadyFree: "You're not lined up yet. At the big screen, reply READY.",
+    readyFree: "YOU'RE READY!\n\nYou're #{position} for the next game.\n\nStay near the display while the current game finishes; voting and the next countdown will appear there.\n\nWhen VOTE appears, reply {choices}.\n\nIf selected, we'll text you a number to call, then your voice controls the display.",
+    readyFreeScreen: "YOU'RE READY! You're #{position}.\n\nSave {callNumber}. Stay near while the current game finishes. Watch the display for the next countdown, and call that number when it says you're up.",
+    notReadyFree: "You're not lined up yet. At the display, reply READY.",
     continueInBrowser: "You're already registered in this phone's browser. Return to that Twilio Games tab to join the next game.",
     capacity: "We can't start another phone session right now. Show this message to booth staff so they can help.",
     gameChoice: 'VOTE LOCKED: {game}\nChanged your mind? Reply with another number before voting closes.',
-    gameChoiceInvalid: "That option isn't on the big screen. Reply {choices}.",
-    gameChoiceUnavailable: "Voting hasn't opened yet. When VOTE appears on the big screen, reply {choices}.",
-    gameChoiceClosed: "Voting is closed. Watch the big screen; we'll tell you if you're in and when it's time to call.",
+    gameChoiceInvalid: "That option isn't on the display. Reply {choices}.",
+    gameChoiceUnavailable: "Voting hasn't opened yet. When VOTE appears on the display, reply {choices}.",
+    gameChoiceClosed: "Voting is closed. Watch the display; we'll tell you if you're in and when it's time to call.",
     alreadyReadyVote: 'VOTING IS OPEN! Reply {choices}.\nReply STATUS to see your spot.',
     moreNone: "No bonus challenges are live right now. Show this message to booth staff and they'll help you get another play.",
     morePage: 'More challenges are available. Reply MORE {page} for the next link.',
-    named: "You're set, {name}! Game coins: {balance}.\nAt the big screen, reply COIN to line up for a voice-powered game.",
-    namedFree: "You're set, {name}!\nAt the big screen, reply READY to line up for a voice-powered game.",
+    named: "You're set, {name}!\n\nGame coins: {balance}.\n\nAt the display, reply COIN to line up for a voice-powered game.",
+    namedFree: "You're set, {name}!\n\nAt the display, reply READY to line up for a voice-powered game.",
   },
   'pt-BR': {
     wrongStation: 'Esse QR é de uma rodada anterior. Escaneie novamente o QR na tela principal ou responda ENTRAR.',
     joinFirst: 'Comece por mensagem e depois jogue por voz. Responda ENTRAR.',
-    joined: 'Boas-vindas ao Twilio Games!\nMoedas: {balance}.\nDiante da tela, responda MOEDA para entrar na fila. Se for selecionado, avisaremos quando ligar.',
+    joined: 'Boas-vindas ao Twilio Games!\n\nMoedas: {balance}.\n\nDiante da tela, responda MOEDA para entrar na fila. Se for selecionado, avisaremos quando ligar.',
     help: 'TWILIO GAMES\nMOEDA - entrar na fila do próximo jogo\nSTATUS - ver sua posição e suas moedas\nMAIS - ganhar mais moedas\nSAIR - sair da fila\n\nQuando aparecer VOTAÇÃO, responda com o número do jogo. Se for selecionado, enviaremos um número para ligar, e sua voz controlará a tela.',
     status: '{status}\nMoedas: {balance}.\n{next}',
     finishRegistration: 'Conclua primeiro a criação do seu jogador e depois responda MOEDA.',
     notReady: 'Você ainda não está na fila. Diante da tela, responda MOEDA.',
-    registered: 'Jogador pronto! Moedas: {balance}.\nDiante da tela, responda MOEDA. Se for selecionado, avisaremos quando ligar e jogar por voz.',
+    registered: 'Jogador pronto!\n\nMoedas: {balance}.\n\nDiante da tela, responda MOEDA. Se for selecionado, avisaremos quando ligar e jogar por voz.',
     cannotLeave: 'Sua partida já está sendo preparada ou está ao vivo. Mostre esta mensagem à equipe se precisar de ajuda.',
     left: 'Você saiu da fila do próximo jogo, e sua moeda voltou para o saldo. Responda MOEDA quando quiser entrar novamente.',
     alreadyReady: 'Você já está na fila. Acompanhe a tela para votar ou responda STATUS para ver sua posição.',
     noCoins: 'Suas moedas acabaram, mas você pode ganhar outra jogada. Responda MAIS para abrir os desafios.',
     poolFull: 'A fila do próximo jogo está cheia. Fique por perto e tente MOEDA novamente quando a partida atual começar.',
     coinUnavailable: 'Esta sessão não usa moedas. Responda PRONTO para entrar na fila.',
-    coin: 'MOEDA INSERIDA!\nVocê é o nº {position} para o próximo jogo. Saldo: {balance}.\nFique perto da tela enquanto a partida atual termina; a votação e a próxima contagem regressiva aparecerão nela.\nQuando aparecer VOTAÇÃO, responda {choices}.\nSe for selecionado, enviaremos um número para ligar, e sua voz controlará a tela.',
-    coinScreen: 'MOEDA INSERIDA! Você é o nº {position}. Saldo: {balance}.\nSalve {callNumber}. Fique por perto enquanto a partida atual termina. Acompanhe a tela para a próxima contagem regressiva e ligue quando ela indicar sua vez.',
+    coin: 'MOEDA INSERIDA!\n\nVocê é o nº {position} para o próximo jogo. Saldo: {balance}.\n\nFique perto da tela enquanto a partida atual termina; a votação e a próxima contagem regressiva aparecerão nela.\n\nQuando aparecer VOTAÇÃO, responda {choices}.\n\nSe for selecionado, enviaremos um número para ligar, e sua voz controlará a tela.',
+    coinScreen: 'MOEDA INSERIDA! Você é o nº {position}. Saldo: {balance}.\n\nSalve {callNumber}. Fique por perto enquanto a partida atual termina. Acompanhe a tela para a próxima contagem regressiva e ligue quando ela indicar sua vez.',
     joinedFree: 'Boas-vindas ao Twilio Games!\nDiante da tela, responda PRONTO para entrar na fila. Se for selecionado, avisaremos quando ligar.',
     helpFree: 'TWILIO GAMES\nPRONTO - entrar na fila do próximo jogo\nSTATUS - ver sua posição\nSAIR - sair da fila\n\nQuando aparecer VOTAÇÃO, responda com o número do jogo. Se for selecionado, enviaremos um número para ligar, e sua voz controlará a tela.',
     statusFree: '{status}\n{next}',
@@ -841,8 +842,8 @@ const MESSAGING_COPY: Record<'en-US' | 'pt-BR', Record<MessagingCopyKey, string>
     registeredFree: 'Jogador pronto! Diante da tela, responda PRONTO. Se for selecionado, avisaremos quando ligar e jogar por voz.',
     leftFree: 'Você saiu da fila do próximo jogo. Responda PRONTO quando quiser entrar novamente.',
     poolFullFree: 'A fila do próximo jogo está cheia. Fique por perto e tente PRONTO novamente quando a partida atual começar.',
-    readyFree: 'TUDO PRONTO!\nVocê é o nº {position} para o próximo jogo.\nFique perto da tela enquanto a partida atual termina; a votação e a próxima contagem regressiva aparecerão nela.\nQuando aparecer VOTAÇÃO, responda {choices}.\nSe for selecionado, enviaremos um número para ligar, e sua voz controlará a tela.',
-    readyFreeScreen: 'TUDO PRONTO! Você é o nº {position}.\nSalve {callNumber}. Fique por perto enquanto a partida atual termina. Acompanhe a tela para a próxima contagem regressiva e ligue quando ela indicar sua vez.',
+    readyFree: 'TUDO PRONTO!\n\nVocê é o nº {position} para o próximo jogo.\n\nFique perto da tela enquanto a partida atual termina; a votação e a próxima contagem regressiva aparecerão nela.\n\nQuando aparecer VOTAÇÃO, responda {choices}.\n\nSe for selecionado, enviaremos um número para ligar, e sua voz controlará a tela.',
+    readyFreeScreen: 'TUDO PRONTO! Você é o nº {position}.\n\nSalve {callNumber}. Fique por perto enquanto a partida atual termina. Acompanhe a tela para a próxima contagem regressiva e ligue quando ela indicar sua vez.',
     notReadyFree: 'Você ainda não está na fila. Diante da tela, responda PRONTO.',
     continueInBrowser: 'Você já está cadastrado no navegador deste celular. Volte à aba do Twilio Games para entrar no próximo jogo.',
     capacity: 'Não é possível iniciar outra sessão de celular agora. Mostre esta mensagem à equipe para receber ajuda.',
@@ -853,8 +854,8 @@ const MESSAGING_COPY: Record<'en-US' | 'pt-BR', Record<MessagingCopyKey, string>
     alreadyReadyVote: 'A VOTAÇÃO ESTÁ ABERTA! Responda {choices}.\nResponda STATUS para ver sua posição.',
     moreNone: 'Não há desafios extras disponíveis agora. Mostre esta mensagem à equipe para receber ajuda e jogar novamente.',
     morePage: 'Há mais desafios disponíveis. Responda MAIS {page} para receber o próximo link.',
-    named: 'Tudo pronto, {name}! Moedas: {balance}.\nDiante da tela, responda MOEDA para entrar em um jogo controlado por voz.',
-    namedFree: 'Tudo pronto, {name}!\nDiante da tela, responda PRONTO para entrar em um jogo controlado por voz.',
+    named: 'Tudo pronto, {name}!\n\nMoedas: {balance}.\n\nDiante da tela, responda MOEDA para entrar em um jogo controlado por voz.',
+    namedFree: 'Tudo pronto, {name}!\n\nDiante da tela, responda PRONTO para entrar em um jogo controlado por voz.',
   },
 };
 
@@ -969,13 +970,13 @@ function messagingPrompt(
     TERMS: 'Leia os termos de participação na página de entrada. Responda SIM para aceitar.',
     COMPLETE: 'Jogador pronto! Diante da tela, responda MOEDA para entrar na próxima partida.',
   } : {
-    FIRST_NAME: 'What first name should appear on the big screen?',
+    FIRST_NAME: 'What first name should appear on the display?',
     LAST_NAME: 'What is your last name?',
     WORK_EMAIL: 'What is your work email? Example: name@company.com',
     COMPANY: 'Which company are you with?',
     COUNTRY: 'What country are you joining from? Reply with two letters, such as US.',
     TERMS: 'Review the participation terms on the join page. Reply YES to accept.',
-    COMPLETE: 'Player ready! At the big screen, reply COIN to enter the next game.',
+    COMPLETE: 'Player ready!\n\nAt the display, reply COIN to enter the next game.',
   };
   if(draft.step==='COMPLETE')return prompts.COMPLETE;
   const total=leadCapture?(requireTerms?6:5):(requireTerms?2:1);
@@ -1039,7 +1040,7 @@ function messagingStatusNext(
   const portuguese = normalizeMessagingLocale(locale) === 'pt-BR';
   if (!entry) {
     if (portuguese) return `Diante da tela, responda ${freePlay ? 'PRONTO' : 'MOEDA'} para entrar na fila.`;
-    return `At the big screen, reply ${freePlay ? 'READY' : 'COIN'} to line up.`;
+    return `At the display, reply ${freePlay ? 'READY' : 'COIN'} to line up.`;
   }
   if (entry.status === 'READY' && aggregate?.station.phase === 'GAME_SELECTION'
     && aggregate.station.activeRoundId === entry.roundId) {
@@ -1050,7 +1051,7 @@ function messagingStatusNext(
   if (entry.status === 'READY') {
     return portuguese
       ? 'Acompanhe a tela. Quando aparecer VOTAÇÃO, responda com o número do jogo.'
-      : 'Watch the big screen. When VOTE appears, reply with the game number.';
+      : 'Watch the display. When VOTE appears, reply with the game number.';
   }
   return portuguese ? 'Fique com o celular pronto para a próxima mensagem.' : 'Keep your phone ready for the next message.';
 }
@@ -1081,7 +1082,7 @@ function messagingStatusSummary(
   if (entry.status === 'PLAYING') {
     return portuguese
       ? `Sua partida${game ? ` de ${game}` : ''} está ao vivo na tela principal.`
-      : `Your${game ? ` ${game}` : ''} game is live on the big screen.`;
+      : `Your${game ? ` ${game}` : ''} game is live on the display.`;
   }
   return portuguese
     ? `Você é o nº ${position} na fila do próximo jogo.`
@@ -1187,6 +1188,7 @@ const STATION_NOTIFICATION_TTL_MS: Record<ArcadeStationNotificationKind, number>
   STATION_CALL_NOW: 5 * 60 * 1000,
   STATION_RESULTS: 24 * 60 * 60 * 1000,
   STATION_NEXT_GAME: 10 * 60 * 1000,
+  CHALLENGE_REWARD: 60 * 60 * 1000,
 };
 
 const STATION_GAME_NAMES: Record<'en-US' | 'pt-BR', Record<PlayableArcadeGame, string>> = {
@@ -1232,25 +1234,25 @@ function stationNotificationContent(input: {
       return { body: `HORA DE JOGAR!\nToque em ${callNumber} e permaneça na linha. Sua voz controlará ${game} na tela principal.`, templateVariables: { '1': callNumber, '2': game } };
     }
     if (input.kind === 'STATION_RESULTS') {
-      const balance = input.balance === null ? '' : `\nSaldo: ${input.balance} moeda${input.balance === 1 ? '' : 's'}.`;
+      const balance = input.balance === null ? '' : `\n\nSaldo: ${input.balance} moeda${input.balance === 1 ? '' : 's'}.`;
       const duration = input.game === 'racer' && input.durationSeconds !== null && input.durationSeconds > 0
-        ? `\nTempo da corrida: ${input.durationSeconds.toFixed(2).replace('.', ',')} segundos.` : '';
+        ? `\n\nTempo da corrida: ${input.durationSeconds.toFixed(2).replace('.', ',')} segundos.` : '';
       const replay = input.offerChallenges
-        ? '\nQuer jogar novamente? Responda MAIS para completar um desafio e ganhar mais moedas.'
-        : input.freePlay ? '\nResponda PRONTO para entrar na próxima partida.'
-          : input.remainingBalance===0 ? '\nMostre esta mensagem à equipe para receber ajuda e jogar novamente.'
-            : '\nResponda MOEDA para entrar na próxima partida.';
-      const result = input.rank === null ? '\nConfira o placar na tela.'
-        : input.won ? `\nVOCÊ VENCEU! Você terminou em ${input.rank}º lugar.` : `\nVocê terminou em ${input.rank}º lugar.`;
+        ? '\n\nQuer jogar novamente? Responda MAIS para completar um desafio e ganhar mais moedas.'
+        : input.freePlay ? '\n\nResponda PRONTO para entrar na próxima partida.'
+          : input.remainingBalance===0 ? '\n\nMostre esta mensagem à equipe para receber ajuda e jogar novamente.'
+            : '\n\nResponda MOEDA para entrar na próxima partida.';
+      const result = input.rank === null ? '\n\nConfira o placar na tela.'
+        : input.won ? `\n\nVOCÊ VENCEU! Você terminou em ${input.rank}º lugar.` : `\n\nVocê terminou em ${input.rank}º lugar.`;
       return {
-        body: `FIM DE JOGO: ${game}!${result}${duration}\nVocê acabou de controlar a tela por ligação.${balance}${replay}`,
+        body: `FIM DE JOGO: ${game}!${result}${duration}${balance}${replay}`,
         templateVariables: { '1': game, ...(input.balance === null ? {} : { '2': String(input.balance) }) },
       };
     }
     return { body: 'ABRIU UMA VAGA!\nVocê voltou para a próxima rodada. Fique perto da tela, vote quando aparecer e deixe o celular pronto para a ligação.', templateVariables: {} };
   }
   if (input.kind === 'STATION_ADMITTED') {
-    return { body: `YOU'RE IN!\nNext game: ${game}.\nKeep your phone out. We'll tell you when to call, then your voice will control the game on the big screen.`, templateVariables: { '1': game } };
+    return { body: `YOU'RE IN!\n\nNext game: ${game}.\n\nKeep your phone out. We'll tell you when to call, then your voice will control the game on the display.`, templateVariables: { '1': game } };
   }
   if (input.kind === 'STATION_OVERFLOW') {
     return { body: input.freePlay
@@ -1258,25 +1260,25 @@ function stationNotificationContent(input: {
       : `This match filled up, but your coin and place carry over.\nYou're #${position} for the next game. Stay nearby!`, templateVariables: { '1': position } };
   }
   if (input.kind === 'STATION_CALL_NOW') {
-    return { body: `GAME TIME!\nTap ${callNumber} and stay on the line. Your voice will control ${game} on the big screen.`, templateVariables: { '1': callNumber, '2': game } };
+    return { body: `GAME TIME!\n\nTap ${callNumber} and stay on the line. Your voice will control ${game} on the display.`, templateVariables: { '1': callNumber, '2': game } };
   }
   if (input.kind === 'STATION_RESULTS') {
-    const balance = input.balance === null ? '' : `\nBalance: ${input.balance} game coin${input.balance === 1 ? '' : 's'}.`;
+    const balance = input.balance === null ? '' : `\n\nBalance: ${input.balance} game coin${input.balance === 1 ? '' : 's'}.`;
     const duration = input.game === 'racer' && input.durationSeconds !== null && input.durationSeconds > 0
-      ? `\nRace time: ${input.durationSeconds.toFixed(2)} seconds.` : '';
+      ? `\n\nRace time: ${input.durationSeconds.toFixed(2)} seconds.` : '';
     const replay = input.offerChallenges
-      ? '\nWant another play? Reply MORE to complete a challenge and earn more game coins.'
-      : input.freePlay ? '\nReply READY to line up again.'
-        : input.remainingBalance===0 ? '\nShow this message to booth staff for help getting another play.'
-          : '\nReply COIN to line up again.';
-    const result = input.rank === null ? '\nCheck the scoreboard on the big screen.'
-      : input.won ? `\nYOU WON! You finished #${input.rank}.` : `\nYou finished #${input.rank}.`;
+      ? '\n\nWant another play? Reply MORE to complete a challenge and earn more game coins.'
+      : input.freePlay ? '\n\nReply READY to line up again.'
+        : input.remainingBalance===0 ? '\n\nShow this message to booth staff for help getting another play.'
+          : '\n\nReply COIN to line up again.';
+    const result = input.rank === null ? '\n\nCheck the scoreboard on the display.'
+      : input.won ? `\n\nYOU WON! You finished #${input.rank}.` : `\n\nYou finished #${input.rank}.`;
     return {
-      body: `${game} complete!${result}${duration}\nYou just controlled the big screen by phone call.${balance}${replay}`,
+      body: `${game} complete!${result}${duration}${balance}${replay}`,
       templateVariables: { '1': game, ...(input.balance === null ? {} : { '2': String(input.balance) }) },
     };
   }
-  return { body: "A SPOT OPENED!\nYou're back in for the next round. Stay near the big screen, vote when prompted, and keep your phone ready for the call.", templateVariables: {} };
+  return { body: "A SPOT OPENED!\n\nYou're back in for the next round. Stay near the display, vote when prompted, and keep your phone ready for the call.", templateVariables: {} };
 }
 
 function scheduledEarningChallenges(config: ArcadeConfigSnapshot, at: string) {
@@ -1317,6 +1319,7 @@ export class ArcadeService {
   private readonly operatorAuthorizer: ArcadeOperatorAuthorizer;
   private readonly stationUpdated?: (revision: number) => void;
   private readonly readyEntryAdded?: ArcadeServiceOptions['readyEntryAdded'];
+  private readonly outboundNotificationAdded?: () => void;
   private readonly stationNotifications?: ArcadeStationNotificationOptions;
   private readonly newMutationsAllowed: () => boolean;
   private readonly messagingIdentityCapacity: number;
@@ -1357,6 +1360,7 @@ export class ArcadeService {
       this.operatorAuthorizer = operatorAuthorizer ?? (() => null);
       this.stationUpdated = undefined;
       this.readyEntryAdded = undefined;
+      this.outboundNotificationAdded = undefined;
       this.stationNotifications = undefined;
       this.newMutationsAllowed = () => true;
     } else {
@@ -1370,6 +1374,7 @@ export class ArcadeService {
       this.operatorAuthorizer = optionsOrStore.operatorAuthorizer ?? (() => null);
       this.stationUpdated = optionsOrStore.stationUpdated;
       this.readyEntryAdded = optionsOrStore.readyEntryAdded;
+      this.outboundNotificationAdded = optionsOrStore.outboundNotificationAdded;
       this.stationNotifications = optionsOrStore.stationNotifications;
       this.newMutationsAllowed = optionsOrStore.newMutationsAllowed ?? (() => true);
     }
@@ -1979,7 +1984,8 @@ export class ArcadeService {
   async claimChallengeFromPortal(token: string, challengeIdInput: string): Promise<ChallengeClaimResult> {
     const payload = this.authenticateChallengePortalToken(token);
     const challengeId = requireIdentifier(challengeIdInput, 'challengeId');
-    return this.execute('CLAIM_CHALLENGE', challengePortalClaimKey(payload.jti, challengeId), payload.player, {
+    let notificationAdded = false;
+    const result = await this.execute('CLAIM_CHALLENGE', challengePortalClaimKey(payload.jti, challengeId), payload.player, {
       playerId: payload.player, challengeId, tokenJti: payload.jti,
     }, (state, config, at) => {
       this.requireOn(config);
@@ -2007,11 +2013,16 @@ export class ArcadeService {
         requestMetadata: { source: 'messaging-challenge-portal', tokenJti: `${payload.jti}:${challengeId}` },
       });
       state.wallets[payload.player] = wallet;
+      notificationAdded = this.enqueueChallengeRewardNotification(
+        state, config, payload.player, claimId, challenge.rewardCoins, at,
+      );
       return {
         challengeId, claimId, rewardCoins: challenge.rewardCoins,
         destinationUrl: challenge.url, availableBalance: availableBalance(wallet),
       };
     });
+    if (notificationAdded) this.outboundNotificationAdded?.();
+    return result;
   }
 
   async joinQueue(input: JoinArcadeQueueInput): Promise<QueueEntryResult> {
@@ -2656,8 +2667,8 @@ export class ArcadeService {
           const link = this.challengePortalLink(playerId, config.arcade.cabinetId, at, normalizeMessagingLocale(locale));
           const total = available.reduce((sum, challenge) => sum + challenge.rewardCoins, 0);
           const reply = portuguese
-            ? `Ganhe até ${total} moeda${total === 1 ? '' : 's'} para jogar novamente. Abra o link, escolha um desafio, conclua-o e toque em Resgatar:\n${link}`
-            : `Earn up to ${total} more game coin${total === 1 ? '' : 's'}. Open the link, choose a challenge, complete it, then tap Claim:\n${link}`;
+            ? `Ganhe até ${total} moeda${total === 1 ? '' : 's'} para jogar novamente. Abra o link, escolha um desafio, conclua-o e toque em Resgatar:\n\n${link}`
+            : `Earn up to ${total} more game coin${total === 1 ? '' : 's'}. Open the link, choose a challenge, complete it, then tap Claim:\n\n${link}`;
           return finish(command, reply, null, link);
         }
         const entry = Object.values(state.stationReadyEntries)
@@ -4156,6 +4167,53 @@ export class ArcadeService {
       lockedSeconds: timing.lockedSeconds,
       postGameRecruitingSeconds: timing.postGameRecruitingSeconds,
     };
+  }
+
+  private enqueueChallengeRewardNotification(
+    state: ArcadeState,
+    config: ArcadeConfigSnapshot,
+    playerId: string,
+    claimId: string,
+    rewardCoins: number,
+    at: string,
+  ): boolean {
+    const address = Object.values(state.channelAddresses)
+      .filter(candidate => candidate.playerId === playerId && config.channels[candidate.channel]
+        && this.notificationsEnabled(candidate.channel))
+      .sort((left, right) => Date.parse(right.lastSeenAt) - Date.parse(left.lastSeenAt))[0];
+    if (!address) return false;
+    const id = stationNotificationId('CHALLENGE_REWARD', claimId, address.id);
+    if (own(state.outboundNotifications, id)) return false;
+    const locale = normalizeMessagingLocale(address.preferredLocale);
+    const body = locale === 'pt-BR'
+      ? `Você ganhou ${rewardCoins === 1 ? 'uma moeda' : `${rewardCoins} moedas`}!\n\nResponda MOEDA para jogar novamente.`
+      : `You earned ${rewardCoins === 1 ? 'a game coin' : `${rewardCoins} game coins`}!\n\nReply COIN to play again.`;
+    state.outboundNotifications[id] = {
+      id,
+      kind: 'CHALLENGE_REWARD',
+      playerId,
+      stationId: config.arcade.cabinetId,
+      roundId: claimId,
+      matchId: claimId,
+      readyEntryId: claimId,
+      channelAddressId: address.id,
+      channel: address.channel,
+      to: address.providerAddress,
+      locale,
+      body,
+      templateContentSid: null,
+      templateVariables: {},
+      configVersion: config.version,
+      status: 'PENDING',
+      nextAttemptAt: at,
+      expiresAt: new Date(Date.parse(at) + STATION_NOTIFICATION_TTL_MS.CHALLENGE_REWARD).toISOString(),
+      attempts: [],
+      terminalReason: null,
+      createdAt: at,
+      updatedAt: at,
+      terminalAt: null,
+    };
+    return true;
   }
 
   private enqueueStationNotification(

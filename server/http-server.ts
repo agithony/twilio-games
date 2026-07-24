@@ -452,17 +452,24 @@ export class HttpServer {
         if (boundRoom() === roomCode) endRelayAfterPlayback(socket);
       }
     };
+    const finalize = () => {
+      endCalls();
+      if (game === 'racer') this.game.abortRoom(roomCode);
+      else if (game === 'monsters') this.battle.abortRoom(roomCode);
+      else this.fighter.abortRoom(roomCode);
+      this.activeStationEngines.delete(`${game}:${roomCode}`);
+    };
     if (game === 'racer') {
       const settled = Promise.all([...this.voiceAdapters.get(roomCode) ?? []]
         .map(adapter => adapter.whenSpeechSettled()));
-      void Promise.race([settled, sleep(RELAY_SPEECH_SETTLE_TIMEOUT_MS)]).then(endCalls);
+      void Promise.race([settled, sleep(RELAY_SPEECH_SETTLE_TIMEOUT_MS)]).then(finalize);
+    } else if (game === 'monsters') {
+      const settled = Promise.all([...this.battleVoice.get(roomCode) ?? []]
+        .map(session => session.whenSpeechSettled()));
+      void Promise.race([settled, sleep(RELAY_SPEECH_SETTLE_TIMEOUT_MS)]).then(finalize);
     } else {
-      endCalls();
+      finalize();
     }
-    if (game === 'racer') this.game.abortRoom(roomCode);
-    else if (game === 'monsters') this.battle.abortRoom(roomCode);
-    else this.fighter.abortRoom(roomCode);
-    this.activeStationEngines.delete(`${game}:${roomCode}`);
   }
 
   /** Refresh the cached lobby choices: car count + names from the manifest, map keys from maps.json. */
@@ -868,7 +875,7 @@ export class HttpServer {
     if (game === 'fighter') {
       const commands = locale === 'pt-BR'
         ? ['frente', 'avançar', 'avance', 'aproximar', 'aproxime-se', 'trás', 'recuar', 'recue', 'afastar', 'afaste-se', 'pular', 'pule', 'saltar', 'soco', 'socar', 'dê um soco', 'golpear', 'chute', 'chutar', 'dê um chute', 'bloquear', 'bloqueie', 'defender', 'defenda-se', 'começar', 'próximo', 'lutar', 'revanche', 'ajuda']
-        : ['forward', 'closer', 'back', 'backward', 'away', 'jump', 'leap', 'hop', 'punch', 'jab', 'strike', 'kick', 'roundhouse', 'block', 'guard', 'defend', 'start', 'next', 'fight', 'rematch', 'help'];
+        : ['forward', 'closer', 'back', 'backward', 'away', 'jump', 'leap', 'hop', 'punch', 'jab', 'strike', 'kick', 'roundhouse', 'block', 'guard', 'defend', 'start', 'next', 'fight', 'fights', 'flight', 'rematch', 'help'];
       const fighters = FIGHTER_ROSTER.flatMap(fighter => localizedFighterAliases(fighter.id, fighter.name));
       const maps = this.fighterMaps.flatMap(map => [map.name, localizedFighterMapName(locale, map.id, map.name),
         ...(map.id === 'inakaya'
@@ -1383,14 +1390,18 @@ export class HttpServer {
 
   private racerResultsRecap(context:HostContext,locale:SupportedLocale):string{
     const rank=context.myCurrentTrackRank,count=context.currentTrackRankedRunCount??0,map=context.selectedMap??(locale==='pt-BR'?'esta pista':'this track');
+    const time=(seconds:number)=>locale==='pt-BR'?seconds.toFixed(2).replace('.',','):seconds.toFixed(2);
+    const outro=createTranslator(locale,RACER_MESSAGES)('voice.waitOperator');
     if(locale==='pt-BR'){
-      const race=context.myPlace?`Você terminou esta corrida na posição ${context.myPlace}.`:'A corrida terminou.';
-      const board=rank&&count?`Seu tempo ficou em ${rank}º lugar entre ${count} corridas concluídas nesta pista, ${map}.`:`Veja a classificação da pista na tela.`;
-      return `${race} ${board} ${context.stationManaged?'Confira as instruções do Twilio Games e entre novamente na fila quando quiser jogar.':'Diga revanche quando quiser correr novamente.'}`;
+      const race=context.myPlace?`Você terminou esta corrida na posição ${context.myPlace}${context.myFinishTime?`, com o tempo de ${time(context.myFinishTime)} segundos`:''}.`:'A corrida terminou.';
+      const leader=context.allTimeBest?`O melhor tempo em ${map} é de ${context.allTimeBest.name}, com ${time(context.allTimeBest.time)} segundos.`:`Veja a classificação da pista na tela.`;
+      const board=rank&&count?`Seu tempo ficou em ${rank}º lugar entre ${count} corridas concluídas nesta pista.`:'';
+      return `${race} ${leader}${board?` ${board}`:''} ${context.stationManaged?outro:'Diga revanche quando quiser correr novamente.'}`;
     }
-    const race=context.myPlace?`You finished this race in place ${context.myPlace}.`:'The race is complete.';
-    const board=rank&&count?`Your run ranks number ${rank} out of ${count} completed runs all-time on ${map}.`:'Check the track leaderboard on the big screen.';
-    return `${race} ${board} ${context.stationManaged?'Check your Twilio Games instructions, then join the line again when you want to play.':'Say rematch when you want to race again.'}`;
+    const race=context.myPlace?`You finished this race in place ${context.myPlace}${context.myFinishTime?`, with a time of ${time(context.myFinishTime)} seconds`:''}.`:'The race is complete.';
+    const leader=context.allTimeBest?`${context.allTimeBest.name} leads ${map} with the fastest time of ${time(context.allTimeBest.time)} seconds.`:'Check the track leaderboard on the display.';
+    const board=rank&&count?`Your run ranks number ${rank} out of ${count} completed runs on this track.`:'';
+    return `${race} ${leader}${board?` ${board}`:''} ${context.stationManaged?outro:'Say rematch when you want to race again.'}`;
   }
 
   /** Test seam for verifying voice host context. */

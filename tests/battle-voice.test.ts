@@ -181,14 +181,15 @@ describe('BattleVoiceSession', () => {
   });
 
   it('greets new callers with Conversation Relay and simple voice-control instructions', () => {
-    const { deps, said } = fakeDeps();
+    const { deps, said } = fakeDeps({ snapshot: () => battleSnap({ phase: 'lobby' }) });
     const s = new BattleVoiceSession(deps);
     s.handleMessage(setup('4821'));
-    const joined = said.join(' ').toLowerCase();
-    expect(joined).toContain('conversation relay');
-    expect(joined).toContain('voice controls');
-    expect(joined).toMatch(/say start|pick a monster/);
-    expect(joined).toMatch(/fight.*attack|guard.*item.*taunt/);
+    expect(said).toHaveLength(3);
+    expect(said[0]).toMatch(/welcome to voice monsters/i);
+    expect(said[1]).toMatch(/conversation relay/i);
+    expect(said[2]).toMatch(/what.*name/i);
+    s.handleMessage(prompt("I'm Ada"));
+    expect(said.slice(3).join(' ')).toMatch(/nice to meet.*before you start.*attack or fight.*say start/i);
   });
 
   it('captures the caller name in the lobby BEFORE anything else (deterministic, no LLM)', () => {
@@ -722,7 +723,7 @@ describe('BattleVoiceSession', () => {
     })});
     const session=new BattleVoiceSession(deps);session.setStationManaged(true);session.handleMessage(setup());said.length=0;
     session.onBattleEvent({kind:'battle_over',winner:'a',winnerName:'Ada'});
-    expect(said.join(' ')).toMatch(/check your Twilio Games instructions.*join the line again/i);
+    expect(said.join(' ')).toMatch(/results.*display.*thanks for playing.*check your messages/i);
     expect(said.join(' ')).not.toMatch(/rematch|automatically/i);
   });
 

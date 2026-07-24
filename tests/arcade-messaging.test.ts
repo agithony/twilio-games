@@ -27,6 +27,7 @@ async function harness(
   configure?: (value: Record<string, any>) => void,
   messagingProtection?: ArcadeMessagingProtectionOptions,
   readyEntryAdded?: (event: Readonly<{revision:number;displayName:string;admission:'coin'|'ready'}>) => void,
+  outboundNotificationAdded?: () => void,
 ) {
   const directory = await mkdtemp(path.join(tmpdir(), 'arcade-messaging-'));
   directories.push(directory);
@@ -47,6 +48,8 @@ async function harness(
     challengeTokenSecret: TOKEN_SECRET,
     messagingProtection,
     readyEntryAdded,
+    outboundNotificationAdded,
+    stationNotifications: outboundNotificationAdded ? { enabled: () => true } : undefined,
     operatorAuthorizer: authorization => authorization === OPERATOR_AUTH
       ? { kind: 'operator', subject: 'operator@twilio.com' }
       : null,
@@ -117,8 +120,8 @@ describe('Arcade messaging commands', () => {
     const coin = await message(h.service, 'SM007', 'COIN');
     expect(coin.reply).toContain("You're #1");
     expect(coin.reply).toContain('Save the number on screen');
-    expect(coin.reply.split('\n')).toHaveLength(2);
-    expect(coin.reply).toContain('Watch the big screen');
+    expect(coin.reply.split('\n')).toHaveLength(3);
+    expect(coin.reply).toContain('Watch the display');
     expect(coin.reply).toContain('current game finishes');
     expect(coin.reply).toContain('next countdown');
     expect(coin.reply).not.toContain('we will text');
@@ -196,6 +199,7 @@ describe('Arcade messaging commands', () => {
   });
 
   it('returns one MORE hub on SMS and WhatsApp and requires visiting each challenge before claiming', async () => {
+    let outboundWakeups = 0;
     const h = await harness('coin_only', 'per_player', value => {
       value.registration.termsAcknowledgementRequired = false;
       value.coins.startingBalance = 1;
@@ -208,7 +212,7 @@ describe('Arcade messaging commands', () => {
         url: 'https://github.com/twilio', rewardCoins: 1, enabled: true,
         maxClaimsPerPlayer: 1, displayOrder: 1, startsAt: null, endsAt: null,
       }];
-    });
+    }, undefined, undefined, () => { outboundWakeups += 1; });
     await message(h.service, 'MORE-JOIN', 'JOIN');
     await message(h.service, 'MORE-NAME', 'Ada');
 
@@ -238,11 +242,40 @@ describe('Arcade messaging commands', () => {
     const claimed = await h.service.claimChallengeFromPortal(token, 'voice-docs');
     expect(claimed).toMatchObject({ rewardCoins: 2, availableBalance: 3 });
     expect(await h.service.claimChallengeFromPortal(token, 'voice-docs')).toEqual(claimed);
+    const rewardNotices = Object.values(h.store.snapshot().outboundNotifications)
+      .filter(notification => notification.kind === 'CHALLENGE_REWARD');
+    expect(rewardNotices).toHaveLength(1);
+    expect(rewardNotices[0]).toMatchObject({
+      channel: 'sms', body: 'You earned 2 game coins!\n\nReply COIN to play again.', status: 'PENDING',
+    });
+    expect(outboundWakeups).toBe(1);
     expect((await h.service.getChallengePortalStatus(token)).challenges[0]).toMatchObject({ action: 'claimed' });
     expect((await message(h.service, 'MORE-PAGED', 'MORE 2')).command).toBe('TEXT');
     await h.service.visitChallengeFromPortal(token, 'github');
     expect(await h.service.claimChallengeFromPortal(token, 'github')).toMatchObject({ availableBalance: 4 });
     expect((await message(h.service, 'MORE-NONE', 'MORE')).reply).toContain('No bonus challenges are live');
+  });
+
+  it('localizes the durable challenge reward message with replay guidance', async () => {
+    const h = await harness('coin_only', 'per_player', value => {
+      value.registration.termsAcknowledgementRequired = false;
+      value.earning.challenges = [{
+        id: 'docs', title: 'Documentação', message: 'Leia a documentação.',
+        url: 'https://www.twilio.com/docs', rewardCoins: 1, enabled: true,
+        maxClaimsPerPlayer: 1, displayOrder: 0, startsAt: null, endsAt: null,
+      }];
+    }, undefined, undefined, () => {});
+    const from = '+5511999999999';
+    await message(h.service, 'REWARD-PT-JOIN', 'ENTRAR', from);
+    await message(h.service, 'REWARD-PT-NAME', 'Ana', from);
+    const more = await message(h.service, 'REWARD-PT-MORE', 'MAIS', from);
+    const link = /(http:\/\/localhost\/challenge\/\?locale=pt-BR#\S+)/.exec(more.reply)?.[1];
+    const token = decodeURIComponent(new URL(link!).hash.slice(1));
+    await h.service.visitChallengeFromPortal(token, 'docs');
+    await h.service.claimChallengeFromPortal(token, 'docs');
+    const notice = Object.values(h.store.snapshot().outboundNotifications)
+      .find(notification => notification.kind === 'CHALLENGE_REWARD');
+    expect(notice?.body).toBe('Você ganhou uma moeda!\n\nResponda MOEDA para jogar novamente.');
   });
 
   it('prompts legacy unnamed coin-only players before their next ready entry', async () => {
@@ -429,7 +462,7 @@ describe('Arcade messaging commands', () => {
   it('keeps registration commands and invalid answers on the exact current prompt', async () => {
     const h = await harness('lead_capture');
     const joined = await message(h.service, 'SM-PROMPT-001', 'JOIN');
-    expect(joined.reply).toBe("Let's create your player. 1/6: What first name should appear on the big screen?");
+    expect(joined.reply).toBe("Let's create your player. 1/6: What first name should appear on the display?");
     for (const [index, command] of ['HELP', 'STATUS', 'COIN', 'READY', 'LEAVE'].entries()) {
       expect((await message(h.service, `SM-PROMPT-${index + 2}`, command)).reply).toBe(joined.reply);
     }
@@ -478,7 +511,7 @@ describe('Arcade messaging commands', () => {
     expect((await message(h.service, 'SM-CHOICE-003', 'RACER')).reply)
       .toContain("Voting hasn't opened yet");
     const coin = await message(h.service, 'SM-CHOICE-004', 'COIN');
-    expect(coin.reply).toContain('Watch the big screen');
+    expect(coin.reply).toContain('Watch the display');
     const recruiting = await h.service.getStation('ARCADE-01');
     await h.service.closeStationRecruiting({
       stationId: 'ARCADE-01', expectedRevision: recruiting!.station.revision,
@@ -491,7 +524,7 @@ describe('Arcade messaging commands', () => {
     const changed = await message(h.service, 'SM-CHOICE-006', 'VOICE MONSTERS');
     expect(changed.reply).toContain('VOTE LOCKED: Voice Monsters');
     expect((await message(h.service, 'SM-CHOICE-007', '4')).reply)
-      .toContain("That option isn't on the big screen. Reply 1 Voice Racer, 2 Voice Monsters, 3 Voice Fighter");
+      .toContain("That option isn't on the display. Reply 1 Voice Racer, 2 Voice Monsters, 3 Voice Fighter");
     const state = h.store.snapshot();
     const entry = Object.values(state.stationReadyEntries).find(candidate => candidate.playerId === joined.playerId)!;
     expect(state.stationRounds[entry.roundId]?.gameChoicesByReadyEntryId).toEqual({ [entry.id]: 'monsters' });
@@ -521,7 +554,7 @@ describe('Arcade messaging commands', () => {
     h.setNow(deadline);
     const exact = await message(h.service, 'SM-CLOSED-EXACT', 'RACER', englishFrom);
     expect(exact.reply).toBe(
-      "Voting is closed. Watch the big screen; we'll tell you if you're in and when it's time to call.",
+      "Voting is closed. Watch the display; we'll tell you if you're in and when it's time to call.",
     );
     h.setNow(deadline + 1);
     const late = await message(h.service, 'SM-CLOSED-LATE', '2', portugueseFrom);

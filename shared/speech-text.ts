@@ -23,7 +23,10 @@ export function speechSafeText(input: string, maxLen = 500, locale: SupportedLoc
     .replace(/\(([^)]*)\)/g, ', $1, ')
     .replace(/\.{3,}/g, '. ')
     .replace(/\s+([,.!?;:])/g, '$1')
-    .replace(/([,.!?;:])(?=\S)/g, '$1 ')
+    .replace(/([,.!?;:])(?=\S)/g, (mark, _capture, offset, text) => (
+      /[.,]/.test(mark) && /\d/.test(text[offset - 1] ?? '') && /\d/.test(text[offset + 1] ?? '')
+        ? mark : `${mark} `
+    ))
     .replace(/\s+/g, ' ')
     .trim();
 

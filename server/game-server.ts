@@ -437,11 +437,12 @@ export class GameServer {
     // room gets reaped before the next stepRoom. (Read fresh — phase changed during tick().)
     const phaseAfter: string = room.phase;
     if (phaseAfter === 'results') {
-      this.reportFinishedOnce(room);
       // The final tick can queue finish/race_over and enter results before broadcastAll gets another
       // racing-phase pass. Flush those events here so voice callers hear the race-end recap.
       for (const ev of room.drainEvents()) this.emitEvent(room.code, ev);
       this.pushLobby(room.code);
+      // Start station completion only after callers have received race_over and begun their recap.
+      this.reportFinishedOnce(room);
     }
   }
 

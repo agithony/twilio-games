@@ -149,23 +149,7 @@ export class ConversationRelayAdapter {
     // The final recap waits for race_over so the room is on the results screen and hostContext has the
     // actual standings. A finish event can fire earlier while other racers are still driving.
     if (ev.kind === 'race_over' && this.playerId && !this.recapDone) {
-      this.recapDone = true;
-      this.lateRacingPromptUntil = Date.now() + 10_000;
-      const fallback = () => this.stationManaged
-        ? createTranslator(this.commandLocale, RACER_MESSAGES)('voice.waitOperator')
-        : raceOverLine(this.myFinishPlace, this.commandLocale);
-      if (this.deps.converse && this.roomCode) {
-        const epoch = ++this.turnEpoch;
-        const prompt = createTranslator(this.commandLocale, RACER_MESSAGES)('voice.raceOverPrompt');
-        let speech!: Promise<void>;
-        speech = this.deps.converse(this.roomCode, this.playerId, prompt, this.commandLocale)
-          .then(reply => { if (epoch === this.turnEpoch) this.speakResultRecap(reply || fallback()); })
-          .catch(() => { if (epoch === this.turnEpoch) this.speakResultRecap(fallback()); })
-          .finally(() => this.pendingSpeech.delete(speech));
-        this.pendingSpeech.add(speech);
-        return;
-      }
-      this.speakResultRecap(fallback());
+      this.requestResultRecap();
       return;
     }
     const line = lineForEvent(ev, this.playerId, this.lineSeq, this.commandLocale);
@@ -180,6 +164,24 @@ export class ConversationRelayAdapter {
     for (const sentence of text.split(/(?<=[.!?])\s+/).map(part => part.trim()).filter(Boolean)) {
       this.deps.say?.(sentence);
     }
+  }
+
+  private requestResultRecap(): void {
+    if (!this.playerId || !this.roomCode || this.recapDone) return;
+    this.recapDone = true;
+    this.lateRacingPromptUntil = Date.now() + 10_000;
+    const fallback = () => this.stationManaged
+      ? createTranslator(this.commandLocale, RACER_MESSAGES)('voice.waitOperator')
+      : raceOverLine(this.myFinishPlace, this.commandLocale);
+    if (!this.deps.converse) { this.speakResultRecap(fallback()); return; }
+    const epoch = ++this.turnEpoch;
+    const prompt = createTranslator(this.commandLocale, RACER_MESSAGES)('voice.raceOverPrompt');
+    let speech!: Promise<void>;
+    speech = this.deps.converse(this.roomCode, this.playerId, prompt, this.commandLocale)
+      .then(reply => { if (epoch === this.turnEpoch) this.speakResultRecap(reply || fallback()); })
+      .catch(() => { if (epoch === this.turnEpoch) this.speakResultRecap(fallback()); })
+      .finally(() => this.pendingSpeech.delete(speech));
+    this.pendingSpeech.add(speech);
   }
 
   ignoreLateRacingPrompt(final: boolean): void {
@@ -225,7 +227,10 @@ export class ConversationRelayAdapter {
       }
       case 'prompt': {
         if(msg.last&&this.stationManaged&&this.roomCode&&['results','finished'].includes(this.deps.phaseOf?.(this.roomCode)??'')){
-          this.firedIntents=[];this.deps.say?.(createTranslator(this.commandLocale,RACER_MESSAGES)('voice.waitOperator'));break;
+          this.firedIntents=[];
+          if(!this.recapDone)this.requestResultRecap();
+          else this.deps.say?.(createTranslator(this.commandLocale,RACER_MESSAGES)('voice.waitOperator'));
+          break;
         }
         if (msg.last && isHelpRequest(msg.voicePrompt, this.commandLocale)) {
           this.firedIntents = [];
@@ -284,6 +289,9 @@ export class ConversationRelayAdapter {
         console.log(`[CR] interrupt after ${msg.durationUntilInterruptMs}ms; played="${msg.utteranceUntilInterrupt}"`);
         this.turnEpoch++;
         this.firedIntents = [];
+        if(this.stationManaged&&this.roomCode&&['results','finished'].includes(this.deps.phaseOf?.(this.roomCode)??'')){
+          this.recapDone=false;this.requestResultRecap();
+        }
         break;
       }
       case 'error':
@@ -298,7 +306,7 @@ export class ConversationRelayAdapter {
     if(!this.authoritativeName||!this.roomCode)return;
     const text=createTranslator(this.commandLocale,RACER_MESSAGES);
     this.deps.say?.(text(resumed?'voice.returnedNamed':'voice.welcomeNamed',{name:this.authoritativeName}));
-    if(!resumed)this.deps.say?.(text('voice.controlsIntro'));
+    if(!resumed){this.deps.say?.(text('voice.greeting.1'));this.deps.say?.(text('voice.controlsIntro'));}
     this.speakPhaseGuidance();
   }
 
@@ -306,6 +314,7 @@ export class ConversationRelayAdapter {
     if(!this.roomCode)return;
     const text=createTranslator(this.commandLocale,RACER_MESSAGES);
     const phase=this.deps.phaseOf?.(this.roomCode)??'lobby';
+    if(this.stationManaged&&['results','finished'].includes(phase)){this.requestResultRecap();return;}
     const key=phase==='car_select'?'voice.helpCar'
       :phase==='map_select'?'voice.helpMap'
       :phase==='racing'||phase==='countdown'?'voice.help'
