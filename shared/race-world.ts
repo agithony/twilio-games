@@ -87,10 +87,11 @@ export class RaceWorld {
   /** Drain queued announcer events (server polls this each broadcast). */
   drainEvents(): GameEvent[] { const e = this.events; this.events = []; return e; }
 
-  applyIntent(playerId: string, intent: Intent): void {
-    if (this._phase !== 'racing') return;
+  applyIntent(playerId: string, intent: Intent): boolean {
+    if (this._phase !== 'countdown' && this._phase !== 'racing') return false;
     const c = this.cars.find(x => x.id === playerId);
-    if (!c || c.finished) return;
+    if (!c || c.finished) return false;
+    const before={targetLane:c.targetLane,boost:c.boost,power:c.power,powerActive:c.powerActive};
     switch (intent) {
       case 'MOVE_LEFT':  c.targetLane = clamp(c.targetLane - 1, 0, LANES - 1); break;
       case 'MOVE_RIGHT': c.targetLane = clamp(c.targetLane + 1, 0, LANES - 1); break;
@@ -98,6 +99,8 @@ export class RaceWorld {
       case 'BRAKE':      c.boost = Math.max(c.boost - 1.6, BOOST_MIN); break;
       case 'USE_POWER':  if (c.power > 0) { c.power--; c.powerActive = POWER_ACTIVE_SECS; } break;
     }
+    return c.targetLane!==before.targetLane||c.boost!==before.boost||c.power!==before.power
+      ||c.powerActive!==before.powerActive;
   }
 
   step(dt: number): void {

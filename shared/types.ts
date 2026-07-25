@@ -91,7 +91,7 @@ export type GameEvent =
   | { kind: 'enter_car_select'; spokenReplyPlayerId?: string }  // flow reached car-select
   | { kind: 'enter_map_select'; spokenReplyPlayerId?: string }  // flow reached map-select
   | { kind: 'car_picked'; playerId: string; name: string; car: string; spokenReplyPlayerId?: string }  // a player locked a car
-  | { kind: 'map_picked'; map: string }                   // the track was chosen
+  | { kind: 'map_picked'; map: string; playerId?:string } // one caller cast or changed a track vote
   | { kind: 'countdown'; n: number }
   | { kind: 'go' }
   | { kind: 'lead_change'; playerId: string; name: string }

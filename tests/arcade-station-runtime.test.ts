@@ -37,7 +37,7 @@ async function harness(configure?: (input: Record<string, any>) => void) {
   let sequence = 0;
   let scheduled: { handle: NodeJS.Timeout; callback: () => void; delayMs: number } | null = null;
   const removedMatches: Array<{ game: string; roomCode: string; removal: 'retire'|'abort' }> = [];
-  const participantUpdates: Array<{ game: string; roomCode: string; count: number }> = [];
+  const participantUpdates:Array<{game:string;roomCode:string;count:number;activeEnginePlayerIds:readonly string[]}>=[];
   const runtimeErrors: unknown[] = [];
   const service = new ArcadeService({
     store,
@@ -71,7 +71,7 @@ async function harness(configure?: (input: Record<string, any>) => void) {
       if (scheduled?.handle === handle) scheduled = null;
     },
     onMatchRemoved: (game, roomCode, removal) => removedMatches.push({ game, roomCode, removal }),
-    onMatchParticipantsChanged: (game, roomCode, count) => participantUpdates.push({ game, roomCode, count }),
+    onMatchParticipantsChanged:(game,roomCode,count,activeEnginePlayerIds)=>participantUpdates.push({game,roomCode,count,activeEnginePlayerIds}),
     onError: error => runtimeErrors.push(error),
   });
   return {
@@ -176,12 +176,12 @@ describe('ArcadeStationRuntime', () => {
     });
 
     expect(h.participantUpdates).toEqual([
-      { game: 'racer', roomCode: 'DROP', count: 2 },
-      { game: 'racer', roomCode: 'DROP', count: 1 },
+      {game:'racer',roomCode:'DROP',count:2,activeEnginePlayerIds:[]},
+      {game:'racer',roomCode:'DROP',count:1,activeEnginePlayerIds:[]},
     ]);
     h.participantUpdates.length = 0;
     await runtime.dropAdmittedEntry(firstDropInput);
-    expect(h.participantUpdates).toEqual([{ game: 'racer', roomCode: 'DROP', count: 1 }]);
+    expect(h.participantUpdates).toEqual([{game:'racer',roomCode:'DROP',count:1,activeEnginePlayerIds:[]}]);
   });
 
   it('recovers an overdue recruiting deadline and advances later deadlines deterministically', async () => {
@@ -511,6 +511,9 @@ describe('ArcadeStationRuntime', () => {
     expect(replaced?.matches[replaced.station.activeMatchId!]!.participantReadyEntryIds)
       .toContain(launching.match!.overflowReadyEntryIds[0]);
     expect(replaced?.matches[replaced.station.activeMatchId!]!.launchGeneration).toBe(2);
+    expect(h.participantUpdates.at(-1)).toEqual({
+      game:'racer',roomCode:'AUTO',count:2,activeEnginePlayerIds:[`legacy:${admitted[0]}`],
+    });
     expect(h.scheduled()?.delayMs).toBe(120_000);
     h.setTime(T0+240_000);
     runtime.markParticipantConnected(launching.match!.overflowReadyEntryIds[0]!);

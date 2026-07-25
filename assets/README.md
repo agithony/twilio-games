@@ -1,6 +1,6 @@
 # Asset Guide
 
-This directory contains the repository-root 3D assets and their runtime configuration. Browser-public sprites, audio, brand files, and Draco decoders live under `client/public/`. See the [project README](../README.md) for application setup and [asset credits](CREDITS.md) for the provenance ledger.
+This directory contains the repository-root 3D assets and their runtime configuration. Browser-public sprites, audio, fonts, demo videos, brand files, and Draco decoders live under `client/public/`. See the [project README](../README.md) for application setup and [asset credits](CREDITS.md) for the provenance ledger.
 
 ## Installation
 
@@ -16,7 +16,7 @@ An FBX or GLB containing `version https://git-lfs.github.com/spec/v1` is an unre
 
 ## Layout
 
-Current counts describe the committed/runtime layout, excluding ignored raw and quarantined files.
+The counts below are verified against the committed runtime layout and exclude ignored raw and quarantined files.
 
 | Path | Current contents | Purpose |
 |---|---:|---|
@@ -38,8 +38,14 @@ The browser also consumes these asset trees outside this directory:
 |---|---:|---|
 | `client/public/assets/monsters/` | 16 GIFs | `/assets/monsters/` |
 | `client/public/audio/` | 25 MP3/M4A files | `/audio/` |
-| `client/public/brand/` | Twilio SVGs and the join QR PNG | `/brand/` |
+| `client/public/fonts/` | 5 OTF files | `/fonts/` |
+| `client/public/video/` | 3 MP4 files | `/video/` |
+| `client/public/brand/` | 2 SVG logos and 3 PNG QR images | `/brand/` |
 | `client/public/draco/` | JavaScript and WASM decoders | `/draco/` |
+
+The font inventory is `TwilioSansDisplay-Regular.otf`, `TwilioSansDisplay-Extrabold.otf`, `TwilioSansText-Regular.otf`, `TwilioSansText-Bold.otf`, and `TwilioSansMono-Regular.otf`. CSS loads them directly with `@font-face`; the production server maps `.otf` to `font/otf`.
+
+The home-page previews use `vr-demo.mp4`, `vm-demo.mp4`, and `vf-demo.mp4` for Voice Racer, Voice Monsters, and Voice Fighter. The brand inventory is `twilio_logo_1color_white.svg`, `Twilio_Logo_Bug_White.svg`, the standalone fallback `join-qr.png`, and the locale-specific station QR images `arcade-en.png` and `arcade-pt.png`.
 
 Vite serves the public tree directly. In development it proxies other `/assets/*` requests to the Node server; in production the Node server resolves built client assets first and then repository-root `assets/` files.
 
@@ -109,4 +115,4 @@ npm run build
 
 The repository has no root `LICENSE` file and must not be treated as granting general reuse rights. Asset licenses are file-specific. Consult [CREDITS.md](CREDITS.md), preserve required attribution, and verify that a source license permits the intended distribution and modification before adding or publishing an asset.
 
-The Racer, arena, and map ledger includes CC BY material, one CC BY-ND Racer map, incomplete source fields, and excluded noncommercial or unknown-license models. Fighter source URLs and licenses remain explicitly unverified. The current ledger does not document the audio files, monster GIFs, join QR, or Twilio brand files. Do not infer permission from a filename, a download site, or inclusion in this repository.
+The Racer, arena, and map ledger includes CC BY material, one CC BY-ND Racer map, incomplete source fields, and excluded noncommercial or unknown-license models. Fighter source URLs and licenses remain explicitly unverified. The current ledger does not document the audio files, fonts, demo videos, monster GIFs, QR images, or Twilio brand files. Do not infer permission from a filename, a download site, or inclusion in this repository.

@@ -1,14 +1,27 @@
 # Twilio Games: One-Display Expo Station Plan
 
-**Date:** 2026-07-21
-**Status:** Implemented baseline; live Twilio/Azure validation remains
-**Scope:** One shared display at one conference booth, one active game at a time
-**Supersedes:** The station, queue-wave, game-selection, capacity, and QR journey in
-`TWILIO_ARCADE_PLAN.md` where this document is more specific.
+> **Document status (2026-07-25):** This completed plan is the historical expo-station baseline.
+> Later implementation deltas supersede it where they differ.
+>
+> **Operational truth:** Use the [README](../README.md), [Deployment](DEPLOYMENT.md), and
+> [Infrastructure Setup](INFRA_SETUP.md) for current behavior and operations.
+>
+> **Current implementation delta (2026-07-25):** Direct Conversation Relay owns Voice. Signed
+> `POST /sms` owns SMS/WhatsApp commands and immediate replies; Conversation Orchestrator and TAC
+> enrich Conversation Memory only. One individual FIFO ready line feeds up to two assigned callers
+> in Racer, Monsters, or Fighter, with FIFO overflow and caller-scoped setup. Racer uses explicit
+> caller-driven phase gates; Monsters and Fighter advance setup automatically. WhatsApp
+> call-now uses the approved Phone CTA when configured. Every playable game emits factual results,
+> and the operator can reset Racer leaderboard records for one selected map.
 
-This is the durable product and implementation source of truth for the one-display expo flow. Future
-sessions must read this document before changing the Twilio Games station, round, QR, coin insertion,
-messaging, game-selection, or display behavior.
+**Original plan date:** 2026-07-21
+**Status:** Completed historical baseline; retained for decision history
+**Scope:** One shared display at one conference booth, one active game at a time
+**Historical relationship:** This plan originally superseded the station, queue-wave, game-selection,
+capacity, and QR journey in `TWILIO_ARCADE_PLAN.md` where it was more specific.
+
+This document preserves the decisions and implementation baseline for the original one-display expo
+flow. It is not the current operational source of truth.
 
 ## 1. Locked Decisions
 
@@ -34,7 +47,9 @@ messaging, game-selection, or display behavior.
 | Trivia | Not selectable until a playable authoritative engine exists |
 | Browser display voice | No browser `speechSynthesis`; caller audio remains Conversation Relay |
 | Language | Display language flows into QR, chooser, messaging, wallet, queue, and Memory preference |
-| Authority | Deterministic station/game services own state; TAC/LLM may converse but never mutate directly |
+| Messaging authority | Signed `POST /sms` owns commands and immediate replies for SMS and WhatsApp |
+| Memory enrichment | Conversation Orchestrator and TAC enrich Conversation Memory only |
+| Authority | Deterministic station/game services own state; direct Conversation Relay owns Voice gameplay |
 
 Runtime configuration enforces these economics: paid `per_player` play starts new players with at least
 one coin, and `defaultGameCost` plus every game-specific cost must equal exactly one. Free play uses zero.
@@ -52,6 +67,8 @@ The booth behaves like one physical arcade machine:
 6. Watch the display animate the inserted coin and add the player to the ready pool.
 7. Vote for a game by replying with its name/number or choosing it on the player page.
 8. Admitted players play; overflow stays first for the next game.
+9. An admitted messaging player follows the call-now notice. The signed Voice webhook routes the
+   caller to the assigned game and room and supplies their registered name and player slot automatically.
 
 The confirmation message is not the coin. The wallet ledger is authoritative.
 
@@ -206,15 +223,20 @@ Messaging flow:
 ```text
 QR chooser
   -> SMS or WhatsApp
-  -> Twilio Conversations / Orchestrator
-  -> TAC callback
-  -> deterministic registration and wallet tools
-  -> localized reply
+  -> signed POST /sms
+  -> deterministic registration, wallet, ready-line, and voting commands
+  -> immediate localized reply
+
+Conversation Orchestrator capture
+  -> signed POST /tac/webhook
+  -> TAC lifecycle processing
+  -> Conversation Memory enrichment only
 ```
 
-The channel address supplies the trusted phone destination. TAC invokes the deterministic step-by-step
-registration flow; application code validates exact fields, consent, idempotency, wallet, ready-pool,
-and match operations. Recalled Memory contributes profile and locale continuity, not economic authority.
+The channel address supplies the trusted phone destination. Signed `/sms` runs the deterministic
+step-by-step registration flow and validates exact fields, consent, idempotency, wallet, ready-line,
+and match operations. Orchestrator/TAC does not execute the command or send a second reply. Recalled
+Memory contributes profile and locale continuity, not economic authority.
 
 After registration:
 
@@ -233,7 +255,13 @@ Position: 3
 When game selection appears, reply with the game name or number.
 ```
 
-Deterministic commands are parsed before TAC/LLM fallback:
+When an assigned player must call, SMS sends the locale-specific Voice number. WhatsApp uses the
+approved localized `twilio/call-to-action` Phone CTA when its Content SID is configured, including
+inside the 24-hour session window. The action contains the static locale Voice number and opens the
+device Phone dialer; it is not a WhatsApp Voice Call action. Without the template, an in-window notice
+falls back to a free-form phone number and an out-of-window notice is suppressed.
+
+Signed `/sms` parses deterministic commands and generates the immediate reply:
 
 - `JOIN`
 - `COIN`
@@ -253,7 +281,7 @@ The selected display language chooses the short initial command (`JOIN` or `ENTR
 - Attract/recruiting instructions
 - Mobile channel chooser
 - SMS/WhatsApp prefilled command
-- TAC registration prompts
+- Signed `/sms` registration prompts
 - Wallet and coin confirmation
 - Queue status and call messages
 - Post-game messages
@@ -318,17 +346,27 @@ Station LAUNCHING
   -> persist launch intent
   -> command shared display to selected route
   -> display sends ready acknowledgement
-  -> bind admitted player identities/calls to game-local IDs
+  -> send admitted messaging players the locale-specific call-now notice
+  -> signed Voice webhook automatically binds each caller to the assigned game, room, identity, and slot
+  -> game receives the registered name and expected caller count
   -> authoritative engine starts
   -> redeem admitted coin reservations
   -> station PLAYING
 ```
+
+Assigned callers do not enter a room code or repeat their registered name. Game-specific selections
+remain caller-driven, and the engine waits for the expected assigned callers subject to the station's
+no-show and overflow policy.
 
 On launch failure, keep or release reservations according to a deterministic compensation policy.
 Never claim an engine launch and a file-store write are one transaction.
 
 Engine completion emits one normalized result into the station coordinator, which completes the
 Arcade match and transitions to results/recruiting.
+
+Racer, Monsters, and Fighter now provide factual authoritative participant results to the station
+display and result notices. Racer reports place and time; Monsters and Fighter report the outcome.
+Authenticated staff can reset persisted Racer leaderboard records for one selected map with a reason.
 
 ## 12. Realtime Events
 
@@ -362,11 +400,15 @@ Authenticated staff can:
 - Launch, cancel, or recover a round
 - Release reservations
 - Toggle QR rail preset
+- Reset persisted Racer scores for one selected map with a reason
 - Reset the station after an unrecoverable display/game failure
 
 Automatic timers remain active when no operator acts.
 
 ## 14. Implementation Phases
+
+These phases record the completed baseline plan. Their original imperative wording is retained as
+history; they are not a current implementation checklist.
 
 ### Phase A: Domain and Persistence
 
@@ -428,6 +470,5 @@ Automatic timers remain active when no operator acts.
 - One process and one replica remain required until shared state/session infrastructure exists.
 - File persistence is acceptable for the first expo spike but not indefinite high-volume production.
 - WhatsApp requires approved sender, opt-in, session-window, and template compliance.
-- TAC standard Voice still omits low-level final/DTMF events required by gameplay; retain the hybrid
-  Conversation Relay path until a custom adapter passes capability tests.
+- Direct Conversation Relay owns Voice gameplay. TAC is not in the Voice command path.
 - Messaging, Memory, and live Twilio resources require account credentials and Console provisioning.

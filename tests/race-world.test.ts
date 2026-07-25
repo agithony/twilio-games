@@ -45,10 +45,10 @@ describe('RaceWorld', () => {
     expect(cars.find(c => c.id === 'b')!.carIndex).toBe(0);  // default when unspecified
   });
 
-  it('ignores intents during countdown', () => {
+  it('accepts intents during countdown so the first command is not lost', () => {
     const before = w.snapshot().cars[0]!.targetLane;
     w.applyIntent('p1', 'MOVE_RIGHT');
-    expect(w.snapshot().cars[0]!.targetLane).toBe(before);
+    expect(w.snapshot().cars[0]!.targetLane).toBe(before+1);
   });
 
   it('MOVE_LEFT / MOVE_RIGHT change target lane within bounds', () => {

@@ -1,21 +1,36 @@
 # Twilio Games: TAC, Lead Capture, Digital Coins, and Smart Queue Plan
 
-**Date:** 2026-07-20
-**Status:** Core station/TAC messaging baseline implemented; Conversation Intelligence and richer Memory/knowledge roadmap items remain
+> **Document status (2026-07-25):** This is the product-direction roadmap and decision history. It is
+> not an exhaustive account of the current implementation.
+>
+> **Operational truth:** Use the [README](../README.md), [Deployment](DEPLOYMENT.md), and
+> [Infrastructure Setup](INFRA_SETUP.md) for current behavior and operations.
+>
+> **Current implementation delta (2026-07-25):** Direct Conversation Relay owns Voice. The signed
+> `POST /sms` webhook owns deterministic SMS/WhatsApp commands and immediate replies; Conversation
+> Orchestrator and TAC enrich Conversation Memory only. The station uses one individual FIFO ready
+> line, admits up to two humans to Racer, Monsters, or Fighter, and keeps overflow in FIFO order.
+> Assigned callers are routed to stable personal slots. Racer advances setup only when either caller
+> speaks the next phase command after all required choices; Monsters and Fighter advance automatically.
+> WhatsApp call-now uses the approved localized
+> Phone CTA when configured. All three games report factual authoritative results, and staff can reset
+> the Racer leaderboard for one selected map.
+
+**Original plan date:** 2026-07-20
+**Status:** Product-direction roadmap and decision history; implementation checkpoints below are historical and incomplete
 **Project:** Twilio Games
-**Canonical memory:** This file is the durable source of truth for the product direction and current
-implementation. Future sessions should read this document before changing
+**Historical scope:** This file records durable product decisions for
 TAC, registration, digital coins, earning challenges, queues, post-game messaging, or Conversation
 Intelligence.
 
-**One-display station flow:** `ARCADE_EXPO_STATION_PLAN.md` is the approved implementation source of
-truth for station terminology, ready-pool timing, phase-two game selection, persistent QR behavior,
-messaging onboarding, overflow, launch coordination, and game capacity. It supersedes conflicting
-queue-wave details in this broader plan.
+**One-display station baseline:** `ARCADE_EXPO_STATION_PLAN.md` records the completed historical
+baseline for station terminology, ready-pool timing, phase-two game selection, persistent QR behavior,
+messaging onboarding, overflow, launch coordination, and game capacity. Later implementation deltas
+supersede both plans where the operational documentation differs.
 
 ## 1. Executive Summary
 
-Twilio Games now provides a single-display event experience that demonstrates
+This roadmap describes a single-display event experience that demonstrates
 Twilio Agent Connect (TAC), the new Twilio Conversations layer, Conversation Relay, Messaging,
 Conversation Memory, Conversation Intelligence, and application tools through a cohesive arcade
 metaphor.
@@ -31,8 +46,11 @@ The intended event journey is:
 5. The visitor joins the virtual line for the one physical arcade display.
 6. When promoted, the visitor checks in and one coin is reserved.
 7. The coin is redeemed only when the match actually starts.
-8. Multiplayer games form waves based on each game's capacity. Standby players replace no-shows.
-9. After a match, the station outbox sends a localized result summary and optional wallet balance.
+8. The current station admits the first two eligible players from one FIFO ready line for every
+   playable game. Overflow keeps its reservation and FIFO priority, and can replace a launch-time
+   no-show automatically.
+9. After a match, the station outbox sends a localized factual result summary and optional wallet
+   balance.
    Browser challenges provide one-click opportunities to earn more coins; conversational rematch
    options remain roadmap work.
 10. A visitor earns a coin immediately by clicking a configured tracked URL. Challenges are simple
@@ -53,8 +71,10 @@ These decisions are approved unless explicitly revisited later.
 |---|---|
 | Product name | Twilio Games |
 | Physical setup | One shared display, one active match at a time |
-| Communications framework | Use Twilio Agent Connect as the communications/agent gateway |
-| Voice transport | Direct Conversation Relay remains the deterministic gameplay path; TAC currently owns SMS/WhatsApp |
+| Historical communications direction | Use Twilio Agent Connect as the communications/agent gateway |
+| Voice transport | Direct Conversation Relay owns Voice gameplay |
+| Messaging transport | Signed `POST /sms` owns deterministic SMS/WhatsApp commands and immediate replies |
+| Orchestrator/TAC scope | Captured-message lifecycle processing and Conversation Memory enrichment only; no game command or reply ownership |
 | Gameplay authority | Existing deterministic game servers remain authoritative |
 | LLM role | Optional conversational assistance only; never authoritative for commands, scores, coins, queue order, or rewards |
 | Coin feature | Runtime mode: `off`, `coin_only`, or `lead_capture` |
@@ -72,9 +92,11 @@ These decisions are approved unless explicitly revisited later.
 | Challenge reward | Configurable; default one coin per unique player/challenge |
 | Social challenges | Track the click, not whether the visitor actually followed the account |
 | Queue capacity | Independent of game capacity; configurable high limit, default 250 waiting players |
-| Queue fairness | FIFO with party, readiness, capacity, and one deferral adjustment |
+| Current ready line | One individual FIFO line; up to two humans play and overflow keeps original priority |
+| Roadmap queue fairness | Party, readiness, capacity, and one deferral adjustment remain historical roadmap concepts |
 | Shared display privacy | Show first names/aliases and queue status only; never email, company, or phone |
-| Post-game | Configurable SMS/WhatsApp results notice with optional wallet balance |
+| Post-game | Configurable SMS/WhatsApp factual results notice with optional wallet balance |
+| Racer leaderboard maintenance | Authenticated staff can reset stored results for one selected map with a reason |
 | Intelligence | Configurable call analysis; advisory only |
 | Runtime changes | Stored centrally, versioned, audited, and pushed live without deployment |
 
@@ -102,18 +124,24 @@ Mode transitions must not delete data:
 | Product | Twilio Games responsibility |
 |---|---|
 | Conversation Relay | The microphone and speakers: speech-to-text, text-to-speech, interruptions, and DTMF |
-| Twilio Agent Connect | The arcade attendant for Orchestrator-captured SMS/WhatsApp and deterministic application tools |
-| Conversation Orchestrator | The activity timeline: links calls and messages into a continuous conversation |
+| Twilio Agent Connect | Processes the Orchestrator-captured messaging lifecycle to enrich Conversation Memory; it does not execute commands or send immediate replies |
+| Conversation Orchestrator | Captures SMS/WhatsApp for TAC and Memory enrichment; it does not own Voice gameplay |
 | Conversation Memory | The player profile card: name, language, preferences, and high-level history |
 | Conversation Intelligence | The analyst: detects confusion, sentiment, help requests, and product interest |
 | Enterprise Knowledge | The rulebook: game instructions, event information, and product documentation |
 | Arcade application database | The cash drawer and scoreboard: exact leads, balances, reservations, queue order, scores, and achievements |
 
-TAC does not remember a player by itself. Orchestrator links interactions and Conversation Memory
-resolves the cross-channel profile. The current application consumes recalled locale history and
-keeps exact lead, wallet, station, and result state in its own durable store.
+TAC does not remember a player by itself. In the current implementation, the signed `/sms` route
+handles each command and immediate reply once. Orchestrator captures SMS/WhatsApp, TAC enriches
+Conversation Memory, and the application keeps exact lead, wallet, station, and result state in its
+own durable store.
 
 ## 5. Target Architecture
+
+> **Historical target:** The diagram and service-boundary discussion below preserve the broader TAC
+> architecture considered during planning. They do not describe current routing. Current Voice goes
+> directly through Conversation Relay; current commands and replies go through signed `/sms`; the
+> Orchestrator/TAC path only enriches Conversation Memory.
 
 ```mermaid
 flowchart TB
@@ -191,8 +219,9 @@ TAC visible as the cross-channel agent and tool layer.
 
 ### 5.2 Runtime Requirements
 
-The TypeScript TAC SDK currently requires Node.js 22.13 or later. The repository currently documents
-Node.js 20. The implementation plan must either:
+The TypeScript TAC SDK requires Node.js 22.13 or later. At the time of this plan, the repository
+documented Node.js 20; the current repository and container use Node.js 22.13 or later. The original
+implementation alternatives were:
 
 1. Upgrade the entire application and container to Node.js 22.13+, or
 2. Run TAC as a separate Node.js 22 service beside the existing game server.
@@ -581,6 +610,10 @@ Match 4: player 7 versus next solo player or AI
 
 ## 11. Smart Virtual Queue
 
+> **Historical roadmap model:** The current station uses one individual FIFO ready line, two-human
+> admission for every playable game, and FIFO overflow. It does not use the party, approaching,
+> called, deferral, or standby-wave model retained below.
+
 Queue capacity is separate from game capacity. The default queue accepts 250 waiting players and can
 be increased at runtime.
 
@@ -841,19 +874,27 @@ Post-game wallet: 0
 
 ## 13. Post-Game Delivery
 
-The implemented station completion notification is a factual results notice over configured SMS and/or
-WhatsApp channels. `includeCoinBalance` optionally adds the authoritative available wallet balance.
-Enabled delivery requires at least one selected channel, and every selected channel must also be enabled
-globally.
+The implemented station completion notification uses normalized authoritative results from all three
+playable games. It sends factual per-player outcomes over configured SMS and/or WhatsApp, including
+Racer place and time and Monsters/Fighter win or loss when supplied by the engine.
+`includeCoinBalance` optionally adds the authoritative available wallet balance. Enabled delivery
+requires at least one selected channel, and every selected channel must also be enabled globally.
 
-Score, leaderboard, challenge links, rematch links, achievements, and intelligence tips are not yet
-implemented. Their schema fields remain for persisted configuration compatibility, but all must be
-`false` whenever post-game delivery is enabled. Validation rejects enabled configurations requesting
-any of those fields, so no accepted runtime setting silently promises missing content. Disabled legacy
-snapshots may retain the old values without activating them; new defaults set them to `false`.
+`includeChallenges` is implemented. When a player has zero available coins and an eligible earning
+challenge, the result notice can invite the player to reply `MORE`; the deterministic messaging flow
+then returns a signed challenge link. Challenge-bearing WhatsApp results and challenge-reward notices
+remain in-window free-form messages because they do not have approved template variants.
 
-The operator console reports delivery as off, results-notice-only, or results notice with coin balance.
+Separately configurable score or leaderboard content, rematch links, achievements, and intelligence
+tips are not yet implemented. Their schema fields remain for persisted configuration compatibility,
+but all must be `false` whenever post-game delivery is enabled. Validation rejects enabled
+configurations requesting those fields. Disabled legacy snapshots may retain old values without
+activating them; new defaults set them to `false`.
+
+The operator console reports delivery as off or enabled with the selected result, balance, and challenge options.
 WhatsApp outbound messages must follow applicable opt-in and template/session requirements.
+The same console can reset persisted Racer leaderboard records for one selected map after an
+authenticated operator supplies a reason. This is data maintenance, not a post-game message option.
 
 ## 14. Conversation Intelligence
 
@@ -1289,7 +1330,7 @@ for lead operations.
 ### End-to-End Event Tests
 
 - One display with 20+ queued simulated players
-- Racer wave of eight plus two standby
+- Racer round with two admitted players plus FIFO overflow
 - Fighter/Monsters one-human AI fallback
 - Party larger than capacity split into consecutive waves
 - Player snooze, return, one miss, second miss removal
@@ -1387,7 +1428,11 @@ without an extra step.
 **Exit criteria:** A queue larger than eight feeds one display fairly; no-show players do not block
 ready players; coins are charged only when matches start.
 
-### Phase 5: TAC Multichannel Concierge
+### Phase 5: Historical TAC Multichannel Concierge Proposal
+
+Current routing deliberately does not give TAC command or reply ownership. Signed `/sms` handles
+SMS/WhatsApp commands and immediate replies, while Orchestrator/TAC only enrich Conversation Memory.
+The original proposal is retained below as decision history.
 
 - [ ] Route SMS and WhatsApp through TAC
 - [ ] Add unified `onMessageReady` dispatcher
@@ -1403,9 +1448,10 @@ WhatsApp summary in one linked conversation.
 
 ### Phase 6: Post-Game and Intelligence
 
-- [ ] Normalize authoritative result events for every game
-- [ ] Add post-game message templates
-- [ ] Include score, rank, balance, achievements, and challenges
+- [x] Normalize authoritative result events for every playable game
+- [x] Add localized factual post-game result messages
+- [x] Add configurable balance and challenge content
+- [ ] Add separately configurable score, leaderboard, and achievement content
 - [ ] Configure Conversation Intelligence operators
 - [ ] Validate operator JSON outputs
 - [ ] Store analysis separately from authoritative game state
@@ -1476,6 +1522,9 @@ These are deliberately unresolved and should be answered during implementation s
 
 ## 26. References
 
+- [Current application behavior](../README.md)
+- [Current deployment and runtime operations](DEPLOYMENT.md)
+- [Current infrastructure and Twilio setup](INFRA_SETUP.md)
 - [Twilio Conversations](https://www.twilio.com/docs/conversations)
 - [Twilio Agent Connect](https://www.twilio.com/docs/conversations/agent-connect)
 - [TAC overview](https://www.twilio.com/docs/conversations/agent-connect/overview)
@@ -1490,8 +1539,10 @@ These are deliberately unresolved and should be answered during implementation s
 
 When resuming this work in a new or cleared session:
 
-1. Read this document first.
-2. Treat the locked product decisions as approved requirements.
+1. Read the README, Deployment, and Infrastructure Setup documents for current behavior and
+   operations, then use this document for product direction and decision history.
+2. Treat locked product decisions as historical direction and check later implementation deltas before
+   changing current behavior.
 3. Check the repository for implementation progress against the phase checklists.
 4. Do not redesign lead fields, challenge mechanics, queue fairness, or coin timing without an
    explicit user decision.

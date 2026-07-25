@@ -43,8 +43,8 @@ export function parseCrMessage(raw: string): CrMessage {
 
 export type RoomLike = {
   addPlayer(name: string, color?: string, preferredIndex?: number): { playerId: string; lane: number } | { error: string };
-  expectHumanPlayers?(count: number): void;
-  applyIntent(id: string, intent: Intent): void;
+  expectHumanPlayers?(count:number,stationManaged?:boolean):void;
+  applyIntent(id: string, intent: Intent): boolean|void;
   removePlayer(id: string): void;
   readonly playerCount?:number;
 };
@@ -56,6 +56,7 @@ const DTMF_TO_INTENT: Record<string, Intent> = {
 /** Min gap between mid-race "arcade" voice lines to a caller, so they stay fun (not spammy) and don't
  *  talk over the caller's spoken commands. 2s → snappy, reactive, still not a constant stream. */
 const CHATTY_GAP_MS = 2000;
+const SETUP_PHASE_GUARD_MS=1_500;
 
 /** Everything the adapter needs from its host to TALK BACK to the caller + hook game events. All
  *  optional so existing callers/tests that only drive intents keep working unchanged. */
@@ -83,6 +84,7 @@ export interface AdapterDeps {
   hasPlayerName?: (roomCode: string, playerId: string) => boolean;
   onSetupChanged?: (roomCode:string,beforePhase:string) => void;
   handleSetupUtterance?: (roomCode:string,playerId:string,utterance:string,locale:SupportedLocale) => string|null;
+  setupTurnFor?: (roomCode:string,playerId:string,phase:string) => 'active'|'waiting';
   /** Accepted semantic commands only; raw transcripts are deliberately never exposed to analytics. */
   onIntent?: (intent: Intent) => void;
 }
@@ -105,6 +107,10 @@ export class ConversationRelayAdapter {
   private stationParticipantIndex = 0;
   private stationParticipantCount = 1;
   private active=true;
+  private callSid='';
+  private setupPromptPhase:string|null=null;
+  private lastFinalCommand:{text:string;at:number;source:'setup'|'race'}|null=null;
+  private setupPhaseEnteredAt=0;
   constructor(private deps: AdapterDeps) {}
 
   setAuthoritativeName(name: string | null): void {
@@ -146,8 +152,26 @@ export class ConversationRelayAdapter {
     }
     if (ev.kind === 'enter_car_select' || ev.kind === 'enter_map_select') {
       this.turnEpoch++;
+      this.setupPhaseEnteredAt=now;
       if (this.lastMenuPrompt?.kind === ev.kind && now - this.lastMenuPrompt.at < 1000) return;
       this.lastMenuPrompt = { kind: ev.kind, at: now };
+      const phase=ev.kind==='enter_car_select'?'car_select':'map_select';
+      if(this.stationManaged&&this.roomCode&&this.playerId
+        &&this.deps.setupTurnFor?.(this.roomCode,this.playerId,phase)==='waiting'){
+        this.deps.say?.(createTranslator(this.commandLocale,RACER_MESSAGES)('voice.waitingForPlayers'));
+        return;
+      }
+    }
+    if(this.stationManaged&&this.roomCode&&this.playerId
+      &&((ev.kind==='car_picked'&&ev.playerId!==this.playerId)||
+        (ev.kind==='map_picked'&&ev.playerId!==undefined&&ev.playerId!==this.playerId))){
+      const phase=ev.kind==='car_picked'?'car_select':'map_select';
+      if(this.deps.setupTurnFor?.(this.roomCode,this.playerId,phase)==='active'){
+        this.deps.say?.(createTranslator(this.commandLocale,RACER_MESSAGES)(
+          phase==='car_select'?'voice.helpCar':'voice.helpMap',
+        ));
+        return;
+      }
     }
     if (isChattyEvent(ev.kind)) {
       if (now - this.lastChattyAt < CHATTY_GAP_MS) return;   // too soon → stay quiet
@@ -227,9 +251,10 @@ export class ConversationRelayAdapter {
         const room = this.deps.findOrCreateRoom(code);
         if (!room) { console.log(`[CR] room ${code} not found → unbound`); return; }
         const beforeJoinPhase=this.deps.phaseOf?.(code)??'lobby';
-        if(this.stationManaged)room.expectHumanPlayers?.(this.stationParticipantCount);
-        else if(this.authoritativeName)room.expectHumanPlayers?.(1);
-        else if((room.playerCount??0)>=1)room.expectHumanPlayers?.(2);
+        this.callSid=msg.callSid;
+        if(this.stationManaged)room.expectHumanPlayers?.(this.stationParticipantCount,true);
+        else if(this.authoritativeName)room.expectHumanPlayers?.(1,false);
+        else if((room.playerCount??0)>=1)room.expectHumanPlayers?.(2,false);
         const resumed=this.deps.resumePlayer?.(msg.callSid,code)??null;
         const res = resumed??room.addPlayer(this.authoritativeName ?? playerName(msg.from, this.commandLocale), undefined,
           this.stationManaged ? this.stationParticipantIndex : undefined);
@@ -252,6 +277,16 @@ export class ConversationRelayAdapter {
       }
       case 'prompt': {
         const requestEpoch = ++this.turnEpoch;
+        const phaseAtFrame=this.roomCode?this.deps.phaseOf?.(this.roomCode)??null:null;
+        if(!msg.last&&phaseAtFrame&&['lobby','car_select','map_select'].includes(phaseAtFrame)
+          &&this.setupPromptPhase===null)this.setupPromptPhase=phaseAtFrame;
+        const originatingSetupPhase=msg.last?this.setupPromptPhase:null;
+        if(msg.last)this.setupPromptPhase=null;
+        if(msg.last&&originatingSetupPhase&&phaseAtFrame!==originatingSetupPhase){
+          this.firedIntents=[];
+          this.speakPhaseFallback(phaseAtFrame);
+          break;
+        }
         if(msg.last&&this.stationManaged&&this.roomCode&&['results','finished'].includes(this.deps.phaseOf?.(this.roomCode)??'')){
           this.firedIntents=[];
           if(!this.recapDone)this.requestResultRecap();
@@ -261,7 +296,11 @@ export class ConversationRelayAdapter {
         if (msg.last && isHelpRequest(msg.voicePrompt, this.commandLocale)) {
           this.firedIntents = [];
           const phase = this.roomCode ? this.deps.phaseOf?.(this.roomCode) : null;
-          const key = phase === 'car_select' ? 'voice.helpCar'
+          const waiting=this.stationManaged&&this.roomCode&&this.playerId&&phase
+            &&['car_select','map_select'].includes(phase)
+            &&this.deps.setupTurnFor?.(this.roomCode,this.playerId,phase)==='waiting';
+          const key = waiting?'voice.waitingForPlayers'
+            :phase === 'car_select' ? 'voice.helpCar'
             : phase === 'map_select' ? 'voice.helpMap'
               : phase === 'results' || phase === 'finished' ? 'voice.helpResults'
                 : phase === 'racing' || phase === 'countdown' ? 'voice.help'
@@ -272,8 +311,15 @@ export class ConversationRelayAdapter {
         const setupPhase=this.roomCode?this.deps.phaseOf?.(this.roomCode):null;
         if(msg.last&&this.roomCode&&this.playerId&&setupPhase&&['lobby','car_select','map_select'].includes(setupPhase)){
           this.firedIntents=[];
+          const now=Date.now();
+          if(now-this.setupPhaseEnteredAt<SETUP_PHASE_GUARD_MS){
+            this.speakPhaseFallback(setupPhase);
+            break;
+          }
           const reply=this.deps.handleSetupUtterance?.(this.roomCode,this.playerId,msg.voicePrompt,this.commandLocale)??null;
           const currentPhase=this.deps.phaseOf?.(this.roomCode)??setupPhase;
+          this.lastFinalCommand={text:msg.voicePrompt.trim().toLocaleLowerCase(this.commandLocale),at:now,source:'setup'};
+          if(currentPhase!==setupPhase)this.setupPhaseEnteredAt=now;
           if(reply)this.deps.say?.(reply,this.phaseGuard(currentPhase));
           else this.speakPhaseFallback(currentPhase);
           break;
@@ -289,6 +335,15 @@ export class ConversationRelayAdapter {
           // Interim hypotheses are revisable. Mutate authoritative race state only from the final
           // transcript so a correction such as left -> right cannot execute both commands.
           if (!msg.last) break;
+          const normalizedFinal=msg.voicePrompt.trim().toLocaleLowerCase(this.commandLocale);
+          const now=Date.now();
+          const commandPhase=this.roomCode?this.deps.phaseOf?.(this.roomCode)??'unknown':'unbound';
+          const duplicateWindow=this.lastFinalCommand?.source==='setup'?SETUP_PHASE_GUARD_MS:400;
+          if(this.lastFinalCommand?.text===normalizedFinal&&now-this.lastFinalCommand.at<duplicateWindow){
+            console.log(`[CR] command call=${this.callSid.slice(0,8)||'unknown'} player=${this.playerId??'unbound'} phase=${commandPhase} duplicate-final=true`);
+            break;
+          }
+          this.lastFinalCommand={text:normalizedFinal,at:now,source:'race'};
           const intents = intentsFromTranscript(msg.voicePrompt, this.commandLocale);
           if (!intents.length) {
             const phase = this.roomCode ? this.deps.phaseOf?.(this.roomCode) ?? null : null;
@@ -297,8 +352,11 @@ export class ConversationRelayAdapter {
             } else this.speakPhaseFallback(phase);
             break;
           }
-          console.log(`[CR] prompt last=true text="${msg.voicePrompt}" → fired ${intents.length} new: [${intents.join(',')}]${this.playerId ? '' : ' (NOT BOUND — dropped)'}`);
-          if (this.room && this.playerId) for (const intent of intents) { this.room.applyIntent(this.playerId, intent); this.deps.onIntent?.(intent); }
+          const accepted:Intent[]=[];
+          if (this.room && this.playerId) for (const intent of intents) {
+            if(this.room.applyIntent(this.playerId,intent)!==false){accepted.push(intent);this.deps.onIntent?.(intent);}
+          }
+          console.log(`[CR] command call=${this.callSid.slice(0,8)||'unknown'} player=${this.playerId??'unbound'} phase=${this.roomCode?this.deps.phaseOf?.(this.roomCode)??'unknown':'unbound'} requested=[${intents.join(',')}] accepted=[${accepted.join(',')}]`);
           this.firedIntents = [];
         } else if (msg.last && this.roomCode && this.playerId) {
           // Conversational path — only on the FINAL transcript (partials would spam the LLM). Fire and
@@ -315,7 +373,11 @@ export class ConversationRelayAdapter {
         const phase = this.roomCode ? this.deps.phaseOf?.(this.roomCode) : null;
         if (phase === 'racing' || phase === 'countdown' || !this.deps.phaseOf) {
           const intent = DTMF_TO_INTENT[msg.digit];
-          if (intent) { this.room.applyIntent(this.playerId, intent); this.deps.onIntent?.(intent); }
+          if (intent) {
+            const accepted=this.room.applyIntent(this.playerId,intent)!==false;
+            if(accepted)this.deps.onIntent?.(intent);
+            console.log(`[CR] command call=${this.callSid.slice(0,8)||'unknown'} player=${this.playerId} phase=${phase??'unknown'} dtmf=${msg.digit} accepted=${accepted}`);
+          }
         } else if (/^\d+$/.test(msg.digit)) {
           this.handleMessage(JSON.stringify({ type: 'prompt', voicePrompt: msg.digit, last: true }));
         }
@@ -328,6 +390,7 @@ export class ConversationRelayAdapter {
         console.log(`[CR] interrupt after ${msg.durationUntilInterruptMs}ms; played="${msg.utteranceUntilInterrupt}"`);
         this.turnEpoch++;
         this.firedIntents = [];
+        this.setupPromptPhase=null;
         if(this.stationManaged&&this.roomCode&&['results','finished'].includes(this.deps.phaseOf?.(this.roomCode)??'')){
           this.recapDone=false;this.requestResultRecap();
         }
@@ -354,7 +417,10 @@ export class ConversationRelayAdapter {
     const text=createTranslator(this.commandLocale,RACER_MESSAGES);
     const phase=this.deps.phaseOf?.(this.roomCode)??'lobby';
     if(this.stationManaged&&['results','finished'].includes(phase)){this.requestResultRecap();return;}
-    const key=phase==='car_select'?'voice.helpCar'
+    const waiting=this.stationManaged&&this.playerId&&['car_select','map_select'].includes(phase)
+      &&this.deps.setupTurnFor?.(this.roomCode,this.playerId,phase)==='waiting';
+    const key=waiting?'voice.waitingForPlayers'
+      :phase==='car_select'?'voice.helpCar'
       :phase==='map_select'?'voice.helpMap'
       :phase==='racing'||phase==='countdown'?'voice.help'
       :phase==='results'||phase==='finished'?(this.stationManaged?'voice.waitOperator':'voice.helpResults')
@@ -395,7 +461,11 @@ export class ConversationRelayAdapter {
 
   private speakPhaseFallback(phase: string | null): void {
     const text = createTranslator(this.commandLocale, RACER_MESSAGES);
-    const key = phase === 'car_select' ? 'voice.helpCar'
+    const waiting=this.stationManaged&&this.roomCode&&this.playerId&&phase
+      &&['car_select','map_select'].includes(phase)
+      &&this.deps.setupTurnFor?.(this.roomCode,this.playerId,phase)==='waiting';
+    const key = waiting?'voice.waitingForPlayers'
+      :phase === 'car_select' ? 'voice.helpCar'
       : phase === 'map_select' ? 'voice.helpMap'
         : phase === 'results' || phase === 'finished' ? 'voice.helpResults'
           : phase === 'racing' || phase === 'countdown' ? 'voice.help'

@@ -80,6 +80,13 @@ export function isRacerAdvanceWord(spoken: string, locale: SupportedLocale = DEF
     : /\b(start|begin|go|next|continue|ready|race|rematch|again|race again|go again|yes)\b/.test(text);
 }
 
+function isRacerCorrection(spoken:string,locale:SupportedLocale):boolean {
+  const text=normalizeForMatching(spoken,locale);
+  return locale==='pt-BR'
+    ?/\b(mudar|trocar|corrigir|na verdade|em vez disso)\b/.test(text)
+    :/\b(change|switch|correct|actually|instead)\b/.test(text);
+}
+
 export function isLateRacerGameplayPrompt(spoken: string, locale: SupportedLocale = DEFAULT_LOCALE): boolean {
   const text = normalizeForMatching(spoken, locale);
   const explicitRematch = locale === 'pt-BR'
@@ -286,10 +293,35 @@ export class HttpServer {
       if (removal === 'retire') this.retireStationEngine(game, roomCode);
       else this.abortStationEngine(game, roomCode);
     });
-    this.arcadeApi?.setStationParticipantCountHandler?.((game, roomCode, count) => {
-      if (game === 'racer') this.game.voiceExpectHumanPlayers(roomCode,count);
-      else if (game === 'monsters') this.battle.voiceExpectHumanPlayers(roomCode,count);
-      else this.fighter.voiceExpectHumanPlayers(roomCode,count);
+    this.arcadeApi?.setStationParticipantCountHandler?.((game,roomCode,count,activeEnginePlayerIds) => {
+      if (game === 'racer') {
+        const retained=new Set(activeEnginePlayerIds);
+        for(const[callSid,binding]of this.racerVoiceCallBindings){
+          if(binding.code!==roomCode||retained.has(binding.playerId))continue;
+          if(binding.leaveTimer)clearTimeout(binding.leaveTimer);
+          this.racerVoiceCallBindings.delete(callSid);
+          this.stationVoiceReconnectRoutes.delete(callSid);
+          this.voiceReconnectAttempts.delete(callSid);
+        }
+        this.game.voiceExpectHumanPlayers(roomCode,count,activeEnginePlayerIds);
+      }
+      else if (game === 'monsters') {
+        const retained=new Set(activeEnginePlayerIds);
+        for(const[callSid,binding]of this.battleVoiceCallBindings){
+          if(binding.code!==roomCode||retained.has(binding.playerId))continue;
+          if(binding.leaveTimer)clearTimeout(binding.leaveTimer);
+          this.battleVoiceCallBindings.delete(callSid);this.stationVoiceReconnectRoutes.delete(callSid);this.voiceReconnectAttempts.delete(callSid);
+        }
+        this.battle.voiceExpectHumanPlayers(roomCode,count,activeEnginePlayerIds);
+      } else {
+        const retained=new Set(activeEnginePlayerIds);
+        for(const[callSid,binding]of this.fighterVoiceCallBindings){
+          if(binding.code!==roomCode||retained.has(binding.playerId))continue;
+          if(binding.leaveTimer)clearTimeout(binding.leaveTimer);
+          this.fighterVoiceCallBindings.delete(callSid);this.stationVoiceReconnectRoutes.delete(callSid);this.voiceReconnectAttempts.delete(callSid);
+        }
+        this.fighter.voiceExpectHumanPlayers(roomCode,count,activeEnginePlayerIds);
+      }
     });
     this.arcadeApi?.setPlayerResetCleanupHandler?.(context => this.cleanupResetPlayerHistory(context));
     const allowBrowserPlayer = (roomCode: string) => !this.arcadeApi?.isStationEngineRoom(roomCode);
@@ -448,6 +480,11 @@ export class HttpServer {
     if (game === 'racer') {
       for (const adapter of [...(this.voiceAdapters.get(roomCode) ?? [])]) adapter.handleClose();
       this.voiceAdapters.delete(roomCode);
+      for (const [callSid,binding] of this.racerVoiceCallBindings) {
+        if(binding.code!==roomCode)continue;
+        if(binding.leaveTimer)clearTimeout(binding.leaveTimer);
+        this.racerVoiceCallBindings.delete(callSid);
+      }
       this.game.abortRoom(roomCode);
     } else if (game === 'monsters') {
       for (const session of [...(this.battleVoice.get(roomCode) ?? [])]) session.handleReplaced();
@@ -468,6 +505,11 @@ export class HttpServer {
       }
       this.fighter.abortRoom(roomCode);
     }
+    for(const [callSid,route] of this.stationVoiceReconnectRoutes){
+      if(route.game!==game||route.roomCode!==roomCode)continue;
+      this.stationVoiceReconnectRoutes.delete(callSid);
+      this.voiceReconnectAttempts.delete(callSid);
+    }
     this.activeStationEngines.delete(`${game}:${roomCode}`);
   }
 
@@ -480,9 +522,47 @@ export class HttpServer {
     };
     const finalize = () => {
       endCalls();
-      if (game === 'racer') this.game.abortRoom(roomCode);
-      else if (game === 'monsters') this.battle.abortRoom(roomCode);
-      else this.fighter.abortRoom(roomCode);
+      if (game === 'racer') {
+        for(const adapter of [...(this.voiceAdapters.get(roomCode)??[])])adapter.handleClose(true);
+        this.voiceAdapters.delete(roomCode);
+        for(const[callSid,binding]of this.racerVoiceCallBindings){
+          if(binding.code!==roomCode)continue;
+          if(binding.leaveTimer)clearTimeout(binding.leaveTimer);
+          this.racerVoiceCallBindings.delete(callSid);
+        }
+        for(const[callSid,route]of this.stationVoiceReconnectRoutes){
+          if(route.game!=='racer'||route.roomCode!==roomCode)continue;
+          this.stationVoiceReconnectRoutes.delete(callSid);this.voiceReconnectAttempts.delete(callSid);
+        }
+        this.game.abortRoom(roomCode);
+      }
+      else if (game === 'monsters') {
+        for(const session of [...(this.battleVoice.get(roomCode)??[])])session.handleReplaced();
+        this.battleVoice.delete(roomCode);
+        for(const[callSid,binding]of this.battleVoiceCallBindings){
+          if(binding.code!==roomCode)continue;
+          if(binding.leaveTimer)clearTimeout(binding.leaveTimer);
+          this.battleVoiceCallBindings.delete(callSid);
+        }
+        for(const[callSid,route]of this.stationVoiceReconnectRoutes){
+          if(route.game!=='monsters'||route.roomCode!==roomCode)continue;
+          this.stationVoiceReconnectRoutes.delete(callSid);this.voiceReconnectAttempts.delete(callSid);
+        }
+        this.battle.abortRoom(roomCode);
+      } else {
+        for(const session of [...(this.fighterVoice.get(roomCode)??[])])session.handleReplaced();
+        this.fighterVoice.delete(roomCode);
+        for(const[callSid,binding]of this.fighterVoiceCallBindings){
+          if(binding.code!==roomCode)continue;
+          if(binding.leaveTimer)clearTimeout(binding.leaveTimer);
+          this.fighterVoiceCallBindings.delete(callSid);
+        }
+        for(const[callSid,route]of this.stationVoiceReconnectRoutes){
+          if(route.game!=='fighter'||route.roomCode!==roomCode)continue;
+          this.stationVoiceReconnectRoutes.delete(callSid);this.voiceReconnectAttempts.delete(callSid);
+        }
+        this.fighter.abortRoom(roomCode);
+      }
       this.activeStationEngines.delete(`${game}:${roomCode}`);
     };
     if (game === 'racer') {
@@ -706,7 +786,14 @@ export class HttpServer {
       onSetupChanged:(roomCode,beforePhase)=>this.game.voiceSetupChanged(roomCode,beforePhase as Phase),
       handleSetupUtterance:(roomCode,playerId,utterance,locale)=>{
         const room=this.game.findRoom(roomCode);
-        return room?this.directSelection(room,playerId,utterance,locale,stationFirstName!==null):null;
+        const setupReady=!stationManaged||Boolean(stationReadyEntryId&&this.arcadeApi?.stationVoiceSetupReady(stationReadyEntryId));
+        return room?this.directSelection(room,playerId,utterance,locale,stationFirstName!==null,setupReady):null;
+      },
+      setupTurnFor:(roomCode,playerId,phase)=>{
+        const room=this.game.findRoom(roomCode);
+        if(!room)return'waiting';
+        return phase==='car_select'?(room.canSelectCar(playerId)?'active':'waiting')
+          :phase==='map_select'?(room.canSelectMap(playerId)?'active':'waiting'):'active';
       },
       onIntent: () => this.analyticsObserver.voiceCommand('racer'),
       // Conversational AI turn: build the host context from the live room, run the LLM (with history),
@@ -1083,7 +1170,7 @@ export class HttpServer {
     if (binding.activeAdapter && binding.activeAdapter !== adapter) binding.activeAdapter.handleClose(true);
     binding.activeAdapter = adapter;
     binding.leaveTimer = null;
-    return { playerId: binding.playerId, lane: 0, resumed:true, name:player!.name };
+    return { playerId: binding.playerId, lane: player.lane, resumed:true, name:player.name };
   }
 
   private hasResumableRacerVoiceCall(callSid: string, code: string): boolean {
@@ -1098,6 +1185,7 @@ export class HttpServer {
     callSid: string,
     adapter: ConversationRelayAdapter,
   ): void {
+    if(!this.game.findRoom(code))return;
     const sid = callSid.trim();
     if (!sid) { this.game.voiceLeave(code, playerId); return; }
     const binding = this.racerVoiceCallBindings.get(sid);
@@ -1314,7 +1402,8 @@ export class HttpServer {
    *  CLEARLY picked one (a number or strong name, not a question), do it now + return the confirmation.
    *  Returns null when it's not a clear pick (a question, chit-chat, or wrong phase) → the LLM handles
    *  it. Makes numeric/name picks reliable regardless of the model, and works with the LLM disabled. */
-  private directSelection(room: Room, playerId: string, utterance: string, locale: SupportedLocale = DEFAULT_LOCALE,nameLocked=false): string | null {
+  private directSelection(room:Room,playerId:string,utterance:string,locale:SupportedLocale=DEFAULT_LOCALE,
+    nameLocked=false,setupReady=true):string|null {
     const text = createTranslator(locale, RACER_MESSAGES);
     const controls = text('voice.controlsIntro');
     const carChoices = this.roomConfigCache.carNames.map(name => localizedCarAliases(name).join(' '));
@@ -1351,17 +1440,20 @@ export class HttpServer {
     if (room.phase === 'car_select') {
       const i = clearSelectionIndex(utterance, carChoices, locale);
       if (i !== null) {
-        this.game.voiceSelectCar(room.code, playerId, i);
-        const locked=text('voice.lockedCar',{car:localizedCarName(locale,room.carName(i))});
-        return String(room.phase)==='map_select'?`${locked} ${text('voice.chooseTrack')}`
-          :room.usesAutomaticSetup?`${locked} ${text('voice.waitingForPlayers')}`:text('voice.lockedCarNext',{car:localizedCarName(locale,room.carName(i))});
+        const correction=isRacerCorrection(utterance,locale);
+        if(!room.canSelectCar(playerId,correction))return text('voice.waitingForPlayers');
+        if(!this.game.voiceSelectCar(room.code,playerId,i,correction))return text('voice.repeatChoice');
+        return text(room.allCarChoicesComplete?'voice.lockedCarNext':'voice.lockedCarWait',{
+          car:localizedCarName(locale,room.carName(i)),
+        });
       }
       // "next"/"start" advances to the track — but only once they've actually picked a car.
       if (isRacerAdvanceWord(utterance, locale)) {
+        if(!setupReady)return text('voice.waitingForPlayers');
         const me = room.lobbyPlayers().find(p => p.playerId === playerId);
         if ((me?.carIndex ?? null) === null) return text('voice.pickCarFirst');
-        if(room.usesAutomaticSetup)return text('voice.waitingForPlayers');
-        return this.game.voiceAdvance(room.code,playerId)?text('voice.onTrack'):text('voice.waitingForPlayers');
+        if(!this.game.voiceAdvance(room.code,playerId))return text('voice.waitingForPlayers');
+        return room.canSelectMap(playerId)?text('voice.onTrack'):text('voice.waitingForPlayers');
       }
       return null;
     }
@@ -1370,24 +1462,28 @@ export class HttpServer {
       if ((current?.carIndex ?? null) === null) {
         const carIndex = clearSelectionIndex(utterance, carChoices, locale);
         if (carIndex === null) return null;
-        this.game.voiceSelectCar(room.code, playerId, carIndex);
+        const correction=isRacerCorrection(utterance,locale);
+        if(!this.game.voiceSelectCar(room.code,playerId,carIndex,correction))return text('voice.repeatChoice');
         return `${text('voice.lockedCar', { car: localizedCarName(locale, room.carName(carIndex)) })} ${text('voice.chooseTrack')}`;
       }
       const i = clearSelectionIndex(utterance, mapChoices, locale);
       if (i === null) {
         if (!isRacerAdvanceWord(utterance, locale)) return null;
+        if(!setupReady)return text('voice.waitingForPlayers');
         if(!room.hasMapVote(playerId))return text('voice.pickTrackFirst');
-        if(room.usesAutomaticSetup)return text('voice.waitingForPlayers');
         return this.game.voiceAdvance(room.code,playerId)?text('voice.goRace'):text('voice.waitingForPlayers');
       }
-      this.game.voiceSelectMap(room.code, room.mapChoices[i]!, playerId);
-      return ['countdown','racing'].includes(room.phase)
-        ? `${text('voice.voteTrack',{map:localizedTrackName(locale,room.mapChoices[i]!)})} ${text('voice.goRace')}`
-        : text(room.usesAutomaticSetup?'voice.voteTrackWait':'voice.voteTrackStart',{map:localizedTrackName(locale,room.mapChoices[i]!)});
+      const correction=isRacerCorrection(utterance,locale);
+      if(!room.canSelectMap(playerId,correction))return text('voice.waitingForPlayers');
+      if(!this.game.voiceSelectMap(room.code,room.mapChoices[i]!,playerId,correction))return text('voice.repeatChoice');
+      return text(room.allMapVotesComplete?'voice.voteTrackStart':'voice.voteTrackWait',{
+        map:localizedTrackName(locale,room.mapChoices[i]!),
+      });
     }
     // ADVANCE / REMATCH (deterministic, LLM-independent): "start"/"go"/"next"/"race"/"rematch" moves the
     // flow forward — this was previously LLM-only, so "start" did nothing when the model was off/slow.
     if (isRacerAdvanceWord(utterance, locale)) {
+      if(!setupReady)return text('voice.waitingForPlayers');
       const me = room.lobbyPlayers().find(p => p.playerId === playerId);
       // (car_select is handled by its own branch above; reaching here means lobby/map_select/results.)
       const ok = this.game.voiceAdvance(room.code, playerId);
@@ -1395,8 +1491,8 @@ export class HttpServer {
       // room.phase is now the NEW phase we advanced INTO — describe that screen.
       const landed = String(room.phase);
       void me;
-      return landed === 'car_select' ? text('voice.chooseCar')
-        : landed === 'map_select' ? text('voice.chooseTrack')
+      return landed === 'car_select' ? (room.canSelectCar(playerId)?text('voice.chooseCar'):text('voice.waitingForPlayers'))
+        : landed === 'map_select' ? (room.canSelectMap(playerId)?text('voice.chooseTrack'):text('voice.waitingForPlayers'))
         : text('voice.goRace');
     }
     return null;
@@ -1951,6 +2047,13 @@ export class HttpServer {
                 matchId: refreshed.matchId, launchGeneration: refreshed.launchGeneration, locale: station.locale,
               };
               this.stationVoiceReconnectRoutes.set(callSid, station);
+            } else {
+              const terminalBinding=station.game==='racer'
+                ?this.hasResumableRacerVoiceCall(callSid,station.roomCode)
+                :station.game==='monsters'
+                  ?this.hasResumableBattleVoiceCall(callSid,station.roomCode)
+                  :this.hasResumableFighterVoiceCall(callSid,station.roomCode);
+              if(!terminalBinding){this.stationVoiceReconnectRoutes.delete(callSid);station=undefined;}
             }
           } catch { /* fall back to the last validated route; setup validation still fails closed */ }
         }

@@ -1,25 +1,49 @@
-# Lobby Join QR Code
+# Join QR Assets
 
-`client/public/brand/join-qr.png` is the browser-public QR image used by the main lobby, Voice Monsters lobby, and Voice Fighter lobby. See the [project README](../../../README.md) for application setup and the [asset credits](../../../assets/CREDITS.md) for the repository provenance ledger.
+This directory contains three browser-public QR PNGs. Runtime-generated QR codes handle normal joins; the PNGs provide a standalone fallback and deployment-specific station artwork. See the [project README](../../../README.md) for application setup and the [asset credits](../../../assets/CREDITS.md) for the repository provenance ledger.
+
+## Inventory
+
+| File | Dimensions | Runtime role |
+|---|---:|---|
+| `join-qr.png` | 600 by 600 | Fallback when a standalone game cannot generate a QR for its locale-specific voice number |
+| `arcade-en.png` | 600 by 600 | English station join QR for the production `ARCADE-01` deployment |
+| `arcade-pt.png` | 1200 by 1200 | Brazilian Portuguese station join QR for the production `ARCADE-01` deployment |
 
 ## Installation
 
-This image ships with the main application and requires no separate installation. Follow the [root installation guide](../../../README.md#installation); Vite copies `client/public/` into the build and serves the image as `/brand/join-qr.png`.
+These assets ship with the main application and require no separate installation. Follow the [root installation guide](../../../README.md#installation). Vite copies the files into the build and serves them from `/brand/`.
 
 ## Usage
 
-Replace the PNG in place to change the destination without changing application code:
+### Standalone Joins
 
-```bash
-cp /path/to/join-qr.png client/public/brand/join-qr.png
+Voice Racer, Voice Monsters, and Voice Fighter watch the configured number for the display locale. When a number is available, each game generates a 520-pixel QR data URL for `tel:<number>` with medium error correction. The browser updates that QR when the runtime configuration changes.
+
+`/brand/join-qr.png?v=2` is only the fallback. A standalone lobby uses it when its locale has no configured number or when `QRCode.toDataURL()` fails. Replacing the PNG changes that fallback image; it does not replace the normal generated QR or update the written phone number.
+
+The dialed locale-specific number determines the call locale when it maps uniquely to `en-US` or `pt-BR`. Standalone call routing then uses the most recently opened `display=1` game connection and the standalone room fallback. Standalone display registration does not validate the station display token. This open-display recency rule does not route station-managed calls.
+
+### Station Joins
+
+Generated station QR codes encode an HTTP join URL, not a `tel:` URL:
+
+```text
+/join?station=<station-id>&locale=<locale>
 ```
 
-Keep the image square and verify it on the actual display and a physical phone. The current file is 600 by 600 pixels; the main lobby displays it in a 240 by 240 pixel card. The application requests `/brand/join-qr.png?v=2`, so update the query version in code if an intermediary cache continues to serve an old image.
+The home and player views generate this QR at 520 pixels. The in-game station rail generates the same station-and-locale URL at 420 pixels. All views use the configured public visitor origin when available, and station-client tests cover asset selection plus generated-URL fallback.
 
-The QR should encode the intended call entry point, such as a `tel:` URL for the configured game number. The current `/voice/incoming` flow joins room `4821` immediately for all three games; it does not collect a room code through DTMF. Open the intended shared display before scanning so the call routes to the correct game.
+For station `ARCADE-01` on the configured production origin, `stationQrAsset()` selects `arcade-en.png` or `arcade-pt.png` before generating a QR. Those committed PNGs encode `https://twil.io/arcade-en?qr=1` and `https://twil.io/arcade-pt?qr=1`; the short links redirect to the locale-specific `/join` URLs. `resolveStationQrImage()` probes the selected image and generates the direct station join URL if the image cannot load. Other station IDs and origins always use a generated QR. There is no general image-element error-handler contract beyond this explicit resolution step.
 
-The main and Voice Monsters lobby images hide themselves when loading fails, leaving the written steps visible. The Voice Fighter lobby does not install that image-error fallback, so a missing or invalid file produces a broken image there. The runtime references a PNG specifically; using SVG requires changing the three image references in `client/screens.ts`, `client/battle/monsters.ts`, and `client/fighter/fighter.ts`.
+Scanning a station QR starts the `/join` registration, wallet, and queue flow. When the caller reaches an active match, the server routes the call from its persisted station assignment to the selected game and that match's dynamically generated engine room. The launched display receives the same assigned room. Replacing a PNG cannot override those assignments or bind callers to a fixed room.
+
+### Updating The Files
+
+Keep every replacement square and test it from the deployed public origin on a physical phone. Update `join-qr.png` only as a safe fallback for the current standalone voice entry point. Update `arcade-en.png` and `arcade-pt.png` together with their `twil.io` redirect destinations and the final production `/join` URLs and locale parameters.
+
+The standalone fallback references include `?v=2`. Increment that query in `client/screens.ts`, `client/battle/monsters.ts`, and `client/fighter/fighter.ts` only when an intermediary continues to serve an obsolete fallback image.
 
 ## License
 
-The repository has no root `LICENSE` file. A generated QR may encode operational phone or routing information and should be reviewed before distribution. The current [asset credits](../../../assets/CREDITS.md) do not record provenance for this image. Twilio names and logos in the same directory are brand assets and remain subject to Twilio brand permissions; repository inclusion does not grant trademark or reuse rights.
+The repository has no root `LICENSE` file. A generated QR may encode operational phone or routing information and should be reviewed before distribution. The current [asset credits](../../../assets/CREDITS.md) do not record provenance for these images. Twilio names and logos in the same directory remain subject to Twilio brand permissions; repository inclusion does not grant trademark or reuse rights.

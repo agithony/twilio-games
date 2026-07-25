@@ -616,11 +616,11 @@ describe('Arcade browser UI', () => {
     expect(coinInsertion).toContain('getSoundEffectsManager().playSelect()');
   });
 
-  it('describes shared voice setup as automatic after personal choices', () => {
+  it('describes Racer setup as caller-advanced and other games as automatic', () => {
     const racerCopy=readFileSync(new URL('../shared/i18n/racer.ts',import.meta.url),'utf8');
     const monstersCopy=readFileSync(new URL('../shared/i18n/monsters.ts',import.meta.url),'utf8');
     expect(racerCopy).toContain("'voice.helpCar': 'Choose your own car");
-    expect(racerCopy).toContain('The race starts after every racer votes.');
+    expect(racerCopy).toContain('After every racer votes, either racer can say start.');
     expect(monstersCopy).toContain("'voice.helpSelect': 'Choose your own monster");
     expect(monstersCopy).toContain("'voice.resumeLobbyNamed': 'You are back, {name}. Waiting for the other player.'");
   });

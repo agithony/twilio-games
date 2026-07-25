@@ -10,7 +10,7 @@ The workflow uses service-principal JSON credentials, Azure CLI provisioning, a 
 - Permission to create resources in the target subscription or resource group.
 - GitHub repository administrator access for Actions secrets and variables.
 - Git LFS objects available to GitHub Actions. Both CI and deploy explicitly check them out.
-- A voice-capable Twilio number for live voice or SMS use.
+- A primary Twilio account with an English Voice number and a separate SMS-capable number, plus a second account with the Portuguese Voice number. WhatsApp is optional.
 - Asset redistribution rights appropriate for the deployment. See [Asset licensing](#asset-licensing).
 
 No local Docker installation is required for the GitHub deployment because `az acr build` runs in Azure. Azure CLI is required only for manual setup and operations.
@@ -34,7 +34,7 @@ The workflow currently declares:
 
 ACR and storage account names are globally unique. Change the values in the workflow `env` block if they are unavailable. Keep `.github/containerapp.yaml`, documentation, and operational commands aligned with any name changes.
 
-The workflow applies `created_by=github-actions` and `managed_by=twilio-games-ci` to resources it creates, except the resource group. This satisfies the repository's documented tenant tag policy. The Log Analytics workspace is created explicitly so the Container Apps environment does not attempt to create an untagged workspace.
+The workflow passes `created_by=github-actions` and `managed_by=twilio-games-ci` when it creates ACR, storage, Log Analytics, the Container Apps environment, and the Container App. It does not tag the resource group, file share, or environment-storage attachment, and it does not reconcile tags on existing resources. These Azure resource tags are unrelated to the container image tags. The explicit tagged Log Analytics workspace prevents the Container Apps environment from attempting to create an untagged workspace that tenant policy would deny.
 
 ## Create the deployment identity
 
@@ -65,16 +65,16 @@ This deployment intentionally uses two Twilio accounts:
 | Responsibility | Primary English/messaging account | Portuguese Voice account |
 |---|---|---|
 | English Voice number | Yes | No |
-| SMS number | Yes | No |
-| WhatsApp sender | Yes | No |
+| Dedicated SMS number | Yes | No |
+| Approved WhatsApp sender | Optional | No |
 | TAC and Conversation Orchestrator | Yes | No |
 | Conversation Memory store | Yes | No |
 | Outbound Messaging API | Yes | No |
 | Portuguese Voice number | No | Yes |
-| Runtime Account SID/API key | Required | Not required |
+| Runtime Account SID/API key | Required | Not used |
 | Webhook Auth Token | `TWILIO_AUTH_TOKEN` | `TWILIO_PT_AUTH_TOKEN` |
 
-TAC has one account context, so `TWILIO_ACCOUNT_SID`, `TWILIO_API_KEY`, `TWILIO_API_SECRET`, `TWILIO_AUTH_TOKEN`, `TWILIO_SMS_NUMBER`, `TWILIO_WHATSAPP_NUMBER`, the Memory store, and the Conversation Configuration must all belong to the primary account. The Portuguese account only needs its Voice number and Auth Token. Both accounts send Voice webhooks to the same application.
+TAC has one account context, so `TWILIO_ACCOUNT_SID`, `TWILIO_API_KEY`, `TWILIO_API_SECRET`, `TWILIO_AUTH_TOKEN`, `TWILIO_SMS_NUMBER`, any `TWILIO_WHATSAPP_NUMBER`, the Memory store, and the Conversation Configuration must all belong to the primary account. The Portuguese account supplies only its Voice number and `TWILIO_PT_AUTH_TOKEN`; it does not supply runtime REST credentials. Both Voice numbers send webhooks to the same application. Voice and session-ended requests are accepted when either account token validates the Twilio signature, then the exact dialed `To` number selects the locale. The token that validated the request does not select the locale.
 
 ## Configure GitHub Actions secrets
 
@@ -94,7 +94,9 @@ Open **Settings > Secrets and variables > Actions > Secrets** and configure:
 | `EDITOR_TOKEN` | Strongly recommended for public deployments | Stored as Container App secret `editor-token`; protects disk-writing editor and garage APIs |
 | `GOOGLE_OAUTH_CLIENT_ID` | Required for analytics | Stored as Container App secret `google-oauth-client-id`; Google OAuth web client ID |
 | `GOOGLE_OAUTH_CLIENT_SECRET` | Required for analytics | Stored as Container App secret `google-oauth-client-secret`; Google OAuth web client secret |
-| `OPENAI_API_KEY` | No | Enables the OpenAI conversational host; empty uses scripted/deterministic behavior |
+| `OPENAI_API_KEY` | No | Enables English free-form Racer and Monsters help; empty uses deterministic behavior, and Portuguese free-form OpenAI remains disabled |
+| `DUB_API_KEY` | No | Enables shortening of eligible challenge portal URLs when paired with `DUB_SHORT_DOMAIN`; empty preserves the original application URL |
+| `DUB_FOLDER_ID` | No | Optional Dub folder for created challenge links; it has no effect without an enabled Dub shortener |
 
 Credential sources:
 
@@ -109,7 +111,7 @@ Credential sources:
 
 `VOICE_RELAY_TOKEN` protects the public `/voice` WebSocket. The server embeds it in Conversation Relay custom parameters in its TwiML and validates the subsequent setup frame. You do not paste it into Twilio Console and must not reuse either account Auth Token.
 
-The workflow validates webhook authentication, TAC credentials, the dedicated Relay token, and both Arcade secrets before touching Azure. A missing OpenAI key uses the placeholder `disabled`, which the server treats as unset.
+The workflow validates webhook authentication, TAC credentials, the dedicated Relay token, both Arcade secrets, and the Dub key/domain pairing before touching Azure. Missing OpenAI and Dub secrets use the placeholder `disabled`, which the server treats as unset.
 
 An empty primary or Portuguese Auth Token makes the corresponding production webhooks fail closed. An empty `EDITOR_TOKEN` leaves editor and garage writes open. Missing Google OAuth credentials disable analytics sign-in.
 
@@ -124,14 +126,15 @@ Open **Settings > Secrets and variables > Actions > Variables** and configure as
 | `TWILIO_WHATSAPP_NUMBER` | Required to offer WhatsApp | Approved WhatsApp sender; omit the `whatsapp:` prefix or include it, both are accepted |
 | `TWILIO_MESSAGING_SERVICE_SID` | Required for WhatsApp Phone CTA and out-of-session notices | Messaging Service SID containing the approved WhatsApp sender |
 | `ARCADE_OUTBOUND_MESSAGING_ENABLED` | No | Set to literal `true` only after REST credentials, senders, callbacks, and templates are ready; defaults off. The operator console reports whether proactive delivery is effectively enabled separately from inbound onboarding. |
-| `TWILIO_WHATSAPP_CONTENT_SID_STATION_*_{EN_US,PT_BR}` | Call-now required for Phone CTA; others required out of session | Ten approved Content SIDs covering five station notice kinds in English and Brazilian Portuguese |
+| `TWILIO_WHATSAPP_CONTENT_SID_STATION_{ADMITTED,OVERFLOW,CALL_NOW,RESULTS,NEXT_GAME}_{EN_US,PT_BR}` | Call-now required for Phone CTA; others required out of session | Ten approved Content SIDs covering five station notice kinds in English and Brazilian Portuguese |
 | `CR_TTS_VOICE` | No | ElevenLabs voice ID for Conversation Relay TTS; empty uses the Relay default |
 | `CR_TTS_VOICE_PT_BR` | No | Optional Brazilian Portuguese ElevenLabs voice ID; empty uses Relay's `pt-BR` default |
-| `DEFAULT_LOCALE` | No | Locale used when no localized display is connected; defaults to `en-US` |
+| `DEFAULT_LOCALE` | No | Fallback when the dialed number and selected display do not identify a locale; defaults to `en-US` |
 | `OPENAI_MODEL` | No | OpenAI model name; empty defaults to `gpt-4o-mini` |
 | `ANALYTICS_ALLOWED_EMAIL` | No | One exact verified Google email allowed to view analytics in addition to `@twilio.com` accounts |
 | `ARCADE_ADMIN_EMAILS` | Required to edit Twilio Games station settings | Comma-separated Google-authenticated emails allowed to use operator APIs; empty disables updates |
 | `TWILIO_CONVERSATION_CONFIGURATION_ID` | Yes | Active Conversation Orchestrator configuration ID matching `conv_configuration_<26 lowercase letters or digits>` and linked to the Memory store |
+| `DUB_SHORT_DOMAIN` | No | Custom Dub hostname such as `go.example.com`; must be configured together with `DUB_API_KEY` |
 
 These values are rendered into the Container App specification on every deployment.
 
@@ -152,7 +155,10 @@ Set the non-secret IDs and senders after provisioning them:
 gh variable set TWILIO_SMS_NUMBER --body '+1...'
 gh variable set TWILIO_WHATSAPP_NUMBER --body '+1...'
 gh variable set TWILIO_CONVERSATION_CONFIGURATION_ID --body 'conv_configuration_...'
+gh variable set DUB_SHORT_DOMAIN --body 'go.example.com'
 ```
+
+When `DUB_API_KEY` and a valid `DUB_SHORT_DOMAIN` are present, the server shortens only HTTPS application URLs whose path is `/challenge/` and whose one-time token remains in the URL fragment. It creates non-indexed, non-conversion links and optionally assigns `DUB_FOLDER_ID`. A timeout, API error, collision that cannot be reconciled, or malformed Dub response fails closed to the original long challenge URL; it does not block the player reply.
 
 Create a Google OAuth 2.0 web client with `https://<app-fqdn>/auth/google/callback` as an authorized redirect URI. If `ANALYTICS_ALLOWED_EMAIL` belongs to an account outside Twilio Workspace, the OAuth application audience must permit external users. See [Analytics setup](./analytics.md).
 
@@ -162,22 +168,21 @@ The production workflow validates `TWILIO_CONVERSATION_CONFIGURATION_ID` before 
 
 ## First deployment
 
-Push to `main`, or run **Actions > Deploy to Azure Container Apps > Run workflow**. The deploy job proceeds only after the reusable `Validate` job succeeds.
+Push to `main`, or run **Actions > Deploy to Azure Container Apps > Run workflow**. `deploy.yml` performs its own checkout, Node setup, dependency install, typecheck, tests, and build in the deployment job. It does not call the reusable `ci.yml` workflow, although the separate CI workflow runs the same application checks on pushes and pull requests.
 
-The first successful run performs these operations:
+Each deployment run performs these operations:
 
-1. Checks out repository and Git LFS content.
-2. Signs in to Azure with `AZURE_CREDENTIALS`.
-3. Creates or verifies the resource group, ACR, storage account, file share, Log Analytics workspace, Container Apps environment, and `appdata` environment storage.
-4. Builds and pushes SHA and `latest` image tags in ACR.
-5. Creates a tagged zero-replica Container App shell with external ingress on port 8080, then replaces it with the full configured revision.
-6. Enables ACR admin credentials, obtains the admin username/password, and stores the password as the Container App secret `acr-password`.
-7. Records the existing active revision, switches to multiple mode, deactivates it, and waits until it is inactive with zero replicas. On first create, the temporary minimal revision is stopped and reaches zero replicas instead.
-8. Applies `.github/containerapp.yaml` as a uniquely named full-spec revision, including the Azure Files mount, one-replica limit, 2 vCPU, 4 GiB memory, health probes, and runtime environment.
-9. Requires the exact SHA image revision to be `Provisioned`, `Healthy`, and latest-ready with the expected mount and `/livez` probes; asserts it is the only running revision; then checks `/livez`, dependency-aware `/healthz`, `/`, `/join`, `/player`, and `/operator` through the candidate revision FQDN before public cutover.
-10. Restores single revision mode only after those checks pass. Automatic snapshot restore is allowed only before the candidate can produce external or public durable side effects. Once outbound delivery may run or public traffic is admitted, failure leaves current data and the current revision intact for manual recovery rather than erasing accepted interactions.
+1. Checks out repository and Git LFS content, installs Node and dependencies, and runs typecheck, tests, and the client build.
+2. Validates production Twilio, Arcade, Relay, Orchestrator, SMS, and Dub configuration before Azure login.
+3. Signs in to Azure with `AZURE_CREDENTIALS` and creates or verifies the resource group, ACR, storage account, file share, Log Analytics workspace, Container Apps environment, and `appdata` environment storage.
+4. Builds and pushes the commit-SHA image tag and the mutable `latest` tag in ACR.
+5. Reads the ACR admin username/password and stores the password as the Container App secret `acr-password`. The workflow enables the admin account only when it creates ACR; an existing registry must already have `adminUserEnabled=true` or the credential step fails.
+6. Accepts an existing app in `Single` or `Multiple` mode only when exactly one revision is active, switches to `Multiple` when needed, pins traffic to that revision, deactivates it, and waits for zero replicas. It also accepts a stopped, zero-running-replica first-deployment retry. Any other revision topology fails closed. On first create, it creates an Azure-resource-tagged zero-replica shell, then stops its temporary revision.
+7. Applies `.github/containerapp.yaml` as a uniquely named full-spec revision, including the Azure Files mount, one-replica limit, 2 vCPU, 4 GiB memory, health probes, secrets, and complete runtime environment.
+8. Requires the exact SHA image revision to be `Provisioned`, `Healthy`, and latest-ready with the expected mount and `/livez` probes; asserts it is the only running revision; then checks `/livez`, dependency-aware `/healthz`, `/`, `/join`, `/player`, and `/operator` through the candidate revision FQDN before public cutover.
+9. Assigns public traffic, then requires exact `Single` revision mode around the verified revision. Automatic snapshot restore is allowed only before the candidate can produce external or public durable side effects. If outbound delivery is enabled, restore becomes unsafe before the candidate update because its worker can call Twilio as soon as the revision starts. Once restore is unsafe, a failure leaves current data and revision state intact for manual recovery rather than erasing accepted interactions.
 
-The workflow is create-if-missing for supporting infrastructure, not a full declarative reconciliation system. For example, it does not change an existing storage SKU, share quota, region, or Log Analytics configuration to match the checked-in defaults.
+The workflow is create-if-missing for supporting infrastructure, not a full declarative reconciliation system. For example, it does not change an existing storage SKU, share quota, region, resource tags, ACR admin setting, or Log Analytics configuration to match the checked-in defaults.
 
 ## Configure Twilio, Orchestrator, and Memory
 
@@ -189,7 +194,7 @@ Configure both accounts' incoming Voice webhooks:
 POST <base>/voice/incoming
 ```
 
-In the primary account, configure the English Voice number. In the Portuguese account, configure the Brazilian Voice number. Both use the same URL and `POST`. The application validates each request against the correct account token. In the Twilio Games operator console, save the primary-account number under **English voice number** and the second-account number under **Portuguese voice number**. The dialed `To` number selects the locale.
+In the primary account, configure the English Voice number. In the Portuguese account, configure the Brazilian Voice number. Both use the same URL and `POST`. The application accepts the request when either configured Voice account token validates the signature; it does not bind one token to one locale. In the Twilio Games operator console, save the primary-account number under **English voice number** and the second-account number under **Portuguese voice number**. The exact dialed `To` number selects the locale, so the two configured values must be distinct.
 
 Create and configure the Twilio resources in this order:
 
@@ -212,13 +217,24 @@ POST <base>/sms
 
 Configure the approved WhatsApp sender's incoming-message webhook with the same `POST <base>/sms` URL. The signed direct `/sms` route owns deterministic game commands and immediate replies for both SMS and WhatsApp, so player entry still works if an Orchestrator callback is delayed or unavailable. Conversation Orchestrator delivers captured communications to `/tac/webhook` for Conversation Memory profile enrichment only; it does not execute the game command or send a second reply. Keep the sender in the same Orchestrator capture configuration, open the generated join link, and verify that the prefilled `JOIN` command creates one Conversation, one Memory profile, and one deterministic reply.
 
+```mermaid
+flowchart LR
+  Player[Player sends SMS or WhatsApp] --> Provider[Twilio Messaging]
+  Provider -->|signed form webhook| SMS[POST /sms]
+  SMS --> Command[Deterministic command and one reply]
+  Provider -->|captured communication| Orch[Conversation Orchestrator]
+  Orch -->|signed JSON webhook| TAC[POST /tac/webhook]
+  TAC --> Memory[Attach and enrich Conversation Memory]
+  TAC -. no game command or reply .-> Command
+```
+
 The voice webhook returns TwiML that connects Conversation Relay to `wss://<fqdn>/voice` and sets `POST <base>/voice/session-ended` as the session-ended callback. `PUBLIC_BASE_URL` is populated from the Container App FQDN, so these derived URLs do not require separate configuration.
 
 In station mode, the server routes each call by its persisted admitted identity, match, room, and launch generation. Recent-display routing remains only the standalone fallback. Current launch URLs are listed in [Deployment](./DEPLOYMENT.md#public-urls).
 
 Carrier registration requirements, including A2P 10DLC or toll-free verification, may apply to outbound US messaging. Confirm the Twilio number and campaign configuration before an event.
 
-Approved WhatsApp Content Templates must match the application variables: admitted uses `{{1}}` for game, overflow uses `{{1}}` for position, call-now uses `{{1}}` for game, results uses `{{1}}` for game and optionally `{{2}}` for balance, and next-game uses no variables. Configure both `EN_US` and `PT_BR` Content SIDs before enabling out-of-session delivery.
+Approved WhatsApp Content Templates must match the application variables: admitted uses `{{1}}` for game, overflow uses `{{1}}` for position, call-now uses `{{1}}` for game, results always sends `{{1}}` for game and sends `{{2}}` only when paid-mode balance inclusion is enabled, and next-game uses no variables. Configure both `EN_US` and `PT_BR` Content SIDs before relying on out-of-session delivery. Because one results Content SID serves free play, paid play, and balance-on/off configurations, do not make `{{2}}` mandatory unless operations guarantee that every use emits it; the safest general results template uses only `{{1}}`.
 
 Create each call-now template as `twilio/call-to-action` with one **Phone** action, not a WhatsApp **Voice Call** action. The Phone action must contain the static E.164 Voice number for that locale; WhatsApp does not allow variables in Phone actions. Use button text **Call with phone app** for `EN_US` and **Ligar pelo telefone** for `PT_BR`. Both labels stay within WhatsApp's 20-character button limit. Suggested bodies are:
 
@@ -227,7 +243,17 @@ EN_US: GAME TIME! Tap "Call with phone app" below and stay on the line. Your voi
 PT_BR: HORA DE JOGAR! Toque em "Ligar pelo telefone" abaixo e permaneça na linha. Sua voz controlará {{1}} na tela principal.
 ```
 
-Set each Phone action to the corresponding operator-configured `channels.voiceNumbers` value, submit both templates for WhatsApp approval, and assign their SIDs to `TWILIO_WHATSAPP_CONTENT_SID_STATION_CALL_NOW_EN_US` and `TWILIO_WHATSAPP_CONTENT_SID_STATION_CALL_NOW_PT_BR`. The application selects the SID by the player's locale and uses this approved template even within the 24-hour session window so the native Phone button is always present. If either Voice number changes, create or update and reapprove the matching template before changing the operator setting.
+Set each Phone action to the corresponding operator-configured `channels.voiceNumbers` value, submit both templates for WhatsApp approval, and assign their SIDs to `TWILIO_WHATSAPP_CONTENT_SID_STATION_CALL_NOW_EN_US` and `TWILIO_WHATSAPP_CONTENT_SID_STATION_CALL_NOW_PT_BR`. The application selects the SID by the player's locale. Call-now delivery has three states:
+
+| Template and session state | Behavior |
+|---|---|
+| Matching approved Content SID configured | Sends the Phone CTA template both inside and outside the 24-hour window, so the native dialer button is present |
+| Content SID missing, still inside the 24-hour window minus the five-minute margin | Sends a free-form fallback containing the locale Voice number and instructing the player to use the Phone app |
+| Content SID missing, outside that safe window | Suppresses the notice with `WHATSAPP_TEMPLATE_REQUIRED`; it never sends an unapproved free-form message |
+
+If either Voice number changes, create or update and reapprove the matching template before changing the operator setting. Pending call-now notices are revalidated against the current locale number and suppress themselves when the route changed.
+
+Challenge-bearing results deliberately have no results Content SID because the current approved results template contract cannot represent the conditional challenge prompt safely. They can send as free-form WhatsApp only inside the safe 24-hour window and are suppressed outside it. `CHALLENGE_REWARD` notices have the same template limitation. SMS is not subject to the WhatsApp window.
 
 ## Verify the deployment
 
@@ -257,17 +283,19 @@ For an event readiness check, also load `/play.html`, `/monsters.html`, `/fighte
 
 Keep runtime mode `off` during provisioning. After item 1 passes, open the event from `/operator` and continue:
 
-1. Confirm `/livez` and `/healthz` return `200`.
-2. In the primary account, send `JOIN` by SMS and confirm exactly one reply, one Conversation, and one Memory profile. Send `ENTRAR` to verify Portuguese inference; legacy `LANG` commands remain supported.
-3. Send the WhatsApp join message and confirm it resolves to the same profile for the same phone identity.
-4. Register through `/player` and confirm the player can join immediately without an OTP.
-5. Run a paid two-player game. During game selection, vote by SMS with `1` or `RACER`, change the vote by sending another enabled game, and confirm the browser player can vote from `/player`. Confirm the shared display shows looping previews and live totals. When gameplay starts, confirm one coin is redeemed from each admitted player and an overflow player's coin remains reserved.
-6. Switch the event to free play and confirm no wallet grants, reservations, or redemptions are created.
-7. Call the English number and confirm the request is accepted with the primary account signature and uses English recognition/TTS.
-8. Call the Portuguese number and confirm the request is accepted with `TWILIO_PT_AUTH_TOKEN` and uses `pt-BR` recognition/TTS.
-9. Complete Racer, Monsters, and Fighter once and confirm the operator sees authoritative results.
-10. If proactive messaging is enabled, confirm SMS delivery callbacks and one approved out-of-session WhatsApp template.
-11. With the event paused, open `/operator` in the booth display browser, sign in, and select **Connect this browser as booth display**. Confirm the operator is signed out and the same tab returns to `/`; no credential should appear in the URL. During a launch, verify an absent or rejected display session explains why only an operator may reconnect the booth and links to `/operator` instead of showing a secret field or a stuck countdown. Then restart the Container App and confirm persisted event recovery, wallet balances, and Memory-linked messaging still work.
+1. Confirm `/livez` and `/healthz` return `200` while mode is `off`.
+2. After opening the event, confirm `/healthz` returns `200` again. Active mode requires TAC and Conversation Memory to be connected; a post-open `503` is a real readiness failure even when the pre-open check passed.
+3. In the primary account, send `JOIN` by SMS and confirm exactly one reply, one Conversation, and one Memory profile. Send `ENTRAR` to verify Portuguese inference; legacy `LANG` commands remain supported.
+4. Send the WhatsApp join message and confirm it resolves to the same profile for the same phone identity.
+5. Register through `/player` and confirm the player can join immediately without an OTP.
+6. Run a paid two-player game. During game selection, vote by SMS with `1` or `RACER`, change the vote by sending another enabled game, and confirm the browser player can vote from `/player`. Confirm the shared display shows looping previews and live totals. When gameplay starts, confirm one coin is redeemed from each admitted player and an overflow player's coin remains reserved.
+7. Switch the event to free play and confirm no wallet grants, reservations, or redemptions are created.
+8. Call the English number and confirm either configured Voice Auth Token can validate the request, the English `To` number selects English recognition/TTS, and the call reaches its assigned generated room.
+9. Call the Portuguese number and confirm either configured Voice Auth Token can validate the request, the Portuguese `To` number selects `pt-BR`, and free-form OpenAI help remains disabled.
+10. Complete Racer, Monsters, and Fighter once and confirm the operator sees authoritative results.
+11. Reset an inactive test player from `/operator`. The reset must delete the linked Conversation Memory profile before local identity, wallet, messaging, and roster retirement commits; it fails closed if Memory deletion is unavailable or fails. Confirm the next `JOIN` creates a fresh profile and wallet. Never reset a connected caller or a player with an active game, coin hold, or pending outbound notice.
+12. If proactive messaging is enabled, confirm SMS delivery callbacks, all three WhatsApp call-now states where practical, and one approved out-of-session template.
+13. With the event paused, open `/operator` in the intended booth tab, sign in, and select **Pair this tab as the big screen**. Confirm the same tab returns to `/`, its operator session remains active, display access is held only in `sessionStorage`, and no credential appears in the URL. During a launch, verify an absent or rejected display session explains why only an operator may pair the booth and links to `/operator` instead of showing a secret field or a stuck countdown. Then restart the Container App and confirm persisted event recovery, wallet balances, and Memory-linked messaging still work.
 
 ## Persistent storage operations
 
@@ -283,9 +311,9 @@ Do not place image-owned assets or `assets/manifest.json` on the share without c
 
 `VOICE_RELAY_TOKEN` is wired as its own Container App secret and is mandatory in the deployment workflow. Rotate it independently from `TWILIO_AUTH_TOKEN`; the server places the current value in newly generated Conversation Relay setup parameters.
 
-`OPENAI_API_KEY` is stored as a Container App secret and referenced from the container environment; it is not rendered into the checked deployment YAML.
+`OPENAI_API_KEY`, `DUB_API_KEY`, and `DUB_FOLDER_ID` are stored as Container App secrets and referenced from the container environment; their values are not rendered into the checked deployment YAML. `DUB_SHORT_DOMAIN` is a non-secret rendered value.
 
-The workflow enables the ACR admin account and places an admin password in the Container App as `acr-password`. This works with the current YAML but uses long-lived registry credentials. A managed identity with `AcrPull` would reduce credential exposure and rotation work.
+The workflow creates a new ACR with its admin account enabled, but it does not enable or reconcile that setting on an existing ACR. Every deployment reads an admin password and places it in the Container App as `acr-password`; existing ACR must therefore already have the admin account enabled. This uses long-lived registry credentials. A managed identity with `AcrPull` would reduce credential exposure and rotation work.
 
 Manual `az containerapp update --set-env-vars` changes are not authoritative. A later `az containerapp update --yaml` can replace the container environment list with the checked-in specification. Persist runtime configuration by updating the workflow and `.github/containerapp.yaml`; this documentation-only runbook does not add missing secret wiring.
 
@@ -297,4 +325,4 @@ The asset credits also identify `assets/maps/drift_race_track_free.glb` as CC-BY
 
 ## Operational rollback
 
-Every build pushes an immutable commit-SHA tag. Follow the zero-overlap procedure in [Deployment rollback](./DEPLOYMENT.md#rollback); do not run a direct image update while the old revision is active. A later normal deployment reapplies the full YAML and the current commit image. Validate persistent-file compatibility before rolling back application code.
+Every build pushes a commit-SHA tag and updates `latest`; ACR does not lock either tag against mutation. Use the expected full SHA when identifying a rollback image. Follow the zero-overlap procedure in [Deployment rollback](./DEPLOYMENT.md#rollback); do not run a direct image update while the old revision is active. A later normal deployment reapplies the full YAML and the current commit image. Validate persistent-file compatibility before rolling back application code.

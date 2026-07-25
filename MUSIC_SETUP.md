@@ -1,219 +1,123 @@
-# Music Setup Guide
+# Music And Sound Setup
 
-This document describes the music system for Twilio Games.
+Twilio Games serves 25 audio files from `client/public/audio/`: 8 music tracks and 17 sound effects. `client/music-manager.ts` owns contextual music, and `client/sound-effects.ts` owns effects. Vite exposes the directory at `/audio/`.
 
-## Audio Files
+## Music Inventory
 
-The following music tracks have been added to the project in `/client/public/audio/`:
+| Context | File | Playback |
+|---|---|---|
+| `lobby` | `lobby/velvet-arrival.mp3` | Loops |
+| `racer` | `racer/midnight-apex.m4a` | First track in a looping playlist |
+| `racer` | `racer/red-light-to-green.mp3` | Second track in a looping playlist |
+| `monsters` | `monsters/hero-final-gambit.mp3` | First track in a looping playlist |
+| `monsters` | `monsters/one-last-gold-coin.mp3` | Second track in a looping playlist |
+| `fighter` | `fighter/music/break-the-guard.mp3` | Loops through the intro, countdown, and fight |
+| `fighter-victory` | `fighter/music/victory.mp3` | Plays once and stops when the track ends |
+| `leaderboard` | `leaderboard/final-ascent.mp3` | Loops |
 
-### Voice Racer (in-game)
-- `racer/midnight-apex.m4a` - Primary in-game track
-- `racer/red-light-to-green.mp3` - Secondary in-game track
+`MusicManager` uses one `HTMLAudioElement` and one global instance per page. `switchContext()` resets the selected context to its first track and starts it. Repeating the current context while it is marked as playing does nothing. An `ended` event advances to the next track and wraps to the start unless the context sets `loop: false`; only `fighter-victory` currently does that.
 
-Both tracks play automatically in sequence and loop continuously.
+## Context Transitions
 
-### Voice Monsters (in-game)
-- `monsters/hero-final-gambit.mp3` - Primary battle track
-- `monsters/one-last-gold-coin.mp3` - Secondary battle track
+| Display | Transition | Context |
+|---|---|---|
+| Home | First document click | `lobby` |
+| Voice Racer | Lobby state | `lobby` |
+| Voice Racer | First `racing` snapshot | `racer` |
+| Voice Racer | Results | `leaderboard` |
+| Voice Monsters | Enter lobby | `lobby` |
+| Voice Monsters | Enter battle | `monsters` |
+| Voice Monsters | `battle_over` event | `leaderboard` |
+| Voice Fighter | Lobby, fighter selection, map selection, or loading | `lobby` |
+| Voice Fighter | Intro begins | `fighter` |
+| Voice Fighter | Knockout event | `fighter-victory` |
 
-Both tracks play automatically in sequence and loop continuously.
+The Fighter track starts at the intro and remains active through countdown and combat. The victory track is a separate, non-looping context. A later lobby or rematch transition replaces it with lobby music.
 
-### Lobby & Home Screen
-- `lobby/velvet-arrival.mp3` - Lobby background music
+The home page waits for its first click before starting lobby music. Game state transitions call `audio.play()` immediately. A browser autoplay rejection logs `Failed to play track` and leaves playback silent; the manager does not install a global gesture retry. A later context switch, explicit `resume()`, or mute-then-unmute action attempts playback again.
 
-### Leaderboard & Winning Music
-- `leaderboard/final-ascent.mp3` - Leaderboard and results screen music
+The music toggle persists `twilio-games-music-muted` in `localStorage`. A muted context still selects its track but does not call `play()`. Unmuting resumes the selected track when the manager considers it active. The same mute state suppresses all sound effects.
 
-## Music System Architecture
-
-The music system is powered by the `MusicManager` class (`/client/music-manager.ts`), which provides:
-
-### Features
-- **Automatic playlist progression**: When multiple tracks exist for a context, the next track plays automatically when the current one ends
-- **Continuous looping**: Playlists loop indefinitely
-- **Context-aware playback**: Different music plays based on game state
-- **Singleton pattern**: A global instance manages music across the entire application
-- **Volume control**: Adjustable volume from 0 to 1
-
-### Game Contexts
-
-| Context | File | Tracks |
-|---------|------|--------|
-| `lobby` | home.ts, main.ts, battle/monsters.ts | Velvet Arrival |
-| `racer` | main.ts | Midnight Apex, Red Light to Green |
-| `monsters` | battle/monsters.ts | Hero Final Gambit, One Last Gold Coin |
-| `leaderboard` | main.ts, battle/monsters.ts | Final Ascent |
-
-### Integration Points
-
-#### Voice Racer (play.html)
-- Switches to `racer` context when the race starts (countdown → racing phase)
-- Switches to `lobby` context when showing the lobby
-- Switches to `leaderboard` context when showing results
-
-#### Voice Monsters (monsters.html)
-- Switches to `monsters` context during the battle phase
-- Switches to `lobby` context in the lobby
-- Switches to `leaderboard` context for results
-
-#### Home Screen (index.html)
-- Initializes with `lobby` context on page load
-
-## API Usage
+## Music API
 
 ```typescript
 import { getMusicManager } from './music-manager';
 
-const musicManager = getMusicManager();
+const music = getMusicManager();
+music.switchContext('fighter');
+music.pause();
+music.resume();
+music.stop();
+music.setVolume(0.5);
 
-// Switch music context
-musicManager.switchContext('lobby');  // or 'racer', 'monsters', 'leaderboard'
-
-// Control playback
-musicManager.pause();
-musicManager.resume();
-musicManager.stop();
-
-// Volume control
-musicManager.setVolume(0.5);  // 0 to 1
-const volume = musicManager.getVolume();
-
-// Status
-const isPlaying = musicManager.getIsPlaying();
-const currentContext = musicManager.getCurrentContext();
+const context = music.getCurrentContext();
+const playing = music.getIsPlaying();
+const muted = music.getIsMuted();
 ```
 
-## Adding New Tracks
+`setVolume()` clamps values to the range from `0` to `1`. `pause()` preserves the current position, while `stop()` pauses and seeks to the beginning.
 
-To add new music tracks:
+## Sound Effect Inventory
 
-1. **Add files**: Place `.mp3` or `.m4a` files in the appropriate subdirectory under `/client/public/audio/`
+The effects manager preloads every file and debounces repeated playback of the same key for 100 milliseconds.
 
-2. **Update MusicManager**: Modify the `contexts` configuration in `music-manager.ts`:
-   ```typescript
-   private contexts: Record<GameContext, MusicContext> = {
-     // ... existing contexts
-     newContext: {
-       tracks: ['/audio/path/track1.mp3', '/audio/path/track2.mp3'],
-       currentTrackIndex: 0,
-     },
-   };
-   ```
+| File | Public method | Use |
+|---|---|---|
+| `sfx/crash.mp3` | `playCrash()` | Racer barrier hit |
+| `sfx/powerup.mp3` | `playPowerUp()` | Racer boost pickup |
+| `sfx/turbo.mp3` | `playTurbo()` | Racer power activation |
+| `sfx/countdown.mp3` | `playCountdown()` | English Racer and Fighter countdown cue |
+| `sfx/select.mp3` | `playSelect()` | Joins, selections, station admissions, and menu feedback |
+| `sfx/attack-electric.mp3` | `playAttack('electric')` | Electric Monsters move and fallback for types without a dedicated file |
+| `sfx/attack-fire.mp3` | `playAttack('fire')` | Fire Monsters move |
+| `sfx/attack-water.mp3` | `playAttack('water')` | Water Monsters move |
+| `sfx/attack-grass.mp3` | `playAttack('grass')` | Grass Monsters move |
+| `sfx/attack-psychic.mp3` | `playAttack('psychic')` | Psychic Monsters move |
+| `sfx/item-potion.mp3` | `playItem()` | Monsters potion |
+| `sfx/taunt.mp3` | `playTaunt()` | Monsters taunt |
+| `sfx/guard.mp3` | `playGuard()` | Monsters guard or block |
+| `fighter/sfx/punch-light.mp3` | `playFighterPunch()` | First punch in the rotating punch sequence |
+| `fighter/sfx/punch-impact.mp3` | `playFighterPunch()` | Second punch in the rotating punch sequence |
+| `fighter/sfx/punch-heavy.mp3` | `playFighterPunch()` | Third punch in the rotating punch sequence |
+| `fighter/sfx/kick-medium.mp3` | `playFighterKick()` | Fighter kick |
 
-3. **Add type**: If adding a new game context, update the `GameContext` type in `music-manager.ts`
+`playFighterPunch()` rotates through light, impact, and heavy files on successive calls. `playFighterKick()` always uses `kick-medium.mp3`. Fighter intro attacks and authoritative combat action events call these same methods.
 
-## Supported Audio Formats
-
-The system supports:
-- `.mp3` (MPEG Audio)
-- `.m4a` (MPEG-4 Audio)
-- Any format supported by the HTML5 Audio API
-
-## Troubleshooting
-
-### Music not playing
-- Check browser console for audio errors
-- Verify audio files are in the correct `/client/public/audio/` subdirectories
-- Ensure the browser hasn't blocked autoplay (some browsers require user interaction first)
-
-### Tracks not switching
-- Verify the context is being switched at the correct game state transitions
-- Check that the phase/state detection logic is correct for the game flow
-
-### Audio cutting off between tracks
-- This is normal behavior in the HTML5 Audio API; there may be a brief pause between tracks
-
----
-
-## Sound Effects System
-
-The game includes a comprehensive sound effects system that plays context-appropriate audio for in-game events.
-
-### Sound Effects
-
-All sound effects are located in `/client/public/audio/sfx/`:
-
-| Event | File | Trigger |
-|-------|------|---------|
-| **Crash** | `crash.mp3` | Car hits a barrier |
-| **Power-Up** | `powerup.mp3` | Car collects a boost |
-| **Turbo** | `turbo.mp3` | Car activates power/nitro dash |
-| **Countdown** | `countdown.mp3` | Pre-race 3-2-1-GO countdown |
-
-### Sound Effects Manager
-
-The `SoundEffectsManager` class (`/client/sound-effects.ts`) handles:
-- Pre-loading all sound effects for instant playback
-- Debouncing rapid repeated plays (prevents sound overlap)
-- Respecting the music mute state (SFX mute when music is muted)
-- Volume control (0 to 1)
-
-### Integration Points
-
-#### Voice Racer (main.ts)
-- **Crash**: Plays when `hit` event occurs
-- **Power-Up**: Plays when `boost_taken` event occurs
-- **Turbo**: Plays when player's `powerActive` becomes > 0
-- **Countdown**: Plays when `countdown` event occurs (synced with displayed number)
-
-### API Usage
+## Sound Effect API
 
 ```typescript
 import { getSoundEffectsManager } from './sound-effects';
 
 const sfx = getSoundEffectsManager();
-
-// Play specific sounds
 sfx.playCrash();
 sfx.playPowerUp();
 sfx.playTurbo();
 sfx.playCountdown();
-
-// Volume control
-sfx.setVolume(0.8);  // 0 to 1
-const volume = sfx.getVolume();
+sfx.playSelect();
+sfx.playAttack('fire');
+sfx.playGuard();
+sfx.playItem();
+sfx.playTaunt();
+sfx.playFighterPunch();
+sfx.playFighterKick();
+sfx.setVolume(0.8);
 ```
 
-### Mute Behavior
+`playAttack()` uses the electric effect when the requested type has no dedicated key. The effects manager resets an effect to time zero before playback and logs load or playback failures without substituting another file, except for that explicit attack-type fallback.
 
-- Sound effects automatically respect the music mute state
-- When music is muted via the toggle button, SFX are also silenced
-- Unmuting music re-enables SFX
+## Adding Audio
 
-### Adding New Sound Effects
+1. Add an `.mp3`, `.m4a`, or other browser-supported audio file under `client/public/audio/`.
+2. Add music to the `contexts` record in `client/music-manager.ts`, including `loop: false` when it must stop after one pass.
+3. Add effects through `loadSound()` and a public play method in `client/sound-effects.ts`.
+4. Trigger the context or method from an authoritative state transition or event.
+5. Test with the global mute preference enabled and disabled, and test under browser autoplay restrictions.
 
-To add new in-game sound effects:
+## Troubleshooting
 
-1. **Add audio file**: Place the `.mp3` file in `/client/public/audio/sfx/`
-
-2. **Load in SoundEffectsManager**:
-   ```typescript
-   private loadSound(key: string, path: string): void {
-     // Already called in constructor for all effects
-   }
-   ```
-
-3. **Add play method**:
-   ```typescript
-   playNewEffect(): void {
-     this.playSound('newEffect');
-   }
-   ```
-
-4. **Trigger from event handlers**: Call the method when the appropriate game event occurs
-
-### Troubleshooting
-
-### Sounds not playing
-- Check browser console for audio loading errors
-- Verify audio files are in `/client/public/audio/sfx/`
-- Ensure music is not muted
-- Some browsers may block autoplay without user interaction (click the page first)
-
-### Sound cutting off or overlapping
-- The debounce mechanism (100ms) prevents rapid overlaps
-- Adjust `debounceMs` in `SoundEffectsManager` if needed
-
-### Volume issues
-- Ensure SFX volume is set appropriately with `setVolume()`
-- Check system/browser volume levels
+| Symptom | Check |
+|---|---|
+| No music | Browser autoplay console errors, the persisted mute setting, the context transition, and the `/audio/` URL |
+| Playlist does not advance | The `ended` event, context track order, and the context's `loop` value |
+| No effects | The music mute state, the loaded effect key, and the 100-millisecond same-key debounce |
+| Brief gap between tracks | Native `HTMLAudioElement` playlist changes are not gapless |
