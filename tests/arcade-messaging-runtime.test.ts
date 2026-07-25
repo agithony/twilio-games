@@ -502,6 +502,20 @@ describe('ArcadeMessagingRuntime', () => {
     await worker.stop();
   });
 
+  it('deduplicates admission guidance but sends a fresh call-now notice for a retried match', async () => {
+    const h=await outboxHarness({game:'racer'});
+    const locked=await h.service.getStation('ARCADE-01');
+    const firstLaunch=await h.service.requestStationLaunch({stationId:'ARCADE-01',expectedRevision:locked!.station.revision,idempotencyKey:'retry-first-launch',authorization:AUTHORIZATION});
+    const failed=await h.service.failStationLaunch({stationId:'ARCADE-01',expectedRevision:firstLaunch.station.revision,idempotencyKey:'retry-first-fail',authorization:AUTHORIZATION});
+    const selecting=await h.service.closeStationRecruiting({stationId:'ARCADE-01',expectedRevision:failed.station.revision,idempotencyKey:'retry-close',authorization:AUTHORIZATION});
+    const retryLocked=await h.service.selectStationGame({stationId:'ARCADE-01',expectedRevision:selecting.station.revision,game:'racer',engineRoomCode:'4822',idempotencyKey:'retry-select',authorization:AUTHORIZATION});
+    const secondLaunch=await h.service.requestStationLaunch({stationId:'ARCADE-01',expectedRevision:retryLocked.station.revision,idempotencyKey:'retry-second-launch',authorization:AUTHORIZATION});
+    const notices=Object.values(h.store.snapshot().outboundNotifications);
+    expect(notices.filter(notice=>notice.kind==='STATION_ADMITTED')).toHaveLength(1);
+    expect(notices.filter(notice=>notice.kind==='STATION_CALL_NOW').map(notice=>notice.matchId).sort())
+      .toEqual([firstLaunch.match!.id,secondLaunch.match!.id].sort());
+  });
+
   it('revalidates result and next-game notices after reset and later selection', async () => {
     const resetHarness = await outboxHarness();
     const locked = await resetHarness.service.getStation('ARCADE-01');

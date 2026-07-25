@@ -376,6 +376,26 @@ describe('HttpServer voice routing seams', () => {
     expect(room.mapVotes().counts).toEqual({'Silver Lake':1});
   });
 
+  it('guides each Racer independently while Player One advances shared setup', async()=>{
+    http=new HttpServer({port:0,publicBaseUrl:'http://localhost',validateSignatures:false});await http.start();
+    const game=(http as unknown as {game:GameServer}).game;
+    game.setRoomConfigProvider(()=>({carCount:2,carNames:['Roadster','Coupe'],maps:['Silver Lake','Drift']}));
+    const room=game.getOrCreateRoom('TWOSETUP');room.expectHumanPlayers(2);
+    const first=room.addPlayer('Ada',undefined,0) as {playerId:string};
+    const second=room.addPlayer('Bo',undefined,1) as {playerId:string};room.advance();
+
+    expect(http.directSelectionForTest(room,second.playerId,'two')).toMatch(/Player one will advance/i);
+    expect(http.directSelectionForTest(room,second.playerId,'next')).toMatch(/Player one controls/i);
+    expect(http.directSelectionForTest(room,first.playerId,'one')).toMatch(/Say "next"/i);
+    expect(http.directSelectionForTest(room,first.playerId,'next')).toMatch(/track/i);
+    expect(room.phase).toBe('map_select');
+    expect(http.directSelectionForTest(room,second.playerId,'two')).toMatch(/Player one will start/i);
+    expect(http.directSelectionForTest(room,second.playerId,'start')).toMatch(/Player one controls/i);
+    expect(http.directSelectionForTest(room,first.playerId,'one')).toMatch(/Say "start"/i);
+    expect(http.directSelectionForTest(room,first.playerId,'start')).toMatch(/race/i);
+    expect(room.phase).toBe('countdown');
+  });
+
   it('gives the voice host a leaderboard filtered to the current track', async () => {
     await mkdir('data', { recursive: true });
     LB = `data/_test-host-lb-${process.pid}.json`;

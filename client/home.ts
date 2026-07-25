@@ -7,6 +7,7 @@ import { applyDocumentLocale, injectLanguagePicker, locale } from './i18n';
 import { injectMagicHat } from './magic-hat';
 import { OPERATOR_ICON, updateThemeToggleIcon } from './icon-controls';
 import { createCoinInsertionPresenter } from './coin-insertion';
+import { getSoundEffectsManager } from './sound-effects';
 import {
   captureDisplayToken,
   displayTokenWasRejected,
@@ -28,10 +29,10 @@ const copy = locale === 'pt-BR' ? {
   connecting: 'Conectando', recruiting: 'Recrutando agora', waiting: 'Aguardando a primeira moeda',
   ready: 'jogadores prontos', readyNext: '{count} prontos para o próximo jogo', timer: 'Próximo jogo em {time}', reconnecting: 'Reconectando', live: 'Estação ao vivo',
   attractEyebrow: 'Twilio Games', phaseTitle: 'Sua voz é o controle.',
-  phaseDescription: 'Escaneie, entre e responda MOEDA quando estiver pronto na tela.',
+  phaseDescription: 'Escaneie, entre e responda MOEDA ou 🪙 quando estiver pronto na tela.',
   joinEyebrow: 'Entre pelo seu telefone', joinTitle: 'Escaneie para jogar',
   joinStepOne: 'Escolha SMS ou WhatsApp', joinStepTwo: 'Conclua a apresentação rápida',
-  joinStepThree: 'Responda MOEDA na tela', selectionEyebrow: 'Escolha dos jogadores',
+  joinStepThree: 'Responda MOEDA ou 🪙 na tela', selectionEyebrow: 'Escolha dos jogadores',
   selectionTitle: 'Escolham o próximo jogo.',
   selectionDescription: 'Jogadores prontos: respondam por mensagem com o número mostrado ou o nome do jogo. Se o tempo acabar ou houver empate, a estação decide automaticamente.',
   countdownEyebrow: 'Jogadores confirmados', countdownDescription: 'Fique por perto. O jogo está carregando nesta tela.',
@@ -64,10 +65,10 @@ const copy = locale === 'pt-BR' ? {
   connecting: 'Connecting', recruiting: 'Now recruiting', waiting: 'Waiting for first coin',
   ready: 'players ready', readyNext: '{count} ready for the next game', timer: 'Next game in {time}', reconnecting: 'Reconnecting', live: 'Station live',
   attractEyebrow: 'Twilio Games', phaseTitle: 'Your voice is the controller.',
-  phaseDescription: 'Scan, join, and reply COIN when you are ready at the screen.',
+  phaseDescription: 'Scan, join, and reply COIN or 🪙 when you are ready at the screen.',
   joinEyebrow: 'Join from your phone', joinTitle: 'Scan to play',
   joinStepOne: 'Choose SMS or WhatsApp', joinStepTwo: 'Complete the quick intro',
-  joinStepThree: 'Reply COIN at the screen', selectionEyebrow: 'Player choice',
+  joinStepThree: 'Reply COIN or 🪙 at the screen', selectionEyebrow: 'Player choice',
   selectionTitle: 'Choose the next game.',
   selectionDescription: 'Ready players: text the number shown or the game name. If time runs out or votes tie, the station chooses automatically.',
   countdownEyebrow: 'Players locked', countdownDescription: 'Stay close. The game is loading on this screen.',
@@ -150,6 +151,7 @@ let enabledGames = new Set(['racer','monsters','fighter']);
 let smsAvailable = false;
 let whatsappAvailable = false;
 let selectionLineup = '';
+let selectionVotes: string | null = null;
 
 function renderGameCards(station: PublicStation): void {
   const available = station.games.filter(impact => enabledGames.has(impact.id));
@@ -159,6 +161,9 @@ function renderGameCards(station: PublicStation): void {
     gameCards.replaceChildren(...available.map(impact => buildGameCard(impact)));
   }
   const highestChoices = Math.max(0, ...available.map(impact => impact.choices));
+  const voteSignature=available.map(impact=>`${impact.id}:${impact.choices}`).join('|');
+  if(selectionVotes!==null&&selectionVotes!==voteSignature)getSoundEffectsManager().playSelect();
+  selectionVotes=voteSignature;
   const leaders = highestChoices > 0 ? available.filter(impact => impact.choices === highestChoices) : [];
   for (const impact of available) {
     const card = gameCards.querySelector<HTMLElement>(`[data-game="${impact.id}"]`)!;
@@ -232,7 +237,10 @@ function show(view: keyof typeof views): void {
 }
 
 function render(station: PublicStation): void {
+  const previousPhase=current?.phase;
   current = station;
+  if(previousPhase==='GAME_SELECTION'&&station.phase==='LOCKED')getSoundEffectsManager().playSelect();
+  if(station.phase!=='GAME_SELECTION')selectionVotes=null;
   clearDisplaySetup();
   connection.textContent = copy.live;
   connection.classList.add('live');

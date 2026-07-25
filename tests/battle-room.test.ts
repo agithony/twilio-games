@@ -20,6 +20,12 @@ describe('BattleRoom', () => {
     expect(r.playerCount).toBe(2);
   });
 
+  it('infers Player One setup authority for two standalone callers', () => {
+    const r=room();const a=r.addPlayer('Ada') as {playerId:string};const b=r.addPlayer('Bo') as {playerId:string};
+    expect(r.canControlSetup(a.playerId)).toBe(true);
+    expect(r.canControlSetup(b.playerId)).toBe(false);
+  });
+
   it('advances lobby → monster_select and records each pick', () => {
     const r = room();
     const a = r.addPlayer('Ada') as { playerId: string };

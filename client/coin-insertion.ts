@@ -1,4 +1,5 @@
 import type { StationAdmissionEvent } from './station-client';
+import { getSoundEffectsManager } from './sound-effects';
 import './coin-insertion.css';
 
 export interface CoinInsertionPresenter {show(event:StationAdmissionEvent):void;}
@@ -13,6 +14,7 @@ export function createCoinInsertionPresenter(host:HTMLElement=document.body):Coi
     if(active||!queue.length)return;
     active=true;
     const event=queue.shift()!;
+    if(event.admission==='coin')getSoundEffectsManager().playSelect();
     const cue=document.createElement('div');cue.className=`coin-insertion-cue ${event.admission}`;
     const cabinet=document.createElement('div');cabinet.className='coin-cabinet';cabinet.setAttribute('aria-hidden','true');
     const coin=document.createElement('span');coin.className='arcade-coin';coin.textContent=event.admission==='coin'?'1':'✓';

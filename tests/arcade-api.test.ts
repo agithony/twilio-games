@@ -310,6 +310,46 @@ describe('Arcade API', () => {
     expect(publicConfig.earning.challenges[0].url).toBeUndefined();
   });
 
+  it('lets an authenticated same-origin operator reset one Racer map with concurrency protection', async () => {
+    const { baseUrl } = await harness();
+    const leaderboardPath = path.join(directory!, 'leaderboard.json');
+    await writeFile(leaderboardPath, JSON.stringify([
+      { name:'Ada',map:'Silver Lake',carIndex:0,finishT:31,at:1 },
+      { name:'Bo',map:'Silver Lake',carIndex:1,finishT:32,at:2 },
+      { name:'Cy',map:'Neon City',carIndex:0,finishT:33,at:3 },
+    ]));
+    const endpoint=`${baseUrl}/api/admin/arcade/leaderboards`;
+
+    expect((await fetch(endpoint)).status).toBe(401);
+    const listed=await fetch(endpoint,{headers:ADMIN_HEADER});
+    expect(listed.status).toBe(200);
+    expect(listed.headers.get('cache-control')).toBe('no-store');
+    expect(await listed.json()).toEqual({games:[
+      {game:'racer',resettable:true,maps:[{map:'Neon City',records:1},{map:'Silver Lake',records:2}]},
+      {game:'monsters',resettable:false,maps:[]},
+      {game:'fighter',resettable:false,maps:[]},
+    ]});
+    const etag=listed.headers.get('etag');expect(etag).toMatch(/^"leaderboard-[a-f0-9]{16}"$/);
+    const resetHeaders={...ADMIN_HEADER,'Content-Type':'application/json',Origin:'http://localhost'};
+    expect((await fetch(`${endpoint}/reset`,{method:'POST',headers:{...resetHeaders,'If-Match':etag!},body:JSON.stringify({game:'racer',map:'Silver Lake',reason:''})})).status).toBe(400);
+    expect((await fetch(`${endpoint}/reset`,{method:'POST',headers:{...resetHeaders,Origin:'https://evil.example','If-Match':etag!},body:JSON.stringify({game:'racer',map:'Silver Lake',reason:'event cleanup'})})).status).toBe(403);
+    expect((await fetch(`${endpoint}/reset`,{method:'POST',headers:{...resetHeaders,'If-Match':'"stale"'},body:JSON.stringify({game:'racer',map:'Silver Lake',reason:'event cleanup'})})).status).toBe(412);
+
+    const reset=await fetch(`${endpoint}/reset`,{method:'POST',headers:{...resetHeaders,'If-Match':etag!},body:JSON.stringify({game:'racer',map:'Silver Lake',reason:'event cleanup'})});
+    expect(reset.status).toBe(200);
+    expect(await reset.json()).toEqual({game:'racer',map:'Silver Lake',deleted:2,remaining:1});
+    expect(JSON.parse(await readFile(leaderboardPath,'utf8'))).toEqual([
+      {name:'Cy',map:'Neon City',carIndex:0,finishT:33,at:3},
+    ]);
+    const refreshed=await fetch(endpoint,{headers:ADMIN_HEADER}),refreshedEtag=refreshed.headers.get('etag');
+    expect(refreshedEtag).not.toBe(etag);
+    const concurrent=await Promise.all([1,2].map(index=>fetch(`${endpoint}/reset`,{
+      method:'POST',headers:{...resetHeaders,'If-Match':refreshedEtag!},
+      body:JSON.stringify({game:'racer',map:'Neon City',reason:`concurrent cleanup ${index}`}),
+    })));
+    expect(concurrent.map(response=>response.status).sort()).toEqual([200,412]);
+  });
+
   it('connects an authenticated same-origin booth display without initializing mode-off player state', async () => {
     let now = Date.parse('2026-07-23T12:00:00.000Z');
     const { baseUrl, playerRuntime } = await harness({ now: () => now });

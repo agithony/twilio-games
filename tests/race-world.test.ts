@@ -172,6 +172,17 @@ describe('RaceWorld', () => {
     expect(w.over).toBe(true);
   });
 
+  it('keeps each racer controls independent when cars occupy the same lane', () => {
+    const w=new RaceWorld(PLAYERS,12345);startRacing(w);
+    const before=w.snapshot().cars.find(car=>car.id==='p2')!;
+    w.applyIntent('p1','MOVE_RIGHT');
+    for(let i=0;i<20;i++)w.step(0.05);
+    const after=w.snapshot().cars.find(car=>car.id==='p2')!;
+    expect(after.targetLane).toBe(before.targetLane);
+    expect(after.x).toBe(before.x);
+    expect(after.boost).toBe(before.boost);
+  });
+
   it('removeCar on the last car leaves an empty, finishable world (no crash)', () => {
     const w = new RaceWorld(PLAYERS, 1);
     startRacing(w);

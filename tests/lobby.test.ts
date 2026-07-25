@@ -23,6 +23,16 @@ describe('Lobby — join + roster', () => {
     l.removePlayer('p1');
     expect(l.players().map(p => p.id)).toEqual(['p2']);
   });
+
+  it('removes a departing player map vote and recomputes the winner', () => {
+    const l=new Lobby(opts());l.addPlayer('p1','Ada','#f00');l.addPlayer('p2','Rex','#0f0');
+    l.advance();l.selectCar('p1',0);l.selectCar('p2',1);l.advance();
+    l.selectMap('Silver Lake','p1');l.selectMap('Neon City','p2');
+    l.removePlayer('p1');
+    expect(l.mapVoteCounts()).toEqual({'Neon City':1});
+    expect(l.selectedMap).toBe('Neon City');
+    expect(l.allPlayersVoted()).toBe(true);
+  });
 });
 
 describe('Lobby — phase advance', () => {

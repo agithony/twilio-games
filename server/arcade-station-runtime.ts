@@ -62,6 +62,7 @@ export class ArcadeStationRuntime {
   private readonly terminalEngines = new Map<string, 'completed' | 'abandoned'>();
   private readonly engineResults = new Map<string, readonly StationEngineParticipantResult[]>();
   private readonly connectedReadyEntries = new Map<string, string>();
+  private readonly voiceSetupDeadlines = new Map<string, number>();
   private readonly canonicalEngineIdByReadyEntry = new Map<string, string>();
   private readonly canonicalEngineIdByCurrentId = new Map<string, string>();
   private started = false;
@@ -314,6 +315,17 @@ export class ArcadeStationRuntime {
       const activeMatch = aggregate.station.activeMatchId
         ? aggregate.matches[aggregate.station.activeMatchId]
         : undefined;
+      const activeSetupKey=activeMatch?setupGenerationKey(activeMatch):null;
+      for(const setupKey of this.voiceSetupDeadlines.keys()){
+        if(aggregate.station.phase!=='LAUNCHING'||setupKey!==activeSetupKey)this.voiceSetupDeadlines.delete(setupKey);
+      }
+      if(aggregate.station.phase==='LAUNCHING'&&activeMatch?.participantReadyEntryIds.length
+        && activeMatch.participantReadyEntryIds.every(id=>this.connectedReadyEntries.has(id))
+        && activeMatch.launchRequestedAt!==null
+        && Date.parse(activeMatch.launchRequestedAt)+this.config().station.timings.launchTimeoutSeconds*1_000>this.clock()
+        && !this.voiceSetupDeadlines.has(activeSetupKey!)){
+        this.voiceSetupDeadlines.set(activeSetupKey!,this.clock()+this.config().station.timings.launchTimeoutSeconds*1_000);
+      }
       const activeEngineKey = activeMatch ? engineKey(activeMatch.game, activeMatch.engineRoomCode) : null;
       for (const key of this.startedEngines) if (key !== activeEngineKey) this.startedEngines.delete(key);
       for (const key of this.terminalEngines.keys()) if (key !== activeEngineKey) {
@@ -324,7 +336,7 @@ export class ArcadeStationRuntime {
       for (const id of this.connectedReadyEntries.keys()) if (!activeParticipants.has(id)) this.connectedReadyEntries.delete(id);
       const terminalAction = activeEngineKey ? this.terminalEngines.get(activeEngineKey) : undefined;
       if (activeMatch && terminalAction
-        && (aggregate.station.phase === 'LAUNCHING' || aggregate.station.phase === 'PLAYING')) {
+         && (aggregate.station.phase === 'LAUNCHING' || aggregate.station.phase === 'PLAYING')) {
         try {
           await this.applyEngineTerminal(aggregate, activeMatch, terminalAction);
           this.terminalEngines.delete(activeEngineKey!);
@@ -339,7 +351,7 @@ export class ArcadeStationRuntime {
       if (!enabled) return;
       if (aggregate.station.phase === 'LAUNCHING' && activeMatch?.displayReadyAt
         && !terminalAction
-        && !launchDeadlineElapsed(activeMatch, this.config(), this.clock())
+        && !this.launchDeadlineElapsed(activeMatch)
         && this.startedEngines.has(engineKey(activeMatch.game, activeMatch.engineRoomCode))
         && activeMatch.participantReadyEntryIds.every(id => this.connectedReadyEntries.has(id))) {
         try {
@@ -368,8 +380,14 @@ export class ArcadeStationRuntime {
         const held = await this.service.stationResultsHeld(activeMatch.id);
         if (!this.enabled() || held) return;
       }
-      const scheduled = nextStationTransition(aggregate, this.config());
-      if (!scheduled) return;
+      const baseScheduled = nextStationTransition(aggregate, this.config());
+      if (!baseScheduled) return;
+      const setupDeadline=baseScheduled.phase==='LAUNCHING'&&activeMatch
+        ? this.voiceSetupDeadlines.get(setupGenerationKey(activeMatch))
+        : undefined;
+      const scheduled=setupDeadline&&setupDeadline>baseScheduled.at
+        ? {...baseScheduled,at:setupDeadline}
+        : baseScheduled;
       const delay = scheduled.at - this.clock();
       if (delay > 0) {
         this.timer = this.setTimer(() => {
@@ -451,6 +469,13 @@ export class ArcadeStationRuntime {
     if (!this.timer) return;
     this.clearTimer(this.timer);
     this.timer = null;
+  }
+
+  private launchDeadlineElapsed(match:ArcadeStationAggregate['matches'][string]):boolean {
+    const requested=match.launchRequestedAt
+      ? Date.parse(match.launchRequestedAt)+this.config().station.timings.launchTimeoutSeconds*1_000
+      : 0;
+    return Math.max(requested,this.voiceSetupDeadlines.get(setupGenerationKey(match))??0)<=this.clock();
   }
 
   private report(error: unknown): void {
@@ -565,6 +590,10 @@ export function chooseStationGame(
   const eligible = highestVoteCount > 0
     ? enabledOrder.filter(game => votes.get(game) === highestVoteCount)
     : enabledOrder;
+  const failedRetry = Object.values(aggregate.matches).reverse().find(match => (
+    match.roundId === round?.id && match.phase === 'FAILED' && eligible.includes(match.game)
+  ));
+  if (failedRetry) return failedRetry.game;
   return chooseByAutomaticPolicy(aggregate, stationConfig, eligible, readyCount);
 }
 
@@ -579,7 +608,7 @@ function chooseByAutomaticPolicy(
   if (!enabledOrder.length) throw new Error('Twilio Games station has no eligible enabled games');
   if (stationConfig.automaticSelection.policy === 'fixed_priority') return enabledOrder[0]!;
   if (stationConfig.automaticSelection.policy === 'round_robin') {
-    const latest = Object.values(aggregate.matches).at(-1);
+    const latest = Object.values(aggregate.matches).filter(match => match.phase !== 'FAILED').at(-1);
     const previousIndex = latest ? allEnabledOrder.indexOf(latest.game) : -1;
     for (let offset = 1; offset <= allEnabledOrder.length; offset += 1) {
       const game = allEnabledOrder[(previousIndex + offset) % allEnabledOrder.length]!;
@@ -590,6 +619,7 @@ function chooseByAutomaticPolicy(
   const order = new Map(enabledOrder.map((game, index) => [game, index]));
   for (const game of PLAYABLE_ARCADE_GAMES) usage.set(game.id, 0);
   for (const match of Object.values(aggregate.matches)) {
+    if (match.phase === 'FAILED') continue;
     usage.set(match.game, (usage.get(match.game) ?? 0) + 1);
   }
   return PLAYABLE_ARCADE_GAMES.filter(game => enabledOrder.includes(game.id)).sort((left, right) => {
@@ -656,11 +686,6 @@ function engineIdempotencyKey(action: string, matchId: string, generation: numbe
   return `station-engine:${digest}`;
 }
 
-function launchDeadlineElapsed(
-  match: ArcadeStationAggregate['matches'][string],
-  config: ArcadeConfigSnapshot,
-  now: number,
-): boolean {
-  return match.launchRequestedAt !== null
-    && Date.parse(match.launchRequestedAt) + config.station.timings.launchTimeoutSeconds * 1_000 <= now;
+function setupGenerationKey(match:ArcadeStationAggregate['matches'][string]):string {
+  return `${match.id}\0${match.launchGeneration}`;
 }

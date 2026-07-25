@@ -582,6 +582,43 @@ export class HttpServer {
     }).catch((e) => console.error('leaderboard persist error:', e));
   }
 
+  private async leaderboardAdminSummary(): Promise<{ maps:Array<{map:string;records:number}>; etag:string }> {
+    await this.leaderboardWrite;
+    let entries:LeaderboardEntry[]=[];
+    try{
+      const parsed=parseLeaderboardStrict(await readFile(this.leaderboardPath,'utf8'));
+      if(!parsed)throw new Error('leaderboard storage is corrupt');entries=parsed;
+    }catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
+    const names=new Set([...this.roomConfigCache.maps,...entries.map(entry=>entry.map)]);
+    return{
+      maps:[...names].sort().map(map=>({map,records:entries.filter(entry=>entry.map===map).length})),
+      etag:this.leaderboardEtag(entries),
+    };
+  }
+
+  private leaderboardEtag(entries:readonly LeaderboardEntry[]):string {
+    return `"leaderboard-${createHash('sha256').update(JSON.stringify(entries)).digest('hex').slice(0,16)}"`;
+  }
+
+  private resetLeaderboardMap(map:string,expectedEtag:string):Promise<{deleted:number;remaining:number;etag:string}> {
+    const task=this.leaderboardWrite.then(async()=>{
+      let entries:LeaderboardEntry[]=[];
+      try{
+        const parsed=parseLeaderboardStrict(await readFile(this.leaderboardPath,'utf8'));
+        if(!parsed)throw new Error('leaderboard storage is corrupt');entries=parsed;
+      }catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
+      const currentEtag=this.leaderboardEtag(entries);
+      if(expectedEtag!==currentEtag)throw Object.assign(new Error('leaderboard changed; refresh and confirm again'),{code:'PRECONDITION_FAILED',etag:currentEtag});
+      if(!new Set([...this.roomConfigCache.maps,...entries.map(entry=>entry.map)]).has(map))throw Object.assign(new Error('unknown map'),{code:'UNKNOWN_MAP'});
+      const remaining=entries.filter(entry=>entry.map!==map),deleted=entries.length-remaining.length;
+      await this.writeFileAtomic(this.leaderboardPath,JSON.stringify(remaining));
+      this.leaderboardEntriesCache=remaining;this.leaderboardLoaded=true;
+      return{deleted,remaining:remaining.length,etag:this.leaderboardEtag(remaining)};
+    });
+    this.leaderboardWrite=task.then(()=>undefined,()=>undefined);
+    return task;
+  }
+
   private cleanupResetPlayerHistory(context: PlayerResetCleanupContext): Promise<void> {
     const targets = new Set(context.nameHashes);
     const enginePlayerIds = new Set(context.racers
@@ -778,7 +815,7 @@ export class HttpServer {
           const bound = route === 'battle' ? battle?.boundPlayerId
             : route === 'fighter' ? fighter?.boundPlayerId : adapter.boundPlayerId;
           if (bound && readyEntryId) {
-              this.arcadeApi?.stationVoiceParticipantConnected(String(setup.callSid ?? ''), readyEntryId, bound, stationConnectionId);
+            this.arcadeApi?.stationVoiceParticipantConnected(String(setup.callSid ?? ''), readyEntryId, bound, stationConnectionId);
           }
           if (route === 'racer' && bound && adapter.boundRoomCode) {
             this.rememberRacerVoiceCall(relayCallSid, adapter.boundRoomCode, bound, adapter);
@@ -1151,7 +1188,7 @@ export class HttpServer {
         const accepted = this.battle.voiceChooseAction(code, id, a);
         if (accepted) this.analyticsObserver.voiceCommand('monsters');
       },
-      advance: (code: string) => this.battle.voiceAdvance(code),
+      advance: (code: string, id: string) => this.battle.voiceAdvance(code, id),
       setTimer: (fn: () => void, ms: number) => { setTimeout(fn, ms); },
       snapshot: (code: string, id: string, locale?: SupportedLocale) => this.battleVoiceSnapshot(code, id, locale),
       converse: async (code: string, id: string, utterance: string, isCurrent: () => boolean, locale: SupportedLocale,nameLocked:boolean,stationManaged:boolean,authoritativeName:string|null) => {
@@ -1302,13 +1339,14 @@ export class HttpServer {
       const i = clearSelectionIndex(utterance, carChoices, locale);
       if (i !== null) {
         this.game.voiceSelectCar(room.code, playerId, i);
-        return text('voice.lockedCarNext', { car: localizedCarName(locale, room.carName(i)) });
+        return text(room.canControlSetup(playerId)?'voice.lockedCarNext':'voice.lockedCarWait', { car: localizedCarName(locale, room.carName(i)) });
       }
       // "next"/"start" advances to the track — but only once they've actually picked a car.
       if (isRacerAdvanceWord(utterance, locale)) {
         const me = room.lobbyPlayers().find(p => p.playerId === playerId);
         if ((me?.carIndex ?? null) === null) return text('voice.pickCarFirst');
-        return this.game.voiceAdvance(room.code, playerId) ? text('voice.onTrack') : null;
+        if(!room.canControlSetup(playerId))return text('voice.sharedSetupControl');
+        return this.game.voiceAdvance(room.code, playerId) ? text('voice.onTrack') : text('voice.waitingForPlayers');
       }
       return null;
     }
@@ -1323,17 +1361,20 @@ export class HttpServer {
       const i = clearSelectionIndex(utterance, mapChoices, locale);
       if (i === null) {
         if (!isRacerAdvanceWord(utterance, locale)) return null;
+        if(!room.hasMapVote(playerId))return text('voice.pickTrackFirst');
+        if(!room.canControlSetup(playerId))return text('voice.sharedSetupControl');
         const ok = this.game.voiceAdvance(room.code, playerId);
-        return ok ? text('voice.goRace') : text('voice.pickTrackFirst');
+        return ok ? text('voice.goRace') : text('voice.waitingForPlayers');
       }
       this.game.voiceSelectMap(room.code, room.mapChoices[i]!, playerId);
-      return text('voice.voteTrackStart', { map: localizedTrackName(locale, room.mapChoices[i]!) });
+      return text(room.canControlSetup(playerId)?'voice.voteTrackStart':'voice.voteTrackWait', { map: localizedTrackName(locale, room.mapChoices[i]!) });
     }
     // ADVANCE / REMATCH (deterministic, LLM-independent): "start"/"go"/"next"/"race"/"rematch" moves the
     // flow forward — this was previously LLM-only, so "start" did nothing when the model was off/slow.
     if (isRacerAdvanceWord(utterance, locale)) {
       const me = room.lobbyPlayers().find(p => p.playerId === playerId);
       // (car_select is handled by its own branch above; reaching here means lobby/map_select/results.)
+      if(!room.canControlSetup(playerId))return text('voice.sharedSetupControl');
       const ok = this.game.voiceAdvance(room.code, playerId);
       if (!ok) return null;
       // room.phase is now the NEW phase we advanced INTO — describe that screen.
@@ -1599,7 +1640,7 @@ export class HttpServer {
       },
       advance: () => {
         if (!isCurrent() || room.phase !== s.phase) return null;
-        this.battle.voiceAdvance(code); return null;
+        this.battle.voiceAdvance(code, playerId); return null;
       },
     };
   }
@@ -1677,6 +1718,37 @@ export class HttpServer {
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
       res.end(JSON.stringify({ authenticated: Boolean(user), analyticsAuthorized: user?.analyticsAuthorized ?? false,
         configured: this.analyticsAuth.configured, email: user?.email })); return;
+    }
+    if (path === '/api/admin/arcade/leaderboards' && req.method === 'GET') {
+      const principal=this.arcadeApi?.authorizeOperatorRequest(req);
+      if(!principal){res.writeHead(401,{'Content-Type':'application/json','Cache-Control':'no-store'}).end(JSON.stringify({error:'operator authorization required'}));return;}
+      try{
+        const summary=await this.leaderboardAdminSummary();
+        res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store','ETag':summary.etag});
+        res.end(JSON.stringify({games:[{game:'racer',resettable:true,maps:summary.maps},{game:'monsters',resettable:false,maps:[]},{game:'fighter',resettable:false,maps:[]}]}));
+      }catch(error){res.writeHead(503,{'Content-Type':'application/json'}).end(JSON.stringify({error:(error as Error).message}));}
+      return;
+    }
+    if (path === '/api/admin/arcade/leaderboards/reset' && req.method === 'POST') {
+      const principal=this.arcadeApi?.authorizeOperatorRequest(req);
+      if(!principal){res.writeHead(401,{'Content-Type':'application/json','Cache-Control':'no-store'}).end(JSON.stringify({error:'operator authorization required'}));return;}
+      if(req.headers.origin!==new URL(this.publicBaseUrl).origin){res.writeHead(403,{'Content-Type':'application/json'}).end(JSON.stringify({error:'same-origin request required'}));return;}
+      let body:unknown;try{body=JSON.parse(await readBody(req));}catch{res.writeHead(400,{'Content-Type':'application/json'}).end(JSON.stringify({error:'invalid JSON'}));return;}
+      const input=body as {game?:unknown;map?:unknown;reason?:unknown};
+      if(input.game!=='racer'||typeof input.map!=='string'||!input.map.trim()||typeof input.reason!=='string'||!input.reason.trim()||input.reason.trim().length>200){
+        res.writeHead(400,{'Content-Type':'application/json'}).end(JSON.stringify({error:'game racer, map, and reason are required'}));return;
+      }
+      try{
+        const result=await this.resetLeaderboardMap(input.map,String(req.headers['if-match']??''));
+        console.info(`[leaderboard] reset game=racer map=${input.map} deleted=${result.deleted} operator=${principal.email} reason=${input.reason.trim()}`);
+        res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store','ETag':result.etag}).end(JSON.stringify({game:'racer',map:input.map,deleted:result.deleted,remaining:result.remaining}));
+      }catch(error){
+        const failure=error as Error&{code?:string;etag?:string};
+        if(failure.code==='PRECONDITION_FAILED'){res.writeHead(412,{'Content-Type':'application/json',...(failure.etag?{'ETag':failure.etag}:{})}).end(JSON.stringify({error:failure.message}));}
+        else if(failure.code==='UNKNOWN_MAP')res.writeHead(404,{'Content-Type':'application/json'}).end(JSON.stringify({error:failure.message}));
+        else res.writeHead(503,{'Content-Type':'application/json'}).end(JSON.stringify({error:failure.message}));
+      }
+      return;
     }
     if (this.arcadeApi
       && (path.startsWith('/api/arcade/') || path.startsWith('/api/admin/arcade/'))) {

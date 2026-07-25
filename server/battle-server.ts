@@ -441,10 +441,12 @@ export class BattleServer {
     this.commitTurn(room, () => { accepted = room.chooseAction(playerId, action); return accepted; });
     return accepted;
   }
-  voiceAdvance(code: string): void {
-    const room = this.rooms.get(code); if (!room) return;
-    if (!this.allowBrowserPlayer(code) && room.phase === 'results') return;
+  voiceAdvance(code: string, playerId?: string): boolean {
+    const room = this.rooms.get(code); if (!room) return false;
+    if (playerId && !room.canControlSetup(playerId)) return false;
+    if (!this.allowBrowserPlayer(code) && room.phase === 'results') return false;
     room.advance(); this.flushEvents(room); this.pushState(code);
+    return true;
   }
 
   private reapIfEmpty(roomCode: string): void {

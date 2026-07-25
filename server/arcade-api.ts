@@ -292,6 +292,11 @@ export class ArcadeApi {
       ?? enginePlayerId;
   }
 
+  authorizeOperatorRequest(request: http.IncomingMessage): ArcadeAdminPrincipal | null {
+    try { return this.authorizeAdmin(request); }
+    catch { return null; }
+  }
+
   setStationAbortHandler(
     handler: (game: 'racer' | 'monsters' | 'fighter', roomCode: string, removal: StationMatchRemoval) => void,
   ): void {

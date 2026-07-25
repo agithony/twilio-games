@@ -59,6 +59,8 @@ export class Lobby {
 
   removePlayer(id: string): void {
     this.slots = this.slots.filter(s => s.id !== id);
+    this._mapVotes.delete(id);
+    this._map = this.computeVoteWinner();
   }
 
   /** Rename / recolor an existing slot (e.g. concierge fills in the name after a bare join). */
@@ -123,6 +125,12 @@ export class Lobby {
   allPicked(): boolean {
     return this.slots.length > 0 && this.slots.every(s => s.carIndex !== null);
   }
+
+  allPlayersVoted(): boolean {
+    return this.slots.length > 0 && this.slots.every(slot => this._mapVotes.has(slot.id));
+  }
+
+  hasPlayerVoted(playerId:string):boolean { return this._mapVotes.has(playerId); }
 
   /** At least one player has locked a car — enough to leave car_select (idle players get the
    *  toRaceInits() join-index fallback, so a single AFK player can't wedge the room forever). */

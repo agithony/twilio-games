@@ -98,6 +98,9 @@ export class BattleRoom {
     }
   }
   playerSide(playerId: string): Side | null { return this.slots.find(slot => slot.id === playerId)?.side ?? null; }
+  canControlSetup(playerId: string): boolean {
+    return (this.expectedHumanPlayers < 2 && this.slots.length < 2) || this.playerSide(playerId) === 'a';
+  }
 
   removePlayer(playerId: string): void {
     const wasInBattle = this.isBattleParticipant(playerId);
