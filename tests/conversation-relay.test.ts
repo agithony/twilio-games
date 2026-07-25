@@ -232,7 +232,7 @@ describe('ConversationRelayAdapter', () => {
     const adapter=new ConversationRelayAdapter({findOrCreateRoom:()=>room,say:text=>said.push(text),phaseOf:()=> 'car_select'});
     adapter.setAuthoritativeName('Ada');adapter.handleMessage(JSON.stringify({type:'setup',callSid:'CA-car',customParameters:{roomCode:'4821'}}));
     expect(said.join(' ')).toMatch(/Ada/);
-    expect(said.at(-1)?.toLowerCase()).toMatch(/car.*next|after choosing.*next/);
+    expect(said.at(-1)?.toLowerCase()).toMatch(/car.*player one.*every racer chooses/);
   });
 
   it('speaks only numeric countdown + short go events to the caller', () => {

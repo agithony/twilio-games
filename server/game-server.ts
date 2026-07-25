@@ -347,6 +347,7 @@ export class GameServer {
   voiceAdvance(roomCode: string, spokenReplyPlayerId?: string): boolean {
     const room = this.rooms.find(roomCode); if (!room) return false;
     if (this.stationResultsLocked(room)) return false;
+    if (spokenReplyPlayerId && !room.canControlSetup(spokenReplyPlayerId)) return false;
     const before = room.phase;
     room.advance();
     const after = room.phase;

@@ -169,7 +169,7 @@ Root battle commands are:
 
 | Action | Speech | Root number |
 |---|---|---|
-| Open moves | `fight`, `attack` | `1` |
+| Open moves | `fight` (canonical), `attack` (accepted alias) | `1` |
 | Guard | `guard`, `block`, `brace`, `defend`, `shield` | `2` |
 | Use potion | `item`, `potion`, `heal`, `bag`, `medicine` | `3` |
 | Taunt | `taunt`, `mock`, `provoke`, `jeer`, `insult` | `4` |

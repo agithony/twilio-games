@@ -32,6 +32,38 @@ describe('Room', () => {
     expect(room.snapshot()?.cars.map(car => car.name)).toEqual(['Ada Returns', 'Rex']);
   });
 
+  it('keeps two station players car picks and map votes independent', () => {
+    room=new Room('4821',1,{carCount:3,maps:['Silver Lake','Drift']});room.expectHumanPlayers(2);
+    const a=room.addPlayer('Ada',undefined,0) as {playerId:string};
+    const b=room.addPlayer('Rex',undefined,1) as {playerId:string};
+    room.advance();room.selectCar(a.playerId,1);room.advance();
+    expect(room.phase).toBe('car_select');
+    expect(room.lobbyPlayers().map(player=>player.carIndex)).toEqual([1,null]);
+    room.selectCar(b.playerId,2);room.advance();expect(room.phase).toBe('map_select');
+    room.selectMap('Silver Lake',a.playerId);room.advance();expect(room.phase).toBe('map_select');
+    room.selectMap('Drift',b.playerId);room.advance();
+    expect(room.phase).toBe('countdown');
+    expect(room.snapshot()?.cars.map(car=>car.carIndex)).toEqual([1,2]);
+    expect(room.mapVotes().counts).toEqual({'Silver Lake':1,Drift:1});
+  });
+
+  it('reserves station setup advancement for Player One', () => {
+    room.expectHumanPlayers(2);
+    const b=room.addPlayer('Rex',undefined,1) as {playerId:string};
+    const a=room.addPlayer('Ada',undefined,0) as {playerId:string};
+    expect(room.canControlSetup(a.playerId)).toBe(true);
+    expect(room.canControlSetup(b.playerId)).toBe(false);
+  });
+
+  it('infers Player One authority and selection gates for two standalone callers', () => {
+    room=new Room('4821',1,{carCount:2,maps:['Silver Lake']});
+    const a=room.addPlayer('Ada') as {playerId:string};const b=room.addPlayer('Rex') as {playerId:string};
+    expect(room.canControlSetup(a.playerId)).toBe(true);expect(room.canControlSetup(b.playerId)).toBe(false);
+    room.advance();room.selectCar(a.playerId,0);room.advance();expect(room.phase).toBe('car_select');
+    room.selectCar(b.playerId,1);room.advance();room.selectMap('Silver Lake',a.playerId);room.advance();
+    expect(room.phase).toBe('map_select');
+  });
+
   it('rejects joins beyond MAX_PLAYERS', () => {
     for (let i = 0; i < MAX_PLAYERS; i++) room.addPlayer('P' + i);
     const over = room.addPlayer('Overflow') as any;
@@ -127,7 +159,7 @@ describe('Room — Smash-style pre-race flow', () => {
     room.selectCar(room.lobbyPlayers()[0]!.playerId, 3);
     room.selectCar(room.lobbyPlayers()[1]!.playerId, 5);
     room.advance(); expect(room.phase).toBe('map_select');
-    room.selectMap('Neon City');
+    for(const player of room.lobbyPlayers())room.selectMap('Neon City',player.playerId);
     room.advance();
     expect(['countdown', 'racing']).toContain(room.phase);
     expect(room.selectedMap).toBe('Neon City');
@@ -139,7 +171,7 @@ describe('Room — Smash-style pre-race flow', () => {
     room.advance();
     room.selectCar(a.playerId, 8);
     room.selectCar(b.playerId, 2);
-    room.advance(); room.selectMap('Silver Lake'); room.advance();
+    room.advance();for(const player of room.lobbyPlayers())room.selectMap('Silver Lake',player.playerId);room.advance();
     const cars = room.snapshot()!.cars;
     expect(cars.find(c => c.id === a.playerId)!.carIndex).toBe(8);
     expect(cars.find(c => c.id === b.playerId)!.carIndex).toBe(2);

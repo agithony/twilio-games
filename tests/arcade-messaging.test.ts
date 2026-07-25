@@ -246,7 +246,7 @@ describe('Arcade messaging commands', () => {
       .filter(notification => notification.kind === 'CHALLENGE_REWARD');
     expect(rewardNotices).toHaveLength(1);
     expect(rewardNotices[0]).toMatchObject({
-      channel: 'sms', body: 'You earned 2 game coins!\n\nReply COIN to play again.', status: 'PENDING',
+      channel: 'sms', body: 'You earned 2 game coins!\n\nReply COIN or 🪙 to play again.', status: 'PENDING',
     });
     expect(outboundWakeups).toBe(1);
     expect((await h.service.getChallengePortalStatus(token)).challenges[0]).toMatchObject({ action: 'claimed' });
@@ -275,7 +275,7 @@ describe('Arcade messaging commands', () => {
     await h.service.claimChallengeFromPortal(token, 'docs');
     const notice = Object.values(h.store.snapshot().outboundNotifications)
       .find(notification => notification.kind === 'CHALLENGE_REWARD');
-    expect(notice?.body).toBe('Você ganhou uma moeda!\n\nResponda MOEDA para jogar novamente.');
+    expect(notice?.body).toBe('Você ganhou uma moeda!\n\nResponda MOEDA ou 🪙 para jogar novamente.');
   });
 
   it('prompts legacy unnamed coin-only players before their next ready entry', async () => {

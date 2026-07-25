@@ -54,7 +54,7 @@ export interface BattleVoiceDeps {
   openFight(code: string, playerId: string): void;
   backMenu(code: string, playerId: string): void;
   chooseAction(code: string, playerId: string, action: BattleAction): void;
-  advance(code: string): void;
+  advance(code: string, playerId: string): boolean;
   say(text: string): void;                            // speak a line to THIS caller (Relay TTS)
   /** Schedule `fn` after `ms` (injected so tests can drive the paced-commentary clock synchronously). */
   setTimer(fn: () => void, ms: number): void;
@@ -213,13 +213,22 @@ export class BattleVoiceSession {
     // ADVANCE / REMATCH: an intent to move forward ("start"/"go"/"choose a monster"/"next"/"rematch")
     // advances the screen — so a spoken action drives the display. Deterministic (no LLM dependency).
     if (isAdvanceWord(text, this.commandLocale)) {
-      if (snap.phase === 'lobby') { this.deps.advance(this.code!); this.deps.say(this.text('voice.toSelect')); return; }
+      if (snap.phase === 'lobby') {
+        if (!this.deps.advance(this.code!, this.playerId!)) this.deps.say(this.text('voice.sharedMenuControl'));
+        else this.deps.say(this.text('voice.toSelect'));
+        return;
+      }
       if (snap.phase === 'monster_select') {
         if (!snap.myMonsterId) { this.deps.say(this.text('voice.pickFirst')); return; }
         if (!snap.canStartBattle) { this.deps.say(this.text('voice.pickWaiting')); return; }
-        this.deps.advance(this.code!); return;   // battle starts → the paced battle-intro handles the talking
+        if (!this.deps.advance(this.code!, this.playerId!)) this.deps.say(this.text('voice.sharedMenuControl'));
+        return;   // battle starts → the paced battle-intro handles the talking
       }
-      if (snap.phase === 'results') { this.deps.advance(this.code!); this.deps.say(this.text('voice.rematch')); return; }
+      if (snap.phase === 'results') {
+        if (!this.deps.advance(this.code!, this.playerId!)) this.deps.say(this.text('voice.sharedMenuControl'));
+        else this.deps.say(this.text('voice.rematch'));
+        return;
+      }
     }
 
     // MONSTER SELECT: a clear name/number picks a monster. Calm confirmation + a quick background on it,
@@ -676,7 +685,7 @@ export function parseSpokenName(spoken: string, locale: SupportedLocale = DEFAUL
   if (/[?]/.test(spoken)) return null;
   const command = locale === 'pt-BR'
     ? /^(comecar|iniciar|ir|proximo|lutar|atacar|defender|bloquear|proteger|item|pocao|curar|provocar|zombar|sim|nao|pronto|pronta|ajuda|qual|quem|como|por que|quando|onde)\b/
-    : /^(start|go|next|fight|guard|item|potion|taunt|yes|no|ready|help|what|which|who|how|why|when|where)\b/;
+    : /^(start|go|next|fight|attack|guard|item|potion|taunt|yes|no|ready|help|what|which|who|how|why|when|where)\b/;
   if (command.test(low)) return null;
   // Strip a lead-in ("my name is", "i'm", "i am", "this is", "it's", "call me").
   const leadIn = locale === 'pt-BR'

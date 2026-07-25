@@ -27,6 +27,8 @@ describe('standalone and station display UX', () => {
     expect(fighter).toContain("pageUrl.searchParams.delete('hostToken')");
     expect(fighter).not.toContain("t('lobby.room', { room: roomCode })");
     expect(fighter).toContain('connection.spectate(roomCode');
+    expect(fighter).toContain('`<button id="local-join">${t(\'lobby.playingHere\')}</button>`');
+    expect(fighter).not.toContain("t(playerId ? 'lobby.playingHere' : 'lobby.pressP')");
   });
 
   it('allows Racer and Monsters menus to scroll in a narrow viewport', () => {

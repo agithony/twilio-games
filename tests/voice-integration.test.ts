@@ -362,6 +362,35 @@ describe('voice integration (fake Conversation Relay client)', () => {
     spec.close();
   });
 
+  it('binds two Racer calls to independent cars and never cross-applies commands', async () => {
+    srv=new HttpServer({port:0,publicBaseUrl:'http://localhost',validateSignatures:false});const port=await srv.start();
+    const game=(srv as unknown as {game:GameServer}).game;
+    game.setRoomConfigProvider(()=>({carCount:2,carNames:['Roadster','Coupe'],maps:['Silver Lake']}));
+    const connect=async(callSid:string,from:string)=>{
+      const ws=new WebSocket(`ws://127.0.0.1:${port}/voice`);
+      ws.on('message',data=>{const message=JSON.parse(data.toString()) as Record<string,unknown>;acknowledgeText(ws,message);});
+      await new Promise<void>(resolve=>ws.on('open',resolve));
+      ws.send(JSON.stringify({type:'setup',callSid,from,customParameters:{roomCode:'TWO-RACERS'}}));
+      return ws;
+    };
+    const a=await connect('CA-racer-a','+15550000001');const b=await connect('CA-racer-b','+15550000002');
+    try{
+      await wait(80);const room=game.findRoom('TWO-RACERS')!;const [playerA,playerB]=room.lobbyPlayers();
+      expect(playerA?.playerId).not.toBe(playerB?.playerId);
+      room.advance();room.selectCar(playerA!.playerId,0);room.selectCar(playerB!.playerId,1);room.advance();room.selectMap('Silver Lake',playerA!.playerId);room.selectMap('Silver Lake',playerB!.playerId);room.advance();
+      for(let i=0;i<100&&room.phase!=='racing';i++)game.stepRoomForTest(room,0.1);
+      const before=room.snapshot()!;
+      a.send(JSON.stringify({type:'prompt',voicePrompt:'right',last:true}));await wait(40);
+      const afterA=room.snapshot()!;
+      expect(afterA.cars.find(car=>car.id===playerA!.playerId)?.targetLane).toBe((before.cars.find(car=>car.id===playerA!.playerId)?.targetLane??0)+1);
+      expect(afterA.cars.find(car=>car.id===playerB!.playerId)?.targetLane).toBe(before.cars.find(car=>car.id===playerB!.playerId)?.targetLane);
+      b.send(JSON.stringify({type:'prompt',voicePrompt:'left',last:true}));await wait(40);
+      const afterB=room.snapshot()!;
+      expect(afterB.cars.find(car=>car.id===playerA!.playerId)?.targetLane).toBe(afterA.cars.find(car=>car.id===playerA!.playerId)?.targetLane);
+      expect(afterB.cars.find(car=>car.id===playerB!.playerId)?.targetLane).toBe((afterA.cars.find(car=>car.id===playerB!.playerId)?.targetLane??0)-1);
+    }finally{closeWs(a);closeWs(b);}
+  });
+
   it('voice setup flows name → car → track vote → start without asking for the name again', async () => {
     srv = new HttpServer({
       port: 0, publicBaseUrl: 'http://localhost', validateSignatures: false,

@@ -2,6 +2,7 @@ import QRCode from 'qrcode';
 import { updateThemeToggleIcon } from '../icon-controls';
 import { locale as resolvedLocale } from '../i18n';
 import { effectivePublicVisitorBaseUrl, fetchPublicStation, rejectDisplayToken, resolveStationQrImage, stationQrAsset, storeDisplayToken } from '../station-client';
+import { getSoundEffectsManager } from '../sound-effects';
 
 type ArcadeMode = 'off' | 'coin_only' | 'lead_capture';
 type PlayableGame = 'racer' | 'monsters' | 'fighter';
@@ -30,6 +31,7 @@ interface OperatorPlayerRecoveryItem {playerId:string;displayName:string;identit
 interface OperatorPlayerRecoveryPage {configVersion:number;startingBalance:number;players:OperatorPlayerRecoveryItem[];nextCursor:string|null;}
 interface MessagingFailedNotice { notificationId:string;kind:string;channel:'sms'|'whatsapp';status:'FAILED';attempts:number;maximumAttempts:number;lastErrorCode:string|null;lastErrorMessage:string|null;terminalReason:string|null;updatedAt:string;expiresAt:string;retryEligible:boolean;retryIneligibleReason:string|null; }
 interface AdminStatus { display:{configured:boolean;connected:boolean;checking:boolean;lastSeenAt:string|null;presenceTimeoutSeconds:number};messaging:{configured:boolean;enabled:boolean;started:boolean;lastError:string|null;channels:Record<'sms'|'whatsapp',boolean>;counts:Record<string,number>;recentFailures:MessagingFailedNotice[];onboarding:Record<'sms'|'whatsapp',boolean>;storage:{players:number;messagingIdentities:number;identityCapacity:number;remainingIdentityCapacity:number;channelAddresses:number;drafts:number;cleanupEligible:number;retentionDays:number;pruneBatchSize:number}|null}|null; }
+interface LeaderboardAdminSummary { games:Array<{game:PlayableGame;resettable:boolean;maps:Array<{map:string;records:number}>}>; }
 
 class ApiError extends Error { constructor(readonly status:number,readonly code:string,message:string){super(message);} }
 
@@ -45,7 +47,9 @@ const state: {
   operatorStationEtag: string | null;
   adminStatus: AdminStatus | null;
   operatorPlayers: OperatorPlayerRecoveryPage | null;
-} = { config:null,deployment:null,player:null,wallet:null,station:null,adminConfig:null,adminEmail:null,operatorStation:null,operatorStationEtag:null,adminStatus:null,operatorPlayers:null };
+  leaderboardSummary: LeaderboardAdminSummary | null;
+  leaderboardEtag: string | null;
+} = { config:null,deployment:null,player:null,wallet:null,station:null,adminConfig:null,adminEmail:null,operatorStation:null,operatorStationEtag:null,adminStatus:null,operatorPlayers:null,leaderboardSummary:null,leaderboardEtag:null };
 
 const notice = el('notice'), modeBadge = el('mode-badge'), heroBalance = el('hero-balance');
 const operatorView = location.pathname === '/operator' || location.pathname === '/operator/';
@@ -86,6 +90,10 @@ el('add-admin-challenge').addEventListener('click',()=>openChallengeEditor());
 el<HTMLInputElement>('admin-challenges-enabled').addEventListener('change',()=>void saveChallengeAvailability());
 el('cancel-admin-challenge').addEventListener('click',closeChallengeEditor);
 el<HTMLFormElement>('admin-challenge-form').addEventListener('submit',event=>void saveAdminChallenge(event));
+el<HTMLSelectElement>('leaderboard-reset-game').addEventListener('change',renderLeaderboardReset);
+el<HTMLSelectElement>('leaderboard-reset-map').addEventListener('change',renderLeaderboardReset);
+el<HTMLInputElement>('leaderboard-reset-reason').addEventListener('input',renderLeaderboardReset);
+el('leaderboard-reset-button').addEventListener('click',()=>void resetLeaderboard());
 el('admin-logout').addEventListener('click', () => void switchAccount());
 el('connect-booth-display').addEventListener('click', () => void connectBoothDisplay());
 el('overview-action-button').addEventListener('click',openCurrentStationAction);
@@ -127,7 +135,7 @@ async function refreshAll(showProgress=!operatorView): Promise<boolean> {
     if(!currentConfig)throw new Error('Twilio Games settings are unavailable.');
     if(operatorView){
       await checkAdmin();show('operations',true);show('dashboard',false);
-      if(state.adminConfig){await Promise.all([refreshOperatorStation(),refreshOperatorStatus(),refreshOperatorPlayers()]);startOperatorUpdates();}
+      if(state.adminConfig){await Promise.all([refreshOperatorStation(),refreshOperatorStatus(),refreshOperatorPlayers(),refreshLeaderboardSummary()]);startOperatorUpdates();}
       if(showProgress)setNotice('Event data refreshed.','success');return true;
     }
     show('operations',false);show('dashboard',true);
@@ -496,6 +504,7 @@ async function chooseGame(game:PlayableGame):Promise<void>{
       state.station={...state.station,ready:{...state.station.ready,gameChoice:result.gameChoice}};
     }
     renderPlayer();
+    getSoundEffectsManager().playSelect();
     setNotice(playerText(`Your vote is now ${gameName(game)}. You can change it until time runs out.`,`Seu voto agora é ${gameName(game)}. Você pode mudar até o tempo acabar.`),'success');
     try{await refreshPlayer();}catch{/* Keep the saved choice; live updates will retry the projection refresh. */}
   }catch(error){showError(error);}
@@ -1443,6 +1452,56 @@ function renderMessagingStatus():void{
   const failures=el('messaging-failure-list');failures.replaceChildren();
   if(!messaging?.recentFailures.length){const empty=document.createElement('div');empty.className='empty';empty.textContent='No messages need attention.';failures.append(empty);return;}
   for(const failure of messaging.recentFailures)failures.append(messagingFailureItem(failure));
+}
+
+async function refreshLeaderboardSummary():Promise<void>{
+  try{
+    const {payload,response}=await request<LeaderboardAdminSummary>('/api/admin/arcade/leaderboards');
+    state.leaderboardSummary=payload;state.leaderboardEtag=response.headers.get('ETag');renderLeaderboardReset();
+  }catch(error){
+    state.leaderboardSummary=null;state.leaderboardEtag=null;
+    el('leaderboard-reset-status').textContent=error instanceof ApiError?error.message:'Score controls are unavailable.';
+    el<HTMLButtonElement>('leaderboard-reset-button').disabled=true;
+  }
+}
+
+function renderLeaderboardReset():void{
+  const game=el<HTMLSelectElement>('leaderboard-reset-game').value as PlayableGame;
+  const mapSelect=el<HTMLSelectElement>('leaderboard-reset-map'),previousMap=mapSelect.value;
+  const summary=state.leaderboardSummary?.games.find(item=>item.game===game);
+  mapSelect.replaceChildren();
+  for(const map of summary?.maps??[]){const option=document.createElement('option');option.value=map.map;option.textContent=`${map.map} (${map.records} record${map.records===1?'':'s'})`;mapSelect.append(option);}
+  if(previousMap&&summary?.maps.some(item=>item.map===previousMap))mapSelect.value=previousMap;
+  const selected=summary?.maps.find(item=>item.map===mapSelect.value);
+  const reason=el<HTMLInputElement>('leaderboard-reset-reason').value.trim();
+  const button=el<HTMLButtonElement>('leaderboard-reset-button');
+  mapSelect.disabled=!summary?.resettable||!summary.maps.length;
+  button.disabled=!summary?.resettable||!selected||selected.records===0||!reason||!state.leaderboardEtag;
+  el('leaderboard-reset-status').textContent=!summary
+    ? 'Score controls are loading.'
+    : !summary.resettable
+      ? `${gameName(game)} does not store persistent scores, so there is nothing to reset.`
+      : selected
+        ? `${selected.records} stored result${selected.records===1?'':'s'} on ${selected.map}. This cannot be undone.`
+        : 'No Voice Racer maps are available.';
+}
+
+async function resetLeaderboard():Promise<void>{
+  const game=el<HTMLSelectElement>('leaderboard-reset-game').value as PlayableGame;
+  const map=el<HTMLSelectElement>('leaderboard-reset-map').value;
+  const reason=el<HTMLInputElement>('leaderboard-reset-reason').value.trim();
+  const summary=state.leaderboardSummary?.games.find(item=>item.game===game),selected=summary?.maps.find(item=>item.map===map);
+  if(!summary?.resettable||!selected||!reason||!state.leaderboardEtag){renderLeaderboardReset();return;}
+  if(!window.confirm(`Delete all ${selected.records} stored Voice Racer result${selected.records===1?'':'s'} for ${map}? This cannot be undone.`))return;
+  const button=el<HTMLButtonElement>('leaderboard-reset-button');button.disabled=true;button.textContent='Resetting...';
+  try{
+    const result=await api<{deleted:number}>('/api/admin/arcade/leaderboards/reset',{method:'POST',headers:{'Content-Type':'application/json','If-Match':state.leaderboardEtag,'Idempotency-Key':crypto.randomUUID()},body:JSON.stringify({game,map,reason})});
+    el<HTMLInputElement>('leaderboard-reset-reason').value='';
+    await refreshLeaderboardSummary();setNotice(`Deleted ${result.deleted} stored result${result.deleted===1?'':'s'} from ${map}.`,'success');
+  }catch(error){
+    if(error instanceof ApiError&&error.status===412)await refreshLeaderboardSummary();
+    showError(error);
+  }finally{button.textContent='Reset selected scores';renderLeaderboardReset();}
 }
 
 function messagingFailureItem(failure:MessagingFailedNotice):HTMLElement{

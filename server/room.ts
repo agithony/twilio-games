@@ -65,6 +65,13 @@ export class Room {
   get isEmpty(): boolean { return this.lobby.playerCount === 0; }
   get selectedMap(): string | null { return this.raceMap ?? this.lobby.selectedMap; }
   get mapChoices(): string[] { return this.lobby.mapChoices; }
+  private get requiredHumanPlayers():number { return Math.max(this.expectedHumanPlayers,Math.min(2,this.lobby.playerCount)); }
+  canControlSetup(playerId: string): boolean {
+    if(this.requiredHumanPlayers<2)return true;
+    const controller=this.stationSlots.size?this.stationSlots.get(0):this.lobby.players()[0]?.id;
+    return controller===playerId;
+  }
+  hasMapVote(playerId:string):boolean { return this.lobby.hasPlayerVoted(playerId); }
 
   /** True while the room is in a pre-race selection phase (lobby/car_select/map_select). */
   private get inPreRace(): boolean {
@@ -143,7 +150,10 @@ export class Room {
       this._phase = this.lobby.phase;
       return;
     }
+    if (this._phase === 'map_select' && this.requiredHumanPlayers >= 2 && !this.lobby.allPlayersVoted()) return;
     if (this._phase === 'map_select' && this.lobby.canStart()) { this.start(); return; }
+    if (this._phase === 'car_select' && this.requiredHumanPlayers >= 2
+      && (this.lobby.playerCount < this.requiredHumanPlayers || !this.lobby.allPicked())) return;
     if (this.inPreRace) { this.lobby.advance(); this._phase = this.lobby.phase; }
   }
 
@@ -161,7 +171,7 @@ export class Room {
   }
 
   start(): void {
-    if (this.lobby.playerCount < this.expectedHumanPlayers) return;
+    if (this.lobby.playerCount < this.requiredHumanPlayers) return;
     // Evolve the seed each start so every race gets a NEW (deterministic-per-race) course.
     this.seed = (Math.imul(this.seed ^ (this.seed >>> 15), 0x2c1b3c6d) + 0x9e3779b9) >>> 0;
     this.raceMap = this.lobby.selectedMap;

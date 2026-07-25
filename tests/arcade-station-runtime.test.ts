@@ -98,6 +98,30 @@ async function harness(configure?: (input: Record<string, any>) => void) {
 }
 
 describe('ArcadeStationRuntime', () => {
+  it('gives connected callers a bounded setup window without marking gameplay started', async () => {
+    const h=await harness();
+    await h.service.identifyCoinOnly({playerId:'p1',idempotencyKey:'setup-grace-identify'});
+    const inserted=await h.service.insertStationCoin({stationId:'expo',playerId:'p1',idempotencyKey:'setup-grace-coin'});
+    const runtime=h.makeRuntime();await runtime.start();
+    const selecting=await h.service.closeStationRecruiting({stationId:'expo',expectedRevision:inserted.station.revision,idempotencyKey:'setup-grace-close',authorization:AUTHORIZATION});
+    const locked=await h.service.selectStationGame({stationId:'expo',expectedRevision:selecting.station.revision,game:'racer',engineRoomCode:'SETUP-GRACE',idempotencyKey:'setup-grace-select',authorization:AUTHORIZATION});
+    const launching=await h.service.requestStationLaunch({stationId:'expo',expectedRevision:locked.station.revision,idempotencyKey:'setup-grace-launch',authorization:AUTHORIZATION});
+    await runtime.flush();
+    h.setTime(T0+119_000);
+    runtime.markParticipantConnected(launching.match!.participantReadyEntryIds[0]!,'engine-p1');
+    await runtime.flush();
+    expect((await h.service.getStation('expo'))?.station.phase).toBe('LAUNCHING');
+    expect(h.scheduled()?.delayMs).toBe(120_000);
+
+    h.setTime(T0+120_500);h.fire();await runtime.flush();
+    expect((await h.service.getStation('expo'))?.station.phase).toBe('LAUNCHING');
+    expect(h.scheduled()?.delayMs).toBe(118_500);
+
+    h.setTime(T0+239_001);h.fire();await runtime.flush();
+    expect((await h.service.getStation('expo'))?.station.phase).toBe('RECRUITING');
+    expect(h.removedMatches).toEqual([{game:'racer',roomCode:'SETUP-GRACE',removal:'abort'}]);
+  });
+
   it('updates the live engine player gate when an admitted no-show has no replacement', async () => {
     const h = await harness();
     for (const playerId of ['p1', 'p2', 'p3']) {
@@ -449,10 +473,11 @@ describe('ArcadeStationRuntime', () => {
       matchId: launching.match!.id, launchGeneration: launching.match!.launchGeneration,
       expectedRevision: launching.station.revision, idempotencyKey: 'auto-ready',
     });
-    await runtime.markEngineStarted('racer','AUTO');
     const admitted=launching.match!.participantReadyEntryIds;
     runtime.markParticipantConnected(admitted[0]!);
+    runtime.markParticipantConnected(admitted[1]!);
     await runtime.flush();
+    runtime.markParticipantDisconnected(admitted[1]!);
     expect(h.scheduled()?.delayMs).toBe(120_000);
     h.setTime(T0+121_000);h.fire();await runtime.flush();
     const replaced=await h.service.getStation('expo');
@@ -463,6 +488,10 @@ describe('ArcadeStationRuntime', () => {
     expect(replaced?.matches[replaced.station.activeMatchId!]!.participantReadyEntryIds)
       .toContain(launching.match!.overflowReadyEntryIds[0]);
     expect(replaced?.matches[replaced.station.activeMatchId!]!.launchGeneration).toBe(2);
+    expect(h.scheduled()?.delayMs).toBe(120_000);
+    h.setTime(T0+240_000);
+    runtime.markParticipantConnected(launching.match!.overflowReadyEntryIds[0]!);
+    await runtime.flush();
     expect(h.scheduled()?.delayMs).toBe(120_000);
     await runtime.stop();
   });
@@ -639,6 +668,12 @@ describe('ArcadeStationRuntime', () => {
       stationId: 'expo', playerId: 'p2', game: 'fighter', idempotencyKey: 'vote-p2-fighter',
     });
     expect(chooseStationGame((await h.service.getStation('expo'))!, fixedConfig.station)).toBe('fighter');
+
+    const retryState=(await h.service.getStation('expo'))!;
+    const failedRacer={...retryState,matches:{...retryState.matches,failed:{
+      game:'racer',phase:'FAILED',roundId:retryState.station.activeRoundId,
+    }}} as unknown as typeof retryState;
+    expect(chooseStationGame(failedRacer,fixedConfig.station)).toBe('racer');
 
     const tied = (await h.service.getStation('expo'))!;
     const withPreviousMonsters = {

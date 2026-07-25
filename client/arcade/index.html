@@ -485,6 +485,19 @@
               </div>
             </details>
 
+            <details id="leaderboard-reset-panel" class="panel compact setup-details">
+              <summary><span><small>Data maintenance</small><strong>Reset scores</strong></span></summary>
+              <div class="setup-details-body">
+                <p id="leaderboard-reset-status">Only Voice Racer currently stores persistent scores.</p>
+                <div class="settings-fields three-up">
+                  <label>Game<select id="leaderboard-reset-game"><option value="racer">Voice Racer</option><option value="monsters">Voice Monsters</option><option value="fighter">Voice Fighter</option></select></label>
+                  <label>Map<select id="leaderboard-reset-map"></select></label>
+                  <label>Reason<input id="leaderboard-reset-reason" maxlength="200" placeholder="Why are these scores being reset?" /></label>
+                </div>
+                <button id="leaderboard-reset-button" class="button danger" type="button">Reset selected scores</button>
+              </div>
+            </details>
+
             <details class="panel compact qr-operator-panel setup-details">
               <summary><span><small>Player entry</small><strong>Join QR and channel status</strong></span></summary>
               <div class="setup-details-body">

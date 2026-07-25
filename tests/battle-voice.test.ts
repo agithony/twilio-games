@@ -90,7 +90,7 @@ function fakeDeps(over: Partial<BattleVoiceDeps> = {}): { deps: BattleVoiceDeps;
     openFight: (_c, _id) => log.push('openFight'),
     backMenu: (_c, _id) => log.push('backMenu'),
     chooseAction: (_c, _id, a) => log.push(`action ${JSON.stringify(a)}`),
-    advance: (_c) => log.push('advance'),
+    advance: (_c, _id) => { log.push('advance'); return true; },
     setTimer: (fn: () => void) => { fn(); },   // synchronous in tests → paced commentary drains at once
     say: (t) => said.push(t),
     snapshot: () => battleSnap(),
@@ -210,7 +210,7 @@ describe('BattleVoiceSession', () => {
     expect(said[1]).toMatch(/conversation relay/i);
     expect(said[2]).toMatch(/what.*name/i);
     s.handleMessage(prompt("I'm Ada"));
-    expect(said.slice(3).join(' ')).toMatch(/nice to meet.*before you start.*attack or fight.*say start/i);
+    expect(said.slice(3).join(' ')).toMatch(/nice to meet.*before you start.*say fight.*say start/i);
   });
 
   it('captures the caller name in the lobby BEFORE anything else (deterministic, no LLM)', () => {
@@ -240,13 +240,14 @@ describe('BattleVoiceSession', () => {
 
   it('a spoken monster name during select picks it (deterministic, no LLM)', () => {
     // A name is already set, so "Embertail" is treated as a monster pick, not a name.
-    const { deps, log } = fakeDeps({
+    const { deps, log, said } = fakeDeps({
       snapshot: () => battleSnap({ myName: 'Ada' }),
     });
     const s = new BattleVoiceSession(deps);
     s.handleMessage(setup());
     s.handleMessage(prompt('Embertail'));
     expect(log.some(l => l === 'monster embertail')).toBe(true);
+    expect(said.at(-1)).toMatch(/Player One can say "battle"/i);
   });
 
   it('understands ordinal monster picks before cardinal words', () => {

@@ -598,4 +598,30 @@ describe('Arcade browser UI', () => {
     expect(joinCss).toContain('box-shadow:var(--action-shadow)');
     expect(joinCss).toContain('.channel:active{transform:translateY(5px)');
   });
+
+  it('provides a guarded operator control for persistent Racer scores', () => {
+    expect(html).toContain('id="leaderboard-reset-panel"');
+    expect(html).toContain('Only Voice Racer currently stores persistent scores.');
+    expect(script).toContain("request<LeaderboardAdminSummary>('/api/admin/arcade/leaderboards')");
+    expect(script).toContain("'If-Match':state.leaderboardEtag");
+    expect(script).toContain('does not store persistent scores, so there is nothing to reset');
+    expect(script).toContain('This cannot be undone.');
+  });
+
+  it('advertises the coin emoji and plays selection cues for committed choices', () => {
+    expect(homeScript).toContain('reply COIN or 🪙');
+    expect(homeScript).toContain('responda MOEDA ou 🪙');
+    expect(homeScript).toContain('getSoundEffectsManager().playSelect()');
+    expect(script).toContain('getSoundEffectsManager().playSelect()');
+    expect(coinInsertion).toContain('getSoundEffectsManager().playSelect()');
+  });
+
+  it('describes shared voice setup as Player One controlled', () => {
+    const racerCopy=readFileSync(new URL('../shared/i18n/racer.ts',import.meta.url),'utf8');
+    const monstersCopy=readFileSync(new URL('../shared/i18n/monsters.ts',import.meta.url),'utf8');
+    expect(racerCopy).toContain("'voice.helpCar': 'Say a car name or number. Player one advances");
+    expect(racerCopy).toContain("'voice.helpMap': 'Say a track name or number to vote. Player one starts");
+    expect(monstersCopy).toContain("'voice.helpSelect': 'Say a monster name or number. Player one can say battle");
+    expect(monstersCopy).toContain("'voice.resumeLobbyNamed': 'You are back, {name}. Player one can say start");
+  });
 });

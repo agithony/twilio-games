@@ -136,7 +136,6 @@ export class RaceWorld {
       }
     }
     this.resolveItems();
-    this.resolveCollisions(dt);
     this.updatePlaces();
     this.detectLeadChange();
     // SAFETY TIMEOUT: if the race runs past MAX_RACE_SECONDS (a car wedged/very slow/disconnected mid-
@@ -207,21 +206,6 @@ export class RaceWorld {
             this.consumedUntil.set(it.id, this.t + BOOST_RESPAWN);
             this.events.push({ kind: 'boost_taken', playerId: c.id, itemId: it.id });
           }
-        }
-      }
-    }
-  }
-
-  private resolveCollisions(dt: number): void {
-    for (let i = 0; i < this.cars.length; i++) {
-      for (let j = i + 1; j < this.cars.length; j++) {
-        const a = this.cars[i]!, b = this.cars[j]!;
-        if (Math.abs(a.z - b.z) < 3.4 && Math.abs(a.x - b.x) < 2.0) {
-          const push = a.x <= b.x ? -1 : 1;
-          a.x += push * 1.2 * dt * 8; b.x -= push * 1.2 * dt * 8;
-          a.boost *= 0.9; b.boost *= 0.9;
-          a.x = clamp(a.x, laneX(0), laneX(LANES - 1));
-          b.x = clamp(b.x, laneX(0), laneX(LANES - 1));
         }
       }
     }
