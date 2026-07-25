@@ -37,6 +37,18 @@ describe('BattleRoom', () => {
     expect(r.lobbyPlayers()[0]!.monsterId).toBeNull();
   });
 
+  it('exposes phase-correct readiness for a solo battle', () => {
+    const r = room();
+    const a = r.addPlayer('Ada') as { playerId: string };
+    expect(r.canStart()).toBe(false);
+    r.advance();
+    expect(r.canStart()).toBe(false);
+    r.selectMonster(a.playerId, M0);
+    expect(r.canStart()).toBe(true);
+    r.advance();
+    expect(r.canStart()).toBe(false);
+  });
+
   it('SINGLE-PLAYER: 1 human who picked → start battles an AI opponent (with its own monster)', () => {
     const r = room();
     const a = r.addPlayer('Ada') as { playerId: string };
@@ -45,6 +57,8 @@ describe('BattleRoom', () => {
     r.advance();                 // → battle (AI fills the 2nd slot)
     expect(r.phase).toBe('battle');
     const s = r.snapshot()!;
+    expect(s.a.name).toBe('Ada');
+    expect(s.b.name).toBe('Rival');
     expect(s.a.monsterId).toBe(M0);
     expect(s.b.monsterId).toBeTruthy();          // AI got a monster
     expect(s.b.id).not.toBe(a.playerId);         // opponent isn't the human
@@ -54,9 +68,14 @@ describe('BattleRoom', () => {
     const r=room();r.expectHumanPlayers(2);
     const b=r.addPlayer('Bo','b') as {playerId:string};
     r.advance();r.selectMonster(b.playerId,M1);r.advance();
+    expect(r.canStart()).toBe(false);
     expect(r.phase).toBe('monster_select');
     const a=r.addPlayer('Ada','a') as {playerId:string};
-    r.selectMonster(a.playerId,M0);r.advance();
+    expect(r.canStart()).toBe(false);
+    r.selectMonster(a.playerId,M0);
+    expect(r.canStart()).toBe(true);
+    r.advance();
+    expect(r.canStart()).toBe(false);
     expect(r.snapshot()).toMatchObject({
       a:{id:a.playerId,name:'Ada',monsterId:M0},
       b:{id:b.playerId,name:'Bo',monsterId:M1},
@@ -65,6 +84,18 @@ describe('BattleRoom', () => {
     expect(r.chooseAction(a.playerId,{kind:'guard'})).toBe(true);
     expect(r.activeSide()).toBe('b');
     expect(r.chooseAction(b.playerId,{kind:'guard'})).toBe(true);
+  });
+
+  it('promotes a lone retained Player Two into the solo control slot after a no-show drop', () => {
+    const r=room();r.expectHumanPlayers(2);
+    const b=r.addPlayer('Bo','b') as {playerId:string};
+    r.advance();r.selectMonster(b.playerId,M1);
+    r.expectHumanPlayers(1);
+
+    expect(r.playerSide(b.playerId)).toBe('a');
+    expect(r.canStart()).toBe(true);
+    r.advance();
+    expect(r.snapshot()).toMatchObject({a:{id:b.playerId,name:'Bo',monsterId:M1},b:{id:'cpu',name:'Rival'}});
   });
 
   it('rejects late joins during an active battle instead of corrupting the current matchup', () => {

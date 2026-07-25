@@ -349,6 +349,33 @@ describe('HttpServer voice routing seams', () => {
     expect(room.phase).toBe('results');
   });
 
+  it('makes superseded same-phase Racer host tools unable to mutate state', async()=>{
+    http=new HttpServer({port:0,publicBaseUrl:'http://localhost',validateSignatures:false});await http.start();
+    const game=(http as unknown as {game:GameServer}).game;
+    game.setRoomConfigProvider(()=>({carCount:2,carNames:['Roadster','Coupe'],maps:['Silver Lake']}));
+    const room=game.getOrCreateRoom('STALETOOLS');const player=room.addPlayer('Racer 1234') as {playerId:string};
+    room.advance();let current=true;const context=http.hostContextForTest(room,player.playerId,'en-US',()=>current);current=false;
+
+    expect(context.setName('Mallory')).toBeNull();
+    expect(context.selectCarByName('Coupe')).toBeNull();
+    expect(room.lobbyPlayers()[0]).toMatchObject({name:'Racer 1234',carIndex:null});
+  });
+
+  it('lets a late map-select caller provide a name and choose a car before voting', async()=>{
+    http=new HttpServer({port:0,publicBaseUrl:'http://localhost',validateSignatures:false});await http.start();
+    const game=(http as unknown as {game:GameServer}).game;
+    game.setRoomConfigProvider(()=>({carCount:2,carNames:['Roadster','Coupe'],maps:['Silver Lake','Drift']}));
+    const room=game.getOrCreateRoom('LATEMAP');const first=room.addPlayer('Ada') as {playerId:string};
+    room.advance();room.selectCar(first.playerId,0);room.advance();
+    const late=room.addPlayer('Racer 2222') as {playerId:string};
+
+    expect(http.directSelectionForTest(room,late.playerId,'Bo')).toContain('Nice to meet you');
+    expect(http.directSelectionForTest(room,late.playerId,'two')).toContain('Coupe');
+    expect(room.lobbyPlayers().find(player=>player.playerId===late.playerId)).toMatchObject({name:'Bo',carIndex:1});
+    expect(http.directSelectionForTest(room,late.playerId,'one')).toContain("vote's in");
+    expect(room.mapVotes().counts).toEqual({'Silver Lake':1});
+  });
+
   it('gives the voice host a leaderboard filtered to the current track', async () => {
     await mkdir('data', { recursive: true });
     LB = `data/_test-host-lb-${process.pid}.json`;

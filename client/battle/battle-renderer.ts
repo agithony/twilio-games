@@ -23,6 +23,7 @@ import { createTranslator, type MessageValues } from '../../shared/i18n/translat
 import {
   BATTLE_HUD_RECTS,
   BATTLE_OUTCOME_RECTS,
+  battleNameplateLines,
   outcomeBadgePresentation,
   outcomesBySide,
 } from './battle-hud-layout';
@@ -430,15 +431,17 @@ export class BattleRenderer {
     const ctx = this.ctx;
     const { x, y, width:w, height:h } = rect;
     this.drawWindow(x, y, w, h);
-    this.drawText(st.monsterName.slice(0, 11), x + 5, y + 4, true);
+    const names = battleNameplateLines(st.name, st.monsterName);
+    this.drawTinyText(names.player, x + 5, y + 4);
+    this.drawText(names.monster, x + 5, y + 10, true);
     // HP: during a paced resolution show the tracker's value (drops one hit at a time); else snapshot.
     const hp = this.resHp.display(side, st.hp);
     const frac = hpFraction(hp, st.maxHp);
-    const barX = x + 5, barY = y + 13, barW = w - 10, barH = 4;
+    const barX = x + 5, barY = y + 18, barW = w - 10, barH = 4;
     ctx.fillStyle = DARK; ctx.fillRect(barX - 1, barY - 1, barW + 2, barH + 2);   // frame
     ctx.fillStyle = PAPER; ctx.fillRect(barX, barY, barW, barH);
     ctx.fillStyle = hpColor(hpZone(frac)); ctx.fillRect(barX, barY, Math.round(barW * frac), barH);
-    this.drawText(`${hp}/${st.maxHp}`, x + 5, y + 21, true);
+    this.drawText(`${hp}/${st.maxHp}`, x + 5, y + 25, true);
   }
 
   /** A GB-style window: light fill + a dark inner/outer border. */
@@ -455,6 +458,14 @@ export class BattleRenderer {
     const ctx = this.ctx;
     ctx.fillStyle = INK;
     ctx.font = `${small ? 6 : 8}px monospace`;
+    ctx.textBaseline = 'top';
+    ctx.fillText(text, x, y);
+  }
+
+  private drawTinyText(text: string, x: number, y: number): void {
+    const ctx = this.ctx;
+    ctx.fillStyle = INK;
+    ctx.font = '5px monospace';
     ctx.textBaseline = 'top';
     ctx.fillText(text, x, y);
   }

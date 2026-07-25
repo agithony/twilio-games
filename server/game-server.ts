@@ -201,7 +201,7 @@ export class GameServer {
       case 'select_car': {
         const room = conn.roomCode ? this.rooms.find(conn.roomCode) : undefined;
         if (room && conn.playerId) {
-          room.selectCar(conn.playerId, msg.carIndex);
+          if (!room.selectCar(conn.playerId, msg.carIndex)) break;
           this.pushLobby(conn.roomCode!);
           // Playful host reaction to the pick (screen + the picking caller's phone).
           const who = room.lobbyPlayers().find(p => p.playerId === conn.playerId);
@@ -214,7 +214,7 @@ export class GameServer {
         const room = conn.roomCode ? this.rooms.find(conn.roomCode) : undefined;
         if (room) {
           // A player's WS pick counts as THEIR vote; the display (no playerId) uses the shared bucket.
-          room.selectMap(msg.map, conn.playerId);
+          if (!room.selectMap(msg.map, conn.playerId)) break;
           this.pushLobby(conn.roomCode!);
           this.emitEvent(conn.roomCode!, { kind: 'map_picked', map: msg.map });
         }
@@ -315,12 +315,12 @@ export class GameServer {
   // ── Voice-host actions: the conversational AI drives the game for a caller. These mirror the WS
   //    handlers (select_car/select_map/advance) EXACTLY — same room mutation, same broadcasts + host
   //    events — so a voice-driven pick appears on the shared screen just like a texted/keyed one.
-  voiceSelectCar(roomCode: string, playerId: string, carIndex: number): void {
-    const room = this.rooms.find(roomCode); if (!room) return;
-    room.selectCar(playerId, carIndex);
+  voiceSelectCar(roomCode: string, playerId: string, carIndex: number): boolean {
+    const room = this.rooms.find(roomCode); if (!room || !room.selectCar(playerId, carIndex)) return false;
     this.pushLobby(roomCode);
     const who = room.lobbyPlayers().find(p => p.playerId === playerId);
     this.emitEvent(roomCode, { kind: 'car_picked', playerId, name: who?.name ?? 'Racer', car: room.carName(carIndex), spokenReplyPlayerId: playerId });
+    return true;
   }
   /** Set a caller's display name by voice (shows on the shared screen). */
   voiceSetName(roomCode: string, playerId: string, name: string): void {
@@ -328,11 +328,11 @@ export class GameServer {
     room.setPlayerInfo(playerId, { name });
     this.pushLobby(roomCode);
   }
-  voiceSelectMap(roomCode: string, map: string, voterId?: string): void {
-    const room = this.rooms.find(roomCode); if (!room) return;
-    room.selectMap(map, voterId);
+  voiceSelectMap(roomCode: string, map: string, voterId?: string): boolean {
+    const room = this.rooms.find(roomCode); if (!room || !room.selectMap(map, voterId)) return false;
     this.pushLobby(roomCode);
     this.emitEvent(roomCode, { kind: 'map_picked', map });
+    return true;
   }
   /** A voice caller left (hung up). Drop their slot, refresh the lobby, and REAP the room if now empty
    *  — the racer's WS close/leave paths reap, but a phone caller never takes those, so without this a

@@ -64,6 +64,21 @@ function battleSnap(over: Partial<BattleVoiceSnapshot> = {}): BattleVoiceSnapsho
   };
 }
 
+function activeBattle(over: Partial<BattleVoiceSnapshot> = {}): BattleVoiceSnapshot {
+  return battleSnap({
+    phase: 'battle', myName: 'Ada', myMonsterId: 'sparkmouse', myMonsterName: 'Sparkmouse', myMonsterType: 'electric',
+    foeName: 'Bo', foeMonsterName: 'Shellback', foeMonsterType: 'water', myHp: 70, myMaxHp: 70, foeHp: 82, foeMaxHp: 82,
+    turn: 0, activeSide: 'a', activeMenu: 'root', whoseTurn: 'me',
+    myMoves: [
+      { id: 'sparkmouse.jolt', name: 'Thunder Jolt' },
+      { id: 'sparkmouse.zap', name: 'Static Zap' },
+      { id: 'sparkmouse.bite', name: 'Quick Bite' },
+      { id: 'sparkmouse.tackle', name: 'Tackle' },
+    ],
+    ...over,
+  });
+}
+
 function fakeDeps(over: Partial<BattleVoiceDeps> = {}): { deps: BattleVoiceDeps; log: string[]; said: string[] } {
   const log: string[] = [];
   const said: string[] = [];
@@ -90,6 +105,7 @@ const setup = (code = '4821', commandLocale?: string) => JSON.stringify({
   customParameters: { roomCode: code, ...(commandLocale ? { commandLocale } : {}) },
 });
 const prompt = (text: string, last = true) => JSON.stringify({ type: 'prompt', voicePrompt: text, last });
+const dtmf = (digit: string) => JSON.stringify({ type: 'dtmf', digit });
 
 describe('BattleVoiceSession', () => {
   it('binds the caller to the room on setup + greets', () => {
@@ -258,15 +274,141 @@ describe('BattleVoiceSession', () => {
     expect(log.some(l => l === 'name Sparkmouse')).toBe(false);
   });
 
-  it('does not treat a descriptive monster phrase as option one or as the caller name', () => {
-    const { deps, log } = fakeDeps({ snapshot: () => battleSnap({ myName: null }) });
+  it('does not treat a descriptive monster phrase as option one or as the caller name', async () => {
+    const { deps, log, said } = fakeDeps({ snapshot: () => battleSnap({ myName: null }) });
     const s = new BattleVoiceSession(deps);
     s.handleMessage(setup());
+    said.length = 0;
 
     s.handleMessage(prompt('the fire one'));
+    await Promise.resolve();
 
     expect(log.some(l => l.startsWith('monster '))).toBe(false);
     expect(log.some(l => l.startsWith('name '))).toBe(false);
+    expect(said.join(' ')).toMatch(/monster name or number/i);
+  });
+
+  it.each([
+    { label: 'English named lobby', locale: undefined, snap: battleSnap({ phase: 'lobby', myName: 'Ada' }), utterance: 'what now?', expected: /say start/i },
+    { label: 'Portuguese unnamed lobby', locale: 'pt-BR', snap: battleSnap({ phase: 'lobby', myName: null }), utterance: 'o que devo fazer agora?', expected: /nome.*começar/i },
+    { label: 'English monster select', locale: undefined, snap: battleSnap({ myName: 'Ada' }), utterance: 'the fiery-looking one', expected: /monster name or number/i },
+    { label: 'Portuguese monster select', locale: 'pt-BR', snap: battleSnap({ myName: 'Ada' }), utterance: 'quero o monstro de fogo', expected: /nome ou o número de um monstro/i },
+    { label: 'English battle root', locale: undefined, snap: activeBattle(), utterance: 'something else', expected: /fight.*guard.*item.*taunt/i },
+    { label: 'Portuguese fight menu', locale: 'pt-BR', snap: activeBattle({ activeMenu: 'fight' }), utterance: 'não sei qual', expected: /seus golpes.*Thunder Jolt.*Static Zap/i },
+  ])('uses a phase-correct scripted reprompt without an LLM: $label', async ({ locale, snap, utterance, expected }) => {
+    const { deps, said } = fakeDeps({ snapshot: () => snap });
+    const session = new BattleVoiceSession(deps);
+    session.handleMessage(setup('4821', locale));
+    said.length = 0;
+
+    session.handleMessage(prompt(utterance));
+    await Promise.resolve();
+
+    expect(said.join(' ')).toMatch(expected);
+  });
+
+  it('uses the same scripted reprompt when the LLM fails', async () => {
+    const { deps, said } = fakeDeps({
+      snapshot: () => activeBattle(),
+      converse: async () => { throw new Error('offline'); },
+    });
+    const session = new BattleVoiceSession(deps);
+    session.handleMessage(setup());
+    said.length = 0;
+
+    session.handleMessage(prompt('not a command'));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(said.join(' ')).toMatch(/fight.*guard.*item.*taunt/i);
+  });
+
+  it('does not reprompt after an LLM tool changed the battle state', async () => {
+    let snap = activeBattle();
+    const { deps, said } = fakeDeps({
+      snapshot: () => snap,
+      converse: async () => {
+        snap = { ...snap, turn: 1, activeSide: 'b', whoseTurn: 'foe' };
+        return null;
+      },
+    });
+    const session = new BattleVoiceSession(deps);
+    session.handleMessage(setup());
+    said.length = 0;
+
+    session.handleMessage(prompt('make a tactical choice'));
+    await Promise.resolve();
+
+    expect(said).toHaveLength(0);
+  });
+
+  it('uses selection DTMF digits to choose monsters in either locale', () => {
+    for (const locale of [undefined, 'pt-BR']) {
+      const { deps, log } = fakeDeps({ snapshot: () => battleSnap({ myName: 'Ada' }) });
+      const session = new BattleVoiceSession(deps);
+      session.handleMessage(setup('4821', locale));
+
+      session.handleMessage(dtmf('2'));
+
+      expect(log).toContain('monster embertail');
+    }
+  });
+
+  it.each([
+    ['1', 'openFight'],
+    ['2', '"kind":"guard"'],
+    ['3', '"kind":"item"'],
+    ['4', '"kind":"taunt"'],
+  ])('maps root DTMF %s to its battle action', (digit, expectedLog) => {
+    const { deps, log } = fakeDeps({ snapshot: () => activeBattle() });
+    const session = new BattleVoiceSession(deps);
+    session.handleMessage(setup());
+
+    session.handleMessage(dtmf(digit));
+
+    expect(log.some(entry => entry.includes(expectedLog))).toBe(true);
+  });
+
+  it.each([
+    ['1', 'sparkmouse.jolt'],
+    ['2', 'sparkmouse.zap'],
+    ['3', 'sparkmouse.bite'],
+    ['4', 'sparkmouse.tackle'],
+  ])('maps fight-menu DTMF %s to move %s', (digit, moveId) => {
+    const { deps, log } = fakeDeps({ snapshot: () => activeBattle({ activeMenu: 'fight' }) });
+    const session = new BattleVoiceSession(deps);
+    session.handleMessage(setup());
+
+    session.handleMessage(dtmf(digit));
+
+    expect(log.some(entry => entry.includes(`"moveId":"${moveId}"`))).toBe(true);
+  });
+
+  it('uses DTMF 0 to back out of the fight menu', () => {
+    const { deps, log } = fakeDeps({ snapshot: () => activeBattle({ activeMenu: 'fight' }) });
+    const session = new BattleVoiceSession(deps);
+    session.handleMessage(setup('4821', 'pt-BR'));
+
+    session.handleMessage(dtmf('0'));
+
+    expect(log).toContain('backMenu');
+  });
+
+  it.each([
+    { locale: undefined, item: 'potion', expected: /no potions remain/i },
+    { locale: 'pt-BR', item: 'poção', expected: /não restam poções/i },
+  ])('explicitly reports no remaining potions in $locale', ({ locale, item, expected }) => {
+    const { deps, log, said } = fakeDeps({ snapshot: () => activeBattle({ myPotions: 0 }) });
+    const session = new BattleVoiceSession(deps);
+    session.handleMessage(setup('4821', locale));
+    said.length = 0;
+
+    session.handleMessage(prompt(item));
+    session.handleMessage(dtmf('3'));
+
+    expect(log.some(entry => entry.includes('"kind":"item"'))).toBe(false);
+    expect(said).toHaveLength(2);
+    expect(said.join(' ')).toMatch(expected);
   });
 
   it('"start" advances the flow deterministically (no LLM) — lobby → select', () => {
@@ -426,7 +568,7 @@ describe('BattleVoiceSession', () => {
     expect(said.some(t => /thunder jolt/i.test(t) && /static zap/i.test(t))).toBe(true);
   });
 
-  it('opens FIGHT from an interim transcript and announces moves once on an empty final', () => {
+  it('ignores interim fight guesses and applies the corrected final root action', () => {
     const { deps, log, said } = fakeDeps({
       snapshot: () => battleSnap({
         phase: 'battle', myName: 'Ada', myMonsterId: 'sparkmouse', myMonsterName: 'Sparkmouse',
@@ -442,10 +584,11 @@ describe('BattleVoiceSession', () => {
 
     session.handleMessage(prompt('fight', false));
     session.handleMessage(prompt('fight', false));
-    session.handleMessage(prompt('', true));
+    session.handleMessage(prompt('two', true));
 
-    expect(log.filter(entry => entry === 'openFight')).toHaveLength(1);
-    expect(said.filter(text => /thunder jolt/i.test(text) && /static zap/i.test(text))).toHaveLength(1);
+    expect(log).not.toContain('openFight');
+    expect(log.some(entry => entry.includes('"kind":"guard"'))).toBe(true);
+    expect(said.filter(text => /thunder jolt/i.test(text) && /static zap/i.test(text))).toHaveLength(0);
   });
 
   it('refuses an out-of-turn battle command with a wait cue instead of committing it', () => {
@@ -463,6 +606,20 @@ describe('BattleVoiceSession', () => {
 
     expect(log.some(l => l.startsWith('action '))).toBe(false);
     expect(said.some(t => /wait for sparkmouse/i.test(t))).toBe(true);
+  });
+
+  it('uses the existing wait cue for out-of-turn DTMF', () => {
+    const { deps, log, said } = fakeDeps({
+      snapshot: () => activeBattle({ mySide: 'b', myName: 'Bo', activeSide: 'a', whoseTurn: 'foe' }),
+    });
+    const session = new BattleVoiceSession(deps);
+    session.handleMessage(setup());
+    said.length = 0;
+
+    session.handleMessage(dtmf('2'));
+
+    expect(log.some(entry => entry.startsWith('action '))).toBe(false);
+    expect(said.join(' ')).toMatch(/wait for shellback/i);
   });
 
   it('speaks commentary for a battle event (super-effective)', () => {
@@ -549,7 +706,24 @@ describe('BattleVoiceSession', () => {
     expect(log.some(l => l.includes('"kind":"guard"'))).toBe(true);
   });
 
-  it('drops a superseded LLM turn when an interim fight command opens the move menu', async () => {
+  it('uses the existing resolving cue for DTMF during commentary', () => {
+    const timers: (() => void)[] = [];
+    const { deps, log, said } = fakeDeps({
+      snapshot: () => activeBattle(),
+      setTimer: (fn: () => void) => { timers.push(fn); },
+    });
+    const session = new BattleVoiceSession(deps);
+    session.handleMessage(setup());
+    said.length = 0;
+    session.onBattleEvent({ kind: 'move_used', by: 'b', moveId: 'shellback.splash', moveName: 'Splash' });
+
+    session.handleMessage(dtmf('1'));
+
+    expect(log).not.toContain('openFight');
+    expect(said.join(' ')).toMatch(/resolving the last move/i);
+  });
+
+  it('drops a superseded LLM turn when a newer interim arrives', async () => {
     let release!: () => void;
     let staleActionRan = false;
     const pending = new Promise<void>(r => { release = r; });
@@ -568,7 +742,6 @@ describe('BattleVoiceSession', () => {
     const s = new BattleVoiceSession(deps);
     s.handleMessage(setup());
     s.handleMessage(prompt('what should I do'));
-    s.handleMessage(prompt('fight', false));
     s.handleMessage(prompt('fight', false));
     release();
     await pending;

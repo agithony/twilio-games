@@ -71,21 +71,23 @@ export class Lobby {
   /** A player claims a car by manifest index. Valid during car_select AND map_select (so a player
    *  who joined late — after the host advanced — can still lock in, instead of wedging canStart()).
    *  In range only. Locks ready. */
-  selectCar(id: string, carIndex: number): void {
-    if (this._phase !== 'car_select' && this._phase !== 'map_select') return;
-    if (!Number.isInteger(carIndex) || carIndex < 0 || carIndex >= this.carCount) return;
-    const s = this.slots.find(x => x.id === id); if (!s) return;
+  selectCar(id: string, carIndex: number): boolean {
+    if (this._phase !== 'car_select' && this._phase !== 'map_select') return false;
+    if (!Number.isInteger(carIndex) || carIndex < 0 || carIndex >= this.carCount) return false;
+    const s = this.slots.find(x => x.id === id); if (!s) return false;
     s.carIndex = carIndex; s.ready = true;
+    return true;
   }
 
   /** Cast a player's VOTE for a track (voterId identifies who — defaults to a shared 'host' bucket for
    *  the display/keyboard path). Only valid during map_select + a known map. The selected map is
    *  recomputed as the vote winner. A voter changing their mind replaces their prior vote. */
-  selectMap(map: string, voterId = 'host'): void {
-    if (this._phase !== 'map_select') return;
-    if (!this.maps.includes(map)) return;
+  selectMap(map: string, voterId = 'host'): boolean {
+    if (this._phase !== 'map_select') return false;
+    if (!this.maps.includes(map)) return false;
     this._mapVotes.set(voterId, map);
     this._map = this.computeVoteWinner();
+    return true;
   }
 
   /** Vote tally per map (only maps with ≥1 vote), for the UI to show live vote counts. */

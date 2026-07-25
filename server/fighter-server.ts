@@ -275,6 +275,7 @@ export class FighterServer {
   }
   voiceLeave(code: string, id: string): void { code = canonicalRoomCode(code); this.rooms.get(code)?.removePlayer(id); this.pushState(code); this.reap(code); }
   voiceSetName(code: string, id: string, name: string): void { code = canonicalRoomCode(code); this.rooms.get(code)?.setName(id, name); this.pushState(code); }
+  voiceExpectHumanPlayers(code: string, count: number): void { code=canonicalRoomCode(code);const room=this.rooms.get(code);if(!room)return;room.expectHumanPlayers(count);this.pushState(code); }
   voiceSelectFighter(code: string, id: string, fighterId: string): boolean { code = canonicalRoomCode(code); const ok = this.rooms.get(code)?.selectFighter(id, fighterId) ?? false; this.pushState(code); return ok; }
   voiceSelectMap(code: string, id: string, mapId: string): boolean {
     code = canonicalRoomCode(code); const room = this.rooms.get(code);

@@ -91,7 +91,12 @@ export class BattleRoom {
     return { playerId: id };
   }
 
-  expectHumanPlayers(count: number): void { this.expectedHumanPlayers = count >= 2 ? 2 : 1; }
+  expectHumanPlayers(count: number): void {
+    this.expectedHumanPlayers = count >= 2 ? 2 : 1;
+    if (this.expectedHumanPlayers === 1 && this.slots.length === 1 && this._phase !== 'battle') {
+      this.slots[0]!.side = 'a';
+    }
+  }
   playerSide(playerId: string): Side | null { return this.slots.find(slot => slot.id === playerId)?.side ?? null; }
 
   removePlayer(playerId: string): void {
@@ -149,7 +154,8 @@ export class BattleRoom {
 
   /** Ready to battle when at least one human has picked a monster (the 2nd side is the other human
    *  if present + picked, else an AI). */
-  private canStart(): boolean {
+  canStart(): boolean {
+    if (this._phase !== 'monster_select') return false;
     if (this.slots.length < this.expectedHumanPlayers) return false;
     const picked = this.slots.filter(s => s.monsterId);
     if (this.slots.length >= 2) return this.slots.every(s => s.monsterId);   // 2P: both must pick

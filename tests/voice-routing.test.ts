@@ -6,6 +6,8 @@ import WebSocket from 'ws';
 import type { ArcadeApi } from '../server/arcade-api';
 import { HttpServer } from '../server/http-server';
 import type { SupportedLocale } from '../shared/i18n/locales';
+import { monsterName } from '../shared/i18n/content';
+import { rosterEntries } from '../shared/monster-roster';
 
 type StationVoiceRoute = Awaited<ReturnType<ArcadeApi['stationVoiceRoute']>>;
 
@@ -204,6 +206,7 @@ describe('Arcade Voice routing', () => {
     expect(terms).toHaveLength(100);
     expect(new Set(terms.map(term => term.toLowerCase())).size).toBe(terms.length);
     expect(terms).toEqual(expect.arrayContaining(locale === 'pt-BR' ? ['lutar', 'dois'] : ['fight', 'two']));
+    expect(terms).toEqual(expect.arrayContaining(rosterEntries().map(monster => monsterName(locale, monster.id))));
   });
 
   it('returns unavailable TwiML when active station routing fails', async () => {

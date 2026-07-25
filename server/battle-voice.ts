@@ -7,7 +7,7 @@
 // All game access is through injected deps (BattleVoiceDeps) + the LLM through `converse`, so it
 // unit-tests with fakes and has no direct WS/BattleServer dependency.
 import { parseCrMessage } from './conversation-relay';
-import { matchBattleAction } from '../shared/battle-intent';
+import { matchBattleAction, parseMoveNumber } from '../shared/battle-intent';
 import { commentaryForBattleEvent, battleIntro } from '../shared/battle-commentary';
 import { dwellForEvent, HANDOFF_PAUSE_MS } from '../shared/battle-timing';
 import type { BattleEvent, BattleAction } from '../shared/battle-world';
@@ -81,8 +81,6 @@ export class BattleVoiceSession {
   private authoritativeName: string | null = null;
   private stationManaged=false;
   private stationAssignment: { side: 'a' | 'b'; expectedPlayers: number } | null = null;
-  private interimFightOpened=false;
-  private interimFightCount=0;
   private text: (key: MonstersMessageKey, values?: MessageValues) => string = createTranslator(DEFAULT_LOCALE, MONSTERS_MESSAGES);
 
   constructor(private deps: BattleVoiceDeps) {}
@@ -149,29 +147,23 @@ export class BattleVoiceSession {
       }
       case 'prompt': {
         if (!this.code || !this.playerId) return;
+        this.turnEpoch++;
         const text = msg.voicePrompt.trim();
-        if (!msg.last) {
-          if (text) this.openFightFromInterim(text);
-          return;
-        }
-        this.interimFightCount = 0;
-        if (this.interimFightOpened) {
-          this.interimFightOpened = false;
-          const snap = this.deps.snapshot(this.code, this.playerId, this.commandLocale);
-          if (snap && (!text || this.isOpenFightCommand(text, snap))) {
-            this.speakMoveChoices(snap);
-            return;
-          }
-        }
+        if (!msg.last) return;
         if (text) this.handleUtterance(text);
         break;
       }
       case 'interrupt':
         this.turnEpoch++;   // caller barged in → drop any in-flight LLM reply
-        this.interimFightCount = 0;
-        this.interimFightOpened = false;
         break;
-      case 'dtmf':
+      case 'dtmf': {
+        if (!this.code || !this.playerId) return;
+        const digit = msg.digit.trim();
+        if (/^[0-9*#]$/.test(digit)) {
+          this.handleUtterance(digit === '0' ? this.backCommand() : digit);
+        }
+        break;
+      }
       case 'error':
       case 'unknown':
         return;
@@ -258,6 +250,10 @@ export class BattleVoiceSession {
     }
     if (snap.phase === 'battle' && snap.whoseTurn === 'me') {
       const level = snap.activeMenu ?? this.menuLevel;
+      if (snap.myPotions <= 0 && isItemRequest(text, level, this.commandLocale)) {
+        this.deps.say(this.text('voice.noPotions'));
+        return;
+      }
       const res = matchBattleAction(text, { moves: snap.myMoves, potions: snap.myPotions, level }, this.commandLocale);
       if (res) {
         if (res.kind === 'openFight') {
@@ -277,29 +273,6 @@ export class BattleVoiceSession {
     void this.converse(text);
   }
 
-  private openFightFromInterim(text: string): void {
-    if (this.interimFightOpened || this.draining || this.evQ.length > 0) return;
-    const snap = this.deps.snapshot(this.code!, this.playerId!, this.commandLocale);
-    if (!snap || snap.phase !== 'battle' || snap.whoseTurn !== 'me' || snap.activeMenu !== 'root'
-      || !this.isOpenFightCommand(text, snap)) {
-      this.interimFightCount = 0;
-      return;
-    }
-    this.interimFightCount++;
-    // Two stable partials avoid acting on one ASR guess that is immediately revised.
-    if (this.interimFightCount < 2) return;
-    this.interimFightOpened = true;
-    this.turnEpoch++;
-    this.menuLevel = 'fight';
-    this.deps.openFight(this.code!, this.playerId!);
-  }
-
-  private isOpenFightCommand(text: string, snap: BattleVoiceSnapshot): boolean {
-    return matchBattleAction(text, {
-      moves: snap.myMoves, potions: snap.myPotions, level: 'root',
-    }, this.commandLocale)?.kind === 'openFight';
-  }
-
   private speakMoveChoices(snap: BattleVoiceSnapshot): void {
     const list = formatList(this.commandLocale, snap.myMoves.map((move, index) => `${index + 1}, ${move.name}`));
     this.deps.say(this.text('voice.moves', { moves: list }));
@@ -308,10 +281,13 @@ export class BattleVoiceSession {
   private looksLikeBattleCommand(text: string, snap: BattleVoiceSnapshot): boolean {
     if (matchBattleAction(text, { moves: snap.myMoves, potions: snap.myPotions, level: snap.activeMenu }, this.commandLocale)) return true;
     const normalized = normalizeForMatching(text, this.commandLocale);
+    if (/^[0-4]$/.test(normalized) || isItemRequest(text, snap.activeMenu, this.commandLocale)) return true;
     return this.commandLocale === 'pt-BR'
       ? /\b(lutar|atacar|golpe|defender|bloquear|proteger|item|pocao|curar|provocar|zombar|voltar|cancelar)\b/.test(normalized)
-      : /\b(fight|attack|move|guard|item|potion|taunt|go|hit|strike)\b/.test(normalized);
+      : /\b(fight|attack|move|guard|item|potion|taunt|go|hit|strike|back|cancel|return)\b/.test(normalized);
   }
+
+  private backCommand(): string { return this.commandLocale === 'pt-BR' ? 'voltar' : 'back'; }
 
   private captureName(text: string, phase: BattleVoiceSnapshot['phase']): boolean {
     const name = phase === 'monster_select'
@@ -336,9 +312,50 @@ export class BattleVoiceSession {
   /** Fire the conversational host; speak its reply unless the caller has spoken again since (epoch). */
   private converse(text: string): void {
     const epoch = ++this.turnEpoch;
-    void this.deps.converse(this.code!, this.playerId!, text, () => epoch === this.turnEpoch && !this.isPresentingResults(), this.commandLocale,this.authoritativeName!==null,this.stationManaged,this.authoritativeName)
-      .then(reply => { if (reply && epoch === this.turnEpoch) this.deps.say(reply); })
-      .catch(() => { /* LLM failure → stay quiet, never break the call */ });
+    const before = this.repromptState();
+    const isCurrent = () => epoch === this.turnEpoch && !this.isPresentingResults();
+    void this.deps.converse(this.code!, this.playerId!, text, isCurrent, this.commandLocale,this.authoritativeName!==null,this.stationManaged,this.authoritativeName)
+      .then(reply => {
+        if (!isCurrent()) return;
+        if (reply) this.deps.say(reply);
+        else if (before === this.repromptState()) this.speakReprompt();
+      })
+      .catch(() => {
+        if (isCurrent() && before === this.repromptState()) this.speakReprompt();
+      });
+  }
+
+  private repromptState(): string | null {
+    if (!this.code || !this.playerId) return null;
+    const snap = this.deps.snapshot(this.code, this.playerId, this.commandLocale);
+    if (!snap) return null;
+    return JSON.stringify([
+      snap.phase, snap.myName, snap.myMonsterId, snap.canStartBattle, snap.canRematch,
+      snap.turn, snap.activeSide, snap.activeMenu, snap.whoseTurn, snap.myPotions, snap.participating,
+    ]);
+  }
+
+  private speakReprompt(): void {
+    if (!this.code || !this.playerId) return;
+    const snap = this.deps.snapshot(this.code, this.playerId, this.commandLocale);
+    if (!snap) return;
+    if (snap.phase === 'lobby') {
+      this.deps.say(this.text(snap.myName || this.authoritativeName ? 'voice.helpLobbyNamed' : 'voice.helpLobby'));
+    } else if (snap.phase === 'monster_select') {
+      this.deps.say(this.text('voice.helpSelect'));
+    } else if (snap.phase === 'results') {
+      this.deps.say(this.text(this.stationManaged ? 'voice.waitOperator' : 'voice.helpResults'));
+    } else if (!snap.participating) {
+      this.deps.say(this.text('voice.currentBattle'));
+    } else if (this.draining || this.evQ.length > 0) {
+      this.deps.say(this.text('voice.resolving'));
+    } else if (snap.whoseTurn === 'foe') {
+      this.deps.say(this.text('voice.foeTurn', { monster: snap.foeMonsterName ?? this.text('voice.otherMonster') }));
+    } else if (snap.activeMenu === 'fight') {
+      this.speakMoveChoices(snap);
+    } else {
+      this.deps.say(this.text('voice.battlePrompt'));
+    }
   }
 
   private introDone = false;   // one dramatic "X vs Y" intro + how-to-play recap per battle
@@ -634,6 +651,13 @@ function isBattleHelpRequest(spoken: string, locale: SupportedLocale): boolean {
   return locale === 'pt-BR'
     ? /\b(ajuda|instrucoes|comandos|como jogar|o que posso dizer)\b/.test(text)
     : /\b(help|instructions|commands|how do i play|what can i say)\b/.test(text);
+}
+
+function isItemRequest(spoken: string, level: BattleVoiceSnapshot['activeMenu'], locale: SupportedLocale): boolean {
+  const text = normalizeForMatching(spoken, locale);
+  const itemWords = locale === 'pt-BR' ? ['item', 'pocao', 'curar', 'cura'] : ['item', 'potion', 'heal', 'bag', 'medicine'];
+  if (itemWords.some(word => new RegExp(`\\b${word}\\b`).test(text))) return true;
+  return level === 'root' && parseMoveNumber(spoken, locale) === 3;
 }
 
 function sideForActionEvent(ev: BattleEvent): 'a' | 'b' | null {

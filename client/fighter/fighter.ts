@@ -96,6 +96,7 @@ let playerId: string | null = null;
 let roster: FighterRosterEntry[] = [];
 let maps: FighterMapEntry[] = [];
 let phoneNumber = t('phone.fallback');
+const FIGHTER_ACTOR_FALLBACK_MS = 15_000;
 let phoneQr = '/brand/join-qr.png?v=2';
 let movement: Partial<Record<FighterId, { from: number; to: number; elapsed: number; jump: boolean; duration: number }>> = {};
 const actionDurations: Record<FighterId, number> = { p1: FIGHTER_RUN_FORWARD_DURATION, p2: FIGHTER_RUN_FORWARD_DURATION };
@@ -256,7 +257,7 @@ function renderFlow(): void {
       : ['lobby.step1','lobby.step2','lobby.step3'] as const;
     overlay.innerHTML = `<section class="flow-panel lobby-panel"><div class="lobby-head"><h1>${t('app.title')}</h1><p>${t(stationDisplay.active?'lobby.stationTagline':'lobby.tagline')}</p></div><div class="lobby-layout">${joinCard}<div class="lobby-center"><h2>${t('lobby.getStarted')}</h2><ol class="join-steps">${steps.map((step,index)=>`<li><b>${index+1}</b><span>${t(step)}</span></li>`).join('')}</ol><div class="player-list"><h2>${t(state.players.length ? 'lobby.challengers' : 'lobby.title')}</h2>${state.players.length ? state.players.map(playerChip).join('') : `<p>${t('lobby.waitingFirst')}</p>`}</div></div><aside class="how-to"><h2>${t('lobby.howToFight')}</h2><p>${t('lobby.rules')}</p><div class="instruction-grid"><span><b>${t('command.forward')}</b> ${t('instruction.forward')}</span><span><b>${t('command.back')}</b> ${t('instruction.back')}</span><span><b>${t('command.jump')}</b> ${t('instruction.jump')}</span><span><b>${t('command.punch')}</b> ${t('instruction.punch')}</span><span><b>${t('command.kick')}</b> ${t('instruction.kick')}</span><span><b>${t('command.block')}</b> ${t('instruction.block')}</span></div><p class="voice-tip">${t('lobby.voiceTip')}</p></aside></div><div class="flow-actions lobby-actions">${stationDisplay.active ? '' : `<button id="local-join">${t(playerId ? 'lobby.playingHere' : 'lobby.pressP')}</button>`}<button id="flow-next" ${state.players.length && isHost ? '' : 'disabled'}>${t('lobby.chooseFighters')}</button></div>${isHost ? '' : `<p class="flow-hint">${t('lobby.viewOnly')}</p>`}</section>`;
   } else if (state.phase === 'fighter_select') {
-    const allPicked = state.players.length > 0 && state.players.every(player => player.fighterId);
+    const allPicked = state.hasExpectedPlayers && state.players.length > 0 && state.players.every(player => player.fighterId);
     overlay.innerHTML = selectScreen(t('select.fighterTitle'), t('select.fighterDescription'), roster.map((fighter, index) => {
       const owner = state!.players.find(player => player.fighterId === fighter.id);
       return { id: fighter.id, name: localizedFighterName(fighter), detail: owner ? t('select.selectedBy', { name: owner.name }) : localizedFighterTitle(fighter), color: fighter.color, number: index + 1, selected: !!owner, taken: !!owner };
@@ -415,7 +416,20 @@ async function ensureFightActors(p1Id: string, p2Id: string, expectedKey: string
       void pending.then(actor => { loadedActors.set(id, actor); trimActorCache(new Set([p1Id, p2Id])); })
         .finally(() => actorLoads.delete(id)).catch(() => {});
     }
-    return pending;
+    let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
+    const fallback = new Promise<FighterActor>(resolve => {
+      fallbackTimer = setTimeout(() => {
+        const existing = loadedActors.get(id);
+        if (existing) { resolve(existing); return; }
+        const color = roster.find(fighter => fighter.id === id)?.color ?? '#ef223a';
+        const actor = FighterActor.fallback(color);
+        loadedActors.set(id, actor);
+        resolve(actor);
+      }, FIGHTER_ACTOR_FALLBACK_MS);
+    });
+    return Promise.race([pending, fallback]).finally(() => {
+      if (fallbackTimer) clearTimeout(fallbackTimer);
+    });
   };
   try {
     const results = await Promise.allSettled([load(p1Id), load(p2Id)]);
@@ -426,11 +440,8 @@ async function ensureFightActors(p1Id: string, p2Id: string, expectedKey: string
       prepareFight(state); if (state.phase === 'intro') beginIntro(state); maybeSignalReady();
     }
   } catch (error) {
-    showAssetError(t('error.fighterLoad'), error, [
-      { label: t('action.retry'), action: () => { hideAssetError(); void ensureFightActors(p1Id, p2Id, expectedKey); } },
-      { label: t('action.fallback'), action: () => installFallbackActors(p1Id, p2Id, expectedKey) },
-      { label: t('action.cancel'), secondary: true, action: () => { hideAssetError(); connection.back(); } },
-    ]);
+    console.warn('Fighter model failed to load; using fallback actors.', error);
+    installFallbackActors(p1Id, p2Id, expectedKey);
   }
 }
 

@@ -123,10 +123,10 @@ export class Room {
   }
 
   // ── Pre-race flow (delegates to Lobby) ─────────────────────────────────────────────────────────
-  selectCar(playerId: string, carIndex: number): void { this.lobby.selectCar(playerId, carIndex); }
+  selectCar(playerId: string, carIndex: number): boolean { return this.lobby.selectCar(playerId, carIndex); }
   /** Cast a map VOTE. voterId = the player casting it (so each player's vote is one; changing it
    *  replaces the prior). The winning map (selectedMap) is the vote leader, ties broken deterministically. */
-  selectMap(map: string, voterId?: string): void { this.lobby.selectMap(map, voterId); }
+  selectMap(map: string, voterId?: string): boolean { return this.lobby.selectMap(map, voterId); }
   /** Live map-vote tallies + tie flag, for the selection-screen UI. */
   mapVotes(): { counts: Record<string, number>; tie: boolean } {
     return { counts: this.lobby.mapVoteCounts(), tie: this.lobby.mapWinnerIsTie };

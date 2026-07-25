@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { parseCrMessage } from '../server/conversation-relay';
 import { ConversationRelayAdapter } from '../server/conversation-relay';
 import type { Intent } from '../shared/types';
@@ -82,22 +82,18 @@ describe('ConversationRelayAdapter', () => {
     expect(room.applied).toHaveLength(0);
   });
 
-  it('debounces repeated interim frames of the same command, resetting on last:true', () => {
+  it('ignores repeated interim commands and applies the finalized command once', () => {
     const room = fakeRoom();
     const a = new ConversationRelayAdapter({ findOrCreateRoom: () => room });
     a.handleMessage(JSON.stringify({ type:'setup', callSid:'CA1', customParameters:{ roomCode:'4821' } }));
-    // three interim frames of the same word -> fires once
+    // Interim hypotheses never mutate authoritative state.
     a.handleMessage(JSON.stringify({ type:'prompt', voicePrompt:'le',   last:false }));
     a.handleMessage(JSON.stringify({ type:'prompt', voicePrompt:'left', last:false }));
     a.handleMessage(JSON.stringify({ type:'prompt', voicePrompt:'left', last:false }));
-    expect(room.applied).toEqual([{ id:'p1', intent:'MOVE_LEFT' }]);
-    // last:true resets; the same word in a NEW utterance fires again
+    expect(room.applied).toEqual([]);
     a.handleMessage(JSON.stringify({ type:'prompt', voicePrompt:'left', last:true }));
     a.handleMessage(JSON.stringify({ type:'prompt', voicePrompt:'left', last:false }));
-    expect(room.applied).toEqual([
-      { id:'p1', intent:'MOVE_LEFT' },
-      { id:'p1', intent:'MOVE_LEFT' },
-    ]);
+    expect(room.applied).toEqual([{ id:'p1', intent:'MOVE_LEFT' }]);
   });
 
   it('fires the CORRECTED command when ASR revises a partial (left → right)', () => {
@@ -106,12 +102,9 @@ describe('ConversationRelayAdapter', () => {
     const room = fakeRoom();
     const a = new ConversationRelayAdapter({ findOrCreateRoom: () => room });
     a.handleMessage(JSON.stringify({ type:'setup', callSid:'CA1', customParameters:{ roomCode:'4821' } }));
-    a.handleMessage(JSON.stringify({ type:'prompt', voicePrompt:'left',  last:false }));  // fires LEFT
-    a.handleMessage(JSON.stringify({ type:'prompt', voicePrompt:'right', last:true }));   // corrected → RIGHT
-    expect(room.applied).toEqual([
-      { id:'p1', intent:'MOVE_LEFT' },
-      { id:'p1', intent:'MOVE_RIGHT' },
-    ]);
+    a.handleMessage(JSON.stringify({ type:'prompt', voicePrompt:'left',  last:false }));
+    a.handleMessage(JSON.stringify({ type:'prompt', voicePrompt:'right', last:true }));
+    expect(room.applied).toEqual([{ id:'p1', intent:'MOVE_RIGHT' }]);
   });
 
   it('fires an appended second command in the same utterance ("left" then "left right")', () => {
@@ -136,6 +129,21 @@ describe('ConversationRelayAdapter', () => {
       { id:'p1', intent:'MOVE_LEFT' },
       { id:'p1', intent:'MOVE_RIGHT' },
     ]);
+  });
+
+  it('routes menu DTMF through the finalized conversational selection path', async () => {
+    const room = fakeRoom(); const utterances: string[] = [];
+    const adapter = new ConversationRelayAdapter({
+      findOrCreateRoom: () => room,
+      phaseOf: () => 'car_select',
+      converse: async (_code, _id, utterance) => { utterances.push(utterance); return 'Selected.'; },
+    });
+    adapter.handleMessage(JSON.stringify({ type:'setup', callSid:'CA-menu-dtmf', customParameters:{ roomCode:'4821' } }));
+    adapter.handleMessage(JSON.stringify({ type:'dtmf', digit:'2' }));
+    await Promise.resolve();
+
+    expect(utterances).toEqual(['2']);
+    expect(room.applied).toEqual([]);
   });
 
   it('removes the player on close', () => {
@@ -366,16 +374,18 @@ describe('ConversationRelayAdapter', () => {
   });
 
   it('allows the same menu prompt again after a later phase cycle', () => {
+    vi.useFakeTimers();
     const room = fakeRoom(); const said: string[] = [];
     const a = new ConversationRelayAdapter({ findOrCreateRoom: () => room, say: (t) => said.push(t) });
     a.handleMessage(JSON.stringify({ type:'setup', callSid:'CA1', customParameters:{ roomCode:'4821' } }));
     said.length = 0;
 
     a.onGameEvent({ kind:'enter_car_select' });
-    for (let i = 0; i < 25; i++) a.onGameEvent({ kind:'countdown', n:3 });
+    vi.advanceTimersByTime(1001);
     a.onGameEvent({ kind:'enter_car_select' });
 
     expect(said.filter(s => /car|ride|machine/i.test(s))).toHaveLength(2);
+    vi.useRealTimers();
   });
 
   it('announces the caller\'s OWN finish only, not other players\'', () => {
@@ -427,6 +437,57 @@ describe('ConversationRelayAdapter', () => {
     expect(said).toHaveLength(0);   // the stale reply was dropped
   });
 
+  it('drops an older host turn as soon as a newer interim transcript arrives', async () => {
+    const room=fakeRoom();const said:string[]=[];let release!:(value:string)=>void;
+    const delayed=new Promise<string>(resolve=>{release=resolve;});
+    const adapter=new ConversationRelayAdapter({findOrCreateRoom:()=>room,phaseOf:()=> 'car_select',say:text=>said.push(text),converse:async()=>delayed});
+    adapter.handleMessage(JSON.stringify({type:'setup',callSid:'CA-new-partial',customParameters:{roomCode:'4821'}}));
+    said.length=0;
+    adapter.handleMessage(JSON.stringify({type:'prompt',voicePrompt:'which car is fastest?',last:true}));
+    adapter.handleMessage(JSON.stringify({type:'prompt',voicePrompt:'actually the',last:false}));
+    release('Choose the second car.');await Promise.resolve();await Promise.resolve();
+    expect(said).toHaveLength(0);
+  });
+
+  it.each([
+    ['en-US','car_select',/car name or number/i],
+    ['pt-BR','map_select',/nome ou o número.*pista/i],
+  ] as const)('uses scripted %s menu guidance when the host returns nothing', async (locale,phase,expected) => {
+    const room=fakeRoom();const said:string[]=[];
+    const adapter=new ConversationRelayAdapter({findOrCreateRoom:()=>room,phaseOf:()=>phase,say:text=>said.push(text),converse:async()=>null});
+    adapter.handleMessage(JSON.stringify({type:'setup',callSid:'CA-fallback',customParameters:{roomCode:'4821',commandLocale:locale}}));
+    said.length=0;adapter.handleMessage(JSON.stringify({type:'prompt',voicePrompt:'not a valid choice',last:true}));
+    await Promise.resolve();await Promise.resolve();
+    expect(said.join(' ')).toMatch(expected);
+  });
+
+  it('uses named lobby guidance after deterministic name capture updates the room', async () => {
+    const room=fakeRoom();const said:string[]=[];
+    const adapter=new ConversationRelayAdapter({
+      findOrCreateRoom:()=>room,phaseOf:()=> 'lobby',hasPlayerName:()=>true,
+      say:text=>said.push(text),converse:async()=>null,
+    });
+    adapter.handleMessage(JSON.stringify({type:'setup',callSid:'CA-named-fallback',customParameters:{roomCode:'4821'}}));
+    said.length=0;adapter.handleMessage(JSON.stringify({type:'prompt',voicePrompt:'what now exactly?',last:true}));
+    await Promise.resolve();await Promise.resolve();
+    expect(said.join(' ')).toMatch(/say start/i);
+    expect(said.join(' ')).not.toMatch(/say your name/i);
+  });
+
+  it('throttles commentary by elapsed time rather than number of events', () => {
+    vi.useFakeTimers();
+    try {
+      const room=fakeRoom();const said:string[]=[];
+      const adapter=new ConversationRelayAdapter({findOrCreateRoom:()=>room,say:text=>said.push(text)});
+      adapter.handleMessage(JSON.stringify({type:'setup',callSid:'CA-throttle',customParameters:{roomCode:'4821'}}));
+      said.length=0;vi.setSystemTime(1_000);
+      adapter.onGameEvent({kind:'hit_streak',playerId:'p1',name:'Ada',count:3});
+      vi.advanceTimersByTime(2_001);
+      adapter.onGameEvent({kind:'fell_to_last',playerId:'p1',name:'Ada'});
+      expect(said).toHaveLength(2);
+    } finally { vi.useRealTimers(); }
+  });
+
   it('during a RACE, uses the fast command path (does NOT call converse)', async () => {
     const room = fakeRoom(); let conversed = false;
     const a = new ConversationRelayAdapter({
@@ -439,6 +500,20 @@ describe('ConversationRelayAdapter', () => {
     await new Promise(r => setTimeout(r, 0));
     expect(conversed).toBe(false);
     expect(room.applied).toEqual([{ id:'p1', intent:'MOVE_LEFT' }]);
+  });
+
+  it('answers a concise mid-race question when no driving intent is present', async () => {
+    const room=fakeRoom();const said:string[]=[];const utterances:string[]=[];
+    const adapter=new ConversationRelayAdapter({
+      findOrCreateRoom:()=>room,phaseOf:()=> 'racing',say:text=>said.push(text),
+      converse:async(_code,_id,utterance)=>{utterances.push(utterance);return 'You are in first place.';},
+    });
+    adapter.handleMessage(JSON.stringify({type:'setup',callSid:'CA-race-question',customParameters:{roomCode:'4821'}}));
+    said.length=0;adapter.handleMessage(JSON.stringify({type:'prompt',voicePrompt:'what place am I?',last:true}));
+    await Promise.resolve();await Promise.resolve();
+    expect(utterances).toEqual(['what place am I?']);
+    expect(said).toEqual(['You are in first place.']);
+    expect(room.applied).toEqual([]);
   });
 
   it('during a RACE, handles a burst of spoken commands in one utterance', () => {
