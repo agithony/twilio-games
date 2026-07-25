@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { clone as skeletonClone } from 'three/examples/jsm/utils/SkeletonUtils.js';
 
 /** Build a car group: clone the GLB template if present (preserving wheel tags), else the primitive. */
-export function buildCar(template: THREE.Group | null, color: string, isMe: boolean): THREE.Group {
+export function buildCar(template: THREE.Group | null, color: string, _isMe: boolean): THREE.Group {
   let g: THREE.Group;
   if (template) {
     // SkeletonUtils.clone rebinds SkinnedMesh instances to the cloned Skeleton, so the
@@ -35,15 +35,15 @@ export function buildCar(template: THREE.Group | null, color: string, isMe: bool
     }
     g.userData.wheels = wheels;
   }
-  // A floating arrow above EVERY car, colored to that caller (so on the shared screen each player can
-  // spot their own car by its color). The local keyboard player ('isMe') gets a slightly bigger arrow
-  // so "your car" still stands out. color is a CSS string (e.g. "#36d1dc"); THREE.Color parses it.
-  const arrowColor = new THREE.Color(color);
-  const cone = new THREE.Mesh(
-    new THREE.ConeGeometry(isMe ? 0.7 : 0.55, isMe ? 1.4 : 1.1, 4),
-    new THREE.MeshBasicMaterial({ color: arrowColor }));
-  cone.rotation.x = Math.PI; cone.position.y = 4;
-  cone.userData.isPlayerArrow = true;   // tag so the renderer can bob it / find it later
-  g.add(cone);
   return g;
+}
+
+export function buildPlayerMarker(color:string,playerNumber:number):THREE.Group {
+  const marker=new THREE.Group();
+  const material=new THREE.MeshBasicMaterial({color:new THREE.Color(color),depthTest:false,depthWrite:false});
+  const cone=new THREE.Mesh(new THREE.ConeGeometry(0.72,1.45,4),material);
+  cone.rotation.x=Math.PI;cone.renderOrder=20;marker.add(cone);
+  marker.userData.isPlayerArrow=true;
+  marker.userData.playerNumber=playerNumber;
+  return marker;
 }

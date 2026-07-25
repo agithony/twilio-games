@@ -76,24 +76,24 @@ export function buildSystemPrompt(ctx: HostContext, locale: SupportedLocale = DE
   // the NAME first (any phase) if it's still unset.
   if (!ctx.myName) {
     lines.push(locale === 'pt-BR'
-      ? 'A pessoa ainda NÃO disse o nome. Primeiro pergunte o nome e use set_name. Na mesma resposta, cumprimente-a, explique os comandos esquerda, direita, acelerar, frear e nitro, e diga para falar "começar" quando quiser escolher o carro.'
-      : "The caller has NOT given their name yet. Your FIRST job: ask their name, and the moment they say it, CALL set_name. In the SAME reply, greet them BY NAME, tell them to look at the controls on the screen, and briefly explain: say left/right to steer, boost to speed up, brake to slow down, and nitro to break through a wall. Then tell them to say start when ready to pick a car — do NOT just say 'nice to meet you' and stop.");
+      ? 'A pessoa ainda NÃO disse o nome. Primeiro pergunte o nome e use set_name. Na mesma resposta, cumprimente-a, diga para olhar os controles na tela e explique os comandos esquerda, direita, acelerar, frear e nitro. A escolha de carros abre automaticamente.'
+      : 'The caller has NOT given their name yet. Ask their name and CALL set_name. Greet them by name, tell them to look at the controls on the screen, explain left, right, boost, brake, and nitro, and say car selection opens automatically.');
   }
   if (ctx.phase === 'lobby') {
-    lines.push("SCREEN: the LOBBY (players call in to join; the shared screen shows who's in). Once you have their name: greet them, say they can wait a moment for other players to call in OR jump right in, and that you'll take them to pick their car — then CALL start_race to advance to CAR selection. NEVER end a turn on a bare 'nice to meet you'; always tell them the next step. Nothing is picked yet, so don't mention specific cars/tracks.");
+    lines.push("SCREEN: the LOBBY (players call in to join; the shared screen shows who's in). Once named, the caller waits for the expected players and CAR selection opens automatically. Nothing is picked yet, so don't mention specific cars or tracks.");
   }
   if (ctx.phase === 'car_select') {
     lines.push(`SCREEN: CAR SELECT — a grid of cars is on the display right now. The ONLY cars that exist are, in order: ${numberedList(ctx.cars)}. These names are EXACT — only ever say a car from THIS list, never invent or rename one, and if unsure read the number. Callers can pick by number ("car 2") or name.`);
     if (ctx.myCar) {
-      lines.push(`The caller has picked the ${ctx.myCar}. If they are happy, CALL start_race to advance to the TRACK vote. If they want to change it, CALL select_car again.`);
+      lines.push(`The caller has picked the ${ctx.myCar}. Wait for every player to pick; TRACK voting opens automatically. They can change only their own car with select_car.`);
     } else {
-      lines.push('The caller has NOT picked a car yet. Ask which car they want (a fun one-line suggestion is great); when they name one or a number, CALL select_car. DO NOT talk about tracks/maps and DO NOT call start_race until they actually have a car — do not skip ahead.');
+      lines.push('The caller has NOT picked a car yet. Ask which car they want; when they name one or a number, CALL select_car. Do not talk about tracks until every player has picked.');
     }
   }
   if (ctx.phase === 'map_select') {
     lines.push(`SCREEN: TRACK VOTE — the tracks are on the display. This is a VOTE (each player votes; most votes wins, ties use the deterministic station tie-breaker). The ONLY tracks that exist are, in order: ${numberedList(ctx.maps)}.`);
     lines.push('CRITICAL — TRACK NAMES: say each track name EXACTLY as written above, word-for-word — do NOT translate it, spell it out, add flavor words, or invent a fancier name. If a name looks odd or you are unsure how to say it, refer to it by its NUMBER instead ("track two"). Never speak a track name that is not verbatim in the list. Prefer numbers — it is a shared screen and numbers are unambiguous.');
-    lines.push(`${ctx.selectedMap ? `Currently leading: ${ctx.selectedMap}. ` : ''}Ask which track they want (you can say "say a track name or number") and CALL select_map to cast THEIR vote; tell them it is a vote. Only CALL start_race once they say they are ready to race.`);
+    lines.push(`${ctx.selectedMap ? `Currently leading: ${ctx.selectedMap}. ` : ''}Ask which track they want and CALL select_map to cast THEIR vote. The race starts automatically after every player votes.`);
   }
   if (ctx.phase === 'racing' || ctx.phase === 'countdown') {
     lines.push(locale === 'pt-BR'

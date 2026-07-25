@@ -14,6 +14,7 @@ export class FighterRoom {
   private world: FighterWorld | null = null;
   private events: FighterEvent[] = [];
   private selectedMap: string | null = null;
+  private mapVotes=new Map<string,string>();
   private nextPlayer = 1;
   private aiNext = 0;
   private aiFighterId: string | null = null;
@@ -24,6 +25,7 @@ export class FighterRoom {
   private victory = 0;
   private voiceCommands = new Map<string, FighterCommand[]>();
   private expectedHumanPlayers = 1;
+  private automaticSetup=false;
   private rng: number;
 
   constructor(readonly code: string, seed = 0x12345678, private maps: FighterMapEntry[] = FIGHTER_MAPS) { this.rng = seed >>> 0; }
@@ -34,50 +36,51 @@ export class FighterRoom {
     const side: FighterId = preferredSide ?? (this.players.some(player => player.side === 'p1') ? 'p2' : 'p1');
     if (this.players.some(player => player.side === side)) return { error: 'room_full' };
     const player = { playerId: `f${this.nextPlayer++}`, name: cleanName(name), fighterId: null, side };
-    this.players.push(player); this.players.sort((left, right) => left.side.localeCompare(right.side));
+    this.players.push(player);this.players.sort((left,right)=>left.side.localeCompare(right.side));this.reconcileSetup();
     return { playerId: player.playerId };
   }
   expectHumanPlayers(count: number): void {
     this.expectedHumanPlayers = count >= 2 ? 2 : 1;
+    this.automaticSetup=true;
     if (this.expectedHumanPlayers === 1 && this.players.length === 1
       && (this.phase === 'lobby' || this.phase === 'fighter_select' || this.phase === 'map_select')) {
       this.players[0]!.side = 'p1';
     }
+    this.reconcileSetup();
   }
   removePlayer(id: string): void {
     this.players = this.players.filter((player) => player.playerId !== id);
+    this.mapVotes.delete(id);if(this.phase==='map_select')this.selectedMap=this.mapVoteWinner();
     this.voiceCommands.delete(id);
-    if (!this.players.length) { this.phase = 'lobby'; this.world = null; this.selectedMap = null; this.aiFighterId = null; }
-    else if (this.phase === 'loading' || this.phase === 'intro' || this.phase === 'fight' || this.phase === 'countdown' || this.phase === 'victory') {
-      this.phase = 'fighter_select'; this.world = null; this.selectedMap = null; this.aiFighterId = null;
+    if (!this.players.length) { this.phase = 'lobby'; this.world = null; this.selectedMap = null;this.mapVotes.clear();this.aiFighterId = null; }
+    else if(this.phase==='map_select'&&this.players.length<this.expectedHumanPlayers){
+      this.phase='fighter_select';this.selectedMap=null;
     }
+    else if (this.phase === 'loading' || this.phase === 'intro' || this.phase === 'fight' || this.phase === 'countdown' || this.phase === 'victory') {
+      this.phase = 'fighter_select'; this.world = null; this.selectedMap = null;this.mapVotes.clear();this.aiFighterId = null;
+    }
+    this.reconcileSetup();
   }
   setName(id: string, name: string): void { const player = this.players.find(p => p.playerId === id); if (player) player.name = cleanName(name); }
   selectFighter(id: string, fighterId: string): boolean {
     if (this.phase !== 'fighter_select' || !FIGHTER_ROSTER.some(f => f.id === fighterId)) return false;
     const player = this.players.find(p => p.playerId === id);
     if (!player || this.players.some(p => p !== player && p.fighterId === fighterId)) return false;
-    player.fighterId = fighterId; return true;
+    player.fighterId=fighterId;this.reconcileSetup();return true;
   }
   nextUnselectedPlayerId(): string | null { return this.players.find(player => !player.fighterId)?.playerId ?? null; }
-  selectMap(mapId: string): boolean {
+  selectMap(playerId:string,mapId: string): boolean {
     if (this.phase !== 'map_select' || !this.maps.some(map => map.id === mapId)) return false;
-    this.selectedMap = mapId; return true;
+    if(!this.players.some(player=>player.playerId===playerId))return false;
+    this.mapVotes.set(playerId,mapId);this.selectedMap=this.mapVoteWinner();this.reconcileSetup();return true;
   }
   advance(): boolean {
+    if(this.automaticSetup&&this.phase!=='results')return false;
     if (this.phase === 'lobby' && this.players.length) { this.phase = 'fighter_select'; return true; }
     if (this.phase === 'fighter_select' && this.players.length >= this.expectedHumanPlayers && this.players.every(p => p.fighterId)) { this.phase = 'map_select'; return true; }
-    if (this.phase === 'map_select' && this.selectedMap && this.players.length >= this.expectedHumanPlayers) {
-      const bounds = this.maps.find(map => map.id === this.selectedMap)?.bounds ?? [-9, 9];
-      if (this.players.length === 1) {
-        const choices = FIGHTER_ROSTER.filter(fighter => fighter.id !== this.players[0]!.fighterId);
-        this.aiFighterId = choices[Math.floor(this.random() * choices.length)]?.id ?? 'wraith';
-      } else this.aiFighterId = null;
-      this.phase = 'loading'; this.world = createFighterWorld(bounds); this.voiceCommands.clear(); this.countdown = 0; this.aiNext = 0.8;
-      this.loadingElapsed = 0; this.loadingGeneration++; return true;
-    }
+    if (this.phase === 'map_select' && this.selectedMap && this.players.length >= this.expectedHumanPlayers)return this.beginLoading();
     if (this.phase === 'results') {
-      this.phase = 'fighter_select'; this.world = null; this.selectedMap = null;
+      this.phase = 'fighter_select'; this.world = null; this.selectedMap = null;this.mapVotes.clear();
       this.aiFighterId = null;
       for (const player of this.players) player.fighterId = null;
       return true;
@@ -85,8 +88,9 @@ export class FighterRoom {
     return false;
   }
   back(): boolean {
+    if(this.automaticSetup)return false;
     if (this.phase === 'fighter_select') { this.phase = 'lobby'; return true; }
-    if (this.phase === 'map_select') { this.phase = 'fighter_select'; this.selectedMap = null; return true; }
+    if (this.phase === 'map_select') { this.phase = 'fighter_select'; this.selectedMap = null;this.mapVotes.clear();return true; }
     if (this.phase === 'loading') { this.phase = 'map_select'; this.world = null; this.countdown = 0; this.loadingElapsed = 0; return true; }
     return false;
   }
@@ -161,19 +165,44 @@ export class FighterRoom {
   state(): FighterState {
     const winner = this.world?.winner ?? null;
     return { roomCode: this.code, phase: this.phase, players: this.lobbyPlayers(), selectedMap: this.selectedMap,
-      world: this.world, expectedPlayerCount: this.expectedHumanPlayers, hasExpectedPlayers: this.hasExpectedPlayers,
+      mapVotesByPlayerId:Object.fromEntries(this.mapVotes),
+      world:this.world,expectedPlayerCount:this.expectedHumanPlayers,hasExpectedPlayers:this.hasExpectedPlayers,automaticSetup:this.automaticSetup,
       loadingGeneration: this.loadingGeneration, intro: this.phase === 'intro' ? this.intro : null,
       countdown: this.phase === 'countdown' ? this.countdown : null,
       result: winner ? { winner, winnerName: this.nameForSide(winner) } : null };
   }
   hasPlayer(id: string): boolean { return this.players.some(player => player.playerId === id); }
-  canControlSetup(id: string): boolean { return this.players.find(player => player.playerId === id)?.side === 'p1'; }
+  canControlSetup(id: string): boolean { return this.hasPlayer(id); }
   get playerCount(): number { return this.players.length; }
   get expectedPlayerCount(): number { return this.expectedHumanPlayers; }
   get hasExpectedPlayers(): boolean { return this.players.length >= this.expectedHumanPlayers; }
   get isEmpty(): boolean { return this.players.length === 0; }
 
   private nameForSide(side: FighterId): string { return this.lobbyPlayers().find(p => p.side === side)?.name ?? 'Rival'; }
+  private reconcileSetup():void {
+    if(!this.automaticSetup||this.players.length<this.expectedHumanPlayers)return;
+    if(this.phase==='lobby')this.phase='fighter_select';
+    if(this.phase==='fighter_select'&&this.players.every(player=>player.fighterId)){
+      this.phase='map_select';this.selectedMap=this.mapVoteWinner();
+    }
+    if(this.phase==='map_select'&&this.players.every(player=>this.mapVotes.has(player.playerId)))this.beginLoading();
+  }
+  private mapVoteWinner():string|null {
+    const counts=new Map<string,number>();
+    for(const mapId of this.mapVotes.values())counts.set(mapId,(counts.get(mapId)??0)+1);
+    const ranked=[...counts].sort((left,right)=>right[1]-left[1]||left[0].localeCompare(right[0]));
+    return ranked[0]?.[0]??null;
+  }
+  private beginLoading():boolean {
+    if(!this.selectedMap)return false;
+    const bounds=this.maps.find(map=>map.id===this.selectedMap)?.bounds??[-9,9];
+    if(this.players.length===1){
+      const choices=FIGHTER_ROSTER.filter(fighter=>fighter.id!==this.players[0]!.fighterId);
+      this.aiFighterId=choices[Math.floor(this.random()*choices.length)]?.id??'wraith';
+    }else this.aiFighterId=null;
+    this.phase='loading';this.world=createFighterWorld(bounds);this.voiceCommands.clear();this.countdown=0;this.aiNext=0.8;
+    this.loadingElapsed=0;this.loadingGeneration++;return true;
+  }
   private aiCommand(): FighterCommand {
     const world = this.world!;
     const distance = Math.abs(world.p1.x - world.p2.x);

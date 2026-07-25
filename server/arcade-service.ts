@@ -1210,6 +1210,7 @@ function stationNotificationContent(input: {
   game: PlayableArcadeGame;
   overflowOrdinal: number | null;
   callNumber: string | null;
+  channel: ArcadeMessagingChannel;
   balance: number | null;
   remainingBalance:number|null;
   offerChallenges: boolean;
@@ -1231,7 +1232,10 @@ function stationNotificationContent(input: {
         : `Esta partida lotou, mas sua moeda e sua posição continuam garantidas.\nVocê é o nº ${position} para o próximo jogo. Fique por perto!`, templateVariables: { '1': position } };
     }
     if (input.kind === 'STATION_CALL_NOW') {
-      return { body: `HORA DE JOGAR!\nToque em ${callNumber} e permaneça na linha. Sua voz controlará ${game} na tela principal.`, templateVariables: { '1': callNumber, '2': game } };
+      return { body: input.channel==='whatsapp'
+        ? `HORA DE JOGAR!\nLigue para ${callNumber} usando o app Telefone e permaneça na linha. Sua voz controlará ${game} na tela principal.`
+        : `HORA DE JOGAR!\nToque em ${callNumber} e permaneça na linha. Sua voz controlará ${game} na tela principal.`,
+      templateVariables: input.channel === 'whatsapp' ? { '1': game } : { '1': callNumber, '2': game } };
     }
     if (input.kind === 'STATION_RESULTS') {
       const balance = input.balance === null ? '' : `\n\nSaldo: ${input.balance} moeda${input.balance === 1 ? '' : 's'}.`;
@@ -1260,7 +1264,10 @@ function stationNotificationContent(input: {
       : `This match filled up, but your coin and place carry over.\nYou're #${position} for the next game. Stay nearby!`, templateVariables: { '1': position } };
   }
   if (input.kind === 'STATION_CALL_NOW') {
-    return { body: `GAME TIME!\n\nTap ${callNumber} and stay on the line. Your voice will control ${game} on the display.`, templateVariables: { '1': callNumber, '2': game } };
+    return { body: input.channel==='whatsapp'
+      ? `GAME TIME!\n\nCall ${callNumber} with your device Phone app and stay on the line. Your voice will control ${game} on the display.`
+      : `GAME TIME!\n\nTap ${callNumber} and stay on the line. Your voice will control ${game} on the display.`,
+    templateVariables: input.channel === 'whatsapp' ? { '1': game } : { '1': callNumber, '2': game } };
   }
   if (input.kind === 'STATION_RESULTS') {
     const balance = input.balance === null ? '' : `\n\nBalance: ${input.balance} game coin${input.balance === 1 ? '' : 's'}.`;
@@ -4201,6 +4208,7 @@ export class ArcadeService {
       to: address.providerAddress,
       locale,
       body,
+      callNumber: null,
       templateContentSid: null,
       templateVariables: {},
       configVersion: config.version,
@@ -4250,6 +4258,7 @@ export class ArcadeService {
       game: match.game,
       overflowOrdinal: entry.overflowOrdinal,
       callNumber,
+      channel: address.channel,
       balance,
       remainingBalance:actualBalance,
       offerChallenges,
@@ -4279,6 +4288,7 @@ export class ArcadeService {
       to: address.providerAddress,
       locale,
       body: content.body,
+      callNumber: kind === 'STATION_CALL_NOW' ? callNumber : null,
       templateContentSid,
       templateVariables: content.templateVariables,
       configVersion: config.version,

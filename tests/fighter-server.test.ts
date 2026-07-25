@@ -220,19 +220,16 @@ describe('FighterServer WebSocket authority and lifecycle', () => {
     expect(fighter!.findRoom('HOME')?.hasPlayer(joined.playerId as string)).toBe(false);
   });
 
-  it('gives only voice player one shared setup authority and reports command acceptance', async () => {
+  it('keeps both voice players selections independent and advances automatically', async () => {
     await start();
     const p1 = fighter!.voiceJoin(' voice ', 'Ada')!;
     const p2 = fighter!.voiceJoin('VOICE', 'Bob')!;
-    expect(fighter!.voiceAdvance('VOICE', p2)).toBe(false);
-    expect(fighter!.voiceAdvance('VOICE', p1)).toBe(true);
+    expect(fighter!.findRoom('VOICE')?.phase).toBe('fighter_select');
     expect(fighter!.voiceSelectFighter('VOICE', p1, 'nyx')).toBe(true);
     expect(fighter!.voiceSelectFighter('VOICE', p2, 'wraith')).toBe(true);
-    expect(fighter!.voiceAdvance('VOICE', p2)).toBe(false);
-    expect(fighter!.voiceAdvance('VOICE', p1)).toBe(true);
-    expect(fighter!.voiceSelectMap('VOICE', p2, 'void')).toBe(false);
+    expect(fighter!.findRoom('VOICE')?.phase).toBe('map_select');
+    expect(fighter!.voiceSelectMap('VOICE', p2, 'void')).toBe(true);
     expect(fighter!.voiceSelectMap('VOICE', p1, 'void')).toBe(true);
-    expect(fighter!.voiceAdvance('VOICE', p1)).toBe(true);
     const room = fighter!.findRoom('VOICE')!;
     expect(room.phase).toBe('loading');
     expect(room.ready(room.state().loadingGeneration)).toBe(true);

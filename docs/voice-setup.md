@@ -130,13 +130,13 @@ Voice Racer supports up to two players in room `4821`.
 The voice flow is:
 
 1. Say your name.
-2. Say `start` to open car selection.
-3. Say a car name or its number.
-4. Say `next` to open track selection.
-5. Say a track name or its number.
-6. Say `start`, `go`, `race`, or another advance phrase to begin.
+2. Car selection opens automatically when the expected callers are ready.
+3. Each player says their own car name or number.
+4. Track voting opens automatically after every player picks a car.
+5. Each player says their own track name or number.
+6. The race begins automatically after every player votes.
 
-Car and track selection has a deterministic name/number path and does not require OpenAI. A caller cannot advance from car selection without choosing a car or start from track selection without choosing a track.
+Car and track selection is deterministic and never uses OpenAI. Unrecognized setup speech receives concise guidance for the current screen. No caller controls another player's choice or a shared next button.
 
 During countdown and racing, finalized transcripts use the fast local intent path. Command bursts can fire in order, while revisable interim hypotheses never mutate the car.
 
@@ -159,9 +159,9 @@ Voice Monsters is a one-on-one room with up to two human callers. A solo player 
 The voice flow is:
 
 1. Say your name.
-2. Say `start` to open monster selection.
-3. Say a monster name, number, or ordinal such as `the second one`.
-4. Say `battle` or `fight` after the required picks are complete.
+2. Monster selection opens automatically when the expected callers are ready.
+3. Each player says their own monster name, number, or ordinal such as `the second one`.
+4. The battle begins automatically after every player picks.
 5. On your turn, say `fight` to hear the four moves, then say a move name or number. A move name can also be spoken directly from the root menu.
 6. Say `rematch` after the final result is ready.
 
@@ -181,16 +181,16 @@ A Conversation Relay reconnect with the same call SID resumes the existing playe
 
 ## Voice Fighter
 
-Voice Fighter accepts up to two humans during the lobby or fighter-selection phase. A solo player receives an AI rival. New callers cannot join after setup has moved beyond fighter selection. Player one controls shared setup transitions and arena selection; player two chooses a fighter and waits for player one to advance.
+Voice Fighter accepts up to two humans during the lobby or fighter-selection phase. A solo player receives an AI rival. New callers cannot join after setup has moved beyond fighter selection. Each caller owns their fighter choice and arena vote; setup advances automatically when all required choices are complete.
 
 The voice flow is:
 
 1. Say your name.
-2. Player one says `start` to open fighter selection.
-3. Each player says a fighter name or number.
-4. Player one says `next` and chooses an arena by name or number.
-5. Player one says `fight` to load the arena and start the intro and countdown.
-6. After the fight and victory sequence, player one says `rematch`.
+2. Fighter selection opens automatically when the expected callers are ready.
+3. Each player says their own fighter name or number.
+4. Arena voting opens automatically; each player says their own arena name or number.
+5. The selected arena loads automatically after every player votes, then starts the intro and countdown.
+6. After the fight and victory sequence, say `rematch`.
 
 Combat commands are:
 

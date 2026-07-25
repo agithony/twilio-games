@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DEFAULT_ARCADE_CONFIG, parseArcadeConfig, type ArcadeConfigSnapshot } from '../shared/arcade-config';
@@ -10,6 +10,8 @@ import { ArcadeStateStore } from '../server/arcade-state-store';
 const directories: string[] = [];
 const AUTHORIZATION = Object.freeze({ trusted: true });
 const TOKEN_SECRET = '0123456789abcdef0123456789abcdef';
+const EN_CONTENT_SID = `HX${'a'.repeat(32)}`;
+const PT_CONTENT_SID = `HX${'b'.repeat(32)}`;
 
 afterEach(async () => {
   await Promise.all(directories.splice(0).map(directory => rm(directory, { recursive: true, force: true })));
@@ -18,7 +20,8 @@ afterEach(async () => {
 async function harness() {
   const directory = await mkdtemp(path.join(tmpdir(), 'arcade-outbound-service-'));
   directories.push(directory);
-  const store = await ArcadeStateStore.open(path.join(directory, 'state.json'));
+  const statePath = path.join(directory, 'state.json');
+  const store = await ArcadeStateStore.open(statePath);
   let config = stationConfig('coin_only');
   let now = Date.parse('2026-07-21T10:00:00.000Z');
   let sequence = 0;
@@ -34,11 +37,12 @@ async function harness() {
     stationNotifications: {
       enabled: () => true,
       callNumber: () => '+14155550100',
-      whatsappContentSid: () => `HX${'a'.repeat(32)}`,
+      whatsappContentSid: (_kind, locale) => locale === 'pt-BR' ? PT_CONTENT_SID : EN_CONTENT_SID,
     },
   });
   return {
     store,
+    statePath,
     service,
     setMode: (mode: 'off' | 'coin_only') => { config = stationConfig(mode); },
     setVoice: (enabled: boolean, numbers: { 'en-US': string | null; 'pt-BR': string | null }) => {
@@ -96,11 +100,12 @@ async function inbound(
 async function createThreeReadyPlayers(h: Awaited<ReturnType<typeof harness>>): Promise<void> {
   for (const [index, locale] of ['en-US', 'pt-BR', 'pt-BR'].entries()) {
     const from = `+1415555010${index + 1}`;
-    await inbound(h.service, `SM-JOIN-${index}`, `JOIN ARCADE-01 LANG ${locale}`, from);
-    await inbound(h.service, `SM-NAME-${index}`, `Player${index + 1}`, from);
-    await inbound(h.service, `SM-TERMS-${index}`, locale === 'pt-BR' ? 'SIM' : 'YES', from);
+    const channel=index<2?'whatsapp':'sms';
+    await inbound(h.service, `SM-JOIN-${index}`, `JOIN ARCADE-01 LANG ${locale}`, from,channel);
+    await inbound(h.service, `SM-NAME-${index}`, `Player${index + 1}`, from,channel);
+    await inbound(h.service, `SM-TERMS-${index}`, locale === 'pt-BR' ? 'SIM' : 'YES', from,channel);
     const ready = await inbound(
-      h.service, `SM-COIN-${index}`, locale === 'pt-BR' ? 'MOEDA' : 'COIN', from,
+      h.service, `SM-COIN-${index}`, locale === 'pt-BR' ? 'MOEDA' : 'COIN', from,channel,
     );
     if (index === 0) expect(ready.reply).toContain("we'll text you a number to call");
   }
@@ -140,8 +145,16 @@ describe('Arcade station outbound outbox', () => {
     });
     const callNow = Object.values(h.store.snapshot().outboundNotifications)
       .filter(item => item.kind === 'STATION_CALL_NOW');
-    expect(callNow.find(item => item.locale === 'en-US')?.body).toContain('+14155550100');
-    expect(callNow.find(item => item.locale === 'pt-BR')?.body).toContain('+551155555555');
+    const englishWhatsapp=callNow.find(item=>item.locale==='en-US')!;
+    expect(englishWhatsapp.body).toContain('Call +14155550100 with your device Phone app');
+    expect(englishWhatsapp.callNumber).toBe('+14155550100');
+    expect(englishWhatsapp.templateVariables).toEqual({'1':'Voice Fighter'});
+    expect(englishWhatsapp.templateContentSid).toBe(EN_CONTENT_SID);
+    const whatsappCall=callNow.find(item=>item.channel==='whatsapp'&&item.locale==='pt-BR')!;
+    expect(whatsappCall.body).toContain('Ligue para +551155555555 usando o app Telefone');
+    expect(whatsappCall.callNumber).toBe('+551155555555');
+    expect(whatsappCall.templateVariables).toEqual({'1':'Luta por Voz'});
+    expect(whatsappCall.templateContentSid).toBe(PT_CONTENT_SID);
     const displayReady = await h.service.markStationDisplayReady({
       stationId: 'ARCADE-01', expectedRevision: launching.station.revision,
       matchId: launching.match!.id, launchGeneration: launching.match!.launchGeneration,
@@ -199,6 +212,43 @@ describe('Arcade station outbound outbox', () => {
       'STATION_NEXT_GAME', 'STATION_OVERFLOW', 'STATION_RESULTS', 'STATION_RESULTS',
     ].sort());
     expect(new Set(Object.values(h.store.snapshot().outboundNotifications).map(item => item.id)).size).toBe(8);
+  });
+
+  it('keeps SMS call-now notices on the locale-specific E.164 number',async()=>{
+    const h=await harness(),from='+14155550999';
+    await inbound(h.service,'SMS-CALL-JOIN','JOIN ARCADE-01 LANG en-US',from,'sms');
+    await inbound(h.service,'SMS-CALL-NAME','Ada',from,'sms');
+    await inbound(h.service,'SMS-CALL-TERMS','YES',from,'sms');
+    await inbound(h.service,'SMS-CALL-COIN','COIN',from,'sms');
+    const recruiting=await h.service.getStation('ARCADE-01');
+    const selecting=await h.service.closeStationRecruiting({stationId:'ARCADE-01',expectedRevision:recruiting!.station.revision,idempotencyKey:'sms-call-close',authorization:AUTHORIZATION});
+    const locked=await h.service.selectStationGame({stationId:'ARCADE-01',expectedRevision:selecting.station.revision,game:'racer',engineRoomCode:'SMS',idempotencyKey:'sms-call-select',authorization:AUTHORIZATION});
+    await h.service.requestStationLaunch({stationId:'ARCADE-01',expectedRevision:locked.station.revision,idempotencyKey:'sms-call-launch',authorization:AUTHORIZATION});
+    const callNow=Object.values(h.store.snapshot().outboundNotifications).find(item=>item.kind==='STATION_CALL_NOW')!;
+    expect(callNow.channel).toBe('sms');expect(callNow.body).toContain('+14155550100');
+    expect(callNow.templateVariables['1']).toBe('+14155550100');
+  });
+
+  it('migrates the routed number from persisted schema-v8 call-now variables',async()=>{
+    const h=await harness(),from='+14155550998';
+    await inbound(h.service,'MIGRATE-CALL-JOIN','JOIN ARCADE-01 LANG en-US',from,'whatsapp');
+    await inbound(h.service,'MIGRATE-CALL-NAME','Ada',from,'whatsapp');
+    await inbound(h.service,'MIGRATE-CALL-TERMS','YES',from,'whatsapp');
+    await inbound(h.service,'MIGRATE-CALL-COIN','COIN',from,'whatsapp');
+    const recruiting=await h.service.getStation('ARCADE-01');
+    const selecting=await h.service.closeStationRecruiting({stationId:'ARCADE-01',expectedRevision:recruiting!.station.revision,idempotencyKey:'migrate-call-close',authorization:AUTHORIZATION});
+    const locked=await h.service.selectStationGame({stationId:'ARCADE-01',expectedRevision:selecting.station.revision,game:'racer',engineRoomCode:'MIGRATE',idempotencyKey:'migrate-call-select',authorization:AUTHORIZATION});
+    await h.service.requestStationLaunch({stationId:'ARCADE-01',expectedRevision:locked.station.revision,idempotencyKey:'migrate-call-launch',authorization:AUTHORIZATION});
+    const legacy=JSON.parse(await readFile(h.statePath,'utf8')) as Record<string,any>;
+    legacy.schemaVersion=8;
+    for(const notification of Object.values(legacy.outboundNotifications) as Record<string,any>[]){
+      delete notification.callNumber;
+      if(notification.kind==='STATION_CALL_NOW')notification.templateVariables={'1':'+14155550100','2':'Voice Racer'};
+    }
+    await writeFile(h.statePath,JSON.stringify(legacy));
+    const migrated=await ArcadeStateStore.open(h.statePath);
+    expect(Object.values(migrated.snapshot().outboundNotifications).find(item=>item.kind==='STATION_CALL_NOW')?.callNumber)
+      .toBe('+14155550100');
   });
 
   it('includes each Racer place and time in one idempotent result summary', async () => {

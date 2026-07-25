@@ -46,6 +46,7 @@ export type RoomLike = {
   expectHumanPlayers?(count: number): void;
   applyIntent(id: string, intent: Intent): void;
   removePlayer(id: string): void;
+  readonly playerCount?:number;
 };
 
 const DTMF_TO_INTENT: Record<string, Intent> = {
@@ -80,6 +81,8 @@ export interface AdapterDeps {
   /** The room's current phase, so the adapter routes: race → fast commands; else → conversation. */
   phaseOf?: (roomCode: string) => string;
   hasPlayerName?: (roomCode: string, playerId: string) => boolean;
+  onSetupChanged?: (roomCode:string,beforePhase:string) => void;
+  handleSetupUtterance?: (roomCode:string,playerId:string,utterance:string,locale:SupportedLocale) => string|null;
   /** Accepted semantic commands only; raw transcripts are deliberately never exposed to analytics. */
   onIntent?: (intent: Intent) => void;
 }
@@ -223,7 +226,10 @@ export class ConversationRelayAdapter {
         if (!code) { console.log('[CR] no roomCode → unbound'); return; }
         const room = this.deps.findOrCreateRoom(code);
         if (!room) { console.log(`[CR] room ${code} not found → unbound`); return; }
-        if (this.stationManaged) room.expectHumanPlayers?.(this.stationParticipantCount);
+        const beforeJoinPhase=this.deps.phaseOf?.(code)??'lobby';
+        if(this.stationManaged)room.expectHumanPlayers?.(this.stationParticipantCount);
+        else if(this.authoritativeName)room.expectHumanPlayers?.(1);
+        else if((room.playerCount??0)>=1)room.expectHumanPlayers?.(2);
         const resumed=this.deps.resumePlayer?.(msg.callSid,code)??null;
         const res = resumed??room.addPlayer(this.authoritativeName ?? playerName(msg.from, this.commandLocale), undefined,
           this.stationManaged ? this.stationParticipantIndex : undefined);
@@ -238,6 +244,7 @@ export class ConversationRelayAdapter {
         // Register for this room's game events + greet the caller. Send each greeting SENTENCE as its
         // own utterance so Relay TTS pauses naturally between them (one long string read run-on).
         this.deps.register?.(code, this);
+        this.deps.onSetupChanged?.(code,beforeJoinPhase);
         if(this.authoritativeName)this.speakNamedArrival(resumed?.resumed===true);
         else if(resumed?.resumed===true){const text=createTranslator(this.commandLocale,RACER_MESSAGES);this.deps.say?.(text('voice.returned'));if((this.deps.phaseOf?.(code)??'lobby')==='lobby')this.deps.say?.(text('voice.helpLobby'));else this.speakPhaseGuidance();}
         else for(const line of greetingLines(this.commandLocale))this.deps.say?.(line);
@@ -260,6 +267,15 @@ export class ConversationRelayAdapter {
                 : phase === 'racing' || phase === 'countdown' ? 'voice.help'
                   : this.authoritativeName ? 'voice.helpLobbyNamed' : 'voice.helpLobby';
           this.deps.say?.(createTranslator(this.commandLocale, RACER_MESSAGES)(key), phase ? this.phaseGuard(phase) : undefined);
+          break;
+        }
+        const setupPhase=this.roomCode?this.deps.phaseOf?.(this.roomCode):null;
+        if(msg.last&&this.roomCode&&this.playerId&&setupPhase&&['lobby','car_select','map_select'].includes(setupPhase)){
+          this.firedIntents=[];
+          const reply=this.deps.handleSetupUtterance?.(this.roomCode,this.playerId,msg.voicePrompt,this.commandLocale)??null;
+          const currentPhase=this.deps.phaseOf?.(this.roomCode)??setupPhase;
+          if(reply)this.deps.say?.(reply,this.phaseGuard(currentPhase));
+          else this.speakPhaseFallback(currentPhase);
           break;
         }
         // ROUTE by phase: during a live RACE, keep the fast local command path (no LLM latency in the

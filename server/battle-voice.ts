@@ -110,8 +110,8 @@ export class BattleVoiceSession {
           this.deps.leave(this.code, this.playerId, this.callSid ?? '');
           this.code = null; this.playerId = null; this.callSid = null;
         }
-        const joined = this.deps.join(code, this.authoritativeName ?? playerName(msg.from, this.commandLocale), msg.callSid,
-          this.stationAssignment?.side, this.stationAssignment?.expectedPlayers);
+        const joined=this.deps.join(code,this.authoritativeName??playerName(msg.from,this.commandLocale),msg.callSid,
+          this.stationAssignment?.side,this.stationAssignment?.expectedPlayers??(this.authoritativeName?1:undefined));
         if (!joined) { this.deps.say(this.text('voice.roomUnavailable')); return; }
         this.code = code; this.playerId = joined.playerId; this.callSid = msg.callSid;
         if (joined.resumed) this.speakResumeCue();
@@ -214,14 +214,13 @@ export class BattleVoiceSession {
     // advances the screen — so a spoken action drives the display. Deterministic (no LLM dependency).
     if (isAdvanceWord(text, this.commandLocale)) {
       if (snap.phase === 'lobby') {
-        if (!this.deps.advance(this.code!, this.playerId!)) this.deps.say(this.text('voice.sharedMenuControl'));
-        else this.deps.say(this.text('voice.toSelect'));
+        this.speakReprompt();
         return;
       }
       if (snap.phase === 'monster_select') {
         if (!snap.myMonsterId) { this.deps.say(this.text('voice.pickFirst')); return; }
         if (!snap.canStartBattle) { this.deps.say(this.text('voice.pickWaiting')); return; }
-        if (!this.deps.advance(this.code!, this.playerId!)) this.deps.say(this.text('voice.sharedMenuControl'));
+        this.speakReprompt();
         return;   // battle starts → the paced battle-intro handles the talking
       }
       if (snap.phase === 'results') {
@@ -237,8 +236,8 @@ export class BattleVoiceSession {
       const idx = matchNameOrNumber(text, snap.monsterNames, this.commandLocale);
       if (idx >= 0) {
         const name = snap.monsterNames[idx]!;
+        this.deps.say(this.text('voice.lockedMonster',{name}));
         this.deps.selectMonster(this.code!, this.playerId!, ROSTER[idx]!.id);
-        this.deps.say(this.text('voice.pickConfirmation', { name, blurb: monsterBlurb(ROSTER[idx]!.id, this.commandLocale) }));
         return;
       }
       if (!snap.myName && this.captureName(text, snap.phase)) return;
@@ -278,6 +277,10 @@ export class BattleVoiceSession {
       }
     }
 
+    if(snap.phase==='lobby'||snap.phase==='monster_select'){
+      this.speakReprompt();
+      return;
+    }
     // Everything else (chat, questions, ambiguous, or the LLM should decide) → the host brain.
     void this.converse(text);
   }
@@ -595,23 +598,6 @@ export function isAdvanceWord(spoken: string, locale: SupportedLocale = DEFAULT_
   if (/\b(choose|pick|select|show me)\b/.test(q) && /\b(monster|fighter|creature|character)\b/.test(q)) return true;
   return false;
 }
-
-/** A one-line background blurb for a monster (spoken after a pick), keyed by roster id → its flavor. */
-function monsterBlurb(name: string, locale: SupportedLocale): string {
-  const key = name.toLowerCase().replace(/\s+/g, '');
-  const messageKey = MONSTER_BLURBS[key] ?? 'voice.blurbFallback';
-  return createTranslator(locale, MONSTERS_MESSAGES)(messageKey);
-}
-const MONSTER_BLURBS: Record<string, MonstersMessageKey> = {
-  sparkmouse: 'voice.blurbSparkmouse',
-  embertail: 'voice.blurbEmbertail',
-  shellback: 'voice.blurbShellback',
-  thornling: 'voice.blurbThornling',
-  galecoil: 'voice.blurbGalecoil',
-  voltcrest: 'voice.blurbVoltcrest',
-  dazeduck: 'voice.blurbDazeduck',
-  psyclone: 'voice.blurbPsyclone',
-};
 
 /** Match a spoken phrase to a choice index by NAME (fuzzy) or NUMBER ("two", "monster 3"), or -1. */
 function matchNameOrNumber(spoken: string, choices: string[], locale: SupportedLocale): number {

@@ -125,7 +125,7 @@ describe('ArcadeStateStore', () => {
     await expect(store.transaction(addPlayer('p1'))).rejects.toMatchObject({ code: 'STORE_NOT_INITIALIZED' });
   });
 
-  it('persists schema-v8 state and restores it after restart', async () => {
+  it('persists schema-v9 state and restores it after restart', async () => {
     const file = await stateFile();
     const first = await ArcadeStateStore.open(file);
     await first.transaction(addPlayer('trusted:p1'));
@@ -145,7 +145,7 @@ describe('ArcadeStateStore', () => {
     expect(restarted.snapshot().wallets['trusted:p1']?.wallet.cachedBalance).toBe(0);
   });
 
-  it('migrates schema-v1 state losslessly and writes schema v8 on the next transaction', async () => {
+  it('migrates schema-v1 state losslessly and writes schema v9 on the next transaction', async () => {
     const file = await stateFile();
     const first = await ArcadeStateStore.open(file);
     await first.transaction(addPlayer('p1'));
@@ -171,11 +171,11 @@ describe('ArcadeStateStore', () => {
 
     await migrated.transaction(() => undefined);
     const upgraded = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
-    expect(upgraded.schemaVersion).toBe(8);
+    expect(upgraded.schemaVersion).toBe(9);
     expect(upgraded.stations).toEqual({});
   });
 
-  it('migrates schema-v3 messaging state to an empty v8 outbox and audit', async () => {
+  it('migrates schema-v3 messaging state to an empty v9 outbox and audit', async () => {
     const file = await stateFile();
     const first = await ArcadeStateStore.open(file);
     await first.transaction(addPlayer('p1'));
@@ -189,7 +189,7 @@ describe('ArcadeStateStore', () => {
 
     const migrated = await ArcadeStateStore.open(file);
     expect(migrated.snapshot()).toMatchObject({
-      schemaVersion: 8,
+      schemaVersion: 9,
       stationReadyChannels: {},
       outboundNotifications: {},
       messagingAuditEvents: {},
@@ -208,14 +208,14 @@ describe('ArcadeStateStore', () => {
 
     const migrated = await ArcadeStateStore.open(file);
     expect(migrated.snapshot()).toMatchObject({
-      schemaVersion: 8,
+      schemaVersion: 9,
       players: { p1: player('p1') },
       outboundNotifications: {},
       messagingAuditEvents: {},
     });
   });
 
-  it.each(['PLAYING', 'COMPLETED'] as const)('migrates a schema-v5 %s match into valid v8 state', async phase => {
+  it.each(['PLAYING', 'COMPLETED'] as const)('migrates a schema-v5 %s match into valid v9 state', async phase => {
     const file = await stateFile();
     const first = await ArcadeStateStore.open(file);
     await first.transaction(state => {
@@ -284,7 +284,7 @@ describe('ArcadeStateStore', () => {
 
     const migrated = await ArcadeStateStore.open(file);
     expect(migrated.snapshot()).toMatchObject({
-      schemaVersion: 8,
+      schemaVersion: 9,
       stationRounds: {
         'round-1': { gameChoicesByReadyEntryId: {} },
         'round-closed': { gameChoicesByReadyEntryId: {} },
@@ -340,7 +340,7 @@ describe('ArcadeStateStore', () => {
     const migrated = await ArcadeStateStore.open(file);
     const snapshot = migrated.snapshot();
     expect(snapshot).toMatchObject({
-      schemaVersion: 8,
+      schemaVersion: 9,
       stationMatches: {
         'legacy-race': {
           game: 'racer', humanCapacity: 2,
@@ -568,7 +568,7 @@ describe('ArcadeStateStore', () => {
     await expect(ArcadeStateStore.open(file)).rejects.toMatchObject({ code: 'INVALID_STATE' });
   });
 
-  it('requires the exact schema-v8 round choice map', async () => {
+  it('requires the exact schema-v9 round choice map', async () => {
     const file = await stateFile();
     const store = await ArcadeStateStore.open(file);
     await store.transaction(addReadyPlayer);

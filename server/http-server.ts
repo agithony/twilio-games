@@ -27,7 +27,7 @@ import { FighterVoiceSession, type FighterVoiceSnapshot } from './fighter-voice'
 import { battleHostTurn, type BattleHostContext } from './battle-host';
 import { monsterById, rosterEntries } from '../shared/monster-roster';
 import type { Room } from './room';
-import type { RaceResult } from '../shared/types';
+import type { Phase,RaceResult } from '../shared/types';
 import { FIGHTER_MAPS, FIGHTER_ROSTER, type FighterMapEntry } from '../shared/fighter-roster';
 import { parseFighterMaps } from '../shared/fighter-maps';
 import { ANALYTICS_GAMES, type AnalyticsGame } from '../shared/analytics';
@@ -287,7 +287,7 @@ export class HttpServer {
       else this.abortStationEngine(game, roomCode);
     });
     this.arcadeApi?.setStationParticipantCountHandler?.((game, roomCode, count) => {
-      if (game === 'racer') this.game.findRoom(roomCode)?.expectHumanPlayers(count);
+      if (game === 'racer') this.game.voiceExpectHumanPlayers(roomCode,count);
       else if (game === 'monsters') this.battle.voiceExpectHumanPlayers(roomCode,count);
       else this.fighter.voiceExpectHumanPlayers(roomCode,count);
     });
@@ -703,17 +703,21 @@ export class HttpServer {
         const name = this.game.findRoom(roomCode)?.lobbyPlayers().find(player => player.playerId === playerId)?.name ?? '';
         return Boolean(name && !/^(Racer|Piloto)(\s|$)/.test(name));
       },
+      onSetupChanged:(roomCode,beforePhase)=>this.game.voiceSetupChanged(roomCode,beforePhase as Phase),
+      handleSetupUtterance:(roomCode,playerId,utterance,locale)=>{
+        const room=this.game.findRoom(roomCode);
+        return room?this.directSelection(room,playerId,utterance,locale,stationFirstName!==null):null;
+      },
       onIntent: () => this.analyticsObserver.voiceCommand('racer'),
       // Conversational AI turn: build the host context from the live room, run the LLM (with history),
       // return what to say. Null when the LLM is disabled → adapter stays quiet (scripted fallback).
       converse: async (roomCode, playerId, utterance, locale, isCurrent) => {
         const room = this.game.findRoom(roomCode);
         if (!room || !isCurrent()) return null;
-        // DETERMINISTIC fast-path: in car/map select, if the caller CLEARLY picked one (a number or a
-        // strong name match, not a question), act on it immediately — no LLM round-trip, and it works
-        // even with the LLM disabled. This is what makes "two" / "the second one" reliably select.
-        const direct = this.directSelection(room, playerId, utterance, locale,stationFirstName!==null);
-        if (direct) return { text: direct, phase: room.phase };
+        if(['results','finished'].includes(room.phase)){
+          const direct=this.directSelection(room,playerId,utterance,locale,stationFirstName!==null);
+          if(direct)return{text:direct,phase:room.phase};
+        }
         const context=this.hostContext(room,playerId,locale,stationFirstName!==null,isCurrent);
         context.stationManaged=stationManaged;
         if(utterance.trim().startsWith('(')&&['results','finished'].includes(room.phase))return this.racerResultsRecap(context,locale);
@@ -880,6 +884,12 @@ export class HttpServer {
             return;
           }
         }
+        if(stationReadyEntryId){
+          try{
+            const activity=JSON.parse(raw) as {type?:unknown;last?:unknown};
+            if(activity.type==='dtmf'||(activity.type==='prompt'&&activity.last===true))this.arcadeApi?.stationVoiceSetupActivity(stationReadyEntryId);
+          }catch{/* Session parser handles malformed frames. */}
+        }
         processFrame(raw);
       }).catch(() => ws.close(1011, 'voice setup failed'));
     });
@@ -1019,6 +1029,8 @@ export class HttpServer {
     };
     return { phase: state.phase, myName: me?.name ?? null, myFighterId: me?.fighterId ?? null, myFighterName: fighterName(me?.fighterId),
       foeName: foe?.name ?? null, foeFighterId: foe?.fighterId ?? null, foeFighterName: fighterName(foe?.fighterId), selectedMap: state.selectedMap,
+      myMapVote:state.mapVotesByPlayerId[playerId]??null,
+      allMapVotes:state.players.filter(player=>!player.isAi).every(player=>Boolean(state.mapVotesByPlayerId[player.playerId])),
       mySide, myHealth: state.world?.[mySide].health ?? null, foeHealth: state.world?.[foeSide].health ?? null,
       countdown: state.countdown, intro: state.intro, winnerName: state.result?.winnerName ?? null,
       winnerSide: state.result?.winner ?? null,
@@ -1026,6 +1038,7 @@ export class HttpServer {
       playerTwoName: playerTwo?.name ?? null, playerTwoFighterName: fighterName(playerTwo?.fighterId),
       playerCount: state.players.filter(player => !player.isAi).length,
       hasExpectedPlayers: state.hasExpectedPlayers,
+      automaticSetup:state.automaticSetup,
       allFightersSelected: state.players.filter(player => !player.isAi).length > 0 && state.players.filter(player => !player.isAi).every(player => player.fighterId),
       isController: room.canControlSetup(playerId),
       fighters: FIGHTER_ROSTER.map(fighter => ({ id: fighter.id, name: localizedFighterName(locale, fighter.id, fighter.name) })),
@@ -1331,7 +1344,7 @@ export class HttpServer {
           this.game.voiceSetName(room.code, playerId, name);
           return room.phase === 'lobby'
             ? text('voice.niceMeetStart', { name, controls })
-            : `${text('voice.niceMeet', { name })} ${text('voice.helpCar')}`;
+            : `${text('voice.niceMeet',{name})} ${controls} ${text(room.phase==='map_select'?'voice.helpMap':'voice.helpCar')}`;
         }
       }
     }
@@ -1339,14 +1352,16 @@ export class HttpServer {
       const i = clearSelectionIndex(utterance, carChoices, locale);
       if (i !== null) {
         this.game.voiceSelectCar(room.code, playerId, i);
-        return text(room.canControlSetup(playerId)?'voice.lockedCarNext':'voice.lockedCarWait', { car: localizedCarName(locale, room.carName(i)) });
+        const locked=text('voice.lockedCar',{car:localizedCarName(locale,room.carName(i))});
+        return String(room.phase)==='map_select'?`${locked} ${text('voice.chooseTrack')}`
+          :room.usesAutomaticSetup?`${locked} ${text('voice.waitingForPlayers')}`:text('voice.lockedCarNext',{car:localizedCarName(locale,room.carName(i))});
       }
       // "next"/"start" advances to the track — but only once they've actually picked a car.
       if (isRacerAdvanceWord(utterance, locale)) {
         const me = room.lobbyPlayers().find(p => p.playerId === playerId);
         if ((me?.carIndex ?? null) === null) return text('voice.pickCarFirst');
-        if(!room.canControlSetup(playerId))return text('voice.sharedSetupControl');
-        return this.game.voiceAdvance(room.code, playerId) ? text('voice.onTrack') : text('voice.waitingForPlayers');
+        if(room.usesAutomaticSetup)return text('voice.waitingForPlayers');
+        return this.game.voiceAdvance(room.code,playerId)?text('voice.onTrack'):text('voice.waitingForPlayers');
       }
       return null;
     }
@@ -1362,19 +1377,19 @@ export class HttpServer {
       if (i === null) {
         if (!isRacerAdvanceWord(utterance, locale)) return null;
         if(!room.hasMapVote(playerId))return text('voice.pickTrackFirst');
-        if(!room.canControlSetup(playerId))return text('voice.sharedSetupControl');
-        const ok = this.game.voiceAdvance(room.code, playerId);
-        return ok ? text('voice.goRace') : text('voice.waitingForPlayers');
+        if(room.usesAutomaticSetup)return text('voice.waitingForPlayers');
+        return this.game.voiceAdvance(room.code,playerId)?text('voice.goRace'):text('voice.waitingForPlayers');
       }
       this.game.voiceSelectMap(room.code, room.mapChoices[i]!, playerId);
-      return text(room.canControlSetup(playerId)?'voice.voteTrackStart':'voice.voteTrackWait', { map: localizedTrackName(locale, room.mapChoices[i]!) });
+      return ['countdown','racing'].includes(room.phase)
+        ? `${text('voice.voteTrack',{map:localizedTrackName(locale,room.mapChoices[i]!)})} ${text('voice.goRace')}`
+        : text(room.usesAutomaticSetup?'voice.voteTrackWait':'voice.voteTrackStart',{map:localizedTrackName(locale,room.mapChoices[i]!)});
     }
     // ADVANCE / REMATCH (deterministic, LLM-independent): "start"/"go"/"next"/"race"/"rematch" moves the
     // flow forward — this was previously LLM-only, so "start" did nothing when the model was off/slow.
     if (isRacerAdvanceWord(utterance, locale)) {
       const me = room.lobbyPlayers().find(p => p.playerId === playerId);
       // (car_select is handled by its own branch above; reaching here means lobby/map_select/results.)
-      if(!room.canControlSetup(playerId))return text('voice.sharedSetupControl');
       const ok = this.game.voiceAdvance(room.code, playerId);
       if (!ok) return null;
       // room.phase is now the NEW phase we advanced INTO — describe that screen.

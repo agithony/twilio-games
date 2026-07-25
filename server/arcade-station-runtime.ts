@@ -63,6 +63,7 @@ export class ArcadeStationRuntime {
   private readonly engineResults = new Map<string, readonly StationEngineParticipantResult[]>();
   private readonly connectedReadyEntries = new Map<string, string>();
   private readonly voiceSetupDeadlines = new Map<string, number>();
+  private readonly voiceSetupActivityAt=new Map<string,number>();
   private readonly canonicalEngineIdByReadyEntry = new Map<string, string>();
   private readonly canonicalEngineIdByCurrentId = new Map<string, string>();
   private started = false;
@@ -177,6 +178,7 @@ export class ArcadeStationRuntime {
 
   markParticipantConnected(readyEntryId: string, enginePlayerId = `legacy:${readyEntryId}`): void {
     this.connectedReadyEntries.set(readyEntryId, enginePlayerId);
+    this.voiceSetupActivityAt.set(readyEntryId,this.clock());
     const canonical = this.canonicalEngineIdByReadyEntry.get(readyEntryId);
     if (canonical) this.canonicalEngineIdByCurrentId.set(enginePlayerId, canonical);
     this.enqueueReconcile();
@@ -184,6 +186,12 @@ export class ArcadeStationRuntime {
 
   markParticipantDisconnected(readyEntryId: string): void {
     this.connectedReadyEntries.delete(readyEntryId);
+  }
+
+  markSetupActivity(readyEntryId:string):void {
+    if(!this.connectedReadyEntries.has(readyEntryId))return;
+    this.voiceSetupActivityAt.set(readyEntryId,this.clock());
+    this.enqueueReconcile();
   }
 
   connectedParticipantIds(): ReadonlySet<string> {
@@ -320,11 +328,14 @@ export class ArcadeStationRuntime {
         if(aggregate.station.phase!=='LAUNCHING'||setupKey!==activeSetupKey)this.voiceSetupDeadlines.delete(setupKey);
       }
       if(aggregate.station.phase==='LAUNCHING'&&activeMatch?.participantReadyEntryIds.length
-        && activeMatch.participantReadyEntryIds.every(id=>this.connectedReadyEntries.has(id))
-        && activeMatch.launchRequestedAt!==null
-        && Date.parse(activeMatch.launchRequestedAt)+this.config().station.timings.launchTimeoutSeconds*1_000>this.clock()
-        && !this.voiceSetupDeadlines.has(activeSetupKey!)){
-        this.voiceSetupDeadlines.set(activeSetupKey!,this.clock()+this.config().station.timings.launchTimeoutSeconds*1_000);
+        && activeMatch.participantReadyEntryIds.every(id=>this.connectedReadyEntries.has(id))&&activeMatch.launchRequestedAt!==null){
+        const existing=this.voiceSetupDeadlines.get(activeSetupKey!);
+        const originalDeadline=Date.parse(activeMatch.launchRequestedAt)+this.config().station.timings.launchTimeoutSeconds*1_000;
+        if(existing!==undefined||originalDeadline>this.clock()){
+          const latestActivity=Math.max(...activeMatch.participantReadyEntryIds.map(id=>this.voiceSetupActivityAt.get(id)??this.clock()));
+          const activityDeadline=latestActivity+this.config().station.timings.launchTimeoutSeconds*1_000;
+          if(existing===undefined||activityDeadline>existing)this.voiceSetupDeadlines.set(activeSetupKey!,activityDeadline);
+        }
       }
       const activeEngineKey = activeMatch ? engineKey(activeMatch.game, activeMatch.engineRoomCode) : null;
       for (const key of this.startedEngines) if (key !== activeEngineKey) this.startedEngines.delete(key);
@@ -334,6 +345,7 @@ export class ArcadeStationRuntime {
       }
       const activeParticipants = new Set(activeMatch?.participantReadyEntryIds ?? []);
       for (const id of this.connectedReadyEntries.keys()) if (!activeParticipants.has(id)) this.connectedReadyEntries.delete(id);
+      for(const id of this.voiceSetupActivityAt.keys())if(!activeParticipants.has(id))this.voiceSetupActivityAt.delete(id);
       const terminalAction = activeEngineKey ? this.terminalEngines.get(activeEngineKey) : undefined;
       if (activeMatch && terminalAction
          && (aggregate.station.phase === 'LAUNCHING' || aggregate.station.phase === 'PLAYING')) {

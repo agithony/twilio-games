@@ -32,7 +32,7 @@ import {
   type StationReadyEntry,
 } from '../shared/arcade-station';
 
-export const ARCADE_STATE_SCHEMA_VERSION = 8 as const;
+export const ARCADE_STATE_SCHEMA_VERSION = 9 as const;
 export const ARCADE_STATE_MAX_FILE_BYTES = 64 * 1024 * 1024;
 export const ARCADE_STATE_MAX_PLAYERS = 100_000;
 export const ARCADE_STATE_MAX_QUEUE_ENTRIES = 100_000;
@@ -163,6 +163,7 @@ export interface ArcadeOutboundNotificationRecord {
   readonly to: string;
   readonly locale: string;
   readonly body: string;
+  readonly callNumber: string | null;
   readonly templateContentSid: string | null;
   readonly templateVariables: Readonly<Record<string, string>>;
   readonly configVersion: number;
@@ -853,7 +854,7 @@ function assertStationReadyChannelShape(value: ArcadeStationReadyChannelRecord, 
 function assertOutboundNotificationShape(value: ArcadeOutboundNotificationRecord, key: string): void {
   requireExactRecord(value, [
     'id', 'kind', 'playerId', 'stationId', 'roundId', 'matchId', 'readyEntryId',
-    'channelAddressId', 'channel', 'to', 'locale', 'body', 'templateContentSid',
+    'channelAddressId', 'channel', 'to', 'locale', 'body', 'callNumber', 'templateContentSid',
     'templateVariables', 'configVersion', 'status', 'nextAttemptAt', 'expiresAt',
     'attempts', 'terminalReason', 'createdAt', 'updatedAt', 'terminalAt',
   ], `outboundNotifications.${key}`);
@@ -871,6 +872,11 @@ function assertOutboundNotificationShape(value: ArcadeOutboundNotificationRecord
     || !(ARCADE_OUTBOUND_NOTIFICATION_STATUSES as readonly string[]).includes(value.status)
     || (value.channel !== 'sms' && value.channel !== 'whatsapp')) {
     throw new ArcadeStateStoreError('INVALID_STATE', `outbound notification ${key} has invalid enums`);
+  }
+  requireNullableString(value.callNumber, `outboundNotifications.${key}.callNumber`, 16);
+  if ((value.callNumber !== null && !/^\+[1-9][0-9]{7,14}$/.test(value.callNumber))
+    || (value.kind === 'STATION_CALL_NOW') !== (value.callNumber !== null)) {
+    throw new ArcadeStateStoreError('INVALID_STATE', `outbound notification ${key} has invalid call number`);
   }
   requireNullableString(value.templateContentSid, `outboundNotifications.${key}.templateContentSid`, 34);
   if (value.templateContentSid !== null && !/^HX[a-fA-F0-9]{32}$/.test(value.templateContentSid)) {
@@ -1583,91 +1589,118 @@ function migrateArcadeState(state: unknown): unknown {
       idempotencyRecords,
     };
   }
-  if (!isRecord(current) || current.schemaVersion !== 7) return current;
-  const schemaSeven = requireExactRecord(current, [
+  if (isRecord(current) && current.schemaVersion === 7) {
+    const schemaSeven = requireExactRecord(current, [
+      'schemaVersion', 'players', 'wallets', 'queueEntries', 'queueEntryConfigs',
+      'queueEvents', 'idempotencyRecords', 'stations', 'stationRounds', 'stationReadyEntries',
+      'stationMatches', 'channelAddresses', 'messagingDrafts', 'inboundMessages',
+      'stationReadyChannels', 'outboundNotifications', 'messagingAuditEvents', 'stationControlEvents',
+    ], '$');
+    const stationReadyEntries = {
+      ...requireRecord(schemaSeven.stationReadyEntries, 'stationReadyEntries'),
+    };
+    const stationMatches = Object.fromEntries(
+      Object.entries(requireRecord(schemaSeven.stationMatches, 'stationMatches')).map(([id, match]) => {
+        const value = requireRecord(match, `stationMatches.${id}`);
+        const participantsValid = Array.isArray(value.participantReadyEntryIds)
+          && value.participantReadyEntryIds.every(entryId => typeof entryId === 'string');
+        const overflowValid = Array.isArray(value.overflowReadyEntryIds)
+          && value.overflowReadyEntryIds.every(entryId => typeof entryId === 'string');
+        const participants = participantsValid ? value.participantReadyEntryIds as string[] : [];
+        const existingOverflow = overflowValid ? value.overflowReadyEntryIds as string[] : [];
+        const shrinkPendingRacer = value.game === 'racer'
+          && ['PREPARING', 'LAUNCHING'].includes(String(value.phase))
+          && participantsValid && overflowValid;
+        const admitted = shrinkPendingRacer ? participants.slice(0, 2) : participants;
+        const overflow = shrinkPendingRacer ? [...participants.slice(2), ...existingOverflow] : existingOverflow;
+        if (shrinkPendingRacer) {
+          admitted.forEach(entryId => {
+            const entry = requireRecord(stationReadyEntries[entryId], `stationReadyEntries.${entryId}`);
+            stationReadyEntries[entryId] = { ...entry, status: 'ADMITTED', overflowOrdinal: null };
+          });
+          overflow.forEach((entryId, index) => {
+            const entry = requireRecord(stationReadyEntries[entryId], `stationReadyEntries.${entryId}`);
+            stationReadyEntries[entryId] = { ...entry, status: 'OVERFLOW', overflowOrdinal: index + 1 };
+          });
+        }
+        return [id, {
+          ...value,
+          humanCapacity: shrinkPendingRacer ? 2 : value.game === 'racer' ? 4 : 2,
+          participantReadyEntryIds: shrinkPendingRacer ? admitted : value.participantReadyEntryIds,
+          overflowReadyEntryIds: shrinkPendingRacer ? overflow : value.overflowReadyEntryIds,
+        }];
+      }),
+    );
+    const idempotencyRecords = Object.fromEntries(
+      Object.entries(requireRecord(schemaSeven.idempotencyRecords, 'idempotencyRecords')).map(([key, item]) => {
+        const record = requireRecord(item, `idempotencyRecords.${key}`);
+        const result = isRecord(record.result) ? record.result : null;
+        const match = result && isRecord(result.match) ? result.match : null;
+        if (!STATION_MUTATION_RESULT_OPERATIONS.has(String(record.operation)) || !result || !match) {
+          return [key, record];
+        }
+        const participantsValid = Array.isArray(match.participantReadyEntryIds)
+          && match.participantReadyEntryIds.every(entryId => typeof entryId === 'string');
+        const overflowValid = Array.isArray(match.overflowReadyEntryIds)
+          && match.overflowReadyEntryIds.every(entryId => typeof entryId === 'string');
+        const persistedMatch = stationMatches[String(match.id)] as Record<string, unknown> | undefined;
+        const migratedCapacity = persistedMatch?.humanCapacity === 2 ? 2
+          : persistedMatch?.humanCapacity === 4 ? 4
+            : match.game === 'racer' && ['PREPARING', 'LAUNCHING'].includes(String(match.phase)) ? 2
+              : match.game === 'racer' ? 4 : 2;
+        const shrinkPendingRacer = match.game === 'racer' && migratedCapacity === 2
+          && participantsValid && overflowValid;
+        const participants = participantsValid ? match.participantReadyEntryIds as string[] : [];
+        const overflow = overflowValid ? match.overflowReadyEntryIds as string[] : [];
+        return [key, {
+          ...record,
+          result: {
+            ...result,
+            match: {
+              ...match,
+              humanCapacity: migratedCapacity,
+              ...(shrinkPendingRacer ? {
+                participantReadyEntryIds: participants.slice(0, 2),
+                overflowReadyEntryIds: [...participants.slice(2), ...overflow],
+              } : {}),
+            },
+          },
+        }];
+      }),
+    );
+    current = {
+      ...schemaSeven,
+      schemaVersion: 8,
+      stationReadyEntries,
+      stationMatches,
+      idempotencyRecords,
+    };
+  }
+  if (!isRecord(current) || current.schemaVersion !== 8) return current;
+  const schemaEight = requireExactRecord(current, [
     'schemaVersion', 'players', 'wallets', 'queueEntries', 'queueEntryConfigs',
     'queueEvents', 'idempotencyRecords', 'stations', 'stationRounds', 'stationReadyEntries',
     'stationMatches', 'channelAddresses', 'messagingDrafts', 'inboundMessages',
     'stationReadyChannels', 'outboundNotifications', 'messagingAuditEvents', 'stationControlEvents',
   ], '$');
-  const stationReadyEntries = {
-    ...requireRecord(schemaSeven.stationReadyEntries, 'stationReadyEntries'),
-  };
-  const stationMatches = Object.fromEntries(
-    Object.entries(requireRecord(schemaSeven.stationMatches, 'stationMatches')).map(([id, match]) => {
-      const value = requireRecord(match, `stationMatches.${id}`);
-      const participantsValid = Array.isArray(value.participantReadyEntryIds)
-        && value.participantReadyEntryIds.every(entryId => typeof entryId === 'string');
-      const overflowValid = Array.isArray(value.overflowReadyEntryIds)
-        && value.overflowReadyEntryIds.every(entryId => typeof entryId === 'string');
-      const participants = participantsValid ? value.participantReadyEntryIds as string[] : [];
-      const existingOverflow = overflowValid ? value.overflowReadyEntryIds as string[] : [];
-      const shrinkPendingRacer = value.game === 'racer'
-        && ['PREPARING', 'LAUNCHING'].includes(String(value.phase))
-        && participantsValid && overflowValid;
-      const admitted = shrinkPendingRacer ? participants.slice(0, 2) : participants;
-      const overflow = shrinkPendingRacer ? [...participants.slice(2), ...existingOverflow] : existingOverflow;
-      if (shrinkPendingRacer) {
-        admitted.forEach(entryId => {
-          const entry = requireRecord(stationReadyEntries[entryId], `stationReadyEntries.${entryId}`);
-          stationReadyEntries[entryId] = { ...entry, status: 'ADMITTED', overflowOrdinal: null };
-        });
-        overflow.forEach((entryId, index) => {
-          const entry = requireRecord(stationReadyEntries[entryId], `stationReadyEntries.${entryId}`);
-          stationReadyEntries[entryId] = { ...entry, status: 'OVERFLOW', overflowOrdinal: index + 1 };
-        });
-      }
-      return [id, {
-        ...value,
-        humanCapacity: shrinkPendingRacer ? 2 : value.game === 'racer' ? 4 : 2,
-        participantReadyEntryIds: shrinkPendingRacer ? admitted : value.participantReadyEntryIds,
-        overflowReadyEntryIds: shrinkPendingRacer ? overflow : value.overflowReadyEntryIds,
-      }];
-    }),
-  );
-  const idempotencyRecords = Object.fromEntries(
-    Object.entries(requireRecord(schemaSeven.idempotencyRecords, 'idempotencyRecords')).map(([key, item]) => {
-      const record = requireRecord(item, `idempotencyRecords.${key}`);
-      const result = isRecord(record.result) ? record.result : null;
-      const match = result && isRecord(result.match) ? result.match : null;
-      if (!STATION_MUTATION_RESULT_OPERATIONS.has(String(record.operation)) || !result || !match) {
-        return [key, record];
-      }
-      const participantsValid = Array.isArray(match.participantReadyEntryIds)
-        && match.participantReadyEntryIds.every(entryId => typeof entryId === 'string');
-      const overflowValid = Array.isArray(match.overflowReadyEntryIds)
-        && match.overflowReadyEntryIds.every(entryId => typeof entryId === 'string');
-      const persistedMatch = stationMatches[String(match.id)] as Record<string, unknown> | undefined;
-      const migratedCapacity = persistedMatch?.humanCapacity === 2 ? 2
-        : persistedMatch?.humanCapacity === 4 ? 4
-          : match.game === 'racer' && ['PREPARING', 'LAUNCHING'].includes(String(match.phase)) ? 2
-            : match.game === 'racer' ? 4 : 2;
-      const shrinkPendingRacer = match.game === 'racer' && migratedCapacity === 2
-        && participantsValid && overflowValid;
-      const participants = participantsValid ? match.participantReadyEntryIds as string[] : [];
-      const overflow = overflowValid ? match.overflowReadyEntryIds as string[] : [];
-      return [key, {
-        ...record,
-        result: {
-          ...result,
-          match: {
-            ...match,
-            humanCapacity: migratedCapacity,
-            ...(shrinkPendingRacer ? {
-              participantReadyEntryIds: participants.slice(0, 2),
-              overflowReadyEntryIds: [...participants.slice(2), ...overflow],
-            } : {}),
-          },
-        },
-      }];
-    }),
+  const outboundNotifications = Object.fromEntries(
+    Object.entries(requireRecord(schemaEight.outboundNotifications, 'outboundNotifications'))
+      .map(([id, notification]) => {
+        const value = requireRecord(notification, `outboundNotifications.${id}`);
+        const variables = requireRecord(value.templateVariables, `outboundNotifications.${id}.templateVariables`);
+        const legacyCallNumber = value.kind === 'STATION_CALL_NOW' ? variables['1'] : null;
+        return [id, {
+          ...value,
+          callNumber: typeof legacyCallNumber === 'string' && /^\+[1-9][0-9]{7,14}$/.test(legacyCallNumber)
+            ? legacyCallNumber
+            : null,
+        }];
+      }),
   );
   return {
-    ...schemaSeven,
+    ...schemaEight,
     schemaVersion: ARCADE_STATE_SCHEMA_VERSION,
-    stationReadyEntries,
-    stationMatches,
-    idempotencyRecords,
+    outboundNotifications,
   };
 }
 

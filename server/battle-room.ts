@@ -38,6 +38,7 @@ export class BattleRoom {
   private presentationReadyAt = 0;
   private lastPresentedActionSide: Side | null = null;
   private expectedHumanPlayers = 1;
+  private automaticSetup=false;
 
   constructor(code: string, seed: number) {
     this.code = code;
@@ -88,18 +89,21 @@ export class BattleRoom {
     const id = `p${this.nextId++}`;
     this.slots.push({ id, name: name || `Player ${this.slots.length + 1}`, monsterId: null, isAi: false, side });
     this.slots.sort((left, right) => left.side.localeCompare(right.side));
+    this.reconcileSetup();
     return { playerId: id };
   }
 
   expectHumanPlayers(count: number): void {
     this.expectedHumanPlayers = count >= 2 ? 2 : 1;
+    this.automaticSetup=true;
     if (this.expectedHumanPlayers === 1 && this.slots.length === 1 && this._phase !== 'battle') {
       this.slots[0]!.side = 'a';
     }
+    this.reconcileSetup();
   }
   playerSide(playerId: string): Side | null { return this.slots.find(slot => slot.id === playerId)?.side ?? null; }
   canControlSetup(playerId: string): boolean {
-    return (this.expectedHumanPlayers < 2 && this.slots.length < 2) || this.playerSide(playerId) === 'a';
+    return this.playerSide(playerId)!==null;
   }
 
   removePlayer(playerId: string): void {
@@ -107,6 +111,7 @@ export class BattleRoom {
     this.slots = this.slots.filter(s => s.id !== playerId);
     if (this.slots.length === 0 && this._phase !== 'lobby') this.reset();
     else if (wasInBattle && this._phase === 'battle') this.interruptBattle();
+    if(!wasInBattle)this.reconcileSetup();
   }
 
   setPlayerInfo(playerId: string, info: { name?: string }): void {
@@ -128,7 +133,7 @@ export class BattleRoom {
     if (this._phase !== 'monster_select') return;
     if (!monsterById(monsterId)) return;
     const s = this.slots.find(x => x.id === playerId);
-    if (s) s.monsterId = monsterId;
+    if (s){s.monsterId=monsterId;this.reconcileSetup();}
   }
 
   /** Host advances the flow: lobby → monster_select → battle. From results, "advance" = rematch
@@ -144,6 +149,7 @@ export class BattleRoom {
       this._phase = 'monster_select';
       return;
     }
+    if(this.automaticSetup)return;
     if (this._phase === 'lobby') {
       if (this.slots.length > 0) this._phase = 'monster_select';
       return;
@@ -151,7 +157,14 @@ export class BattleRoom {
     if (this._phase === 'monster_select' && this.canStart()) this.start();
   }
 
+  private reconcileSetup():void {
+    if(!this.automaticSetup||this.slots.length<this.expectedHumanPlayers)return;
+    if(this._phase==='lobby')this._phase='monster_select';
+    if(this._phase==='monster_select'&&this.canStart())this.start();
+  }
+
   back(): void {
+    if(this.automaticSetup)return;
     if (this._phase === 'monster_select') this._phase = 'lobby';
   }
 

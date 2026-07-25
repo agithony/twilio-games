@@ -366,6 +366,7 @@ describe('voice integration (fake Conversation Relay client)', () => {
     srv=new HttpServer({port:0,publicBaseUrl:'http://localhost',validateSignatures:false});const port=await srv.start();
     const game=(srv as unknown as {game:GameServer}).game;
     game.setRoomConfigProvider(()=>({carCount:2,carNames:['Roadster','Coupe'],maps:['Silver Lake']}));
+    game.getOrCreateRoom('TWO-RACERS').expectHumanPlayers(2);
     const connect=async(callSid:string,from:string)=>{
       const ws=new WebSocket(`ws://127.0.0.1:${port}/voice`);
       ws.on('message',data=>{const message=JSON.parse(data.toString()) as Record<string,unknown>;acknowledgeText(ws,message);});
@@ -377,7 +378,20 @@ describe('voice integration (fake Conversation Relay client)', () => {
     try{
       await wait(80);const room=game.findRoom('TWO-RACERS')!;const [playerA,playerB]=room.lobbyPlayers();
       expect(playerA?.playerId).not.toBe(playerB?.playerId);
-      room.advance();room.selectCar(playerA!.playerId,0);room.selectCar(playerB!.playerId,1);room.advance();room.selectMap('Silver Lake',playerA!.playerId);room.selectMap('Silver Lake',playerB!.playerId);room.advance();
+      expect(room.phase).toBe('car_select');
+      a.send(JSON.stringify({type:'prompt',voicePrompt:'one',last:true}));await wait(60);
+      expect(room.lobbyPlayers()).toEqual(expect.arrayContaining([
+        expect.objectContaining({playerId:playerA!.playerId,carIndex:0}),
+        expect.objectContaining({playerId:playerB!.playerId,carIndex:null}),
+      ]));
+      b.send(JSON.stringify({type:'prompt',voicePrompt:'two',last:true}));await wait(60);
+      expect(room.lobbyPlayers()).toEqual(expect.arrayContaining([
+        expect.objectContaining({playerId:playerA!.playerId,carIndex:0}),
+        expect.objectContaining({playerId:playerB!.playerId,carIndex:1}),
+      ]));
+      expect(room.phase).toBe('map_select');
+      a.send(JSON.stringify({type:'prompt',voicePrompt:'one',last:true}));await wait(60);expect(room.phase).toBe('map_select');
+      b.send(JSON.stringify({type:'prompt',voicePrompt:'one',last:true}));await wait(60);expect(room.phase).toBe('countdown');
       for(let i=0;i<100&&room.phase!=='racing';i++)game.stepRoomForTest(room,0.1);
       const before=room.snapshot()!;
       a.send(JSON.stringify({type:'prompt',voicePrompt:'right',last:true}));await wait(40);
@@ -391,7 +405,7 @@ describe('voice integration (fake Conversation Relay client)', () => {
     }finally{closeWs(a);closeWs(b);}
   });
 
-  it('voice setup flows name → car → track vote → start without asking for the name again', async () => {
+  it('voice setup flows name → car → track vote → race automatically without asking for the name again', async () => {
     srv = new HttpServer({
       port: 0, publicBaseUrl: 'http://localhost', validateSignatures: false,
       mapsPath: 'assets/maps/maps.json',
@@ -435,13 +449,7 @@ describe('voice integration (fake Conversation Relay client)', () => {
 
       expect(spoken.join(' ').toLowerCase()).toContain("vote's in");
       expect(spoken.join(' ').toLowerCase()).not.toMatch(/what'?s your name|first up.*name/);
-      expect(inbox.some(m => m.type === 'items')).toBe(false);
-
-      spoken.length = 0;
-      voice.send(JSON.stringify({ type: 'prompt', voicePrompt: 'start', last: true }));
-      await wait(300);
-
-      expect(spoken.join(' ').toLowerCase()).toContain('here we go');
+      expect(inbox.some(m => m.type === 'items')).toBe(true);
       expect(spoken.join(' ').toLowerCase()).not.toMatch(/what'?s your name|first up.*name/);
       expect(inbox.some(m => m.type === 'items')).toBe(true);
     } finally {

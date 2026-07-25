@@ -16,8 +16,9 @@ export interface FighterLobbyPlayer {
 }
 export interface FighterState {
   roomCode: string; phase: FighterPhase; players: FighterLobbyPlayer[];
-  selectedMap: string | null; world: FighterWorld | null;
+  selectedMap: string | null; mapVotesByPlayerId:Record<string,string>; world: FighterWorld | null;
   expectedPlayerCount: number; hasExpectedPlayers: boolean;
+  automaticSetup:boolean;
   loadingGeneration: number;
   intro: number | null;
   countdown: number | null;
