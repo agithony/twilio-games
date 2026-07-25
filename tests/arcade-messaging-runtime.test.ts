@@ -90,6 +90,11 @@ async function outboxHarness(input: {
       value.channels.voice = enabled;
       config = parseArcadeConfig(value);
     },
+    setVoiceNumbers: (numbers: { 'en-US': string | null; 'pt-BR': string | null }) => {
+      const value = JSON.parse(JSON.stringify(config)) as Record<string, any>;
+      value.channels.voiceNumbers = numbers;
+      config = parseArcadeConfig(value);
+    },
     config: () => config,
   };
 }
@@ -425,6 +430,53 @@ describe('ArcadeMessagingRuntime', () => {
     await second.stop();
   });
 
+  it('uses the approved Phone CTA template for an in-window WhatsApp call-now notice',async()=>{
+    const h=await outboxHarness({channel:'whatsapp'}),locked=await h.service.getStation('ARCADE-01');
+    await h.service.requestStationLaunch({stationId:'ARCADE-01',expectedRevision:locked!.station.revision,idempotencyKey:'whatsapp-phone-cta-launch',authorization:AUTHORIZATION});
+    const sends:Parameters<ArcadeMessagingTransport['send']>[0][]=[];
+    const worker=runtime(h,{send:async input=>{sends.push(input);return{providerMessageId:MESSAGE_SID,status:'queued'};}});
+    await worker.start();
+    expect(sends.filter(input=>input.contentSid!==undefined)).toEqual([expect.objectContaining({
+      contentSid:CONTENT_SID,contentVariables:{'1':'Voice Racer'},
+    })]);
+    await worker.stop();
+  });
+
+  it('falls back to the locale Voice number inside the WhatsApp window when the CTA template is absent',async()=>{
+    const h=await outboxHarness({channel:'whatsapp',template:false}),locked=await h.service.getStation('ARCADE-01');
+    await h.service.requestStationLaunch({stationId:'ARCADE-01',expectedRevision:locked!.station.revision,idempotencyKey:'whatsapp-phone-fallback-launch',authorization:AUTHORIZATION});
+    const sends:Parameters<ArcadeMessagingTransport['send']>[0][]=[];
+    const worker=runtime(h,{send:async input=>{sends.push(input);return{providerMessageId:MESSAGE_SID,status:'queued'};}});
+    await worker.start();
+    expect(sends).toContainEqual(expect.objectContaining({body:expect.stringContaining('Call +14155550100 with your device Phone app')}));
+    expect(sends.every(input=>input.contentSid===undefined)).toBe(true);
+    await worker.stop();
+  });
+
+  it('uses the locale-specific Phone CTA template outside the WhatsApp window',async()=>{
+    const h=await outboxHarness({channel:'whatsapp'}),locked=await h.service.getStation('ARCADE-01');
+    await h.service.requestStationLaunch({stationId:'ARCADE-01',expectedRevision:locked!.station.revision,idempotencyKey:'whatsapp-phone-cta-window-launch',authorization:AUTHORIZATION});
+    const callNow=Object.values(h.store.snapshot().outboundNotifications).find(notification=>notification.kind==='STATION_CALL_NOW')!;
+    await h.store.transaction(state=>{state.outboundNotifications[callNow.id]={...callNow,expiresAt:new Date(T0+26*60*60*1000).toISOString()};});
+    h.setNow(T0+24*60*60*1000);let sent:Parameters<ArcadeMessagingTransport['send']>[0]|null=null;
+    const worker=runtime(h,{send:async input=>{sent=input;return{providerMessageId:MESSAGE_SID,status:'queued'};}});
+    await worker.start();
+    expect(sent).toMatchObject({contentSid:CONTENT_SID,contentVariables:{'1':'Voice Racer'}});
+    expect(sent).not.toHaveProperty('body');await worker.stop();
+  });
+
+  it('suppresses an out-of-window WhatsApp call-now notice without a CTA template',async()=>{
+    const h=await outboxHarness({channel:'whatsapp',template:false}),locked=await h.service.getStation('ARCADE-01');
+    await h.service.requestStationLaunch({stationId:'ARCADE-01',expectedRevision:locked!.station.revision,idempotencyKey:'whatsapp-phone-no-template-launch',authorization:AUTHORIZATION});
+    const callNow=Object.values(h.store.snapshot().outboundNotifications).find(notification=>notification.kind==='STATION_CALL_NOW')!;
+    await h.store.transaction(state=>{state.outboundNotifications[callNow.id]={...callNow,expiresAt:new Date(T0+26*60*60*1000).toISOString()};});
+    h.setNow(T0+24*60*60*1000);let sends=0;
+    const worker=runtime(h,{send:async()=>{sends++;return{providerMessageId:MESSAGE_SID,status:'queued'};}});await worker.start();
+    expect(sends).toBe(0);
+    expect(h.store.snapshot().outboundNotifications[callNow.id]).toMatchObject({status:'SUPPRESSED',terminalReason:'WHATSAPP_TEMPLATE_REQUIRED'});
+    await worker.stop();
+  });
+
   it('sends nothing while mode is off and prunes retained terminal records after re-enable', async () => {
     const h = await outboxHarness();
     const notification = Object.values(h.store.snapshot().outboundNotifications)[0]!;
@@ -471,6 +523,26 @@ describe('ArcadeMessagingRuntime', () => {
       .find(notification => notification.kind === 'STATION_CALL_NOW')!;
     expect(callNow).toMatchObject({ status: 'SUPPRESSED', terminalReason: 'VOICE_ROUTE_CHANGED' });
     await worker.stop();
+  });
+
+  it('suppresses a pending WhatsApp Phone CTA after its locale Voice number changes',async()=>{
+    const h=await outboxHarness({channel:'whatsapp'}),selected=await h.service.getStation('ARCADE-01');
+    await h.service.requestStationLaunch({stationId:'ARCADE-01',expectedRevision:selected!.station.revision,idempotencyKey:'call-number-change-launch',authorization:AUTHORIZATION});
+    const callNow=Object.values(h.store.snapshot().outboundNotifications).find(notification=>notification.kind==='STATION_CALL_NOW')!;
+    expect(callNow.callNumber).toBe('+14155550100');
+    h.setVoiceNumbers({'en-US':'+14155550199','pt-BR':'+551155555555'});
+    const worker=runtime(h,{send:async()=>({providerMessageId:MESSAGE_SID,status:'queued'})});await worker.start();
+    expect(h.store.snapshot().outboundNotifications[callNow.id]).toMatchObject({status:'SUPPRESSED',terminalReason:'VOICE_ROUTE_CHANGED'});
+    await worker.stop();
+  });
+
+  it('suppresses a WhatsApp call-now notice when the address locale changes before delivery',async()=>{
+    const h=await outboxHarness({channel:'whatsapp'}),selected=await h.service.getStation('ARCADE-01');
+    await h.service.requestStationLaunch({stationId:'ARCADE-01',expectedRevision:selected!.station.revision,idempotencyKey:'call-locale-launch',authorization:AUTHORIZATION});
+    await h.store.transaction(state=>{for(const[addressId,address]of Object.entries(state.channelAddresses))state.channelAddresses[addressId]={...address,preferredLocale:'pt-BR'};});
+    const worker=runtime(h,{send:async()=>({providerMessageId:MESSAGE_SID,status:'queued'})});await worker.start();
+    const callNow=Object.values(h.store.snapshot().outboundNotifications).find(notification=>notification.kind==='STATION_CALL_NOW')!;
+    expect(callNow).toMatchObject({status:'SUPPRESSED',terminalReason:'VOICE_ROUTE_CHANGED'});await worker.stop();
   });
 
   it('revalidates admitted, overflow, and call notices after launch failure', async () => {

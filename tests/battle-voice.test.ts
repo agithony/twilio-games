@@ -124,7 +124,7 @@ describe('BattleVoiceSession', () => {
     expect(arrival).toContain('ada');
     expect(arrival).toContain('voice monsters');
     expect(arrival).toMatch(/fight|attack/);
-    expect(arrival).toContain('say start');
+    expect(arrival).toContain('opens automatically');
     expect(arrival).not.toContain('your name');
     session.handleMessage(prompt('call me Mallory'));
     expect(log).not.toContain('name Mallory');
@@ -210,7 +210,7 @@ describe('BattleVoiceSession', () => {
     expect(said[1]).toMatch(/conversation relay/i);
     expect(said[2]).toMatch(/what.*name/i);
     s.handleMessage(prompt("I'm Ada"));
-    expect(said.slice(3).join(' ')).toMatch(/nice to meet.*before you start.*say fight.*say start/i);
+    expect(said.slice(3).join(' ')).toMatch(/nice to meet.*before you start.*say fight.*opens automatically/i);
   });
 
   it('captures the caller name in the lobby BEFORE anything else (deterministic, no LLM)', () => {
@@ -234,7 +234,7 @@ describe('BattleVoiceSession', () => {
 
     s.handleMessage(prompt("I'm ready"));
 
-    expect(log).toContain('advance');
+    expect(log).not.toContain('advance');
     expect(log.some(l => l === 'name Ready')).toBe(false);
   });
 
@@ -247,7 +247,7 @@ describe('BattleVoiceSession', () => {
     s.handleMessage(setup());
     s.handleMessage(prompt('Embertail'));
     expect(log.some(l => l === 'monster embertail')).toBe(true);
-    expect(said.at(-1)).toMatch(/Player One can say "battle"/i);
+    expect(said.at(-1)).toMatch(/Locked in.*Embertail/i);
   });
 
   it('understands ordinal monster picks before cardinal words', () => {
@@ -286,14 +286,14 @@ describe('BattleVoiceSession', () => {
 
     expect(log.some(l => l.startsWith('monster '))).toBe(false);
     expect(log.some(l => l.startsWith('name '))).toBe(false);
-    expect(said.join(' ')).toMatch(/monster name or number/i);
+    expect(said.join(' ')).toMatch(/own monster.*name or number/i);
   });
 
   it.each([
-    { label: 'English named lobby', locale: undefined, snap: battleSnap({ phase: 'lobby', myName: 'Ada' }), utterance: 'what now?', expected: /say start/i },
-    { label: 'Portuguese unnamed lobby', locale: 'pt-BR', snap: battleSnap({ phase: 'lobby', myName: null }), utterance: 'o que devo fazer agora?', expected: /nome.*começar/i },
-    { label: 'English monster select', locale: undefined, snap: battleSnap({ myName: 'Ada' }), utterance: 'the fiery-looking one', expected: /monster name or number/i },
-    { label: 'Portuguese monster select', locale: 'pt-BR', snap: battleSnap({ myName: 'Ada' }), utterance: 'quero o monstro de fogo', expected: /nome ou o número de um monstro/i },
+    { label: 'English named lobby', locale: undefined, snap: battleSnap({ phase: 'lobby', myName: 'Ada' }), utterance: 'what now?', expected: /opens automatically/i },
+    { label: 'Portuguese unnamed lobby', locale: 'pt-BR', snap: battleSnap({ phase: 'lobby', myName: null }), utterance: 'o que devo fazer agora?', expected: /nome.*automaticamente/i },
+    { label: 'English monster select', locale: undefined, snap: battleSnap({ myName: 'Ada' }), utterance: 'the fiery-looking one', expected: /own monster.*name or number/i },
+    { label: 'Portuguese monster select', locale: 'pt-BR', snap: battleSnap({ myName: 'Ada' }), utterance: 'quero o monstro de fogo', expected: /próprio monstro.*nome ou número/i },
     { label: 'English battle root', locale: undefined, snap: activeBattle(), utterance: 'something else', expected: /fight.*guard.*item.*taunt/i },
     { label: 'Portuguese fight menu', locale: 'pt-BR', snap: activeBattle({ activeMenu: 'fight' }), utterance: 'não sei qual', expected: /seus golpes.*Thunder Jolt.*Static Zap/i },
   ])('uses a phase-correct scripted reprompt without an LLM: $label', async ({ locale, snap, utterance, expected }) => {
@@ -322,6 +322,18 @@ describe('BattleVoiceSession', () => {
     await Promise.resolve();
 
     expect(said.join(' ')).toMatch(/fight.*guard.*item.*taunt/i);
+  });
+
+  it('never sends unknown setup speech to the conversational host',async()=>{
+    let calls=0;const{deps,said}=fakeDeps({
+      snapshot:()=>battleSnap({phase:'monster_select',myName:'Ada'}),
+      converse:async()=>{calls++;return 'off-topic reply';},
+    });
+    const session=new BattleVoiceSession(deps);session.handleMessage(setup());said.length=0;
+    session.handleMessage(prompt('I have two dogs'));
+    await Promise.resolve();
+    expect(calls).toBe(0);
+    expect(said.join(' ')).toMatch(/own monster.*name or number/i);
   });
 
   it('does not reprompt after an LLM tool changed the battle state', async () => {
@@ -412,14 +424,14 @@ describe('BattleVoiceSession', () => {
     expect(said.join(' ')).toMatch(expected);
   });
 
-  it('"start" advances the flow deterministically (no LLM) — lobby → select', () => {
+  it('"start" gives current lobby guidance without manually advancing', () => {
     const { deps, log } = fakeDeps({
       snapshot: () => battleSnap({ phase: 'lobby', monsterNames: ['Sparkmouse'], myName: 'Ada' }),
     });
     const s = new BattleVoiceSession(deps);
     s.handleMessage(setup());
     s.handleMessage(prompt('start'));
-    expect(log.filter(l => l === 'advance').length).toBe(1);
+    expect(log.filter(l => l === 'advance').length).toBe(0);
   });
 
   it('"battle" in monster-select is REFUSED until a monster is picked (no LLM)', () => {
@@ -449,7 +461,7 @@ describe('BattleVoiceSession', () => {
     expect(said.some(t => /waiting for the other player/i.test(t))).toBe(true);
   });
 
-  it('"battle" in monster-select advances when required monster picks are complete', () => {
+  it('"battle" in monster-select does not manually advance when picks are complete', () => {
     const { deps, log } = fakeDeps({
       snapshot: () => battleSnap({
         myName: 'Ada', myMonsterId: 'sparkmouse', myMonsterName: 'Sparkmouse', myMonsterType: 'electric',
@@ -461,10 +473,10 @@ describe('BattleVoiceSession', () => {
 
     s.handleMessage(prompt('battle'));
 
-    expect(log.some(l => l === 'advance')).toBe(true);
+    expect(log.some(l => l === 'advance')).toBe(false);
   });
 
-  it('"fight" in monster-select also starts when required monster picks are complete', () => {
+  it('"fight" in monster-select does not manually advance when picks are complete', () => {
     const { deps, log } = fakeDeps({
       snapshot: () => battleSnap({
         myName: 'Ada', myMonsterId: 'sparkmouse', myMonsterName: 'Sparkmouse', myMonsterType: 'electric',
@@ -476,7 +488,7 @@ describe('BattleVoiceSession', () => {
 
     s.handleMessage(prompt('fight'));
 
-    expect(log.some(l => l === 'advance')).toBe(true);
+    expect(log.some(l => l === 'advance')).toBe(false);
   });
 
   it('a spoken battle action during battle commits it', async () => {

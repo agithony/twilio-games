@@ -750,6 +750,12 @@ export class ArcadeApi {
     }).catch(() => undefined);
   }
 
+  stationVoiceSetupActivity(readyEntryId:string):void {
+    void this.playerRuntime?.getForCleanup().then(resources=>{
+      resources.station.markSetupActivity(readyEntryId);
+    }).catch(()=>undefined);
+  }
+
   requiresStationVoiceAssignment(): boolean {
     const config = this.configStore.getSnapshot();
     return config.arcade.mode !== 'off';

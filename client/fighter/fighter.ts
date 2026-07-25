@@ -322,7 +322,7 @@ function wireFlowButtons(): void {
   $('flow-back')?.addEventListener('click', () => { if (isHost) connection.back(); });
   $('local-join')?.addEventListener('click', toggleLocalPlayer);
   for (const button of overlay.querySelectorAll<HTMLElement>('[data-fighter]')) button.addEventListener('click', () => { if (!isHost && !playerId) return; flowMessage = ''; connection.selectFighter(button.dataset.fighter!); });
-  for (const button of overlay.querySelectorAll<HTMLElement>('[data-map]')) button.addEventListener('click', () => { if (!isHost) return; flowMessage = ''; connection.selectMap(button.dataset.map!); });
+  for (const button of overlay.querySelectorAll<HTMLElement>('[data-map]')) button.addEventListener('click', () => { if (!playerId) return; flowMessage = ''; connection.selectMap(button.dataset.map!); });
 }
 
 function introHtml(current: FighterState): string {
@@ -834,7 +834,7 @@ function handleNumericSelection(key: string): void {
   const select = (number: number) => {
     const id = entries[number - 1]?.id; if (!id) return;
     if (state?.phase === 'fighter_select' && (isHost || playerId)) connection.selectFighter(id);
-    else if (state?.phase === 'map_select' && isHost) connection.selectMap(id);
+    else if (state?.phase === 'map_select' && playerId) connection.selectMap(id);
   };
   if (next.selection) select(next.selection);
   else if (next.waiting) numericTimer = setTimeout(() => {

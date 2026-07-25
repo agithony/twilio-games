@@ -20,10 +20,10 @@ describe('BattleRoom', () => {
     expect(r.playerCount).toBe(2);
   });
 
-  it('infers Player One setup authority for two standalone callers', () => {
+  it('accepts setup input from both standalone callers', () => {
     const r=room();const a=r.addPlayer('Ada') as {playerId:string};const b=r.addPlayer('Bo') as {playerId:string};
     expect(r.canControlSetup(a.playerId)).toBe(true);
-    expect(r.canControlSetup(b.playerId)).toBe(false);
+    expect(r.canControlSetup(b.playerId)).toBe(true);
   });
 
   it('advances lobby → monster_select and records each pick', () => {
@@ -73,14 +73,15 @@ describe('BattleRoom', () => {
   it('waits for both expected station players and preserves assigned sides and picks', () => {
     const r=room();r.expectHumanPlayers(2);
     const b=r.addPlayer('Bo','b') as {playerId:string};
-    r.advance();r.selectMonster(b.playerId,M1);r.advance();
     expect(r.canStart()).toBe(false);
-    expect(r.phase).toBe('monster_select');
+    expect(r.phase).toBe('lobby');
     const a=r.addPlayer('Ada','a') as {playerId:string};
+    expect(r.phase).toBe('monster_select');
+    r.back();expect(r.phase).toBe('monster_select');
+    r.selectMonster(b.playerId,M1);
     expect(r.canStart()).toBe(false);
     r.selectMonster(a.playerId,M0);
-    expect(r.canStart()).toBe(true);
-    r.advance();
+    expect(r.phase).toBe('battle');
     expect(r.canStart()).toBe(false);
     expect(r.snapshot()).toMatchObject({
       a:{id:a.playerId,name:'Ada',monsterId:M0},
@@ -95,13 +96,23 @@ describe('BattleRoom', () => {
   it('promotes a lone retained Player Two into the solo control slot after a no-show drop', () => {
     const r=room();r.expectHumanPlayers(2);
     const b=r.addPlayer('Bo','b') as {playerId:string};
-    r.advance();r.selectMonster(b.playerId,M1);
     r.expectHumanPlayers(1);
+    expect(r.phase).toBe('monster_select');
+    r.selectMonster(b.playerId,M1);
 
     expect(r.playerSide(b.playerId)).toBe('a');
-    expect(r.canStart()).toBe(true);
-    r.advance();
+    expect(r.phase).toBe('battle');
     expect(r.snapshot()).toMatchObject({a:{id:b.playerId,name:'Bo',monsterId:M1},b:{id:'cpu',name:'Rival'}});
+  });
+
+  it.each(['count-first','remove-first'] as const)('reconciles monster selection when a no-show is dropped %s',order=>{
+    const r=room();r.expectHumanPlayers(2);
+    const a=r.addPlayer('Ada','a') as {playerId:string};const b=r.addPlayer('Bo','b') as {playerId:string};
+    r.selectMonster(a.playerId,M0);
+    if(order==='count-first')r.expectHumanPlayers(1);
+    r.removePlayer(b.playerId);
+    if(order==='remove-first')r.expectHumanPlayers(1);
+    expect(r.phase).toBe('battle');expect(r.snapshot()?.a.id).toBe(a.playerId);
   });
 
   it('rejects late joins during an active battle instead of corrupting the current matchup', () => {

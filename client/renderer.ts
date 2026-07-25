@@ -16,7 +16,7 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { AssetLoader } from './asset-loader';
-import { buildCar } from './car-factory';
+import { buildCar,buildPlayerMarker } from './car-factory';
 import { themeAtZ } from '../shared/zones';
 import { shouldCycleZones } from './zone-gate';
 import type { LevelLighting, LevelEffects, PlacedProp, GantryOffset, ResolvedCamera } from '../shared/level';
@@ -286,7 +286,7 @@ export class Renderer {
     this.carScale = fn;
     for (const [id, wrapper] of this.carMeshes) {
       const idx = this.carIndex.get(id);
-      if (idx !== undefined) wrapper.scale.setScalar(fn(idx));
+      if(idx!==undefined)this.applyCarScale(wrapper,idx);
     }
   }
 
@@ -607,7 +607,7 @@ export class Renderer {
     }
   }
 
-  private ensureCar(id: string, color: string, carIndex?: number): THREE.Group {
+  private ensureCar(id: string, color: string, carIndex?: number,playerNumber=1): THREE.Group {
     let wrapper = this.carMeshes.get(id);
     if (!wrapper) {
       // Prefer the player's CHOSEN car model (carIndex from the snapshot, set in car-select); fall
@@ -625,14 +625,25 @@ export class Renderer {
       const model = buildCar(template, color, id === this.myId);
       model.traverse(o => { const m = o as THREE.Mesh; if (m.isMesh) m.castShadow = true; });
       wrapper = new THREE.Group();
-      wrapper.add(model);
-      wrapper.userData.model = model;
-      // Per-level car sizing: scale the WRAPPER (not the inner model) so the model's baked grounding
-      // (-min.y) is preserved and the car still sits on y=0. Keyed by the per-car index (idx).
-      wrapper.scale.setScalar(this.carScale(idx));
+      const scaledModel=new THREE.Group();scaledModel.add(model);
+      wrapper.add(scaledModel);
+      wrapper.userData.model=model;wrapper.userData.scaledModel=scaledModel;
+      const marker=buildPlayerMarker(color,playerNumber);
+      wrapper.add(marker);wrapper.userData.playerMarker=marker;this.applyCarScale(wrapper,idx);
       this.trackContent.add(wrapper); this.carMeshes.set(id, wrapper);   // cars ride the track transform
     }
     return wrapper;
+  }
+
+  private applyCarScale(wrapper:THREE.Group,index:number):void {
+    const scaledModel=wrapper.userData.scaledModel as THREE.Group|undefined;
+    if(!scaledModel)return;
+    scaledModel.scale.setScalar(this.carScale(index));scaledModel.updateMatrixWorld(true);
+    const bounds=new THREE.Box3().setFromObject(scaledModel);
+    const marker=wrapper.userData.playerMarker as THREE.Group|undefined;
+    if(!marker)return;
+    const markerY=Number.isFinite(bounds.max.y)?Math.max(3.4,bounds.max.y+1.25):4;
+    marker.position.y=markerY;marker.userData.baseY=markerY;
   }
 
   /** Show/hide + animate a car's NITRO-DASH aura. Built lazily the first time a car dashes: a flat
@@ -689,8 +700,8 @@ export class Renderer {
       this.carIndex.delete(id);
     }
 
-    for (const c of snap.cars) {
-      const wrapper = this.ensureCar(c.id, c.color, c.carIndex);
+    for (const [carPosition,c] of snap.cars.entries()) {
+      const wrapper = this.ensureCar(c.id, c.color, c.carIndex,carPosition+1);
       if (this.path) {
         // Map straight sim (z=distance, x=lane offset) onto the curve. Scale x by laneScale so cars
         // stay centered in widened lanes, and lift onto the track surface.
@@ -706,6 +717,8 @@ export class Renderer {
       // Dash FX: while a POWER dash is active, the car is invulnerable — show a bold NITRO look
       // (flame-orange glow ring + speed-lines) that's unmistakably different from a plain boost.
       this.updateDashFx(wrapper, c.invulnerable, dt);
+      const marker=wrapper.userData.playerMarker as THREE.Group|undefined;
+      if(marker)marker.position.y=(marker.userData.baseY as number)+Math.sin(this.clock*4+carPosition*Math.PI)*0.18;
       // Animation lives on the inner model (mixer/wheels set by buildCar).
       const model = wrapper.userData.model as THREE.Object3D;
       // Animation priority: baked clip (mixer) > wheel-spin > static.

@@ -403,9 +403,10 @@ export class BattleServer {
   }
 
   /** A caller joins `code` as a player. Returns the new playerId, or null if the room is full. */
-  voiceJoin(code: string, name: string, preferredSide?: 'a' | 'b', expectedPlayers = 1): string | null {
+  voiceJoin(code: string, name: string, preferredSide?: 'a' | 'b', expectedPlayers?:number): string | null {
     const room = this.room(code);
-    room.expectHumanPlayers(expectedPlayers);
+    if(expectedPlayers!==undefined)room.expectHumanPlayers(expectedPlayers);
+    else if(room.playerCount>=1)room.expectHumanPlayers(2);
     const res = room.addPlayer(name, preferredSide);
     if ('error' in res) return null;
     this.pushState(code);
@@ -417,7 +418,7 @@ export class BattleServer {
   }
   voiceSetName(code: string, playerId: string, name: string): void {
     const room = this.rooms.get(code); if (!room) return;
-    room.setPlayerInfo(playerId, { name }); this.pushState(code);
+    room.setPlayerInfo(playerId,{name});room.expectHumanPlayers(Math.max(1,room.playerCount));this.pushState(code);
   }
   voiceExpectHumanPlayers(code: string, count: number): void {
     const room=this.rooms.get(code);if(!room)return;room.expectHumanPlayers(count);this.pushState(code);
@@ -443,7 +444,6 @@ export class BattleServer {
   }
   voiceAdvance(code: string, playerId?: string): boolean {
     const room = this.rooms.get(code); if (!room) return false;
-    if (playerId && !room.canControlSetup(playerId)) return false;
     if (!this.allowBrowserPlayer(code) && room.phase === 'results') return false;
     room.advance(); this.flushEvents(room); this.pushState(code);
     return true;

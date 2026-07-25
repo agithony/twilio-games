@@ -132,6 +132,11 @@ export class Lobby {
 
   hasPlayerVoted(playerId:string):boolean { return this._mapVotes.has(playerId); }
 
+  retainMapVotes(voterIds:ReadonlySet<string>):void {
+    for(const voterId of this._mapVotes.keys())if(!voterIds.has(voterId))this._mapVotes.delete(voterId);
+    this._map=this.computeVoteWinner();
+  }
+
   /** At least one player has locked a car — enough to leave car_select (idle players get the
    *  toRaceInits() join-index fallback, so a single AFK player can't wedge the room forever). */
   anyPicked(): boolean {

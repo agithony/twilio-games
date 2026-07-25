@@ -98,7 +98,7 @@ async function harness(configure?: (input: Record<string, any>) => void) {
 }
 
 describe('ArcadeStationRuntime', () => {
-  it('gives connected callers a bounded setup window without marking gameplay started', async () => {
+  it('keeps active setup alive with a bounded inactivity window without marking gameplay started', async () => {
     const h=await harness();
     await h.service.identifyCoinOnly({playerId:'p1',idempotencyKey:'setup-grace-identify'});
     const inserted=await h.service.insertStationCoin({stationId:'expo',playerId:'p1',idempotencyKey:'setup-grace-coin'});
@@ -117,9 +117,32 @@ describe('ArcadeStationRuntime', () => {
     expect((await h.service.getStation('expo'))?.station.phase).toBe('LAUNCHING');
     expect(h.scheduled()?.delayMs).toBe(118_500);
 
+    h.setTime(T0+230_000);runtime.markSetupActivity(launching.match!.participantReadyEntryIds[0]!);await runtime.flush();
+    expect(h.scheduled()?.delayMs).toBe(120_000);
     h.setTime(T0+239_001);h.fire();await runtime.flush();
+    expect((await h.service.getStation('expo'))?.station.phase).toBe('LAUNCHING');
+    h.setTime(T0+350_001);h.fire();await runtime.flush();
     expect((await h.service.getStation('expo'))?.station.phase).toBe('RECRUITING');
     expect(h.removedMatches).toEqual([{game:'racer',roomCode:'SETUP-GRACE',removal:'abort'}]);
+  });
+
+  it('rearms a two-caller launch from either connected player setup activity',async()=>{
+    const h=await harness();
+    for(const playerId of ['p1','p2']){
+      await h.service.identifyCoinOnly({playerId,idempotencyKey:`two-activity-identify:${playerId}`});
+      await h.service.insertStationCoin({stationId:'expo',playerId,idempotencyKey:`two-activity-coin:${playerId}`});
+    }
+    const runtime=h.makeRuntime();await runtime.start();
+    const recruiting=await h.service.getStation('expo');
+    const selecting=await h.service.closeStationRecruiting({stationId:'expo',expectedRevision:recruiting!.station.revision,idempotencyKey:'two-activity-close',authorization:AUTHORIZATION});
+    const locked=await h.service.selectStationGame({stationId:'expo',expectedRevision:selecting.station.revision,game:'racer',engineRoomCode:'TWO-ACTIVE',idempotencyKey:'two-activity-select',authorization:AUTHORIZATION});
+    const launching=await h.service.requestStationLaunch({stationId:'expo',expectedRevision:locked.station.revision,idempotencyKey:'two-activity-launch',authorization:AUTHORIZATION});
+    const[first,second]=launching.match!.participantReadyEntryIds;
+    runtime.markParticipantConnected(first!,'engine-p1');runtime.markParticipantConnected(second!,'engine-p2');await runtime.flush();
+    h.setTime(T0+110_000);runtime.markSetupActivity(second!);await runtime.flush();
+    expect(h.scheduled()?.delayMs).toBe(120_000);
+    h.setTime(T0+121_000);h.fire();await runtime.flush();
+    expect((await h.service.getStation('expo'))?.station.phase).toBe('LAUNCHING');
   });
 
   it('updates the live engine player gate when an admitted no-show has no replacement', async () => {

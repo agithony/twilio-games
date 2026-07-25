@@ -37,6 +37,7 @@ export class Room {
   private raceMap: string | null = null;
   private carNames: string[] = [];
   private expectedHumanPlayers = 1;
+  private automaticSetup = false;
   private stationSlots = new Map<number, string>();
 
   constructor(code: string, seed: number, config?: RoomConfig) {
@@ -65,11 +66,10 @@ export class Room {
   get isEmpty(): boolean { return this.lobby.playerCount === 0; }
   get selectedMap(): string | null { return this.raceMap ?? this.lobby.selectedMap; }
   get mapChoices(): string[] { return this.lobby.mapChoices; }
+  get usesAutomaticSetup():boolean{return this.automaticSetup;}
   private get requiredHumanPlayers():number { return Math.max(this.expectedHumanPlayers,Math.min(2,this.lobby.playerCount)); }
   canControlSetup(playerId: string): boolean {
-    if(this.requiredHumanPlayers<2)return true;
-    const controller=this.stationSlots.size?this.stationSlots.get(0):this.lobby.players()[0]?.id;
-    return controller===playerId;
+    return this.lobby.players().some(player=>player.id===playerId);
   }
   hasMapVote(playerId:string):boolean { return this.lobby.hasPlayerVoted(playerId); }
 
@@ -99,6 +99,7 @@ export class Room {
     const color2 = safeColor(color, palette);   // reject unsafe colors (stored-XSS guard)
     this.lobby.addPlayer(id, name, color2, stationIndex);
     if (stationIndex !== undefined) this.stationSlots.set(stationIndex, id);
+    this.reconcileSetup();
     // If a race is already running, slot this player into the live world so they get a car.
     if (this.world && (this._phase === 'countdown' || this._phase === 'racing')) {
       this.world.addCar({ id, name, color: color2 }, stationIndex);
@@ -112,9 +113,15 @@ export class Room {
     this.world?.removeCar(playerId);
     // An abandoned race (everyone disconnected) must not lock the room forever.
     if (this.lobby.playerCount === 0 && this._phase !== 'lobby') this.reset();
+    else this.reconcileSetup();
   }
 
-  expectHumanPlayers(count: number): void { this.expectedHumanPlayers = count >= 2 ? 2 : 1; }
+  expectHumanPlayers(count: number): void {
+    this.expectedHumanPlayers = count >= 2 ? 2 : 1;
+    this.automaticSetup = true;
+    this.lobby.retainMapVotes(new Set(this.lobby.players().map(player=>player.id)));
+    this.reconcileSetup();
+  }
 
   /** Concierge / client can fill in a player's display name + color after a bare join. */
   setPlayerInfo(playerId: string, info: { name?: string; color?: string }): void {
@@ -130,10 +137,19 @@ export class Room {
   }
 
   // ── Pre-race flow (delegates to Lobby) ─────────────────────────────────────────────────────────
-  selectCar(playerId: string, carIndex: number): boolean { return this.lobby.selectCar(playerId, carIndex); }
+  selectCar(playerId: string, carIndex: number): boolean {
+    const selected=this.lobby.selectCar(playerId,carIndex);
+    if(selected)this.reconcileSetup();
+    return selected;
+  }
   /** Cast a map VOTE. voterId = the player casting it (so each player's vote is one; changing it
    *  replaces the prior). The winning map (selectedMap) is the vote leader, ties broken deterministically. */
-  selectMap(map: string, voterId?: string): boolean { return this.lobby.selectMap(map, voterId); }
+  selectMap(map: string, voterId?: string): boolean {
+    if(this.automaticSetup&&(!voterId||!this.lobby.players().some(player=>player.id===voterId)))return false;
+    const selected=this.lobby.selectMap(map,voterId);
+    if(selected)this.reconcileSetup();
+    return selected;
+  }
   /** Live map-vote tallies + tie flag, for the selection-screen UI. */
   mapVotes(): { counts: Record<string, number>; tie: boolean } {
     return { counts: this.lobby.mapVoteCounts(), tie: this.lobby.mapWinnerIsTie };
@@ -150,6 +166,7 @@ export class Room {
       this._phase = this.lobby.phase;
       return;
     }
+    if(this.automaticSetup)return;
     if (this._phase === 'map_select' && this.requiredHumanPlayers >= 2 && !this.lobby.allPlayersVoted()) return;
     if (this._phase === 'map_select' && this.lobby.canStart()) { this.start(); return; }
     if (this._phase === 'car_select' && this.requiredHumanPlayers >= 2
@@ -157,8 +174,20 @@ export class Room {
     if (this.inPreRace) { this.lobby.advance(); this._phase = this.lobby.phase; }
   }
 
+  private reconcileSetup():void {
+    if(!this.automaticSetup||this.lobby.playerCount<this.expectedHumanPlayers)return;
+    if(this._phase==='lobby'){
+      this.lobby.advance();this._phase=this.lobby.phase;
+    }
+    if(this._phase==='car_select'&&this.lobby.allPicked()){
+      this.lobby.advance();this._phase=this.lobby.phase;
+    }
+    if(this._phase==='map_select'&&this.lobby.allPlayersVoted()&&this.lobby.canStart())this.start();
+  }
+
   /** Host steps back one selection phase (no-op once racing). */
   back(): void {
+    if(this.automaticSetup)return;
     if (this.inPreRace) { this.lobby.back(); this._phase = this.lobby.phase; }
   }
 

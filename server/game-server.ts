@@ -5,7 +5,7 @@ import { RoomManager } from './room-manager';
 import { Room, type RoomConfig } from './room';
 import { STEP } from '../shared/constants';
 import { INTENTS } from '../shared/types';
-import type { ClientMessage, ServerMessage, GameEvent } from '../shared/types';
+import type { ClientMessage, ServerMessage, GameEvent, Phase } from '../shared/types';
 import { DEFAULT_LOCALE, isSupportedLocale, type SupportedLocale } from '../shared/i18n/locales';
 
 type ParseResult = ClientMessage | { type: 'error'; code: string; message: string };
@@ -147,11 +147,10 @@ export class GameServer {
     ws.on('close', () => {
       const roomCode = conn.roomCode;
       if (roomCode && conn.playerId) {
-        const room = this.rooms.find(roomCode); room?.removePlayer(conn.playerId); if (room) this.reportAbandonedIfReset(room);
+        const room=this.rooms.find(roomCode);if(room){const before=room.phase;room.removePlayer(conn.playerId);this.reportAbandonedIfReset(room);this.publishSetupMutation(room,before);}
       }
       this.conns.delete(conn);
       if (roomCode) {
-        this.pushLobby(roomCode);     // refresh roster after a disconnect
         this.reapRoomIfEmpty(roomCode);
       }
     });
@@ -201,22 +200,24 @@ export class GameServer {
       case 'select_car': {
         const room = conn.roomCode ? this.rooms.find(conn.roomCode) : undefined;
         if (room && conn.playerId) {
+          const before=room.phase;
           if (!room.selectCar(conn.playerId, msg.carIndex)) break;
-          this.pushLobby(conn.roomCode!);
           // Playful host reaction to the pick (screen + the picking caller's phone).
           const who = room.lobbyPlayers().find(p => p.playerId === conn.playerId);
           this.emitEvent(conn.roomCode!, { kind: 'car_picked', playerId: conn.playerId,
             name: who?.name ?? 'Racer', car: room.carName(msg.carIndex) });
+          this.publishSetupMutation(room,before);
         }
         break;
       }
       case 'select_map': {
         const room = conn.roomCode ? this.rooms.find(conn.roomCode) : undefined;
         if (room) {
+          const before=room.phase;
           // A player's WS pick counts as THEIR vote; the display (no playerId) uses the shared bucket.
           if (!room.selectMap(msg.map, conn.playerId)) break;
-          this.pushLobby(conn.roomCode!);
           this.emitEvent(conn.roomCode!, { kind: 'map_picked', map: msg.map });
+          this.publishSetupMutation(room,before);
         }
         break;
       }
@@ -280,9 +281,8 @@ export class GameServer {
         // Drop this connection's PLAYER slot but keep it connected as a spectator (same roomCode).
         // Used by the shared screen toggling "I'm playing" → back to spectating, without reconnecting.
         if (conn.roomCode && conn.playerId) {
-          const room = this.rooms.find(conn.roomCode); room?.removePlayer(conn.playerId); if (room) this.reportAbandonedIfReset(room);
+          const room=this.rooms.find(conn.roomCode);if(room){const before=room.phase;room.removePlayer(conn.playerId);this.reportAbandonedIfReset(room);this.publishSetupMutation(room,before);}
           conn.playerId = undefined;
-          this.pushLobby(conn.roomCode);
           this.reapRoomIfEmpty(conn.roomCode);
         }
         break;
@@ -316,38 +316,49 @@ export class GameServer {
   //    handlers (select_car/select_map/advance) EXACTLY — same room mutation, same broadcasts + host
   //    events — so a voice-driven pick appears on the shared screen just like a texted/keyed one.
   voiceSelectCar(roomCode: string, playerId: string, carIndex: number): boolean {
-    const room = this.rooms.find(roomCode); if (!room || !room.selectCar(playerId, carIndex)) return false;
-    this.pushLobby(roomCode);
+    const room=this.rooms.find(roomCode);if(!room)return false;const before=room.phase;
+    if(!room.selectCar(playerId,carIndex))return false;
     const who = room.lobbyPlayers().find(p => p.playerId === playerId);
     this.emitEvent(roomCode, { kind: 'car_picked', playerId, name: who?.name ?? 'Racer', car: room.carName(carIndex), spokenReplyPlayerId: playerId });
+    this.publishSetupMutation(room,before,playerId);
     return true;
   }
   /** Set a caller's display name by voice (shows on the shared screen). */
   voiceSetName(roomCode: string, playerId: string, name: string): void {
     const room = this.rooms.find(roomCode); if (!room) return;
+    const before=room.phase;
     room.setPlayerInfo(playerId, { name });
-    this.pushLobby(roomCode);
+    if(!room.usesAutomaticSetup)room.expectHumanPlayers(1);
+    this.publishSetupMutation(room,before,playerId);
   }
   voiceSelectMap(roomCode: string, map: string, voterId?: string): boolean {
-    const room = this.rooms.find(roomCode); if (!room || !room.selectMap(map, voterId)) return false;
-    this.pushLobby(roomCode);
+    const room=this.rooms.find(roomCode);if(!room)return false;const before=room.phase;
+    if(!room.selectMap(map,voterId))return false;
     this.emitEvent(roomCode, { kind: 'map_picked', map });
+    this.publishSetupMutation(room,before,voterId);
     return true;
+  }
+
+  voiceSetupChanged(roomCode:string,before:Phase):void {
+    const room=this.rooms.find(roomCode);if(!room)return;
+    this.publishSetupMutation(room,before);
   }
   /** A voice caller left (hung up). Drop their slot, refresh the lobby, and REAP the room if now empty
    *  — the racer's WS close/leave paths reap, but a phone caller never takes those, so without this a
    *  voice-only room would leak in `this.rooms` forever. Mirrors BattleServer.voiceLeave. */
   voiceLeave(roomCode: string, playerId: string): void {
     const room = this.rooms.find(roomCode); if (!room) return;
-    room.removePlayer(playerId); this.reportAbandonedIfReset(room);
-    this.pushLobby(roomCode);
+    const before=room.phase;room.removePlayer(playerId);this.reportAbandonedIfReset(room);this.publishSetupMutation(room,before);
     this.reapRoomIfEmpty(roomCode);
+  }
+  voiceExpectHumanPlayers(roomCode:string,count:number):void {
+    const room=this.rooms.find(roomCode);if(!room)return;
+    const before=room.phase;room.expectHumanPlayers(count);this.publishSetupMutation(room,before);
   }
   /** Advance the flow (lobby→car_select→map_select→race). Returns true if the phase actually changed. */
   voiceAdvance(roomCode: string, spokenReplyPlayerId?: string): boolean {
     const room = this.rooms.find(roomCode); if (!room) return false;
     if (this.stationResultsLocked(room)) return false;
-    if (spokenReplyPlayerId && !room.canControlSetup(spokenReplyPlayerId)) return false;
     const before = room.phase;
     room.advance();
     const after = room.phase;
@@ -359,6 +370,17 @@ export class GameServer {
       else if (after === 'map_select') this.emitEvent(roomCode, { kind: 'enter_map_select', spokenReplyPlayerId });
     }
     return after !== before;
+  }
+
+  private publishSetupMutation(room:Room,before:Phase,spokenReplyPlayerId?:string):void {
+    const after=room.phase;
+    if(after==='countdown'||after==='racing'){
+      this.reportStartedOnce(room);this.broadcastItems(room.code);
+    }else this.pushLobby(room.code);
+    if(after!==before){
+      if(after==='car_select')this.emitEvent(room.code,{kind:'enter_car_select',spokenReplyPlayerId});
+      else if(after==='map_select')this.emitEvent(room.code,{kind:'enter_map_select',spokenReplyPlayerId});
+    }
   }
 
   private stationResultsLocked(room: Room): boolean {

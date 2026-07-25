@@ -131,12 +131,12 @@ describe('ConversationRelayAdapter', () => {
     ]);
   });
 
-  it('routes menu DTMF through the finalized conversational selection path', async () => {
+  it('routes menu DTMF through the deterministic setup selection path', async () => {
     const room = fakeRoom(); const utterances: string[] = [];
     const adapter = new ConversationRelayAdapter({
       findOrCreateRoom: () => room,
       phaseOf: () => 'car_select',
-      converse: async (_code, _id, utterance) => { utterances.push(utterance); return 'Selected.'; },
+      handleSetupUtterance:(_code,_id,utterance)=>{utterances.push(utterance);return 'Selected.';},
     });
     adapter.handleMessage(JSON.stringify({ type:'setup', callSid:'CA-menu-dtmf', customParameters:{ roomCode:'4821' } }));
     adapter.handleMessage(JSON.stringify({ type:'dtmf', digit:'2' }));
@@ -218,7 +218,7 @@ describe('ConversationRelayAdapter', () => {
     expect(arrival).toContain('voice racer');
     expect(arrival).toContain('conversation relay');
     expect(arrival).toMatch(/left|right/);
-    expect(arrival).toContain('say start');
+    expect(arrival).toContain('opens automatically');
     expect(arrival).not.toContain('your name');
     said.length=0;
     adapter.handleMessage(JSON.stringify({type:'prompt',voicePrompt:'help',last:true}));
@@ -232,7 +232,7 @@ describe('ConversationRelayAdapter', () => {
     const adapter=new ConversationRelayAdapter({findOrCreateRoom:()=>room,say:text=>said.push(text),phaseOf:()=> 'car_select'});
     adapter.setAuthoritativeName('Ada');adapter.handleMessage(JSON.stringify({type:'setup',callSid:'CA-car',customParameters:{roomCode:'4821'}}));
     expect(said.join(' ')).toMatch(/Ada/);
-    expect(said.at(-1)?.toLowerCase()).toMatch(/car.*player one.*every racer chooses/);
+    expect(said.at(-1)?.toLowerCase()).toMatch(/choose your own car.*every racer chooses/);
   });
 
   it('speaks only numeric countdown + short go events to the caller', () => {
@@ -331,7 +331,7 @@ describe('ConversationRelayAdapter', () => {
     expect(said[1]!.toLowerCase()).toMatch(/track|course/);
   });
 
-  it('drops menu guidance and delayed replies after another caller advances the phase', async () => {
+  it('uses immediate setup guidance and never starts a delayed host turn', async () => {
     const room=fakeRoom();const said:string[]=[];let phase='car_select';let release!:(value:string)=>void;
     const delayed=new Promise<string>(resolve=>{release=resolve;});
     const adapter=new ConversationRelayAdapter({
@@ -346,17 +346,19 @@ describe('ConversationRelayAdapter', () => {
     adapter.onGameEvent({kind:'enter_car_select'});
     release('Choose a car by name or number.');
     await Promise.resolve();await Promise.resolve();
-    expect(said).toHaveLength(0);
+    expect(said).toHaveLength(1);
+    expect(said[0]).toMatch(/choose your own car/i);
   });
 
-  it('makes a replaced adapter inert before an in-flight reply resolves', async () => {
+  it('does not start a host turn that could outlive a replaced setup adapter', async () => {
     const room=fakeRoom();const said:string[]=[];let release!:(value:string)=>void;
     const delayed=new Promise<string>(resolve=>{release=resolve;});
     const adapter=new ConversationRelayAdapter({findOrCreateRoom:()=>room,phaseOf:()=> 'car_select',say:text=>said.push(text),converse:async()=>delayed});
     adapter.handleMessage(JSON.stringify({type:'setup',callSid:'CA-old',customParameters:{roomCode:'4821'}}));
     said.length=0;adapter.handleMessage(JSON.stringify({type:'prompt',voicePrompt:'which car is fastest?',last:true}));adapter.handleClose(true);
     release('Choose a car by name or number.');await Promise.resolve();await Promise.resolve();
-    expect(said).toHaveLength(0);
+    expect(said).toHaveLength(1);
+    expect(said[0]).toMatch(/choose your own car/i);
   });
 
   it('does not repeat the menu or car response already spoken to the initiating caller', () => {
@@ -400,8 +402,8 @@ describe('ConversationRelayAdapter', () => {
     expect(said[0]!.toLowerCase()).toContain('second');
   });
 
-  // ── Conversational routing (menus → LLM host; race → fast commands) ─────────────────────────────
-  it('routes a MENU utterance to converse() and speaks the reply (not the command path)', async () => {
+  // ── Setup stays deterministic; race questions may use the conversational host ──────────────────
+  it('keeps unknown menu speech contextual and out of the conversational host', async () => {
     const room = fakeRoom(); const said: string[] = []; let conversed = '';
     const a = new ConversationRelayAdapter({
       findOrCreateRoom: () => room, say: (t) => said.push(t),
@@ -412,12 +414,12 @@ describe('ConversationRelayAdapter', () => {
     said.length = 0;
     a.handleMessage(JSON.stringify({ type:'prompt', voicePrompt:'which car is fastest?', last:true }));
     await new Promise(r => setTimeout(r, 0));   // let the converse promise resolve
-    expect(conversed).toBe('which car is fastest?');
-    expect(said).toContain('The McLaren is fastest!');
+    expect(conversed).toBe('');
+    expect(said.join(' ')).toMatch(/choose your own car/i);
     expect(room.applied).toHaveLength(0);        // menu chat must NOT drive the car
   });
 
-  it('DROPS an in-flight LLM reply if the caller barges in (interrupt) before it resolves', async () => {
+  it('does not create an in-flight setup LLM reply when the caller barges in', async () => {
     // Barge-in: the caller asks something, then interrupts while the host is "thinking". The late
     // reply must NOT be spoken over the caller's new speech — that's the whole point of interruption.
     const room = fakeRoom(); const said: string[] = [];
@@ -434,10 +436,11 @@ describe('ConversationRelayAdapter', () => {
     a.handleMessage(JSON.stringify({ type:'interrupt', utteranceUntilInterrupt:'', durationUntilInterruptMs:100 }));
     resolveConverse('Here is a long-winded answer nobody asked to finish');
     await new Promise(r => setTimeout(r, 0));
-    expect(said).toHaveLength(0);   // the stale reply was dropped
+    expect(said).toHaveLength(1);
+    expect(said[0]).toMatch(/choose your own car/i);
   });
 
-  it('drops an older host turn as soon as a newer interim transcript arrives', async () => {
+  it('does not create an older setup host turn when a newer interim arrives', async () => {
     const room=fakeRoom();const said:string[]=[];let release!:(value:string)=>void;
     const delayed=new Promise<string>(resolve=>{release=resolve;});
     const adapter=new ConversationRelayAdapter({findOrCreateRoom:()=>room,phaseOf:()=> 'car_select',say:text=>said.push(text),converse:async()=>delayed});
@@ -446,12 +449,13 @@ describe('ConversationRelayAdapter', () => {
     adapter.handleMessage(JSON.stringify({type:'prompt',voicePrompt:'which car is fastest?',last:true}));
     adapter.handleMessage(JSON.stringify({type:'prompt',voicePrompt:'actually the',last:false}));
     release('Choose the second car.');await Promise.resolve();await Promise.resolve();
-    expect(said).toHaveLength(0);
+    expect(said).toHaveLength(1);
+    expect(said[0]).toMatch(/choose your own car/i);
   });
 
   it.each([
-    ['en-US','car_select',/car name or number/i],
-    ['pt-BR','map_select',/nome ou o número.*pista/i],
+    ['en-US','car_select',/choose your own car.*name or number/i],
+    ['pt-BR','map_select',/vote em uma pista.*nome ou número/i],
   ] as const)('uses scripted %s menu guidance when the host returns nothing', async (locale,phase,expected) => {
     const room=fakeRoom();const said:string[]=[];
     const adapter=new ConversationRelayAdapter({findOrCreateRoom:()=>room,phaseOf:()=>phase,say:text=>said.push(text),converse:async()=>null});
@@ -470,7 +474,7 @@ describe('ConversationRelayAdapter', () => {
     adapter.handleMessage(JSON.stringify({type:'setup',callSid:'CA-named-fallback',customParameters:{roomCode:'4821'}}));
     said.length=0;adapter.handleMessage(JSON.stringify({type:'prompt',voicePrompt:'what now exactly?',last:true}));
     await Promise.resolve();await Promise.resolve();
-    expect(said.join(' ')).toMatch(/say start/i);
+    expect(said.join(' ')).toMatch(/opens automatically/i);
     expect(said.join(' ')).not.toMatch(/say your name/i);
   });
 
@@ -564,7 +568,7 @@ describe('ConversationRelayAdapter', () => {
     expect(said.join(' ')).toMatch(/esquerda.*direita.*acelerar.*frear.*nitro/i);
   });
 
-  it('only converses on the FINAL transcript, not interim partials', async () => {
+  it('never converses on setup transcripts, including final speech', async () => {
     const room = fakeRoom(); let calls = 0;
     const a = new ConversationRelayAdapter({
       findOrCreateRoom: () => room, phaseOf: () => 'lobby',
@@ -574,7 +578,7 @@ describe('ConversationRelayAdapter', () => {
     a.handleMessage(JSON.stringify({ type:'prompt', voicePrompt:'start the', last:false }));
     a.handleMessage(JSON.stringify({ type:'prompt', voicePrompt:'start the race', last:true }));
     await new Promise(r => setTimeout(r, 0));
-    expect(calls).toBe(1);
+    expect(calls).toBe(0);
   });
 
   it('unregisters on close', () => {

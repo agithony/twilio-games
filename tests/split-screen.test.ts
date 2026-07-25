@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { buildPlayerMarker } from '../client/car-factory';
 import { chaseCameraPose } from '../client/chase-camera';
 import { splitScreenViewports, type SplitScreenCar } from '../client/split-screen';
 
@@ -7,6 +9,18 @@ const car = (id: string, name: string, x: number, z: number): SplitScreenCar => 
 });
 
 describe('Voice Racer split screen', () => {
+  it('builds an equal unscaled color marker for each player car',()=>{
+    const first=buildPlayerMarker('#36d1dc',1),second=buildPlayerMarker('#f22f46',2);
+    expect(first.userData).toMatchObject({isPlayerArrow:true,playerNumber:1});
+    expect(second.userData).toMatchObject({isPlayerArrow:true,playerNumber:2});
+    expect(first.children[0]?.scale).toEqual(second.children[0]?.scale);
+    const renderer=readFileSync(new URL('../client/renderer.ts',import.meta.url),'utf8');
+    expect(renderer).toContain('scaledModel.add(model)');
+    expect(renderer).toContain('wrapper.add(marker)');
+    expect(renderer).toContain('scaledModel.scale.setScalar(this.carScale(index))');
+    expect(renderer).not.toContain('wrapper.scale.setScalar(this.carScale(idx))');
+  });
+
   it('covers an odd-height canvas with top and bottom player viewports', () => {
     const views = splitScreenViewports([
       car('p1', 'Ada', -4, 100),

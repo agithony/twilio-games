@@ -122,9 +122,9 @@ Open **Settings > Secrets and variables > Actions > Variables** and configure as
 | `GAME_PHONE_NUMBER` | No | Legacy voice-number fallback until both locale numbers are saved in the operator console |
 | `TWILIO_SMS_NUMBER` | Yes | E.164 SMS-capable Twilio number registered with TAC; intentionally separate from the US and Brazilian voice numbers |
 | `TWILIO_WHATSAPP_NUMBER` | Required to offer WhatsApp | Approved WhatsApp sender; omit the `whatsapp:` prefix or include it, both are accepted |
-| `TWILIO_MESSAGING_SERVICE_SID` | Required for out-of-session WhatsApp notices | Messaging Service SID containing the approved WhatsApp sender |
+| `TWILIO_MESSAGING_SERVICE_SID` | Required for WhatsApp Phone CTA and out-of-session notices | Messaging Service SID containing the approved WhatsApp sender |
 | `ARCADE_OUTBOUND_MESSAGING_ENABLED` | No | Set to literal `true` only after REST credentials, senders, callbacks, and templates are ready; defaults off. The operator console reports whether proactive delivery is effectively enabled separately from inbound onboarding. |
-| `TWILIO_WHATSAPP_CONTENT_SID_STATION_*_{EN_US,PT_BR}` | Required only for out-of-session WhatsApp delivery | Ten approved Content SIDs covering five station notice kinds in English and Brazilian Portuguese |
+| `TWILIO_WHATSAPP_CONTENT_SID_STATION_*_{EN_US,PT_BR}` | Call-now required for Phone CTA; others required out of session | Ten approved Content SIDs covering five station notice kinds in English and Brazilian Portuguese |
 | `CR_TTS_VOICE` | No | ElevenLabs voice ID for Conversation Relay TTS; empty uses the Relay default |
 | `CR_TTS_VOICE_PT_BR` | No | Optional Brazilian Portuguese ElevenLabs voice ID; empty uses Relay's `pt-BR` default |
 | `DEFAULT_LOCALE` | No | Locale used when no localized display is connected; defaults to `en-US` |
@@ -218,7 +218,16 @@ In station mode, the server routes each call by its persisted admitted identity,
 
 Carrier registration requirements, including A2P 10DLC or toll-free verification, may apply to outbound US messaging. Confirm the Twilio number and campaign configuration before an event.
 
-Approved WhatsApp Content Templates must match the application variables: admitted uses `{{1}}` for game, overflow uses `{{1}}` for position, call-now uses `{{1}}` for number and `{{2}}` for game, results uses `{{1}}` for game and optionally `{{2}}` for balance, and next-game uses no variables. Configure both `EN_US` and `PT_BR` Content SIDs before enabling out-of-session delivery.
+Approved WhatsApp Content Templates must match the application variables: admitted uses `{{1}}` for game, overflow uses `{{1}}` for position, call-now uses `{{1}}` for game, results uses `{{1}}` for game and optionally `{{2}}` for balance, and next-game uses no variables. Configure both `EN_US` and `PT_BR` Content SIDs before enabling out-of-session delivery.
+
+Create each call-now template as `twilio/call-to-action` with one **Phone** action, not a WhatsApp **Voice Call** action. The Phone action must contain the static E.164 Voice number for that locale; WhatsApp does not allow variables in Phone actions. Use button text **Call with phone app** for `EN_US` and **Ligar pelo telefone** for `PT_BR`. Both labels stay within WhatsApp's 20-character button limit. Suggested bodies are:
+
+```text
+EN_US: GAME TIME! Tap "Call with phone app" below and stay on the line. Your voice will control {{1}} on the display.
+PT_BR: HORA DE JOGAR! Toque em "Ligar pelo telefone" abaixo e permaneça na linha. Sua voz controlará {{1}} na tela principal.
+```
+
+Set each Phone action to the corresponding operator-configured `channels.voiceNumbers` value, submit both templates for WhatsApp approval, and assign their SIDs to `TWILIO_WHATSAPP_CONTENT_SID_STATION_CALL_NOW_EN_US` and `TWILIO_WHATSAPP_CONTENT_SID_STATION_CALL_NOW_PT_BR`. The application selects the SID by the player's locale and uses this approved template even within the 24-hour session window so the native Phone button is always present. If either Voice number changes, create or update and reapprove the matching template before changing the operator setting.
 
 ## Verify the deployment
 

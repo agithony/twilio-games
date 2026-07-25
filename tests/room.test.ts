@@ -36,32 +36,52 @@ describe('Room', () => {
     room=new Room('4821',1,{carCount:3,maps:['Silver Lake','Drift']});room.expectHumanPlayers(2);
     const a=room.addPlayer('Ada',undefined,0) as {playerId:string};
     const b=room.addPlayer('Rex',undefined,1) as {playerId:string};
-    room.advance();room.selectCar(a.playerId,1);room.advance();
+    expect(room.phase).toBe('car_select');room.back();expect(room.phase).toBe('car_select');room.selectCar(a.playerId,1);
     expect(room.phase).toBe('car_select');
     expect(room.lobbyPlayers().map(player=>player.carIndex)).toEqual([1,null]);
-    room.selectCar(b.playerId,2);room.advance();expect(room.phase).toBe('map_select');
-    room.selectMap('Silver Lake',a.playerId);room.advance();expect(room.phase).toBe('map_select');
-    room.selectMap('Drift',b.playerId);room.advance();
+    room.selectCar(b.playerId,2);expect(room.phase).toBe('map_select');
+    expect(room.selectMap('Drift')).toBe(false);
+    expect(room.mapVotes().counts).toEqual({});
+    room.selectMap('Silver Lake',a.playerId);expect(room.phase).toBe('map_select');
+    room.selectMap('Drift',b.playerId);
     expect(room.phase).toBe('countdown');
     expect(room.snapshot()?.cars.map(car=>car.carIndex)).toEqual([1,2]);
     expect(room.mapVotes().counts).toEqual({'Silver Lake':1,Drift:1});
   });
 
-  it('reserves station setup advancement for Player One', () => {
+  it('lets both station players own setup input while progression is automatic', () => {
     room.expectHumanPlayers(2);
     const b=room.addPlayer('Rex',undefined,1) as {playerId:string};
     const a=room.addPlayer('Ada',undefined,0) as {playerId:string};
     expect(room.canControlSetup(a.playerId)).toBe(true);
-    expect(room.canControlSetup(b.playerId)).toBe(false);
+    expect(room.canControlSetup(b.playerId)).toBe(true);
   });
 
-  it('infers Player One authority and selection gates for two standalone callers', () => {
+  it('accepts setup input from either standalone caller while preserving selection gates', () => {
     room=new Room('4821',1,{carCount:2,maps:['Silver Lake']});
     const a=room.addPlayer('Ada') as {playerId:string};const b=room.addPlayer('Rex') as {playerId:string};
-    expect(room.canControlSetup(a.playerId)).toBe(true);expect(room.canControlSetup(b.playerId)).toBe(false);
+    expect(room.canControlSetup(a.playerId)).toBe(true);expect(room.canControlSetup(b.playerId)).toBe(true);
     room.advance();room.selectCar(a.playerId,0);room.advance();expect(room.phase).toBe('car_select');
     room.selectCar(b.playerId,1);room.advance();room.selectMap('Silver Lake',a.playerId);room.advance();
     expect(room.phase).toBe('map_select');
+  });
+
+  it('purges a display vote when a room switches to automatic voice setup',()=>{
+    room=new Room('4821',1,{carCount:1,maps:['Silver Lake']});
+    const player=room.addPlayer('Ada') as {playerId:string};room.advance();room.selectCar(player.playerId,0);room.advance();
+    expect(room.selectMap('Silver Lake')).toBe(true);expect(room.mapVotes().counts).toEqual({'Silver Lake':1});
+    room.expectHumanPlayers(1);
+    expect(room.mapVotes().counts).toEqual({});expect(room.phase).toBe('map_select');
+  });
+
+  it.each(['count-first','remove-first'] as const)('reconciles Racer setup when a no-show is dropped %s',order=>{
+    room=new Room('4821',1,{carCount:2,maps:['Silver Lake']});room.expectHumanPlayers(2);
+    const a=room.addPlayer('Ada',undefined,0) as {playerId:string};const b=room.addPlayer('Bo',undefined,1) as {playerId:string};
+    room.selectCar(a.playerId,0);room.selectCar(b.playerId,1);room.selectMap('Silver Lake',a.playerId);
+    if(order==='count-first')room.expectHumanPlayers(1);
+    room.removePlayer(b.playerId);
+    if(order==='remove-first')room.expectHumanPlayers(1);
+    expect(room.phase).toBe('countdown');
   });
 
   it('rejects joins beyond MAX_PLAYERS', () => {

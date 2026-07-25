@@ -395,7 +395,9 @@ export class ArcadeMessagingRuntime {
           );
           continue;
         }
-        const useTemplate = notification.channel === 'whatsapp' && !inWhatsAppWindow;
+        const useTemplate = notification.channel === 'whatsapp'
+          && notification.templateContentSid !== null
+          && (!inWhatsAppWindow || notification.kind === 'STATION_CALL_NOW');
         const ordinal = notification.attempts.length + 1;
         const attempt: ArcadeOutboundAttemptRecord = {
           id: `${notification.id}:attempt:${ordinal}`,
@@ -682,10 +684,12 @@ function notificationSuppressionReason(
       || match.phase !== 'LAUNCHING') {
       return 'CALL_NOW_OBSOLETE';
     }
-    const locale = notification.locale.toLowerCase().startsWith('pt') ? 'pt-BR' : 'en-US';
+    const locale = address.preferredLocale === 'pt-BR' ? 'pt-BR' : 'en-US';
+    const notificationLocale = notification.locale === 'pt-BR' ? 'pt-BR' : 'en-US';
+    if (locale !== notificationLocale) return 'VOICE_ROUTE_CHANGED';
     const callNumber = currentVoiceNumber(config, locale, callNumberSource);
     return config.channels.voice && callNumber !== null
-      && notification.templateVariables['1'] === callNumber
+      && notification.callNumber === callNumber
       ? null
       : 'VOICE_ROUTE_CHANGED';
   }
