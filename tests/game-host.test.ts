@@ -160,7 +160,7 @@ describe('buildSystemPrompt', () => {
 
   it('after taking the name it guides the next step (no dead air)', () => {
     const p = buildSystemPrompt(ctx({ phase: 'lobby', myName: null })).toLowerCase();
-    expect(p).toContain('car selection opens automatically');
+    expect(p).toContain('either racer can say start');
   });
 
   it('after taking the name it tells callers to look at controls and gives voice commands', () => {

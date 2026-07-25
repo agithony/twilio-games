@@ -521,8 +521,13 @@ describe('Arcade messaging commands', () => {
     expect(votePrompt.reply).toContain('VOTING IS OPEN! Reply 1 Voice Racer, 2 Voice Monsters, 3 Voice Fighter');
     const first = await message(h.service, 'SM-CHOICE-005', '1');
     expect(first.reply).toContain('VOTE LOCKED: Voice Racer');
-    const changed = await message(h.service, 'SM-CHOICE-006', 'VOICE MONSTERS');
+    for(const [index,input] of ['1 Voice Racer','1 racer','voce racer','voice rcaer','Voice Racer!'].entries()){
+      expect((await message(h.service,`SM-CHOICE-TOLERANT-${index}`,input)).reply).toContain('VOTE LOCKED: Voice Racer');
+    }
+    const changed = await message(h.service, 'SM-CHOICE-006', 'Voice Monsters!');
     expect(changed.reply).toContain('VOTE LOCKED: Voice Monsters');
+    expect((await message(h.service,'SM-CHOICE-CONFLICT','1 Voice Fighter')).reply)
+      .toContain("That option isn't on the display");
     expect((await message(h.service, 'SM-CHOICE-007', '4')).reply)
       .toContain("That option isn't on the display. Reply 1 Voice Racer, 2 Voice Monsters, 3 Voice Fighter");
     const state = h.store.snapshot();
@@ -552,7 +557,7 @@ describe('Arcade messaging commands', () => {
     const deadline = Date.parse(selecting.round!.selectionEndsAt!);
 
     h.setNow(deadline);
-    const exact = await message(h.service, 'SM-CLOSED-EXACT', 'RACER', englishFrom);
+    const exact = await message(h.service, 'SM-CLOSED-EXACT', '1 Voice Racer', englishFrom);
     expect(exact.reply).toBe(
       "Voting is closed. Watch the display; we'll tell you if you're in and when it's time to call.",
     );
@@ -573,7 +578,7 @@ describe('Arcade messaging commands', () => {
       game: 'fighter', engineRoomCode: 'CLOSED-CHOICE',
     });
     expect(locked.station.phase).toBe('LOCKED');
-    expect(await message(h.service, 'SM-CLOSED-EXACT', 'RACER', englishFrom)).toEqual(exact);
+    expect(await message(h.service, 'SM-CLOSED-EXACT', '1 Voice Racer', englishFrom)).toEqual(exact);
   });
 
   it('rejects browser phone replacement while a verified messaging address is linked', async () => {

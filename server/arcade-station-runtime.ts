@@ -33,7 +33,9 @@ export interface ArcadeStationRuntimeOptions {
   readonly clearTimer?: (timer: Timer) => void;
   readonly onError?: (error: unknown) => void;
   readonly onMatchRemoved?: (game: PlayableArcadeGame, roomCode: string, removal: StationMatchRemoval) => void;
-  readonly onMatchParticipantsChanged?: (game: PlayableArcadeGame, roomCode: string, count: number) => void;
+  readonly onMatchParticipantsChanged?: (
+    game:PlayableArcadeGame,roomCode:string,count:number,activeEnginePlayerIds:readonly string[],
+  ) => void;
 }
 
 type ScheduledTransition = Readonly<{
@@ -54,7 +56,9 @@ export class ArcadeStationRuntime {
   private readonly clearTimer: (timer: Timer) => void;
   private readonly onError?: (error: unknown) => void;
   private onMatchRemoved?: (game: PlayableArcadeGame, roomCode: string, removal: StationMatchRemoval) => void;
-  private onMatchParticipantsChanged?: (game: PlayableArcadeGame, roomCode: string, count: number) => void;
+  private onMatchParticipantsChanged?: (
+    game:PlayableArcadeGame,roomCode:string,count:number,activeEnginePlayerIds:readonly string[],
+  ) => void;
   private timer: Timer | null = null;
   private unsubscribe: (() => void) | null = null;
   private pending: Promise<void> = Promise.resolve();
@@ -62,6 +66,7 @@ export class ArcadeStationRuntime {
   private readonly terminalEngines = new Map<string, 'completed' | 'abandoned'>();
   private readonly engineResults = new Map<string, readonly StationEngineParticipantResult[]>();
   private readonly connectedReadyEntries = new Map<string, string>();
+  private readonly knownEnginePlayerByReadyEntry=new Map<string,string>();
   private readonly voiceSetupDeadlines = new Map<string, number>();
   private readonly voiceSetupActivityAt=new Map<string,number>();
   private readonly canonicalEngineIdByReadyEntry = new Map<string, string>();
@@ -91,7 +96,7 @@ export class ArcadeStationRuntime {
   }
 
   setMatchParticipantsChangedHandler(
-    handler: (game: PlayableArcadeGame, roomCode: string, count: number) => void,
+    handler: (game:PlayableArcadeGame,roomCode:string,count:number,activeEnginePlayerIds:readonly string[]) => void,
   ): void {
     this.onMatchParticipantsChanged = handler;
   }
@@ -178,6 +183,7 @@ export class ArcadeStationRuntime {
 
   markParticipantConnected(readyEntryId: string, enginePlayerId = `legacy:${readyEntryId}`): void {
     this.connectedReadyEntries.set(readyEntryId, enginePlayerId);
+    this.knownEnginePlayerByReadyEntry.set(readyEntryId,enginePlayerId);
     this.voiceSetupActivityAt.set(readyEntryId,this.clock());
     const canonical = this.canonicalEngineIdByReadyEntry.get(readyEntryId);
     if (canonical) this.canonicalEngineIdByCurrentId.set(enginePlayerId, canonical);
@@ -229,6 +235,10 @@ export class ArcadeStationRuntime {
         currentMatch.game,
         currentMatch.engineRoomCode,
         currentMatch.participantReadyEntryIds.length,
+        currentMatch.participantReadyEntryIds
+          .map(readyEntryId=>this.knownEnginePlayerByReadyEntry.get(readyEntryId)
+            ??currentMatch.enginePlayerIdsByReadyEntryId[readyEntryId])
+          .filter((enginePlayerId):enginePlayerId is string=>Boolean(enginePlayerId)),
       );
     }
     return result;
@@ -345,6 +355,7 @@ export class ArcadeStationRuntime {
       }
       const activeParticipants = new Set(activeMatch?.participantReadyEntryIds ?? []);
       for (const id of this.connectedReadyEntries.keys()) if (!activeParticipants.has(id)) this.connectedReadyEntries.delete(id);
+      for(const id of this.knownEnginePlayerByReadyEntry.keys())if(!activeParticipants.has(id))this.knownEnginePlayerByReadyEntry.delete(id);
       for(const id of this.voiceSetupActivityAt.keys())if(!activeParticipants.has(id))this.voiceSetupActivityAt.delete(id);
       const terminalAction = activeEngineKey ? this.terminalEngines.get(activeEngineKey) : undefined;
       if (activeMatch && terminalAction
@@ -461,8 +472,7 @@ export class ArcadeStationRuntime {
         readyEntryId => !this.connectedReadyEntries.has(readyEntryId),
       );
       if (match && disconnected && match.overflowReadyEntryIds.length > 0) {
-        return this.service.dropStationAdmittedEntry({
-          stationId,
+        return this.dropAdmittedEntry({
           readyEntryId: disconnected,
           expectedRevision,
           idempotencyKey: engineIdempotencyKey('no-show-drop', match.id, match.launchGeneration),

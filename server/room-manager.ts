@@ -12,4 +12,5 @@ export class RoomManager {
   find(code: string): Room | undefined { return this.rooms.get(code); }
   remove(code: string): void { this.rooms.delete(code); }
   get count(): number { return this.rooms.size; }
+  values(): IterableIterator<Room> { return this.rooms.values(); }
 }

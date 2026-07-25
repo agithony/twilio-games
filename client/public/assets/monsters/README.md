@@ -1,6 +1,6 @@
 # Voice Monsters Sprites
 
-This directory contains the browser-public front and back art for the eight Voice Monsters. It currently has 16 animated GIFs, one complete pair per monster. See the [project README](../../../../README.md) for application setup and the [asset credits](../../../../assets/CREDITS.md) for the repository provenance ledger.
+This directory contains the browser-public front and back art for the eight Voice Monsters defined by `shared/monster-roster.ts`. It currently has 16 animated GIFs, one complete pair per monster. See the [project README](../../../../README.md) for application setup and the [asset credits](../../../../assets/CREDITS.md) for the repository provenance ledger.
 
 ## Installation
 
@@ -19,9 +19,9 @@ Name each file with a roster ID and view:
 
 `front` is the opponent-facing view and `back` is the player's rear view. Valid IDs are `sparkmouse`, `embertail`, `shellback`, `thornling`, `galecoil`, `voltcrest`, `dazeduck`, and `psyclone`.
 
-The battle renderer tries GIF first and PNG second for each monster and view, so GIF wins when both exist. If both requests fail, it draws the hand-authored canvas sprite from `client/battle/monster-art.ts`; an unknown roster ID degrades to a simple tinted shape. The selection and battle screens use the same candidate order. No manifest or code change is needed when replacing an existing filename.
+The battle renderer tries GIF first and PNG second for each monster and view, so GIF wins when both exist. If both requests fail, it draws the hand-authored canvas sprite from `client/battle/monster-art.ts`; an unknown roster ID degrades to a simple tinted shape. The selection and battle screens use the same candidate order, which is covered by the roster and sprite-source tests. No manifest or code change is needed when replacing an existing filename.
 
-Use transparent, roughly square artwork. The UI displays sprites with nearest-neighbor scaling. GIF transparency has hard one-bit edges; an animated PNG stored with a `.png` extension can retain full alpha in supporting browsers. Static PNGs still receive the battle renderer's attack and hit motion.
+Use transparent, roughly square artwork. The UI renders sprites with nearest-neighbor scaling. GIF transparency has hard one-bit edges; an animated PNG stored with a `.png` extension can retain full alpha in supporting browsers. Static PNGs still receive the battle renderer's attack and hit motion.
 
 ## License
 

@@ -218,7 +218,7 @@ describe('ConversationRelayAdapter', () => {
     expect(arrival).toContain('voice racer');
     expect(arrival).toContain('conversation relay');
     expect(arrival).toMatch(/left|right/);
-    expect(arrival).toContain('opens automatically');
+    expect(arrival).toMatch(/either racer.*say start/i);
     expect(arrival).not.toContain('your name');
     said.length=0;
     adapter.handleMessage(JSON.stringify({type:'prompt',voicePrompt:'help',last:true}));
@@ -329,6 +329,19 @@ describe('ConversationRelayAdapter', () => {
     expect(said).toHaveLength(2);
     expect(said[0]!.toLowerCase()).toMatch(/car|ride|machine/);
     expect(said[1]!.toLowerCase()).toMatch(/track|course/);
+  });
+
+  it('tells a waiting station caller when their personal setup turn opens',()=>{
+    const room=fakeRoom(),said:string[]=[];let turn:'active'|'waiting'='waiting';
+    const adapter=new ConversationRelayAdapter({
+      findOrCreateRoom:()=>room,phaseOf:()=> 'car_select',say:text=>said.push(text),setupTurnFor:()=>turn,
+    });
+    adapter.setStationManaged(true);
+    adapter.handleMessage(JSON.stringify({type:'setup',callSid:'CA-turn',customParameters:{roomCode:'4821'}}));
+    said.length=0;adapter.onGameEvent({kind:'enter_car_select'});
+    expect(said.join(' ')).toMatch(/waiting for the other/i);
+    turn='active';adapter.onGameEvent({kind:'car_picked',playerId:'p2',name:'Ada',car:'Roadster'});
+    expect(said.at(-1)).toMatch(/choose your own car/i);
   });
 
   it('uses immediate setup guidance and never starts a delayed host turn', async () => {
@@ -455,7 +468,7 @@ describe('ConversationRelayAdapter', () => {
 
   it.each([
     ['en-US','car_select',/choose your own car.*name or number/i],
-    ['pt-BR','map_select',/vote em uma pista.*nome ou número/i],
+    ['pt-BR','map_select',/vote na sua própria pista.*nome ou número/i],
   ] as const)('uses scripted %s menu guidance when the host returns nothing', async (locale,phase,expected) => {
     const room=fakeRoom();const said:string[]=[];
     const adapter=new ConversationRelayAdapter({findOrCreateRoom:()=>room,phaseOf:()=>phase,say:text=>said.push(text),converse:async()=>null});
@@ -474,8 +487,46 @@ describe('ConversationRelayAdapter', () => {
     adapter.handleMessage(JSON.stringify({type:'setup',callSid:'CA-named-fallback',customParameters:{roomCode:'4821'}}));
     said.length=0;adapter.handleMessage(JSON.stringify({type:'prompt',voicePrompt:'what now exactly?',last:true}));
     await Promise.resolve();await Promise.resolve();
-    expect(said.join(' ')).toMatch(/opens automatically/i);
+    expect(said.join(' ')).toMatch(/either racer.*say start/i);
     expect(said.join(' ')).not.toMatch(/say your name/i);
+  });
+
+  it('does not reinterpret a delayed setup final after the room changes phase',()=>{
+    const room=fakeRoom(),said:string[]=[],handled:string[]=[];let phase='car_select';
+    const adapter=new ConversationRelayAdapter({
+      findOrCreateRoom:()=>room,phaseOf:()=>phase,say:text=>said.push(text),
+      handleSetupUtterance:(_room,_player,utterance)=>{handled.push(utterance);return'Selected.';},
+    });
+    adapter.handleMessage(JSON.stringify({type:'setup',callSid:'CA-stale-setup',customParameters:{roomCode:'4821'}}));
+    said.length=0;
+    adapter.handleMessage(JSON.stringify({type:'prompt',voicePrompt:'one',last:false}));
+    phase='map_select';
+    adapter.handleMessage(JSON.stringify({type:'prompt',voicePrompt:'one',last:true}));
+    expect(handled).toEqual([]);
+    expect(said.join(' ')).toMatch(/track/i);
+  });
+
+  it('does not reinterpret a duplicate final-only setup choice in the next phase',()=>{
+    const room=fakeRoom(),handled:string[]=[];let phase='car_select';
+    const adapter=new ConversationRelayAdapter({
+      findOrCreateRoom:()=>room,phaseOf:()=>phase,
+      handleSetupUtterance:(_room,_player,utterance)=>{handled.push(`${phase}:${utterance}`);return'Selected.';},
+    });
+    adapter.handleMessage(JSON.stringify({type:'setup',callSid:'CA-final-only',customParameters:{roomCode:'4821'}}));
+    adapter.handleMessage(JSON.stringify({type:'prompt',voicePrompt:'one',last:true}));
+    phase='map_select';
+    adapter.onGameEvent({kind:'enter_map_select'});
+    adapter.handleMessage(JSON.stringify({type:'prompt',voicePrompt:'one',last:true}));
+    expect(handled).toEqual(['car_select:one']);
+  });
+
+  it('deduplicates an identical final command repeated by Relay',()=>{
+    const room=fakeRoom();
+    const adapter=new ConversationRelayAdapter({findOrCreateRoom:()=>room,phaseOf:()=> 'racing'});
+    adapter.handleMessage(JSON.stringify({type:'setup',callSid:'CA-duplicate-final',customParameters:{roomCode:'4821'}}));
+    const final=JSON.stringify({type:'prompt',voicePrompt:'right',last:true});
+    adapter.handleMessage(final);adapter.handleMessage(final);
+    expect(room.applied.map(item=>item.intent)).toEqual(['MOVE_RIGHT']);
   });
 
   it('throttles commentary by elapsed time rather than number of events', () => {

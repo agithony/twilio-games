@@ -228,17 +228,51 @@ describe('GameServer integration', () => {
     expect(abandoned).toBe(1);
   });
 
-  it('broadcasts the selected map when no-show recovery completes automatic setup',async()=>{
+  it('broadcasts the selected map after no-show recovery and explicit caller advance',async()=>{
     server=new GameServer({port:0,broadcastHz:30});server.setRoomConfigProvider(()=>({carCount:2,maps:['Silver Lake']}));
     let starts=0;server.setOnRaceStarted(()=>starts++);const port=await server.start();
     const display=new WebSocket(`ws://127.0.0.1:${port}`),inbox:any[]=[];display.on('message',data=>inbox.push(JSON.parse(data.toString())));
     await new Promise<void>(resolve=>display.on('open',resolve));display.send(JSON.stringify({type:'spectate',roomCode:'RECOVER'}));await wait(30);
     const room=server.getOrCreateRoom('RECOVER');room.expectHumanPlayers(2);
     const a=room.addPlayer('Ada',undefined,0) as {playerId:string};const b=room.addPlayer('Bo',undefined,1) as {playerId:string};
-    server.voiceSelectCar('RECOVER',a.playerId,0);server.voiceSelectCar('RECOVER',b.playerId,1);server.voiceSelectMap('RECOVER','Silver Lake',a.playerId);
-    server.voiceExpectHumanPlayers('RECOVER',1);server.voiceLeave('RECOVER',b.playerId);await wait(30);
+    server.voiceAdvance('RECOVER',a.playerId);server.voiceSelectCar('RECOVER',a.playerId,0);server.voiceSelectCar('RECOVER',b.playerId,1);
+    server.voiceAdvance('RECOVER',b.playerId);server.voiceSelectMap('RECOVER','Silver Lake',a.playerId);
+    server.voiceExpectHumanPlayers('RECOVER',1,[a.playerId]);await wait(30);
+    expect(room.phase).toBe('map_select');expect(server.voiceAdvance('RECOVER',a.playerId)).toBe(true);await wait(30);
     expect(starts).toBe(1);expect(room.phase).toBe('countdown');
     expect(inbox).toContainEqual(expect.objectContaining({type:'items',map:'Silver Lake'}));display.close();
+  });
+
+  it('releases a disconnected station slot before an overflow caller replaces it',async()=>{
+    server=new GameServer({port:0});server.setRoomConfigProvider(()=>({carCount:2,maps:['Silver Lake']}));await server.start();
+    const room=server.getOrCreateRoom('PROMOTE');room.expectHumanPlayers(2);
+    const first=room.addPlayer('Ada',undefined,0) as {playerId:string};
+    const dropped=room.addPlayer('Bo',undefined,1) as {playerId:string};
+    server.voiceExpectHumanPlayers('PROMOTE',2,[first.playerId]);
+    expect(room.lobbyPlayers().map(player=>player.playerId)).toEqual([first.playerId]);
+    const replacement=room.addPlayer('Cy',undefined,1);
+    expect(replacement).not.toHaveProperty('error');
+    expect(room.lobbyPlayers().some(player=>player.playerId===dropped.playerId)).toBe(false);
+  });
+
+  it('keeps an active voice race moving while the display reconnects',async()=>{
+    server=new GameServer({port:0,broadcastHz:30});server.setRoomConfigProvider(()=>({carCount:1,maps:['Silver Lake']}));
+    const heard:string[]=[];server.setOnRoomEvents((_roomCode,events)=>heard.push(...events.map(event=>event.kind)));
+    const port=await server.start();const display=new WebSocket(`ws://127.0.0.1:${port}`);
+    await new Promise<void>(resolve=>display.on('open',resolve));display.send(JSON.stringify({type:'spectate',roomCode:'VOICE-ONLY'}));
+    const room=server.getOrCreateRoom('VOICE-ONLY');const player=room.addPlayer('Ada') as {playerId:string};
+    room.advance();room.selectCar(player.playerId,0);room.advance();room.selectMap('Silver Lake');room.advance();
+    display.close();await new Promise<void>(resolve=>display.on('close',()=>resolve()));
+    server.stepRoomForTest(room,3.3);expect(heard).toContain('countdown');
+    for(let index=0;index<100&&room.phase!=='racing';index++)server.stepRoomForTest(room,0.1);
+    const before=room.snapshot()!.cars[0]!.z;
+    await wait(120);
+    expect(room.snapshot()!.cars[0]!.z).toBeGreaterThan(before);
+    const reconnected=new WebSocket(`ws://127.0.0.1:${port}`),inbox:any[]=[];
+    reconnected.on('message',data=>inbox.push(JSON.parse(data.toString())));
+    await new Promise<void>(resolve=>reconnected.on('open',resolve));
+    reconnected.send(JSON.stringify({type:'spectate',roomCode:'VOICE-ONLY'}));await wait(30);
+    expect(inbox).toContainEqual(expect.objectContaining({type:'items',map:'Silver Lake'}));reconnected.close();
   });
 
   it('flushes final finish/race_over events when a race enters results', async () => {
@@ -389,7 +423,7 @@ describe('HttpServer voice routing seams', () => {
     expect(room.mapVotes().counts).toEqual({'Silver Lake':1});
   });
 
-  it('keeps Racer selections independent and advances automatically after both players',async()=>{
+  it('keeps Racer selections independent and requires explicit caller advances',async()=>{
     http=new HttpServer({port:0,publicBaseUrl:'http://localhost',validateSignatures:false});await http.start();
     const game=(http as unknown as {game:GameServer}).game;
     game.setRoomConfigProvider(()=>({carCount:2,carNames:['Roadster','Coupe'],maps:['Silver Lake','Drift']}));
@@ -397,16 +431,25 @@ describe('HttpServer voice routing seams', () => {
     const first=room.addPlayer('Ada',undefined,0) as {playerId:string};
     const second=room.addPlayer('Bo',undefined,1) as {playerId:string};
 
+    expect(room.phase).toBe('lobby');expect(http.directSelectionForTest(room,second.playerId,'start')).toMatch(/Waiting for the other/i);
     expect(http.directSelectionForTest(room,second.playerId,'two')).toMatch(/Waiting for the other/i);
     expect(room.lobbyPlayers()).toEqual(expect.arrayContaining([
       expect.objectContaining({playerId:first.playerId,carIndex:null}),
-      expect.objectContaining({playerId:second.playerId,carIndex:1}),
+      expect.objectContaining({playerId:second.playerId,carIndex:null}),
     ]));
-    expect(http.directSelectionForTest(room,first.playerId,'one')).toMatch(/choose a track/i);
+    expect(http.directSelectionForTest(room,first.playerId,'one')).toMatch(/Waiting for the other/i);
+    expect(http.directSelectionForTest(room,first.playerId,'actually two')).toMatch(/Waiting for the other/i);
+    expect(room.lobbyPlayers().find(player=>player.playerId===first.playerId)?.carIndex).toBe(1);
+    expect(http.directSelectionForTest(room,second.playerId,'one')).toMatch(/Say "next"/i);
+    expect(room.phase).toBe('car_select');expect(http.directSelectionForTest(room,first.playerId,'next')).toMatch(/choose a track/i);
+    expect(room.phase).toBe('map_select');expect(http.directSelectionForTest(room,first.playerId,'one')).toMatch(/Waiting for the other/i);
+    expect(http.directSelectionForTest(room,second.playerId,'one')).toMatch(/repeat your own choice/i);
+    expect(room.mapVotes().counts).toEqual({'Silver Lake':1});
+    expect(http.directSelectionForTest(room,second.playerId,'two')).toMatch(/Say "start"/i);
+    expect(http.directSelectionForTest(room,first.playerId,'actually two')).toMatch(/Say "start"/i);
+    expect(room.mapVotes().counts).toEqual({Drift:2});
     expect(room.phase).toBe('map_select');
-    expect(http.directSelectionForTest(room,first.playerId,'one')).toMatch(/starts automatically/i);
-    expect(room.phase).toBe('map_select');
-    expect(http.directSelectionForTest(room,second.playerId,'two')).toMatch(/race/i);
+    expect(http.directSelectionForTest(room,second.playerId,'start')).toMatch(/race/i);
     expect(room.phase).toBe('countdown');
   });
 

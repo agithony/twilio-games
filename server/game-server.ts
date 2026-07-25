@@ -181,6 +181,10 @@ export class GameServer {
         // per-race seed for a fresh course. Mid-race Enter is ignored (race already running).
         if (conn.roomCode) {
           const room = this.rooms.find(conn.roomCode);
+          if(room?.usesStationSetup){
+            this.send(conn,{type:'error',code:'station_voice_only',message:'station_voice_only'});
+            break;
+          }
           if (room && this.stationResultsLocked(room)) {
             this.send(conn, { type: 'error', code: 'station_requeue_required', message: 'station_requeue_required' });
             break;
@@ -216,7 +220,7 @@ export class GameServer {
           const before=room.phase;
           // A player's WS pick counts as THEIR vote; the display (no playerId) uses the shared bucket.
           if (!room.selectMap(msg.map, conn.playerId)) break;
-          this.emitEvent(conn.roomCode!, { kind: 'map_picked', map: msg.map });
+          this.emitEvent(conn.roomCode!, { kind:'map_picked',map:msg.map,playerId:conn.playerId });
           this.publishSetupMutation(room,before);
         }
         break;
@@ -229,7 +233,7 @@ export class GameServer {
             break;
           }
           const before = room.phase;
-          room.advance();
+          room.advance(conn.playerId);
           const after = room.phase;
           if (after === 'countdown' || after === 'racing') this.reportStartedOnce(room);
           // Crossing into a race broadcasts items (with the chosen map) to EVERY conn in the room
@@ -275,6 +279,7 @@ export class GameServer {
         this.room(msg.roomCode);
         conn.roomCode = msg.roomCode;   // no playerId: receives broadcasts, occupies no slot
         this.pushLobby(msg.roomCode);   // send the display the current select/lobby state immediately
+        {const room=this.rooms.find(msg.roomCode);if(room&&['countdown','racing'].includes(room.phase))this.send(conn,anyItems(room));}
         break;
       }
       case 'leave': {
@@ -315,9 +320,9 @@ export class GameServer {
   // ── Voice-host actions: the conversational AI drives the game for a caller. These mirror the WS
   //    handlers (select_car/select_map/advance) EXACTLY — same room mutation, same broadcasts + host
   //    events — so a voice-driven pick appears on the shared screen just like a texted/keyed one.
-  voiceSelectCar(roomCode: string, playerId: string, carIndex: number): boolean {
+  voiceSelectCar(roomCode:string,playerId:string,carIndex:number,allowRevision=false):boolean {
     const room=this.rooms.find(roomCode);if(!room)return false;const before=room.phase;
-    if(!room.selectCar(playerId,carIndex))return false;
+    if(!room.selectCar(playerId,carIndex,allowRevision))return false;
     const who = room.lobbyPlayers().find(p => p.playerId === playerId);
     this.emitEvent(roomCode, { kind: 'car_picked', playerId, name: who?.name ?? 'Racer', car: room.carName(carIndex), spokenReplyPlayerId: playerId });
     this.publishSetupMutation(room,before,playerId);
@@ -328,13 +333,13 @@ export class GameServer {
     const room = this.rooms.find(roomCode); if (!room) return;
     const before=room.phase;
     room.setPlayerInfo(playerId, { name });
-    if(!room.usesAutomaticSetup)room.expectHumanPlayers(1);
+    if(!room.usesStationSetup)room.expectHumanPlayers(1,false);
     this.publishSetupMutation(room,before,playerId);
   }
-  voiceSelectMap(roomCode: string, map: string, voterId?: string): boolean {
+  voiceSelectMap(roomCode:string,map:string,voterId?:string,allowRevision=false):boolean {
     const room=this.rooms.find(roomCode);if(!room)return false;const before=room.phase;
-    if(!room.selectMap(map,voterId))return false;
-    this.emitEvent(roomCode, { kind: 'map_picked', map });
+    if(!room.selectMap(map,voterId,allowRevision))return false;
+    this.emitEvent(roomCode,{kind:'map_picked',map,...(voterId?{playerId:voterId}:{})});
     this.publishSetupMutation(room,before,voterId);
     return true;
   }
@@ -351,16 +356,21 @@ export class GameServer {
     const before=room.phase;room.removePlayer(playerId);this.reportAbandonedIfReset(room);this.publishSetupMutation(room,before);
     this.reapRoomIfEmpty(roomCode);
   }
-  voiceExpectHumanPlayers(roomCode:string,count:number):void {
+  voiceExpectHumanPlayers(roomCode:string,count:number,activeEnginePlayerIds?:readonly string[]):void {
     const room=this.rooms.find(roomCode);if(!room)return;
-    const before=room.phase;room.expectHumanPlayers(count);this.publishSetupMutation(room,before);
+    const before=room.phase;
+    if(activeEnginePlayerIds){
+      const retained=new Set(activeEnginePlayerIds);
+      for(const player of room.lobbyPlayers())if(!retained.has(player.playerId))room.removePlayer(player.playerId);
+    }
+    room.expectHumanPlayers(count);this.publishSetupMutation(room,before);
   }
   /** Advance the flow (lobby→car_select→map_select→race). Returns true if the phase actually changed. */
-  voiceAdvance(roomCode: string, spokenReplyPlayerId?: string): boolean {
+  voiceAdvance(roomCode: string, spokenReplyPlayerId: string): boolean {
     const room = this.rooms.find(roomCode); if (!room) return false;
     if (this.stationResultsLocked(room)) return false;
     const before = room.phase;
-    room.advance();
+    room.advance(spokenReplyPlayerId);
     const after = room.phase;
     if (after === 'countdown' || after === 'racing') this.reportStartedOnce(room);
     if (after === 'countdown' || after === 'racing') this.broadcastItems(roomCode);
@@ -426,12 +436,9 @@ export class GameServer {
       const now = process.hrtime.bigint();
       let dt = Number(now - last) / 1e9; last = now;
       dt = Math.min(dt, 0.1);
-      // step every active room at fixed timestep
-      const seen = new Set<Room>();
-      for (const c of this.conns) {
-        const room = c.roomCode ? this.rooms.find(c.roomCode) : undefined;
-        if (room && !seen.has(room)) { seen.add(room); this.stepRoom(room, dt); }
-      }
+      // Voice callers are not browser connections. Step every room so a temporary display disconnect
+      // cannot freeze an active race while both calls remain connected.
+      for (const room of this.rooms.values()) this.stepRoom(room, dt);
       this.broadcastAccum += dt;
       if (this.broadcastAccum >= this.broadcastEvery) {
         // Reset to the REMAINDER (not 0) so timing errors don't accumulate — keeps the long-run rate
@@ -455,14 +462,12 @@ export class GameServer {
     let acc = (this.roomAccum.get(room) ?? 0) + dt;
     while (acc >= STEP) { room.tick(STEP); acc -= STEP; }
     this.roomAccum.set(room, acc);
+    for(const event of room.drainEvents())this.emitEvent(room.code,event);
     // A tick may have flipped racing→results INSIDE this call. Report it NOW (same call as the
     // transition) so the standings persist even if the player disconnects this very tick and the
     // room gets reaped before the next stepRoom. (Read fresh — phase changed during tick().)
     const phaseAfter: string = room.phase;
     if (phaseAfter === 'results') {
-      // The final tick can queue finish/race_over and enter results before broadcastAll gets another
-      // racing-phase pass. Flush those events here so voice callers hear the race-end recap.
-      for (const ev of room.drainEvents()) this.emitEvent(room.code, ev);
       this.pushLobby(room.code);
       // Start station completion only after callers have received race_over and begun their recap.
       this.reportFinishedOnce(room);
@@ -514,7 +519,6 @@ export class GameServer {
 
   private broadcastAll(): void {
     const tick = this.lobbyTick++;   // once per broadcast call, not per connection
-    const cached = new Set<Room>();
     for (const c of this.conns) {
       if (!c.roomCode) continue;
       const room = this.rooms.find(c.roomCode); if (!room) continue;
@@ -524,16 +528,8 @@ export class GameServer {
         if (tick % 10 === 0) this.send(c, this.preRaceMessage(room));
         continue;
       }
-      if (!cached.has(room)) {
-        room.cacheEventsForBroadcast(); cached.add(room);
-        // Fan the SAME events out to the voice layer once per room (it speaks the caller-relevant
-        // subset — countdown/go/finish). Done here so the screen + phone hear the same beats.
-        const evs = room.drainEventsOnce();
-        if (evs.length && this.onRoomEvents) this.onRoomEvents(room.code, evs);
-      }
       const snap = room.snapshot(); if (!snap) continue;
       this.send(c, { type: 'snapshot', snapshot: snap });
-      for (const event of room.drainEventsOnce()) this.send(c, { type: 'event', event });
     }
   }
 

@@ -12,9 +12,9 @@ Configure the Twilio number's incoming voice webhook as:
 | URL | `https://<public-host>/voice/incoming` |
 | Method | `POST` |
 
-`POST /voice/incoming` connects an admitted active-event call directly to Conversation Relay. It does not gather a room code. When the event is paused, production returns localized unavailable TwiML and hangs up without reading retained station state.
+`POST /voice/incoming` connects an admitted active-event call directly to Conversation Relay. It does not gather a room code. When the event is paused, the server ignores retained station state and either routes an explicitly enabled standalone call or returns localized unavailable TwiML and hangs up.
 
-In station mode, the server resolves the caller to one persisted admitted player and places the match game, engine room, ready-entry ID, and launch generation into signed Relay setup parameters. Recent-display routing below is used only when standalone Voice is explicitly enabled:
+In station mode, the server resolves the caller to one persisted admitted player and places the game, engine room, ready-entry ID, match ID, and launch generation in Relay custom parameters. These values are not signed claims. A dedicated `VOICE_RELAY_TOKEN` authenticates the Relay setup frame, and the server revalidates the call SID and every station parameter against the current call binding and persisted match before joining the room. Recent-display routing is used only for standalone Voice:
 
 | Display | Local URL | WebSocket |
 |---|---|---|
@@ -22,22 +22,24 @@ In station mode, the server resolves the caller to one persisted admitted player
 | Voice Monsters | `http://localhost:5173/monsters.html?display=1&room=4821` | `/battle` |
 | Voice Fighter | `http://localhost:5173/fighter.html?display=1&room=4821` | `/fighter` |
 
-For standalone testing, open the intended display before placing the call and close unused game displays. If no display is connected, the standalone fallback routes to Voice Racer.
+Room `4821` is the standalone room only. Active station matches use generated 12-character engine room codes.
+
+For standalone testing, open the intended shared display before placing the call and close unused game displays. An eligible display must belong to an operator-enabled game, connect as `display=1`, and remain open. Standalone display registration does not validate the station display token, so expose standalone routing only in a controlled deployment. If several eligible displays are open, the most recently registered one wins. If none is open, the call receives unavailable TwiML; it does not default to Voice Racer.
 
 The selected game is passed to `/voice` as a Conversation Relay custom parameter and remains fixed for that call. `POST /voice/join` is a legacy alias: it uses a posted `Digits` value when present and otherwise uses `4821`. Do not configure new numbers to use `/voice/join`.
 
-When Conversation Relay ends a session, Twilio calls `POST /voice/session-ended`. The server uses the call SID to clean up Voice Monsters and Voice Fighter reconnect state.
+When Conversation Relay ends a session, Twilio calls `POST /voice/session-ended`. The server uses the call SID to recover or clean up all three games.
 
 ## Requirements
 
 - Node.js 22.13 or later
-- A primary Twilio account with the English Voice/SMS/WhatsApp number
+- A primary Twilio account with the English Voice number, a separate SMS-capable number, and an optional WhatsApp sender
 - A second Twilio account with the Portuguese Voice number
 - Both account Auth Tokens for webhook signature validation
 - A public HTTPS URL that forwards to the server on port `8080`
 - A public WebSocket path on the same host; the server derives `wss://<public-host>/voice` from `PUBLIC_BASE_URL`
 
-The direct Conversation Relay gameplay path does not use the Twilio Account SID itself. The production station also enables TAC/Memory and therefore requires the REST credentials documented in [Infrastructure Setup](INFRA_SETUP.md). Station mode uses the operator-configured `en-US` and `pt-BR` voice numbers; `GAME_PHONE_NUMBER` is only a legacy fallback. `TWILIO_SMS_NUMBER` is the required independent TAC/SMS sender.
+The direct Conversation Relay gameplay path does not use the Twilio Account SID itself. The production station also enables TAC/Memory and therefore requires the primary account REST credentials documented in [Infrastructure Setup](INFRA_SETUP.md). Voice webhook and session-ended signatures are accepted when either configured Voice account Auth Token validates the request; the exact dialed `To` number then selects `en-US` or `pt-BR`. The signing token does not select the locale. Station mode uses the operator-configured locale Voice numbers; `GAME_PHONE_NUMBER` is only a legacy fallback. `TWILIO_SMS_NUMBER` is the independent primary-account TAC/SMS sender.
 
 ## Run Locally With a Public Tunnel
 
@@ -82,19 +84,19 @@ For a deployed environment, configure the same `POST /voice/incoming` webhook ag
 | `PUBLIC_BASE_URL` | Yes for live calls | Public origin used to build webhook validation URLs, `wss://.../voice`, and `/voice/session-ended`. Defaults to local HTTP and is not usable by Twilio. A trailing slash is removed. |
 | `TWILIO_AUTH_TOKEN` | Yes for a public Twilio webhook | Validates Twilio signatures. When present, validation is enabled by default. |
 | `TWILIO_PT_AUTH_TOKEN` | Required for the current production topology | Validates Voice and session-ended callbacks from the separate Portuguese Voice account. |
-| `TWILIO_VALIDATE_SIGNATURES` | No | Set to `false` only for controlled local testing. Any other supplied value enables validation. If validation is enabled without `TWILIO_AUTH_TOKEN`, webhooks return `500`. |
+| `TWILIO_VALIDATE_SIGNATURES` | No | Set to `false` only for controlled local testing. Any other supplied value enables validation. Without `TWILIO_AUTH_TOKEN`, primary-account Messaging, TAC, and status webhooks return `500`; Voice requests can still validate with `TWILIO_PT_AUTH_TOKEN`. |
 | `GAME_PHONE_NUMBER` | Optional | Legacy lobby fallback until locale-specific voice numbers are saved in Arcade runtime settings. |
 | `TWILIO_SMS_NUMBER` | Required by production deployment | SMS-capable sender/receiver registered with TAC and used by the join chooser and outbound notices. |
 | `PORT` | No | HTTP and WebSocket port. Defaults to `8080`. |
 | `CR_TTS_VOICE` | No | ElevenLabs voice ID for Conversation Relay talk-back. If unset, Relay uses its default voice. |
 | `CR_TTS_VOICE_PT_BR` | No | Optional Brazilian Portuguese ElevenLabs voice ID. Empty uses Relay's `pt-BR` default. |
-| `DEFAULT_LOCALE` | No | Call locale used when no localized display is connected. Defaults to `en-US`. |
-| `ARCADE_STANDALONE_VOICE_ENABLED` | No | Set to `true` to route standalone calls to the game currently open on the shared display. Production enables this so standalone play remains callable. |
+| `DEFAULT_LOCALE` | No | Fallback when the dialed `To` number does not identify one locale and the selected display does not provide one. Defaults to `en-US`. |
+| `ARCADE_STANDALONE_VOICE_ENABLED` | No | Set to `true` to permit standalone routing to an eligible open shared display. It does not make a game callable without a display. Production sets this to `true`. |
 | `VOICE_RELAY_TOKEN` | Required by production deployment | Independent token of at least 32 characters that authenticates the Conversation Relay `setup` frame. The generated TwiML passes it to Twilio automatically; do not reuse `TWILIO_AUTH_TOKEN`. |
-| `OPENAI_API_KEY` | No | Enables conversational menu help for Voice Racer and Voice Monsters. Deterministic selection and gameplay still work without it. |
+| `OPENAI_API_KEY` | No | Enables English free-form menu help for Voice Racer and Voice Monsters. Portuguese free-form OpenAI replies are disabled; deterministic localized setup and gameplay remain available. |
 | `OPENAI_MODEL` | No | Overrides the OpenAI model when `OPENAI_API_KEY` is set. |
 | `FIGHTER_DISPLAY_TOKEN` | No | Server-side standalone override for custom Fighter integrations. Browser URLs do not accept display credentials; station booth access is installed through the authenticated `/operator` action. |
-| `NODE_ENV` | No | Production mode enables production-only warnings and serving behavior. It does not control Twilio signature validation. |
+| `NODE_ENV` | No | `production` enables signature validation by default when `TWILIO_VALIDATE_SIGNATURES` is unset, along with production-only warnings and serving behavior. |
 
 `EDITOR_TOKEN`, map paths, arena paths, and persistence paths affect editing and deployment but are not required to place a voice call.
 
@@ -107,8 +109,8 @@ The generated TwiML uses these settings:
 | `transcriptionProvider` | `Deepgram` | Required transcription provider |
 | `speechModel` | `flux` | Low-latency speech recognition |
 | `partialPrompts` | `true` | Sends interim transcripts so a newer utterance can cancel stale work; gameplay waits for the final transcript |
-| `transcriptionLanguage` | Active display locale (`en-US` or `pt-BR`) | Recognition language |
-| `ttsLanguage` | Active display locale (`en-US` or `pt-BR`) | Spoken response language |
+| `transcriptionLanguage` | Resolved call locale (`en-US` or `pt-BR`) | Recognition language selected from the dialed number, then display or default fallback |
+| `ttsLanguage` | Resolved call locale (`en-US` or `pt-BR`) | Spoken response language selected by the same route |
 | `interruptible` | `any` | Caller speech or keypad input stops active TTS |
 | `reportInputDuringAgentSpeech` | `any` | Delivers speech and keypad input while TTS is playing |
 | `interruptSensitivity` | `medium` | Balances command barge-in against room noise |
@@ -123,20 +125,36 @@ Talk-back is active. The server sends `{ "type": "text", "token": "...", "last":
 
 Speech barge-in stops Relay TTS. Voice Racer and Voice Monsters also invalidate stale in-flight conversational replies. Voice Fighter resets its interim-command state after an interrupt so a corrected command or selection can be recognized cleanly.
 
+## Station Launch And Personal Setup
+
+Station games admit up to two callers. The persisted match roster supplies an expected caller count of one or two and a stable slot for each caller. The server reuses each registered first name instead of asking for it again; only a station identity without a stored completed name falls back to voice name capture.
+
+Each caller controls only their personal setup choices. Racer keeps explicit shared phase gates: after all expected callers connect, either caller says `start`; after every caller picks a car, either says `next`; after every caller casts one track vote, either says `start`. Monsters advances from monster choices automatically, and Fighter advances from fighter choices to individual arena votes automatically. A one-caller Monsters or Fighter match creates an AI opponent after that caller finishes setup; a one-caller Racer follows the same explicit gates with one caller.
+
+A station match starts only when the display has acknowledged the current launch generation, the selected engine has started, and every expected caller is connected and bound. The launch timeout is also the setup inactivity window. After all expected callers connect, each final speech prompt or DTMF input from either caller moves that deadline forward by the configured launch timeout; partial transcripts do not. Activity extends setup but does not mark gameplay started or redeem a coin.
+
+At the deadline, a disconnected admitted caller is replaced by the first FIFO overflow caller when one exists. The dropped caller's active reservation is released, the replacement receives admitted and call-now notices, the launch generation increments, display readiness clears, and the game room receives the revised expected count. If no overflow caller exists, the automatic deadline fails the launch. Before gameplay, an operator can instead remove an unconnected caller; the same FIFO promotion applies, or the expected count drops to one when no replacement exists. That one-caller reconciliation enables the solo behavior above.
+
+## Connection Recovery
+
+All three games retain the call SID-to-player binding for 30 seconds after a Relay WebSocket disconnect. A replacement WebSocket for the same call SID and room resumes that player and preserves completed personal choices; a normal session-ended callback removes the binding immediately, subject to retaining completed station result state.
+
+This 30-second binding grace is separate from Relay session recovery. When `SessionStatus=failed`, the call remains `in-progress`, and the error is absent or recoverable (`39001`, `64103`, `64105`, `64111`, or `64112`), `/voice/session-ended` can return new Conversation Relay TwiML up to two times. Station recovery refreshes the route when possible and still revalidates the setup against current state. A permanent error, a completed call, or an exhausted recovery count hangs up and clears the bindings.
+
 ## Voice Racer
 
-Voice Racer supports up to two players in room `4821`.
+Voice Racer supports up to two callers. Standalone play uses room `4821`; station play uses its generated engine room.
 
 The voice flow is:
 
-1. Say your name.
-2. Car selection opens automatically when the expected callers are ready.
+1. In standalone play, say your name. Station play greets you by your registered first name.
+2. After the expected callers connect, either player says `start` to open car selection.
 3. Each player says their own car name or number.
-4. Track voting opens automatically after every player picks a car.
-5. Each player says their own track name or number.
-6. The race begins automatically after every player votes.
+4. After every player picks a car, either player says `next` to open track voting.
+5. Each player says their own track name or number. To correct a car or change a vote before advancing, say `actually` followed by the new choice (`na verdade` in Portuguese).
+6. After every player votes, either player says `start` to begin the race.
 
-Car and track selection is deterministic and never uses OpenAI. Unrecognized setup speech receives concise guidance for the current screen. No caller controls another player's choice or a shared next button.
+Car and track selection is deterministic and never uses OpenAI. Station Racer prompts callers one at a time in participant order, while either connected caller may speak the phase-advance command after all required choices are complete. Unrecognized setup speech receives concise guidance for the current screen. No caller controls another player's choice. Near-simultaneous identical choices from different calls are treated as likely acoustic cross-talk and the second caller is asked to repeat. Interim-origin tracking, duplicate-final suppression, and a post-transition guard reduce the chance that delayed speech from an earlier phase is interpreted in the next phase; physically shared audio remains an operational risk and callers should avoid speakerphone near each other.
 
 During countdown and racing, finalized transcripts use the fast local intent path. Command bursts can fire in order, while revisable interim hypotheses never mutate the car.
 
@@ -150,7 +168,7 @@ During countdown and racing, finalized transcripts use the fast local intent pat
 
 Racer keypad fallback is `1` left, `2` boost, `3` right, `4` brake, and `5` power. Monsters uses its displayed menu numbers and `0` to back out of the move list. Fighter uses `0` for fighter 10, `*` for fighter 11, and `#` for fighter 12; during combat, `1` through `6` map to forward, back, jump, punch, kick, and block.
 
-The caller hears onboarding, menu prompts, the final countdown, `Go`, selected race events, their finish, and a race-over recap. Mid-race commentary is throttled so it does not continuously cover commands. A full room leaves the call connected but unbound, so commands do not move a car; check the server log for `addPlayer rejected`.
+The caller hears onboarding, menu prompts, the final countdown, `Go`, selected race events, their finish, and a race-over recap. Mid-race commentary is throttled so it does not continuously cover commands. A full standalone room leaves the call connected but unbound, so commands do not move a car; check the server log for `addPlayer rejected`.
 
 ## Voice Monsters
 
@@ -158,12 +176,12 @@ Voice Monsters is a one-on-one room with up to two human callers. A solo player 
 
 The voice flow is:
 
-1. Say your name.
+1. In standalone play, say your name. Station play greets you by your registered first name.
 2. Monster selection opens automatically when the expected callers are ready.
 3. Each player says their own monster name, number, or ordinal such as `the second one`.
 4. The battle begins automatically after every player picks.
 5. On your turn, say `fight` to hear the four moves, then say a move name or number. A move name can also be spoken directly from the root menu.
-6. Say `rematch` after the final result is ready.
+6. In standalone play, say `rematch` after the final result is ready. Station play returns to the station results and requeue flow instead.
 
 Root battle commands are:
 
@@ -177,7 +195,7 @@ Root battle commands are:
 
 Inside the move list, numbers `1` through `4` choose the corresponding move. Move names support exact and distinctive partial matches. Battle actions use final transcripts only, are accepted only on the caller's turn, and are held while prior move commentary is still resolving. Commentary is paced with the display.
 
-A Conversation Relay reconnect with the same call SID resumes the existing player for 30 seconds instead of repeating onboarding. A normal session-ended callback removes the binding immediately.
+The common 30-second caller binding and up-to-two Relay recovery attempts apply to Monsters.
 
 ## Voice Fighter
 
@@ -185,12 +203,12 @@ Voice Fighter accepts up to two humans during the lobby or fighter-selection pha
 
 The voice flow is:
 
-1. Say your name.
+1. In standalone play, say your name. Station play greets you by your registered first name.
 2. Fighter selection opens automatically when the expected callers are ready.
 3. Each player says their own fighter name or number.
 4. Arena voting opens automatically; each player says their own arena name or number.
 5. The selected arena loads automatically after every player votes, then starts the intro and countdown.
-6. After the fight and victory sequence, say `rematch`.
+6. In standalone play, say `rematch` after the fight and victory sequence. Station play returns to the station results and requeue flow instead.
 
 Combat commands are:
 
@@ -205,7 +223,7 @@ Combat commands are:
 
 Fighter and arena choices and combat commands act only on finalized transcripts, preventing revised interim speech from firing the wrong move. Final transcripts can contain a chain such as `forward then block` with up to 12 actions, or a repeat such as `punch five times` with a maximum repeat count of six.
 
-A Voice Fighter reconnect with the same call SID resumes the existing player for 30 seconds. Hit and miss cues are throttled, and the phone host narrates the intro, countdown, health context, and result.
+The common 30-second caller binding and up-to-two Relay recovery attempts apply to Fighter. Hit and miss cues are throttled, and the phone host narrates the intro, countdown, health context, and result.
 
 ## Test Without Twilio
 
@@ -225,15 +243,15 @@ For standalone testing, open the intended shared display before dialing and clos
 
 ### The webhook returns `403 invalid signature`
 
-Confirm that the Twilio Console webhook URL exactly matches `${PUBLIC_BASE_URL}/voice/incoming`. Restart the server after changing `PUBLIC_BASE_URL`. Confirm `TWILIO_AUTH_TOKEN` belongs to the Twilio account making the request. Reverse proxies must preserve the public scheme and host represented by `PUBLIC_BASE_URL`.
+Confirm that the Twilio Console webhook URL exactly matches `${PUBLIC_BASE_URL}/voice/incoming`. Restart the server after changing `PUBLIC_BASE_URL`. Confirm either `TWILIO_AUTH_TOKEN` or `TWILIO_PT_AUTH_TOKEN` belongs to the Twilio account making the request. Reverse proxies must preserve the public scheme and host represented by `PUBLIC_BASE_URL`.
 
 ### The webhook returns `500` about the Auth Token
 
-Signature validation is enabled while `TWILIO_AUTH_TOKEN` is empty. Set the token. Use `TWILIO_VALIDATE_SIGNATURES=false` only for a controlled request that is not coming from Twilio.
+Signature validation is enabled while `TWILIO_AUTH_TOKEN` is empty. Set the primary token for SMS, WhatsApp, TAC, and messaging-status callbacks. Voice requests may validate with `TWILIO_PT_AUTH_TOKEN`, but production still requires the primary token. Use `TWILIO_VALIDATE_SIGNATURES=false` only for a controlled request that is not coming from Twilio.
 
 ### The call connects but no game responds
 
-Confirm the public host supports WebSocket upgrades at `/voice` and that the generated URL uses `wss://`. Check for `unauthorized relay` in the server log; `VOICE_RELAY_TOKEN` must remain stable between the webhook response and the Relay setup frame. Also confirm the display and call both use room `4821`.
+Confirm the public host supports WebSocket upgrades at `/voice` and that the generated URL uses `wss://`. Check for `unauthorized relay` in the server log; `VOICE_RELAY_TOKEN` must remain stable between the webhook response and the Relay setup frame. For standalone play, confirm the display uses room `4821`. For station play, confirm the display acknowledged the current generated room and launch generation.
 
 ### The caller hears the right game but cannot join
 
@@ -249,7 +267,7 @@ Inspect the returned TwiML for `interruptible="any"` and `reportInputDuringAgent
 
 ### Menus are quiet without an OpenAI key
 
-Voice Racer and Voice Monsters keep deterministic name, number, advance, and gameplay paths without OpenAI. Open-ended questions and conversational recommendations require `OPENAI_API_KEY`. Voice Fighter does not use the OpenAI host.
+Voice Racer and Voice Monsters keep deterministic name, number, advance, help, and gameplay paths without OpenAI. English open-ended questions and recommendations require `OPENAI_API_KEY`. Portuguese sessions never send free-form prompts or replies to OpenAI. Voice Fighter does not use the OpenAI host.
 
 ### The displayed phone number is missing
 

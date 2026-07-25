@@ -912,6 +912,52 @@ function parseMessagingGameChoice(value: string): PlayableArcadeGame | null {
   return null;
 }
 
+const MESSAGING_GAME_CHOICE_ALIASES: Readonly<Record<PlayableArcadeGame, readonly string[]>> = {
+  racer: ['RACER','VOICE RACER','CORRIDA','CORRIDA POR VOZ'],
+  monsters: ['MONSTERS','VOICE MONSTERS','MONSTROS','MONSTROS POR VOZ'],
+  fighter: ['FIGHTER','VOICE FIGHTER','LUTA','LUTA POR VOZ'],
+};
+
+function parseTolerantMessagingGameChoice(value:string):PlayableArcadeGame|null {
+  const cleaned=value.replace(/[^A-Z0-9]+/g,' ').trim().replace(/\s+/g,' ');
+  if(!cleaned||cleaned.length>32)return null;
+  const tokens=cleaned.split(' ');
+  if(tokens.length>4)return null;
+  const numbers=tokens.filter(token=>/^\d+$/.test(token));
+  if(numbers.some(token=>!['1','2','3'].includes(token))||new Set(numbers).size>1)return null;
+  const numberGame=numbers[0]==='1'?'racer':numbers[0]==='2'?'monsters':numbers[0]==='3'?'fighter':null;
+  const text=tokens.filter(token=>!/^\d+$/.test(token)).join(' ');
+  let textGame:PlayableArcadeGame|null=null;
+  if(text){
+    const matches=(Object.entries(MESSAGING_GAME_CHOICE_ALIASES) as Array<[PlayableArcadeGame,readonly string[]]>)
+      .filter(([,aliases])=>aliases.some(alias=>alias===text||(alias.length>=5&&oneEditOrTranspositionAway(alias,text))))
+      .map(([game])=>game);
+    if(new Set(matches).size!==1)return null;
+    textGame=matches[0]!;
+  }
+  if(numberGame&&textGame&&numberGame!==textGame)return null;
+  return numberGame??textGame;
+}
+
+function oneEditOrTranspositionAway(left:string,right:string):boolean {
+  if(left===right)return true;
+  if(Math.abs(left.length-right.length)>1)return false;
+  if(left.length===right.length){
+    const different:number[]=[];
+    for(let index=0;index<left.length;index++)if(left[index]!==right[index])different.push(index);
+    return different.length===1||(different.length===2&&different[1]===different[0]!+1
+      &&left[different[0]!]===right[different[1]!]&&left[different[1]!]===right[different[0]!]);
+  }
+  const [shorter,longer]=left.length<right.length?[left,right]:[right,left];
+  let shortIndex=0,longIndex=0,edits=0;
+  while(shortIndex<shorter.length&&longIndex<longer.length){
+    if(shorter[shortIndex]===longer[longIndex]){shortIndex++;longIndex++;continue;}
+    if(++edits>1)return false;
+    longIndex++;
+  }
+  return true;
+}
+
 const MESSAGING_GAME_CHOICE_NAMES: Record<'en-US' | 'pt-BR', Record<PlayableArcadeGame, string>> = {
   'en-US': { racer: 'Voice Racer', monsters: 'Voice Monsters', fighter: 'Voice Fighter' },
   'pt-BR': { racer: 'Corrida por Voz', monsters: 'Monstros por Voz', fighter: 'Luta por Voz' },
@@ -2570,11 +2616,12 @@ export class ArcadeService {
 
         const command = messagingCommand(normalizedCommand);
         const gameChoice = parseMessagingGameChoice(normalizedCommand);
+        const possibleGameChoice=parseTolerantMessagingGameChoice(normalizedCommand);
         if (config.arcade.mode === 'coin_only' && draft?.step === 'FIRST_NAME') {
           const firstName = body.trim();
           if (command === 'LEAVE') {
             // Legacy unnamed players must still be able to release an existing reservation.
-          } else if (command !== 'TEXT' || gameChoice !== null || !validMessagingText(firstName, 50)) {
+          } else if (command !== 'TEXT' || possibleGameChoice !== null || !validMessagingText(firstName, 50)) {
             return finish(command, messagingPrompt(locale, draft, false, config.registration.termsAcknowledgementRequired));
           } else {
             draft = {
@@ -2706,26 +2753,27 @@ export class ArcadeService {
           && entryRound?.selectionStartedAt
           && Number.isFinite(selectionDeadline)
           && Date.parse(at) >= selectionDeadline);
-        if (gameChoice !== null) {
+        const selectionGameChoice=gameChoice??((selectionIsOpen||selectionHasClosed)?possibleGameChoice:null);
+        if (selectionGameChoice !== null) {
           if (selectionHasClosed) {
             return finish('GAME_CHOICE', messagingCopy(locale, 'gameChoiceClosed'));
           }
           if (!selectionIsOpen) {
             return finish('GAME_CHOICE', messagingCopy(locale, 'gameChoiceUnavailable', { choices: choiceOptions }));
           }
-          if (!config.station.games[gameChoice].enabled) {
+          if (!config.station.games[selectionGameChoice].enabled) {
             return finish('GAME_CHOICE', messagingCopy(locale, 'gameChoiceInvalid', { choices: choiceOptions }));
           }
           const updated = reduceRecordStationGameChoice(aggregate!, {
             readyEntryId: entry!.id,
             roundId: entry!.roundId,
-            game: gameChoice,
+            game: selectionGameChoice,
             at,
             expectedRevision: aggregate!.station.revision,
           });
           this.persistStationAggregate(state, updated);
           return finish('GAME_CHOICE', messagingCopy(locale, 'gameChoice', {
-            game: MESSAGING_GAME_CHOICE_NAMES[normalizeMessagingLocale(locale)][gameChoice],
+            game: MESSAGING_GAME_CHOICE_NAMES[normalizeMessagingLocale(locale)][selectionGameChoice],
             choices: choiceOptions,
           }), updated.station.revision);
         }

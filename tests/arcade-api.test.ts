@@ -1519,6 +1519,19 @@ describe('Arcade API', () => {
       callSid:'CA-known-name',readyEntryId:routed!.readyEntryId!,matchId:routed!.matchId,
       launchGeneration:routed!.launchGeneration,game:routed!.game,roomCode:routed!.roomCode,
     })).toEqual({ firstName: REGISTRATION.lead.firstName, terminal: false, participantIndex: 0, participantCount: 2 });
+    const routedSecond=await api.stationVoiceRoute('+14155550200','CA-known-name-two');
+    expect(routedSecond).toMatchObject({admitted:true,roomCode:routed!.roomCode,matchId:routed!.matchId});
+    expect(resources.store.snapshot().stationReadyEntries[routedSecond!.readyEntryId!]?.playerId)
+      .toBe(secondPlayerId);
+    expect(await api.resolveStationVoiceSetup({
+      callSid:'CA-known-name-two',readyEntryId:routedSecond!.readyEntryId!,matchId:routedSecond!.matchId,
+      launchGeneration:routedSecond!.launchGeneration,game:routedSecond!.game,roomCode:routedSecond!.roomCode,
+    })).toEqual({firstName:REGISTRATION.lead.firstName,terminal:false,participantIndex:1,participantCount:2});
+    expect(api.stationVoiceSetupReady(routed!.readyEntryId!)).toBe(false);
+    api.stationVoiceParticipantConnected('CA-known-name',routed!.readyEntryId!,'engine-player-one','connection-one');
+    await Promise.resolve();expect(api.stationVoiceSetupReady(routed!.readyEntryId!)).toBe(false);
+    api.stationVoiceParticipantConnected('CA-known-name-two',routedSecond!.readyEntryId!,'engine-player-two','connection-two');
+    await Promise.resolve();expect(api.stationVoiceSetupReady(routed!.readyEntryId!)).toBe(true);
     const displayReady=await resources.service.markStationDisplayReady({
       stationId:'ARCADE-01',expectedRevision:launching.station.revision,idempotencyKey:'identity-route-display',
       authorization:resources.operatorAuthorization('test@twilio.com'),matchId:launching.match!.id,launchGeneration:launching.match!.launchGeneration,

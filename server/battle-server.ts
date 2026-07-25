@@ -420,8 +420,13 @@ export class BattleServer {
     const room = this.rooms.get(code); if (!room) return;
     room.setPlayerInfo(playerId,{name});room.expectHumanPlayers(Math.max(1,room.playerCount));this.pushState(code);
   }
-  voiceExpectHumanPlayers(code: string, count: number): void {
-    const room=this.rooms.get(code);if(!room)return;room.expectHumanPlayers(count);this.pushState(code);
+  voiceExpectHumanPlayers(code:string,count:number,activeEnginePlayerIds?:readonly string[]):void {
+    const room=this.rooms.get(code);if(!room)return;
+    if(activeEnginePlayerIds){
+      const retained=new Set(activeEnginePlayerIds);
+      for(const player of room.lobbyPlayers())if(!player.isAi&&!retained.has(player.playerId))room.removePlayer(player.playerId);
+    }
+    room.expectHumanPlayers(count);this.pushState(code);
   }
   voiceSelectMonster(code: string, playerId: string, monsterId: string): void {
     const room = this.rooms.get(code); if (!room) return;

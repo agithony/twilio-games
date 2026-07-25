@@ -1,8 +1,14 @@
 # Future Game Ideas
 
+> **Document status (2026-07-25):** This is an unscheduled concept backlog, not an implementation
+> roadmap. Voice Trivia is not playable.
+>
+> **Operational truth:** Use the [README](../README.md), [Deployment](DEPLOYMENT.md), and
+> [Infrastructure Setup](INFRA_SETUP.md) for current games, behavior, and operations.
+
 ## Voice Trivia
 
-**Status:** Coming soon
+**Status:** Unscheduled concept; not playable
 
 A Kahoot-style multiplayer trivia game played entirely through Twilio Voice. Players call the
 same game and watch questions appear on a shared display. They answer aloud over the phone, and
@@ -23,6 +29,7 @@ for the rest of the question.
 
 ## Twilio Games Station Platform
 
-The approved plan to evolve the Twilio Games station, including TAC, lead capture, digital
-coins, earning challenges, a smart single-display queue, post-game summaries, Conversation Memory,
-and Conversation Intelligence, is the canonical [Twilio Games station plan](TWILIO_ARCADE_PLAN.md).
+The product-direction roadmap and decision history for TAC, lead capture, digital coins, earning
+challenges, a single-display queue, post-game summaries, Conversation Memory, and Conversation
+Intelligence is preserved in the [Twilio Games station plan](TWILIO_ARCADE_PLAN.md). It is not the
+current operational source of truth.

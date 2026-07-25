@@ -280,7 +280,11 @@ export class FighterServer {
     code=canonicalRoomCode(code);const room=this.rooms.get(code);if(!room)return;
     room.setName(id,name);room.expectHumanPlayers(Math.max(1,room.playerCount));this.pushState(code);
   }
-  voiceExpectHumanPlayers(code: string, count: number): void { code=canonicalRoomCode(code);const room=this.rooms.get(code);if(!room)return;room.expectHumanPlayers(count);this.pushState(code); }
+  voiceExpectHumanPlayers(code:string,count:number,activeEnginePlayerIds?:readonly string[]):void {
+    code=canonicalRoomCode(code);const room=this.rooms.get(code);if(!room)return;
+    if(activeEnginePlayerIds){const retained=new Set(activeEnginePlayerIds);for(const player of room.lobbyPlayers())if(!player.isAi&&!retained.has(player.playerId))room.removePlayer(player.playerId);}
+    room.expectHumanPlayers(count);this.pushState(code);
+  }
   voiceSelectFighter(code: string, id: string, fighterId: string): boolean { code = canonicalRoomCode(code); const ok = this.rooms.get(code)?.selectFighter(id, fighterId) ?? false; this.pushState(code); return ok; }
   voiceSelectMap(code: string, id: string, mapId: string): boolean {
     code = canonicalRoomCode(code); const room = this.rooms.get(code);

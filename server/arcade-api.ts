@@ -166,7 +166,9 @@ export class ArcadeApi {
   private readonly stationVoiceCalls = new Map<string, { callSid: string; readyEntryId: string }>();
   private readonly stationVoiceConnections = new Map<string, string>();
   private abortStationEngine: ((game: 'racer' | 'monsters' | 'fighter', roomCode: string, removal: StationMatchRemoval) => void) | null = null;
-  private updateStationEngineParticipants: ((game: 'racer' | 'monsters' | 'fighter', roomCode: string, count: number) => void) | null = null;
+  private updateStationEngineParticipants: ((
+    game:'racer'|'monsters'|'fighter',roomCode:string,count:number,activeEnginePlayerIds:readonly string[],
+  )=>void)|null=null;
   private playerResetCleanup: ((context: PlayerResetCleanupContext) => Promise<void>) | null = null;
   private started = false;
   private stopped = false;
@@ -309,7 +311,7 @@ export class ArcadeApi {
   }
 
   setStationParticipantCountHandler(
-    handler: (game: 'racer' | 'monsters' | 'fighter', roomCode: string, count: number) => void,
+    handler:(game:'racer'|'monsters'|'fighter',roomCode:string,count:number,activeEnginePlayerIds:readonly string[])=>void,
   ): void {
     this.updateStationEngineParticipants = handler;
     const resources = this.playerRuntime?.getInitializedResources();
@@ -754,6 +756,16 @@ export class ArcadeApi {
     void this.playerRuntime?.getForCleanup().then(resources=>{
       resources.station.markSetupActivity(readyEntryId);
     }).catch(()=>undefined);
+  }
+
+  stationVoiceSetupReady(readyEntryId:string):boolean {
+    const resources=this.playerRuntime?.getInitializedResources();if(!resources)return false;
+    const state=resources.store.snapshot();
+    const match=Object.values(state.stationMatches).find(candidate=>
+      candidate.phase==='LAUNCHING'&&candidate.participantReadyEntryIds.includes(readyEntryId));
+    if(!match)return false;
+    const connected=resources.station.connectedParticipantIds();
+    return match.participantReadyEntryIds.every(id=>connected.has(id));
   }
 
   requiresStationVoiceAssignment(): boolean {
@@ -2388,8 +2400,8 @@ export class ArcadeApi {
     resources.station.setMatchRemovedHandler((game, roomCode, removal) => {
       this.removeLiveStationEngine(game, roomCode, removal);
     });
-    resources.station.setMatchParticipantsChangedHandler((game, roomCode, count) => {
-      this.updateStationEngineParticipants?.(game, roomCode, count);
+    resources.station.setMatchParticipantsChangedHandler((game,roomCode,count,activeEnginePlayerIds) => {
+      this.updateStationEngineParticipants?.(game,roomCode,count,activeEnginePlayerIds);
     });
   }
 
