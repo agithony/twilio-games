@@ -54,6 +54,8 @@ export interface StationMatch {
   readonly stationId: string;
   readonly roundId: string;
   readonly game: PlayableArcadeGame;
+  /** Capacity at admission time, retained so historical matches survive later capacity changes. */
+  readonly humanCapacity: number;
   readonly phase: StationMatchPhase;
   readonly participantReadyEntryIds: readonly string[];
   readonly overflowReadyEntryIds: readonly string[];
@@ -346,6 +348,7 @@ export function selectStationGame(
     stationId: state.station.id,
     roundId: round.id,
     game: input.game,
+    humanCapacity: capacity,
     phase: 'PREPARING',
     participantReadyEntryIds: Object.freeze(admitted.map(entry => entry.id)),
     overflowReadyEntryIds: Object.freeze(overflow.map(entry => entry.id)),
@@ -696,7 +699,7 @@ export function dropStationAdmittedEntry(
   const ordered = [...match.participantReadyEntryIds.filter(id => id !== readyEntryId), ...match.overflowReadyEntryIds]
     .map(id => state.readyEntries[id]!)
     .sort(compareReadyEntries);
-  const capacity = arcadeGameDefinition(match.game).humanCapacity!;
+  const capacity = match.humanCapacity;
   const participants = ordered.slice(0, capacity);
   if (participants.length < arcadeGameDefinition(match.game).minimumHumans!) {
     throw new ArcadeStationError('MINIMUM_PLAYERS_REQUIRED', 'cannot remove the final admitted player');
@@ -1012,10 +1015,13 @@ export function assertStationInvariants(value: ArcadeStationAggregate): void {
     if (new Set(allIds).size !== allIds.length || allIds.some(id => !value.readyEntries[id])) {
       throw new ArcadeStationError('INVALID_STATION', 'match ready entries are invalid');
     }
-    if (match.participantReadyEntryIds.length > arcadeGameDefinition(match.game).humanCapacity!) {
+    if (!Number.isInteger(match.humanCapacity) || match.humanCapacity < 1 || match.humanCapacity > 64) {
+      throw new ArcadeStationError('INVALID_STATION', 'match capacity is invalid');
+    }
+    if (match.participantReadyEntryIds.length > match.humanCapacity) {
       throw new ArcadeStationError('INVALID_STATION', 'match exceeds game capacity');
     }
-    const expectedAdmissionCount = Math.min(arcadeGameDefinition(match.game).humanCapacity!, allIds.length);
+    const expectedAdmissionCount = Math.min(match.humanCapacity, allIds.length);
     if (match.participantReadyEntryIds.length !== expectedAdmissionCount) {
       throw new ArcadeStationError('INVALID_STATION', 'match admission count does not match capacity');
     }

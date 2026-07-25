@@ -38,6 +38,7 @@ export interface BattleVoiceSnapshot {
   foeGuarding?: boolean; foeTaunted?: boolean;
   turn: number | null;
   activeSide: 'a' | 'b' | null;
+  participating: boolean;
   activeMenu: 'root' | 'fight';
   whoseTurn: 'me' | 'foe' | null;
   myMoves: { id: string; name: string }[];   // the caller's 4 moves (battle)
@@ -46,7 +47,7 @@ export interface BattleVoiceSnapshot {
 
 /** Everything the session needs from its host (the HTTP server wires these to the BattleServer + LLM). */
 export interface BattleVoiceDeps {
-  join(code: string, name: string, callSid: string): { playerId: string; resumed: boolean } | null;
+  join(code: string, name: string, callSid: string, side?: 'a' | 'b', expectedPlayers?: number): { playerId: string; resumed: boolean } | null;
   leave(code: string, playerId: string, callSid: string): void;
   setName(code: string, playerId: string, name: string): void;
   selectMonster(code: string, playerId: string, monsterId: string): void;
@@ -79,6 +80,7 @@ export class BattleVoiceSession {
   private commandLocale: SupportedLocale = DEFAULT_LOCALE;
   private authoritativeName: string | null = null;
   private stationManaged=false;
+  private stationAssignment: { side: 'a' | 'b'; expectedPlayers: number } | null = null;
   private interimFightOpened=false;
   private interimFightCount=0;
   private text: (key: MonstersMessageKey, values?: MessageValues) => string = createTranslator(DEFAULT_LOCALE, MONSTERS_MESSAGES);
@@ -89,6 +91,9 @@ export class BattleVoiceSession {
     this.authoritativeName = name?.trim().slice(0, 50) || null;
   }
   setStationManaged(active:boolean):void{this.stationManaged=active;}
+  setStationAssignment(index: number, count: number): void {
+    this.stationAssignment = { side: index === 1 ? 'b' : 'a', expectedPlayers: count >= 2 ? 2 : 1 };
+  }
 
   get boundRoom(): string | null { return this.code; }
   get boundPlayer(): string | null { return this.playerId; }
@@ -107,7 +112,8 @@ export class BattleVoiceSession {
           this.deps.leave(this.code, this.playerId, this.callSid ?? '');
           this.code = null; this.playerId = null; this.callSid = null;
         }
-        const joined = this.deps.join(code, this.authoritativeName ?? playerName(msg.from, this.commandLocale), msg.callSid);
+        const joined = this.deps.join(code, this.authoritativeName ?? playerName(msg.from, this.commandLocale), msg.callSid,
+          this.stationAssignment?.side, this.stationAssignment?.expectedPlayers);
         if (!joined) { this.deps.say(this.text('voice.roomUnavailable')); return; }
         this.code = code; this.playerId = joined.playerId; this.callSid = msg.callSid;
         if (joined.resumed) this.speakResumeCue();
@@ -347,6 +353,9 @@ export class BattleVoiceSession {
    *  event stream: battle intro, opening controls, whose turn it is, and who should wait. */
   onBattleStateChanged(): void {
     if (!this.code || !this.playerId) return;
+    const snap = this.deps.snapshot(this.code, this.playerId, this.commandLocale);
+    if (snap?.phase === 'battle' && !snap.participating) return;
+    if (snap && this.lastPhase !== null && snap.phase !== this.lastPhase) this.turnEpoch++;
     if (this.draining || this.evQ.length > 0) { this.pendingStateCue = true; return; }
     this.speakStateCue();
   }
@@ -356,6 +365,8 @@ export class BattleVoiceSession {
    *  keeping the spoken commentary in sync with the on-screen animation (not all dumped at once). */
   onBattleEvent(ev: BattleEvent): void {
     if (!this.code || !this.playerId) return;
+    const snap = this.deps.snapshot(this.code, this.playerId, this.commandLocale);
+    if (snap?.phase === 'battle' && !snap.participating) return;
     this.evQ.push(ev);
     if (!this.draining) { this.draining = true; this.drainEvents(); }
   }
@@ -447,7 +458,6 @@ export class BattleVoiceSession {
       this.introDone = true;
       this.menuLevel = 'root';
       this.deps.say(this.battleIntroFor(snap));
-      if (snap.whoseTurn !== 'me') this.deps.say(this.text('voice.howTo'));
     }
     this.speakTurnCue(snap);
   }
@@ -501,10 +511,14 @@ export class BattleVoiceSession {
     if (key === this.lastTurnCueKey) return;
     this.lastTurnCueKey = key;
     if (snap.whoseTurn === 'me') {
-      this.deps.say(this.text((snap.turn ?? 0) === 0 ? 'voice.turnMineFirst' : 'voice.turnMine'));
+      this.deps.say(this.text((snap.turn ?? 0) === 0 ? 'voice.turnMineFirst' : 'voice.turnMine', {
+        player: snap.myName ?? '', monster: snap.myMonsterName ?? this.text('voice.yourMonsterLower'),
+      }));
     } else if (snap.whoseTurn === 'foe') {
       const monster = snap.foeMonsterName ?? this.text('voice.otherMonster');
-      this.deps.say(this.text((snap.turn ?? 0) === 0 ? 'voice.turnFoeFirst' : 'voice.turnFoe', { monster }));
+      this.deps.say(this.text((snap.turn ?? 0) === 0 ? 'voice.turnFoeFirst' : 'voice.turnFoe', {
+        monster, player: snap.foeName ?? this.text('voice.otherPlayer'),
+      }));
     }
   }
 

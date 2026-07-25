@@ -1,4 +1,5 @@
 import type { ArcadeGame } from './arcade-config';
+import { MAX_PLAYERS } from './constants';
 
 export type PlayableArcadeGame = Exclude<ArcadeGame, 'trivia'>;
 
@@ -13,7 +14,7 @@ export type ArcadeGameDefinition = Readonly<{
 
 export const ARCADE_GAME_DEFINITIONS: Readonly<Record<ArcadeGame, ArcadeGameDefinition>> = Object.freeze({
   racer: Object.freeze({
-    id: 'racer', route: '/play.html', humanCapacity: 4, minimumHumans: 1,
+    id: 'racer', route: '/play.html', humanCapacity: MAX_PLAYERS, minimumHumans: 1,
     aiFallback: true, playable: true,
   }),
   monsters: Object.freeze({

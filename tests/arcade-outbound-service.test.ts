@@ -246,7 +246,7 @@ describe('Arcade station outbound outbox', () => {
     expect(englishResult.body).toContain('Race time: 12.34 seconds.');
     const portugueseResult = resultNotices.find(item => item.locale === 'pt-BR' && item.body.includes('2º lugar'))!;
     expect(portugueseResult.body).toContain('Tempo da corrida: 16,67 segundos.');
-    expect(resultNotices).toHaveLength(3);
+    expect(resultNotices).toHaveLength(2);
   });
 
   it('does not bind or notify a browser-created ready entry', async () => {

@@ -38,6 +38,17 @@ describe('standalone and station display UX', () => {
     expect(monsters).toContain('grid-auto-rows: minmax(150px,auto)');
   });
 
+  it('keeps one shared Racer HUD around two named split-screen views', () => {
+    const html = readClient('play.html');
+    const script = readClient('main.ts');
+    expect(html.match(/class="game-home"/g)).toHaveLength(1);
+    expect(html.match(/id="hint"/g)).toHaveLength(1);
+    expect(html.match(/id="gauge"/g)).toHaveLength(1);
+    expect(html.match(/id="split-name-[12]"/g)).toHaveLength(2);
+    expect(script).toContain('renderer.render(snap, { splitScreen })');
+    expect(script).toContain('splitNameEls[index]!.textContent = car.name');
+  });
+
   it('keeps a join QR discoverable between recruiting and gameplay', () => {
     const html = readClient('index.html');
     const home = readClient('home.ts');

@@ -50,9 +50,11 @@ export class Lobby {
   players(): LobbySlot[] { return this.slots.map(s => ({ ...s })); }
   get playerCount(): number { return this.slots.length; }
 
-  addPlayer(id: string, name: string, color: string): void {
+  addPlayer(id: string, name: string, color: string, preferredIndex?: number): void {
     if (this.slots.some(s => s.id === id)) return;
-    this.slots.push({ id, name, color, carIndex: null, ready: false });
+    const slot = { id, name, color, carIndex: null, ready: false };
+    if (preferredIndex === undefined) this.slots.push(slot);
+    else this.slots.splice(Math.max(0, Math.min(this.slots.length, preferredIndex)), 0, slot);
   }
 
   removePlayer(id: string): void {

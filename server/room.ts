@@ -36,6 +36,8 @@ export class Room {
   private lastResults: RaceResult[] = [];
   private raceMap: string | null = null;
   private carNames: string[] = [];
+  private expectedHumanPlayers = 1;
+  private stationSlots = new Map<number, string>();
 
   constructor(code: string, seed: number, config?: RoomConfig) {
     this.code = code;
@@ -78,28 +80,34 @@ export class Room {
     }));
   }
 
-  addPlayer(name: string, color?: string): { playerId: string; lane: number } | { error: string } {
+  addPlayer(name: string, color?: string, preferredIndex?: number): { playerId: string; lane: number } | { error: string } {
     // A finished/results race is reusable: a new joiner reopens the room to a fresh lobby.
     if (this._phase === 'finished' || this._phase === 'results') this.reset();
     if (this.lobby.playerCount >= MAX_PLAYERS) return { error: 'room_full' };
-    const lane = this.lobby.playerCount % LANES;
+    const stationIndex = preferredIndex === 0 || preferredIndex === 1 ? preferredIndex : undefined;
+    if (stationIndex !== undefined && this.stationSlots.has(stationIndex)) return { error: 'room_full' };
+    const lane = stationIndex ?? (this.lobby.playerCount % LANES);
     const id = `p${this.nextId++}`;
-    const palette = COLORS[this.lobby.playerCount % COLORS.length]!;
+    const palette = COLORS[(stationIndex ?? this.lobby.playerCount) % COLORS.length]!;
     const color2 = safeColor(color, palette);   // reject unsafe colors (stored-XSS guard)
-    this.lobby.addPlayer(id, name, color2);
+    this.lobby.addPlayer(id, name, color2, stationIndex);
+    if (stationIndex !== undefined) this.stationSlots.set(stationIndex, id);
     // If a race is already running, slot this player into the live world so they get a car.
     if (this.world && (this._phase === 'countdown' || this._phase === 'racing')) {
-      this.world.addCar({ id, name, color: color2 });
+      this.world.addCar({ id, name, color: color2 }, stationIndex);
     }
     return { playerId: id, lane };
   }
 
   removePlayer(playerId: string): void {
     this.lobby.removePlayer(playerId);
+    for (const [index, id] of this.stationSlots) if (id === playerId) this.stationSlots.delete(index);
     this.world?.removeCar(playerId);
     // An abandoned race (everyone disconnected) must not lock the room forever.
     if (this.lobby.playerCount === 0 && this._phase !== 'lobby') this.reset();
   }
+
+  expectHumanPlayers(count: number): void { this.expectedHumanPlayers = count >= 2 ? 2 : 1; }
 
   /** Concierge / client can fill in a player's display name + color after a bare join. */
   setPlayerInfo(playerId: string, info: { name?: string; color?: string }): void {
@@ -153,7 +161,7 @@ export class Room {
   }
 
   start(): void {
-    if (this.lobby.playerCount === 0) return;
+    if (this.lobby.playerCount < this.expectedHumanPlayers) return;
     // Evolve the seed each start so every race gets a NEW (deterministic-per-race) course.
     this.seed = (Math.imul(this.seed ^ (this.seed >>> 15), 0x2c1b3c6d) + 0x9e3779b9) >>> 0;
     this.raceMap = this.lobby.selectedMap;

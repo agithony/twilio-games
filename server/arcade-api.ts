@@ -166,6 +166,7 @@ export class ArcadeApi {
   private readonly stationVoiceCalls = new Map<string, { callSid: string; readyEntryId: string }>();
   private readonly stationVoiceConnections = new Map<string, string>();
   private abortStationEngine: ((game: 'racer' | 'monsters' | 'fighter', roomCode: string, removal: StationMatchRemoval) => void) | null = null;
+  private updateStationEngineParticipants: ((game: 'racer' | 'monsters' | 'fighter', roomCode: string, count: number) => void) | null = null;
   private playerResetCleanup: ((context: PlayerResetCleanupContext) => Promise<void>) | null = null;
   private started = false;
   private stopped = false;
@@ -298,6 +299,14 @@ export class ArcadeApi {
     this.playerRuntime?.setStationMatchRemovedHandler((game, roomCode, removal) => {
       this.removeLiveStationEngine(game, roomCode, removal);
     });
+    const resources = this.playerRuntime?.getInitializedResources();
+    if (resources) this.bindStationAbortHandler(resources);
+  }
+
+  setStationParticipantCountHandler(
+    handler: (game: 'racer' | 'monsters' | 'fighter', roomCode: string, count: number) => void,
+  ): void {
+    this.updateStationEngineParticipants = handler;
     const resources = this.playerRuntime?.getInitializedResources();
     if (resources) this.bindStationAbortHandler(resources);
   }
@@ -605,6 +614,8 @@ export class ArcadeApi {
     launchGeneration: number;
     admitted: boolean;
     readyEntryId: string | null;
+    participantIndex: number;
+    participantCount: number;
   } | null> {
     const config = this.configStore.getSnapshot();
     if (config.arcade.mode === 'off' || !config.channels.voice) return null;
@@ -651,6 +662,8 @@ export class ArcadeApi {
       launchGeneration: match.launchGeneration,
       admitted,
       readyEntryId: readyEntryId ?? null,
+      participantIndex: readyEntryId ? match.participantReadyEntryIds.indexOf(readyEntryId) : -1,
+      participantCount: match.participantReadyEntryIds.length,
     };
   }
 
@@ -672,7 +685,7 @@ export class ArcadeApi {
     launchGeneration: number;
     game: string;
     roomCode: string;
-  }): Promise<{ firstName: string | null; terminal: boolean } | null> {
+  }): Promise<{ firstName: string | null; terminal: boolean; participantIndex: number; participantCount: number } | null> {
     if (!input.callSid || !input.readyEntryId || !input.matchId
       || !Number.isSafeInteger(input.launchGeneration) || input.launchGeneration < 1) return null;
     try {
@@ -699,7 +712,12 @@ export class ArcadeApi {
           ? state.messagingDrafts[entry.playerId]?.firstName?.trim()
           : '')
         || null;
-      return { firstName: firstName ? firstName.slice(0, 20) : null, terminal: station!.phase === 'RESULTS' };
+      return {
+        firstName: firstName ? firstName.slice(0, 20) : null,
+        terminal: station!.phase === 'RESULTS',
+        participantIndex: match.participantReadyEntryIds.indexOf(input.readyEntryId),
+        participantCount: match.participantReadyEntryIds.length,
+      };
     } catch {
       return null;
     }
@@ -2358,6 +2376,9 @@ export class ArcadeApi {
   ): void {
     resources.station.setMatchRemovedHandler((game, roomCode, removal) => {
       this.removeLiveStationEngine(game, roomCode, removal);
+    });
+    resources.station.setMatchParticipantsChangedHandler((game, roomCode, count) => {
+      this.updateStationEngineParticipants?.(game, roomCode, count);
     });
   }
 

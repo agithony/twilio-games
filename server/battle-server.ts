@@ -403,9 +403,10 @@ export class BattleServer {
   }
 
   /** A caller joins `code` as a player. Returns the new playerId, or null if the room is full. */
-  voiceJoin(code: string, name: string): string | null {
+  voiceJoin(code: string, name: string, preferredSide?: 'a' | 'b', expectedPlayers = 1): string | null {
     const room = this.room(code);
-    const res = room.addPlayer(name);
+    room.expectHumanPlayers(expectedPlayers);
+    const res = room.addPlayer(name, preferredSide);
     if ('error' in res) return null;
     this.pushState(code);
     return res.playerId;

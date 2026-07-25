@@ -67,12 +67,15 @@ export class RaceWorld {
    * phone caller). The car spawns near the current pack so it's immediately visible
    * and in play. No-op if the id already exists.
    */
-  addCar(p: PlayerInit): void {
+  addCar(p: PlayerInit, preferredIndex?: number): void {
     if (this.hasCar(p.id)) return;
-    const lane = this.cars.length % LANES;
+    const insertAt = preferredIndex === undefined
+      ? this.cars.length
+      : Math.max(0, Math.min(this.cars.length, preferredIndex));
+    const lane = preferredIndex === undefined ? this.cars.length % LANES : preferredIndex % LANES;
     // Spawn at the rear of the current pack so it appears on-screen, not at z=0.
     const rearZ = this.cars.length ? Math.min(...this.cars.map(c => c.z)) - 4 : 0;
-    this.cars.push({
+    this.cars.splice(insertAt, 0, {
       id: p.id, name: p.name, color: p.color, carIndex: p.carIndex ?? 0,
       lane, targetLane: lane, x: laneX(lane), z: rearZ,
       speed: BASE_SPEED, boost: 0, power: POWER_START, powerActive: 0, invulnerable: false, stunned: 0,

@@ -55,6 +55,7 @@ function battleSnap(over: Partial<BattleVoiceSnapshot> = {}): BattleVoiceSnapsho
     myPotions: 2,
     turn: null,
     activeSide: null,
+    participating: true,
     activeMenu: 'root',
     whoseTurn: null,
     myMoves: [],
@@ -158,7 +159,7 @@ describe('BattleVoiceSession', () => {
 
   it('queues a late caller behind an active battle instead of pretending they are fighting', () => {
     const { deps, log, said } = fakeDeps({
-      snapshot: () => battleSnap({ phase: 'battle', myName: null, myMonsterId: null, myMonsterName: null, whoseTurn: null }),
+      snapshot: () => battleSnap({ phase: 'battle', participating: false, myName: null, myMonsterId: null, myMonsterName: null, whoseTurn: null }),
     });
     const s = new BattleVoiceSession(deps);
     s.handleMessage(setup());
@@ -170,6 +171,10 @@ describe('BattleVoiceSession', () => {
     s.handleMessage(prompt('fight'));
     expect(log.some(l => l.startsWith('action '))).toBe(false);
     expect(said.join(' ')).toMatch(/current battle.*in progress|next round/i);
+    said.length=0;
+    s.onBattleEvent({kind:'move_used',by:'a',moveId:'sparkmouse.jolt',moveName:'Thunder Jolt'});
+    s.onBattleStateChanged();
+    expect(said).toHaveLength(0);
   });
 
   it('tells a caller when the battle room is full or already in progress', () => {
@@ -395,7 +400,7 @@ describe('BattleVoiceSession', () => {
     s.onBattleStateChanged();
 
     expect(said.some(t => /sparkmouse goes first|wait for sparkmouse/i.test(t))).toBe(true);
-    expect(said.filter(t => /fight/i.test(t) && /guard|item|taunt/i.test(t))).toHaveLength(1);
+    expect(said.filter(t => /fight/i.test(t) && /guard|item|taunt/i.test(t))).toHaveLength(0);
   });
 
   it('saying FIGHT on your turn opens the server-synced fight menu and reads the four moves', () => {
@@ -515,7 +520,7 @@ describe('BattleVoiceSession', () => {
 
     timers.shift()?.();
 
-    expect(said.some(t => /wait for shellback/i.test(t))).toBe(true);
+    expect(said.some(t => /shellback.*please wait|please wait.*shellback/i.test(t))).toBe(true);
   });
 
   it('does not accept the next battle command while attack commentary is still resolving', () => {

@@ -28,7 +28,7 @@ messaging, game-selection, or display behavior.
 | Manual control | Staff can advance early whenever at least one player is ready |
 | Automatic control | Timers provide unattended fallback and hard throughput bounds |
 | Overflow | Players beyond selected-game capacity keep reservation and FIFO priority for next game |
-| Racer capacity | **Maximum 4 human players** |
+| Racer capacity | **Maximum 2 human players** |
 | Monsters capacity | Maximum 2 human players; AI fills solo play |
 | Fighter capacity | Maximum 2 human players; AI fills solo play |
 | Trivia | Not selectable until a playable authoritative engine exists |
@@ -120,7 +120,7 @@ At selection time, cards show capacity impact:
 ```text
 5 ready
 
-Voice Racer     Playing this round: 4 · Waiting for next game: 1
+Voice Racer     Playing this round: 2 · Waiting for next game: 3
 Voice Monsters  Playing this round: 2 · Waiting for next game: 3
 Voice Fighter   Playing this round: 2 · Waiting for next game: 3
 ```
@@ -300,7 +300,7 @@ admission:
 
 | Game | Route | Human capacity | Minimum | AI fallback | Playable |
 |---|---|---:|---:|---|---|
-| Voice Racer | `/play.html` | **4** | 1 | Race with fewer humans | Yes |
+| Voice Racer | `/play.html` | **2** | 1 | Race with fewer humans | Yes |
 | Voice Monsters | `/monsters.html` | 2 | 1 | AI opponent | Yes |
 | Voice Fighter | `/fighter.html` | 2 | 1 | AI opponent | Yes |
 | Voice Trivia | Future | TBD | TBD | TBD | No |
@@ -370,7 +370,7 @@ Automatic timers remain active when no operator acts.
 
 ### Phase A: Domain and Persistence
 
-- Reconcile Racer engine capacity from 8 to 4.
+- Reconcile Racer engine capacity from 8 to 2.
 - Add canonical playable-game registry.
 - Add station/round/ready/match/channel state schema and migration.
 - Implement pure station reducer and invariant tests.
@@ -411,7 +411,7 @@ Automatic timers remain active when no operator acts.
 
 - Simultaneous duplicate first `COIN` messages start one round and reserve once.
 - Restart at every deadline and phase boundary.
-- Racer admits 4 and preserves overflow priority.
+- Racer admits 2 and preserves overflow priority.
 - Monsters/Fighter admit 2 and preserve overflow priority.
 - Staff early-start and automatic timeout produce the same valid state.
 - COIN during play enters next pool, never current match.

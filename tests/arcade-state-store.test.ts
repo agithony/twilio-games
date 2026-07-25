@@ -125,7 +125,7 @@ describe('ArcadeStateStore', () => {
     await expect(store.transaction(addPlayer('p1'))).rejects.toMatchObject({ code: 'STORE_NOT_INITIALIZED' });
   });
 
-  it('persists schema-v7 state and restores it after restart', async () => {
+  it('persists schema-v8 state and restores it after restart', async () => {
     const file = await stateFile();
     const first = await ArcadeStateStore.open(file);
     await first.transaction(addPlayer('trusted:p1'));
@@ -145,7 +145,7 @@ describe('ArcadeStateStore', () => {
     expect(restarted.snapshot().wallets['trusted:p1']?.wallet.cachedBalance).toBe(0);
   });
 
-  it('migrates schema-v1 state losslessly and writes schema v7 on the next transaction', async () => {
+  it('migrates schema-v1 state losslessly and writes schema v8 on the next transaction', async () => {
     const file = await stateFile();
     const first = await ArcadeStateStore.open(file);
     await first.transaction(addPlayer('p1'));
@@ -171,11 +171,11 @@ describe('ArcadeStateStore', () => {
 
     await migrated.transaction(() => undefined);
     const upgraded = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
-    expect(upgraded.schemaVersion).toBe(7);
+    expect(upgraded.schemaVersion).toBe(8);
     expect(upgraded.stations).toEqual({});
   });
 
-  it('migrates schema-v3 messaging state to an empty v7 outbox and audit', async () => {
+  it('migrates schema-v3 messaging state to an empty v8 outbox and audit', async () => {
     const file = await stateFile();
     const first = await ArcadeStateStore.open(file);
     await first.transaction(addPlayer('p1'));
@@ -189,7 +189,7 @@ describe('ArcadeStateStore', () => {
 
     const migrated = await ArcadeStateStore.open(file);
     expect(migrated.snapshot()).toMatchObject({
-      schemaVersion: 7,
+      schemaVersion: 8,
       stationReadyChannels: {},
       outboundNotifications: {},
       messagingAuditEvents: {},
@@ -208,14 +208,14 @@ describe('ArcadeStateStore', () => {
 
     const migrated = await ArcadeStateStore.open(file);
     expect(migrated.snapshot()).toMatchObject({
-      schemaVersion: 7,
+      schemaVersion: 8,
       players: { p1: player('p1') },
       outboundNotifications: {},
       messagingAuditEvents: {},
     });
   });
 
-  it.each(['PLAYING', 'COMPLETED'] as const)('migrates a schema-v5 %s match into valid v7 state', async phase => {
+  it.each(['PLAYING', 'COMPLETED'] as const)('migrates a schema-v5 %s match into valid v8 state', async phase => {
     const file = await stateFile();
     const first = await ArcadeStateStore.open(file);
     await first.transaction(state => {
@@ -259,7 +259,8 @@ describe('ArcadeStateStore', () => {
     const migrated = await ArcadeStateStore.open(file);
     const match = migrated.snapshot().stationMatches['match-1'];
     expect(match).toMatchObject({
-      phase, result: phase === 'COMPLETED' ? { source: 'LEGACY_UNAVAILABLE', participants: [] } : null,
+      phase, humanCapacity: 4,
+      result: phase === 'COMPLETED' ? { source: 'LEGACY_UNAVAILABLE', participants: [] } : null,
     });
     expect(match?.enginePlayerIdsByReadyEntryId['ready-1']).toMatch(/^legacy:[a-f0-9]{32}$/);
   });
@@ -283,12 +284,78 @@ describe('ArcadeStateStore', () => {
 
     const migrated = await ArcadeStateStore.open(file);
     expect(migrated.snapshot()).toMatchObject({
-      schemaVersion: 7,
+      schemaVersion: 8,
       stationRounds: {
         'round-1': { gameChoicesByReadyEntryId: {} },
         'round-closed': { gameChoicesByReadyEntryId: {} },
       },
     });
+  });
+
+  it('shrinks pending schema-v7 Racer matches and their replay result to two players', async () => {
+    const file = await stateFile();
+    const first = await ArcadeStateStore.open(file);
+    await first.transaction(state => {
+      let aggregate = createArcadeStation('expo', T0);
+      for (let index = 1; index <= 5; index += 1) {
+        addPlayer(`p${index}`)(state);
+        aggregate = insertStationCoin(aggregate, {
+          readyEntryId: `ready-${index}`, roundId: `round-${index}`, playerId: `p${index}`,
+          reservationId: null, at: T0, configVersion: 1, expectedRevision: aggregate.station.revision,
+        });
+      }
+      aggregate = closeStationRecruiting(aggregate, { at: T0, expectedRevision: aggregate.station.revision });
+      aggregate = selectStationGame(aggregate, {
+        game: 'racer', matchId: 'legacy-race', engineRoomCode: '4821', at: T0,
+        expectedRevision: aggregate.station.revision,
+      });
+      state.stations.expo = aggregate.station;
+      Object.assign(state.stationRounds, aggregate.rounds);
+      Object.assign(state.stationReadyEntries, aggregate.readyEntries);
+      Object.assign(state.stationMatches, aggregate.matches);
+    });
+    const legacy = JSON.parse(await readFile(file, 'utf8')) as Record<string, any>;
+    legacy.schemaVersion = 7;
+    const legacyMatch = legacy.stationMatches['legacy-race'];
+    legacyMatch.participantReadyEntryIds = ['ready-1', 'ready-2', 'ready-3', 'ready-4'];
+    legacyMatch.overflowReadyEntryIds = ['ready-5'];
+    delete legacyMatch.humanCapacity;
+    for (const readyEntryId of legacyMatch.participantReadyEntryIds) {
+      legacy.stationReadyEntries[readyEntryId].status = 'ADMITTED';
+      legacy.stationReadyEntries[readyEntryId].overflowOrdinal = null;
+    }
+    legacy.stationReadyEntries['ready-5'].status = 'OVERFLOW';
+    legacy.stationReadyEntries['ready-5'].overflowOrdinal = 1;
+    legacy.idempotencyRecords['legacy-select'] = {
+      key: 'legacy-select', operation: 'SELECT_STATION_GAME', playerId: null,
+      fingerprint: 'a'.repeat(64), configVersion: 1, createdAt: T0,
+      result: {
+        station: legacy.stations.expo,
+        round: legacy.stationRounds['round-1'],
+        match: { ...JSON.parse(JSON.stringify(legacyMatch)), launchGeneration: 7 },
+      },
+    };
+    await writeFile(file, JSON.stringify(legacy));
+
+    const migrated = await ArcadeStateStore.open(file);
+    const snapshot = migrated.snapshot();
+    expect(snapshot).toMatchObject({
+      schemaVersion: 8,
+      stationMatches: {
+        'legacy-race': {
+          game: 'racer', humanCapacity: 2,
+          participantReadyEntryIds: ['ready-1', 'ready-2'],
+          overflowReadyEntryIds: ['ready-3', 'ready-4', 'ready-5'],
+        },
+      },
+      stationReadyEntries: {
+        'ready-3': { status: 'OVERFLOW', overflowOrdinal: 1 },
+        'ready-4': { status: 'OVERFLOW', overflowOrdinal: 2 },
+        'ready-5': { status: 'OVERFLOW', overflowOrdinal: 3 },
+      },
+    });
+    expect((snapshot.idempotencyRecords['legacy-select']?.result as Record<string, any>).match)
+      .toMatchObject({ humanCapacity: 2, launchGeneration: 7, participantReadyEntryIds: ['ready-1', 'ready-2'] });
   });
 
   it('migrates embedded schema-v6 station results and replays them without touching unrelated results', async () => {
@@ -501,7 +568,7 @@ describe('ArcadeStateStore', () => {
     await expect(ArcadeStateStore.open(file)).rejects.toMatchObject({ code: 'INVALID_STATE' });
   });
 
-  it('requires the exact schema-v7 round choice map', async () => {
+  it('requires the exact schema-v8 round choice map', async () => {
     const file = await stateFile();
     const store = await ArcadeStateStore.open(file);
     await store.transaction(addReadyPlayer);

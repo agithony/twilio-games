@@ -12,7 +12,7 @@ The current games are:
 
 | Game | Format | Voice commands |
 |---|---|---|
-| Voice Racer | Real-time, three-lane 3D racing for up to four players | `left`, `right`, `boost`, `brake`, `nitro` |
+| Voice Racer | Real-time, three-lane 3D racing for up to two players | `left`, `right`, `boost`, `brake`, `nitro` |
 | Voice Monsters | Turn-based creature battles with type matchups, moves, guard, items, and taunts | Names or numbers, `fight`, move names, `guard`, `item`, `taunt` |
 | Voice Fighter | Real-time side-view 3D fighting with character and arena selection | Names or numbers, `forward`, `back`, `jump`, `punch`, `kick`, `block` |
 
@@ -26,7 +26,7 @@ The implemented product direction and remaining external provisioning work are d
 [Twilio Games station and TAC plan](docs/TWILIO_ARCADE_PLAN.md). It covers runtime-configurable lead capture,
 digital coins, earning challenges, one-display multiplayer queues, post-game summaries, Conversation
 Memory, and Conversation Intelligence. The approved one-screen conference implementation is captured
-separately in the [Expo Station plan](docs/ARCADE_EXPO_STATION_PLAN.md), including Racer's four-player
+separately in the [Expo Station plan](docs/ARCADE_EXPO_STATION_PLAN.md), including two-player game
 capacity, ready-pool timing, phase-two game selection, persistent QR, and SMS/WhatsApp onboarding.
 
 ## Screenshots

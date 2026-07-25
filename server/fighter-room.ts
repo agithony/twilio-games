@@ -23,18 +23,21 @@ export class FighterRoom {
   private loadingGeneration = 0;
   private victory = 0;
   private voiceCommands = new Map<string, FighterCommand[]>();
+  private expectedHumanPlayers = 1;
   private rng: number;
 
   constructor(readonly code: string, seed = 0x12345678, private maps: FighterMapEntry[] = FIGHTER_MAPS) { this.rng = seed >>> 0; }
   setMaps(maps: FighterMapEntry[]): void { if (maps.length) this.maps = maps; }
 
-  addPlayer(name: string): { playerId: string } | { error: string } {
+  addPlayer(name: string, preferredSide?: FighterId): { playerId: string } | { error: string } {
     if (this.players.length >= 2 || !['lobby', 'fighter_select'].includes(this.phase)) return { error: 'room_full' };
-    const side: FighterId = this.players.some(player => player.side === 'p1') ? 'p2' : 'p1';
+    const side: FighterId = preferredSide ?? (this.players.some(player => player.side === 'p1') ? 'p2' : 'p1');
+    if (this.players.some(player => player.side === side)) return { error: 'room_full' };
     const player = { playerId: `f${this.nextPlayer++}`, name: cleanName(name), fighterId: null, side };
-    this.players.push(player);
+    this.players.push(player); this.players.sort((left, right) => left.side.localeCompare(right.side));
     return { playerId: player.playerId };
   }
+  expectHumanPlayers(count: number): void { this.expectedHumanPlayers = count >= 2 ? 2 : 1; }
   removePlayer(id: string): void {
     this.players = this.players.filter((player) => player.playerId !== id);
     this.voiceCommands.delete(id);
@@ -57,8 +60,8 @@ export class FighterRoom {
   }
   advance(): boolean {
     if (this.phase === 'lobby' && this.players.length) { this.phase = 'fighter_select'; return true; }
-    if (this.phase === 'fighter_select' && this.players.every(p => p.fighterId)) { this.phase = 'map_select'; return true; }
-    if (this.phase === 'map_select' && this.selectedMap) {
+    if (this.phase === 'fighter_select' && this.players.length >= this.expectedHumanPlayers && this.players.every(p => p.fighterId)) { this.phase = 'map_select'; return true; }
+    if (this.phase === 'map_select' && this.selectedMap && this.players.length >= this.expectedHumanPlayers) {
       const bounds = this.maps.find(map => map.id === this.selectedMap)?.bounds ?? [-9, 9];
       if (this.players.length === 1) {
         const choices = FIGHTER_ROSTER.filter(fighter => fighter.id !== this.players[0]!.fighterId);

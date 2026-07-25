@@ -37,6 +37,7 @@ async function harness(configure?: (input: Record<string, any>) => void) {
   let sequence = 0;
   let scheduled: { handle: NodeJS.Timeout; callback: () => void; delayMs: number } | null = null;
   const removedMatches: Array<{ game: string; roomCode: string; removal: 'retire'|'abort' }> = [];
+  const participantUpdates: Array<{ game: string; roomCode: string; count: number }> = [];
   const runtimeErrors: unknown[] = [];
   const service = new ArcadeService({
     store,
@@ -70,6 +71,7 @@ async function harness(configure?: (input: Record<string, any>) => void) {
       if (scheduled?.handle === handle) scheduled = null;
     },
     onMatchRemoved: (game, roomCode, removal) => removedMatches.push({ game, roomCode, removal }),
+    onMatchParticipantsChanged: (game, roomCode, count) => participantUpdates.push({ game, roomCode, count }),
     onError: error => runtimeErrors.push(error),
   });
   return {
@@ -83,6 +85,7 @@ async function harness(configure?: (input: Record<string, any>) => void) {
     },
     scheduled: () => scheduled,
     removedMatches,
+    participantUpdates,
     runtimeErrors,
     fire: () => {
       const current = scheduled;
@@ -95,6 +98,45 @@ async function harness(configure?: (input: Record<string, any>) => void) {
 }
 
 describe('ArcadeStationRuntime', () => {
+  it('updates the live engine player gate when an admitted no-show has no replacement', async () => {
+    const h = await harness();
+    for (const playerId of ['p1', 'p2', 'p3']) {
+      await h.service.identifyCoinOnly({ playerId, idempotencyKey: `identify:${playerId}` });
+      await h.service.insertStationCoin({ stationId: 'expo', playerId, idempotencyKey: `coin:${playerId}` });
+    }
+    const recruiting = await h.service.getStation('expo');
+    const selecting = await h.service.closeStationRecruiting({
+      stationId: 'expo', expectedRevision: recruiting!.station.revision,
+      idempotencyKey: 'drop-close', authorization: AUTHORIZATION,
+    });
+    const locked = await h.service.selectStationGame({
+      stationId: 'expo', expectedRevision: selecting.station.revision, game: 'racer',
+      engineRoomCode: 'DROP', idempotencyKey: 'drop-select', authorization: AUTHORIZATION,
+    });
+    const runtime = h.makeRuntime();
+    const firstDropInput = {
+      readyEntryId: locked.match!.participantReadyEntryIds[1]!,
+      expectedRevision: locked.station.revision,
+      idempotencyKey: 'drop-with-replacement', authorization: OPERATOR_AUTHORIZATION,
+      reason: 'first caller left before launch',
+    };
+    const firstDrop = await runtime.dropAdmittedEntry(firstDropInput);
+    await runtime.dropAdmittedEntry({
+      readyEntryId: firstDrop.match!.participantReadyEntryIds[1]!,
+      expectedRevision: firstDrop.station.revision,
+      idempotencyKey: 'drop-no-replacement', authorization: OPERATOR_AUTHORIZATION,
+      reason: 'replacement caller also left before launch',
+    });
+
+    expect(h.participantUpdates).toEqual([
+      { game: 'racer', roomCode: 'DROP', count: 2 },
+      { game: 'racer', roomCode: 'DROP', count: 1 },
+    ]);
+    h.participantUpdates.length = 0;
+    await runtime.dropAdmittedEntry(firstDropInput);
+    expect(h.participantUpdates).toEqual([{ game: 'racer', roomCode: 'DROP', count: 1 }]);
+  });
+
   it('recovers an overdue recruiting deadline and advances later deadlines deterministically', async () => {
     const h = await harness();
     await h.service.identifyCoinOnly({ playerId: 'p1', idempotencyKey: 'identify:p1' });
@@ -409,7 +451,7 @@ describe('ArcadeStationRuntime', () => {
     });
     await runtime.markEngineStarted('racer','AUTO');
     const admitted=launching.match!.participantReadyEntryIds;
-    for(const readyEntryId of admitted.slice(0,3))runtime.markParticipantConnected(readyEntryId);
+    runtime.markParticipantConnected(admitted[0]!);
     await runtime.flush();
     expect(h.scheduled()?.delayMs).toBe(120_000);
     h.setTime(T0+121_000);h.fire();await runtime.flush();
@@ -417,7 +459,7 @@ describe('ArcadeStationRuntime', () => {
     expect(h.runtimeErrors).toEqual([]);
     expect(replaced?.station.phase).toBe('LAUNCHING');
     expect(Object.values(replaced!.readyEntries).filter(entry=>entry.status==='LEFT').map(entry=>entry.id))
-      .toEqual([admitted[3]]);
+      .toEqual([admitted[1]]);
     expect(replaced?.matches[replaced.station.activeMatchId!]!.participantReadyEntryIds)
       .toContain(launching.match!.overflowReadyEntryIds[0]);
     expect(replaced?.matches[replaced.station.activeMatchId!]!.launchGeneration).toBe(2);

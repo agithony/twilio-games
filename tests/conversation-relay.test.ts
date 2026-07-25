@@ -5,10 +5,18 @@ import type { Intent } from '../shared/types';
 
 function fakeRoom() {
   const applied: { id:string; intent:Intent }[] = [];
+  const assignments: Array<number | undefined> = [];
+  const expectedPlayers: number[] = [];
   let n = 0;
   return {
     applied,
-    addPlayer: (_name:string) => ({ playerId:`p${++n}`, lane:n-1 }),
+    assignments,
+    expectedPlayers,
+    addPlayer: (_name:string, _color?: string, preferredIndex?: number) => {
+      assignments.push(preferredIndex);
+      return { playerId:`p${++n}`, lane:preferredIndex ?? n-1 };
+    },
+    expectHumanPlayers: (count: number) => { expectedPlayers.push(count); },
     applyIntent: (id:string, intent:Intent) => { applied.push({ id, intent }); },
     removePlayer: (_id:string) => {},
   };
@@ -54,6 +62,17 @@ describe('ConversationRelayAdapter', () => {
     a.handleMessage(JSON.stringify({ type:'setup', callSid:'CA1', customParameters:{ roomCode:'4821' } }));
     a.handleMessage(JSON.stringify({ type:'prompt', voicePrompt:'left', last:true }));
     expect(room.applied).toEqual([{ id:'p1', intent:'MOVE_LEFT' }]);
+  });
+
+  it('applies the station Racer order and expected player count before joining', () => {
+    const room = fakeRoom();
+    const adapter = new ConversationRelayAdapter({ findOrCreateRoom: () => room });
+    adapter.setStationManaged(true);
+    adapter.setStationAssignment(1, 2);
+    adapter.handleMessage(JSON.stringify({ type:'setup', callSid:'CA2', customParameters:{ roomCode:'4821' } }));
+
+    expect(room.expectedPlayers).toEqual([2]);
+    expect(room.assignments).toEqual([1]);
   });
 
   it('ignores prompts before setup (no room bound)', () => {
@@ -302,6 +321,34 @@ describe('ConversationRelayAdapter', () => {
     expect(said).toHaveLength(2);
     expect(said[0]!.toLowerCase()).toMatch(/car|ride|machine/);
     expect(said[1]!.toLowerCase()).toMatch(/track|course/);
+  });
+
+  it('drops menu guidance and delayed replies after another caller advances the phase', async () => {
+    const room=fakeRoom();const said:string[]=[];let phase='car_select';let release!:(value:string)=>void;
+    const delayed=new Promise<string>(resolve=>{release=resolve;});
+    const adapter=new ConversationRelayAdapter({
+      findOrCreateRoom:()=>room,phaseOf:()=>phase,
+      say:(text,isCurrent)=>{if(!isCurrent||isCurrent())said.push(text);},
+      converse:async()=>delayed,
+    });
+    adapter.handleMessage(JSON.stringify({type:'setup',callSid:'CA-phase',customParameters:{roomCode:'4821'}}));
+    said.length=0;
+    adapter.handleMessage(JSON.stringify({type:'prompt',voicePrompt:'which car should I choose?',last:true}));
+    phase='countdown';
+    adapter.onGameEvent({kind:'enter_car_select'});
+    release('Choose a car by name or number.');
+    await Promise.resolve();await Promise.resolve();
+    expect(said).toHaveLength(0);
+  });
+
+  it('makes a replaced adapter inert before an in-flight reply resolves', async () => {
+    const room=fakeRoom();const said:string[]=[];let release!:(value:string)=>void;
+    const delayed=new Promise<string>(resolve=>{release=resolve;});
+    const adapter=new ConversationRelayAdapter({findOrCreateRoom:()=>room,phaseOf:()=> 'car_select',say:text=>said.push(text),converse:async()=>delayed});
+    adapter.handleMessage(JSON.stringify({type:'setup',callSid:'CA-old',customParameters:{roomCode:'4821'}}));
+    said.length=0;adapter.handleMessage(JSON.stringify({type:'prompt',voicePrompt:'which car is fastest?',last:true}));adapter.handleClose(true);
+    release('Choose a car by name or number.');await Promise.resolve();await Promise.resolve();
+    expect(said).toHaveLength(0);
   });
 
   it('does not repeat the menu or car response already spoken to the initiating caller', () => {

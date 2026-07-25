@@ -548,7 +548,7 @@ The approved default is one coin per human participant:
 
 | Game | Human capacity | Minimum humans | AI fallback | Default total coin cost |
 |---|---:|---:|---|---:|
-| Voice Racer | 4 | 1 (prefer 2+) | Optional race with fewer humans | One per human |
+| Voice Racer | 2 | 1 (prefer 2) | Optional race with fewer humans | One per human |
 | Voice Fighter | 2 | 1 | AI fighter | One per human |
 | Voice Monsters | 2 | 1 | AI monster | One per human |
 | Voice Trivia | Configurable | Configurable | None by default | One per human |
@@ -568,8 +568,7 @@ Examples:
 
 ```text
 Racer party of 14
-Wave 1: players 1-8
-Wave 2: players 9-14
+Matches 1-7: consecutive two-player pairs
 ```
 
 ```text
@@ -661,10 +660,10 @@ Each match creates a promotion wave containing primary slots and standby slots.
 Example for Racer:
 
 ```text
-Game capacity: 4
-Primary promotions: 4
+Game capacity: 2
+Primary promotions: 2
 Standby promotions: 2
-Total notified: 10
+Total notified: 4
 ```
 
 Promotion algorithm:

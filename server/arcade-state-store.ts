@@ -32,7 +32,7 @@ import {
   type StationReadyEntry,
 } from '../shared/arcade-station';
 
-export const ARCADE_STATE_SCHEMA_VERSION = 7 as const;
+export const ARCADE_STATE_SCHEMA_VERSION = 8 as const;
 export const ARCADE_STATE_MAX_FILE_BYTES = 64 * 1024 * 1024;
 export const ARCADE_STATE_MAX_PLAYERS = 100_000;
 export const ARCADE_STATE_MAX_QUEUE_ENTRIES = 100_000;
@@ -722,7 +722,7 @@ function assertStationReadyShape(value: StationReadyEntry, key: string): void {
 
 function assertStationMatchShape(value: StationMatch, key: string): void {
   requireExactRecord(value, [
-    'id', 'stationId', 'roundId', 'game', 'phase', 'participantReadyEntryIds',
+    'id', 'stationId', 'roundId', 'game', 'humanCapacity', 'phase', 'participantReadyEntryIds',
     'overflowReadyEntryIds', 'engineRoomCode', 'launchGeneration', 'launchRequestedAt',
     'displayReadyAt', 'startedAt', 'completedAt', 'enginePlayerIdsByReadyEntryId', 'result', 'configVersion',
   ], `stationMatches.${key}`);
@@ -731,6 +731,7 @@ function assertStationMatchShape(value: StationMatch, key: string): void {
   for (const field of ['stationId', 'roundId', 'game', 'phase'] as const) {
     requireString(value[field], `stationMatches.${key}.${field}`);
   }
+  requireInteger(value.humanCapacity, `stationMatches.${key}.humanCapacity`, 1);
   requireString(value.engineRoomCode, `stationMatches.${key}.engineRoomCode`);
   for (const [field, ids] of [
     ['participantReadyEntryIds', value.participantReadyEntryIds],
@@ -1539,46 +1540,133 @@ function migrateArcadeState(state: unknown): unknown {
       }));
     current = { ...schemaFive, schemaVersion: 6, stationMatches };
   }
-  if (!isRecord(current) || current.schemaVersion !== 6) return current;
-  const schemaSix = requireExactRecord(current, [
+  if (isRecord(current) && current.schemaVersion === 6) {
+    const schemaSix = requireExactRecord(current, [
+      'schemaVersion', 'players', 'wallets', 'queueEntries', 'queueEntryConfigs',
+      'queueEvents', 'idempotencyRecords', 'stations', 'stationRounds', 'stationReadyEntries',
+      'stationMatches', 'channelAddresses', 'messagingDrafts', 'inboundMessages',
+      'stationReadyChannels', 'outboundNotifications', 'messagingAuditEvents', 'stationControlEvents',
+    ], '$');
+    const stationRounds = Object.fromEntries(
+      Object.entries(requireRecord(schemaSix.stationRounds, 'stationRounds')).map(([id, round]) => [
+        id,
+        {
+          ...requireRecord(round, `stationRounds.${id}`),
+          gameChoicesByReadyEntryId: {},
+        },
+      ]),
+    );
+    const idempotencyRecords = Object.fromEntries(
+      Object.entries(requireRecord(schemaSix.idempotencyRecords, 'idempotencyRecords')).map(([key, item]) => {
+        const record = requireRecord(item, `idempotencyRecords.${key}`);
+        const result = isRecord(record.result) ? record.result : null;
+        if (!STATION_MUTATION_RESULT_OPERATIONS.has(String(record.operation))
+          || !result || !isRecord(result.round)) {
+          return [key, record];
+        }
+        return [key, {
+          ...record,
+          result: {
+            ...result,
+            round: {
+              ...result.round,
+              gameChoicesByReadyEntryId: {},
+            },
+          },
+        }];
+      }),
+    );
+    current = {
+      ...schemaSix,
+      schemaVersion: 7,
+      stationRounds,
+      idempotencyRecords,
+    };
+  }
+  if (!isRecord(current) || current.schemaVersion !== 7) return current;
+  const schemaSeven = requireExactRecord(current, [
     'schemaVersion', 'players', 'wallets', 'queueEntries', 'queueEntryConfigs',
     'queueEvents', 'idempotencyRecords', 'stations', 'stationRounds', 'stationReadyEntries',
     'stationMatches', 'channelAddresses', 'messagingDrafts', 'inboundMessages',
     'stationReadyChannels', 'outboundNotifications', 'messagingAuditEvents', 'stationControlEvents',
   ], '$');
-  const stationRounds = Object.fromEntries(
-    Object.entries(requireRecord(schemaSix.stationRounds, 'stationRounds')).map(([id, round]) => [
-      id,
-      {
-        ...requireRecord(round, `stationRounds.${id}`),
-        gameChoicesByReadyEntryId: {},
-      },
-    ]),
+  const stationReadyEntries = {
+    ...requireRecord(schemaSeven.stationReadyEntries, 'stationReadyEntries'),
+  };
+  const stationMatches = Object.fromEntries(
+    Object.entries(requireRecord(schemaSeven.stationMatches, 'stationMatches')).map(([id, match]) => {
+      const value = requireRecord(match, `stationMatches.${id}`);
+      const participantsValid = Array.isArray(value.participantReadyEntryIds)
+        && value.participantReadyEntryIds.every(entryId => typeof entryId === 'string');
+      const overflowValid = Array.isArray(value.overflowReadyEntryIds)
+        && value.overflowReadyEntryIds.every(entryId => typeof entryId === 'string');
+      const participants = participantsValid ? value.participantReadyEntryIds as string[] : [];
+      const existingOverflow = overflowValid ? value.overflowReadyEntryIds as string[] : [];
+      const shrinkPendingRacer = value.game === 'racer'
+        && ['PREPARING', 'LAUNCHING'].includes(String(value.phase))
+        && participantsValid && overflowValid;
+      const admitted = shrinkPendingRacer ? participants.slice(0, 2) : participants;
+      const overflow = shrinkPendingRacer ? [...participants.slice(2), ...existingOverflow] : existingOverflow;
+      if (shrinkPendingRacer) {
+        admitted.forEach(entryId => {
+          const entry = requireRecord(stationReadyEntries[entryId], `stationReadyEntries.${entryId}`);
+          stationReadyEntries[entryId] = { ...entry, status: 'ADMITTED', overflowOrdinal: null };
+        });
+        overflow.forEach((entryId, index) => {
+          const entry = requireRecord(stationReadyEntries[entryId], `stationReadyEntries.${entryId}`);
+          stationReadyEntries[entryId] = { ...entry, status: 'OVERFLOW', overflowOrdinal: index + 1 };
+        });
+      }
+      return [id, {
+        ...value,
+        humanCapacity: shrinkPendingRacer ? 2 : value.game === 'racer' ? 4 : 2,
+        participantReadyEntryIds: shrinkPendingRacer ? admitted : value.participantReadyEntryIds,
+        overflowReadyEntryIds: shrinkPendingRacer ? overflow : value.overflowReadyEntryIds,
+      }];
+    }),
   );
   const idempotencyRecords = Object.fromEntries(
-    Object.entries(requireRecord(schemaSix.idempotencyRecords, 'idempotencyRecords')).map(([key, item]) => {
+    Object.entries(requireRecord(schemaSeven.idempotencyRecords, 'idempotencyRecords')).map(([key, item]) => {
       const record = requireRecord(item, `idempotencyRecords.${key}`);
       const result = isRecord(record.result) ? record.result : null;
-      if (!STATION_MUTATION_RESULT_OPERATIONS.has(String(record.operation))
-        || !result || !isRecord(result.round)) {
+      const match = result && isRecord(result.match) ? result.match : null;
+      if (!STATION_MUTATION_RESULT_OPERATIONS.has(String(record.operation)) || !result || !match) {
         return [key, record];
       }
+      const participantsValid = Array.isArray(match.participantReadyEntryIds)
+        && match.participantReadyEntryIds.every(entryId => typeof entryId === 'string');
+      const overflowValid = Array.isArray(match.overflowReadyEntryIds)
+        && match.overflowReadyEntryIds.every(entryId => typeof entryId === 'string');
+      const persistedMatch = stationMatches[String(match.id)] as Record<string, unknown> | undefined;
+      const migratedCapacity = persistedMatch?.humanCapacity === 2 ? 2
+        : persistedMatch?.humanCapacity === 4 ? 4
+          : match.game === 'racer' && ['PREPARING', 'LAUNCHING'].includes(String(match.phase)) ? 2
+            : match.game === 'racer' ? 4 : 2;
+      const shrinkPendingRacer = match.game === 'racer' && migratedCapacity === 2
+        && participantsValid && overflowValid;
+      const participants = participantsValid ? match.participantReadyEntryIds as string[] : [];
+      const overflow = overflowValid ? match.overflowReadyEntryIds as string[] : [];
       return [key, {
         ...record,
         result: {
           ...result,
-          round: {
-            ...result.round,
-            gameChoicesByReadyEntryId: {},
+          match: {
+            ...match,
+            humanCapacity: migratedCapacity,
+            ...(shrinkPendingRacer ? {
+              participantReadyEntryIds: participants.slice(0, 2),
+              overflowReadyEntryIds: [...participants.slice(2), ...overflow],
+            } : {}),
           },
         },
       }];
     }),
   );
   return {
-    ...schemaSix,
+    ...schemaSeven,
     schemaVersion: ARCADE_STATE_SCHEMA_VERSION,
-    stationRounds,
+    stationReadyEntries,
+    stationMatches,
     idempotencyRecords,
   };
 }
