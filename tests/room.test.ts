@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { Room } from '../server/room';
 import { STEP, MAX_PLAYERS } from '../shared/constants';
+import { arcadeGameDefinition } from '../shared/arcade-games';
 
 describe('Room', () => {
   let room: Room;
@@ -14,11 +15,29 @@ describe('Room', () => {
     expect(a.playerId).not.toEqual(b.playerId);
   });
 
+  it('orders station racers by assignment and waits for both before starting', () => {
+    room.expectHumanPlayers(2);
+    const second = room.addPlayer('Rex', undefined, 1) as { playerId: string; lane: number };
+    room.start();
+    expect(room.snapshot()).toBeNull();
+
+    const first = room.addPlayer('Ada', undefined, 0) as { playerId: string; lane: number };
+    expect(room.lobbyPlayers().map(player => player.name)).toEqual(['Ada', 'Rex']);
+    expect([first.lane, second.lane]).toEqual([0, 1]);
+    room.start();
+    expect(room.snapshot()?.cars.map(car => car.name)).toEqual(['Ada', 'Rex']);
+
+    room.removePlayer(first.playerId);
+    room.addPlayer('Ada Returns', undefined, 0);
+    expect(room.snapshot()?.cars.map(car => car.name)).toEqual(['Ada Returns', 'Rex']);
+  });
+
   it('rejects joins beyond MAX_PLAYERS', () => {
     for (let i = 0; i < MAX_PLAYERS; i++) room.addPlayer('P' + i);
     const over = room.addPlayer('Overflow') as any;
     expect(over.error).toBeDefined();
     expect(room.playerCount).toBe(MAX_PLAYERS);
+    expect(MAX_PLAYERS).toBe(arcadeGameDefinition('racer').humanCapacity);
   });
 
   it('starts as lobby and has no snapshot until started', () => {

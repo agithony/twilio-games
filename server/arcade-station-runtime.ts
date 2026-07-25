@@ -33,6 +33,7 @@ export interface ArcadeStationRuntimeOptions {
   readonly clearTimer?: (timer: Timer) => void;
   readonly onError?: (error: unknown) => void;
   readonly onMatchRemoved?: (game: PlayableArcadeGame, roomCode: string, removal: StationMatchRemoval) => void;
+  readonly onMatchParticipantsChanged?: (game: PlayableArcadeGame, roomCode: string, count: number) => void;
 }
 
 type ScheduledTransition = Readonly<{
@@ -53,6 +54,7 @@ export class ArcadeStationRuntime {
   private readonly clearTimer: (timer: Timer) => void;
   private readonly onError?: (error: unknown) => void;
   private onMatchRemoved?: (game: PlayableArcadeGame, roomCode: string, removal: StationMatchRemoval) => void;
+  private onMatchParticipantsChanged?: (game: PlayableArcadeGame, roomCode: string, count: number) => void;
   private timer: Timer | null = null;
   private unsubscribe: (() => void) | null = null;
   private pending: Promise<void> = Promise.resolve();
@@ -79,10 +81,17 @@ export class ArcadeStationRuntime {
     this.clearTimer = options.clearTimer ?? clearTimeout;
     this.onError = options.onError;
     this.onMatchRemoved = options.onMatchRemoved;
+    this.onMatchParticipantsChanged = options.onMatchParticipantsChanged;
   }
 
   setMatchRemovedHandler(handler: (game: PlayableArcadeGame, roomCode: string, removal: StationMatchRemoval) => void): void {
     this.onMatchRemoved = handler;
+  }
+
+  setMatchParticipantsChangedHandler(
+    handler: (game: PlayableArcadeGame, roomCode: string, count: number) => void,
+  ): void {
+    this.onMatchParticipantsChanged = handler;
   }
 
   async start(): Promise<void> {
@@ -184,7 +193,7 @@ export class ArcadeStationRuntime {
     return this.canonicalEngineIdByCurrentId.get(enginePlayerId) ?? enginePlayerId;
   }
 
-  dropAdmittedEntry(input: {
+  async dropAdmittedEntry(input: {
     readyEntryId: string;
     expectedRevision: number;
     idempotencyKey: string;
@@ -194,7 +203,7 @@ export class ArcadeStationRuntime {
     if (this.connectedReadyEntries.has(input.readyEntryId)) {
       return Promise.reject(new Error('connected player cannot be removed from the launch'));
     }
-    return this.service.dropStationAdmittedEntry({
+    const result = await this.service.dropStationAdmittedEntry({
       stationId: this.stationIdSource(),
       readyEntryId: input.readyEntryId,
       expectedRevision: input.expectedRevision,
@@ -202,6 +211,18 @@ export class ArcadeStationRuntime {
       authorization: input.authorization,
       reason: input.reason,
     });
+    const current = await this.service.getStation(this.stationIdSource());
+    const currentMatch = current?.station.activeMatchId
+      ? current.matches[current.station.activeMatchId]
+      : undefined;
+    if (currentMatch && currentMatch.id === result.match?.id) {
+      this.onMatchParticipantsChanged?.(
+        currentMatch.game,
+        currentMatch.engineRoomCode,
+        currentMatch.participantReadyEntryIds.length,
+      );
+    }
+    return result;
   }
 
   async markEngineCompleted(

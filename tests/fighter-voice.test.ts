@@ -14,7 +14,7 @@ describe('fighter voice session', () => {
       'This game is powered by Twilio Conversation Relay, so your voice controls the fight in real time over this call.',
       'Before you start, check the controls on the display.',
       'Reduce your rival to zero health. During the fight, say forward, back, jump, punch, kick, or block.',
-      'Say start to choose fighters.',
+      'You are Player One and control shared setup. Say start to choose fighters.',
     ]);
     const arrival=ada.spoken.join(' ').toLowerCase();
     expect(arrival).toContain('ada');
@@ -37,9 +37,9 @@ describe('fighter voice session', () => {
       'Welcome, Ada.',
       'Before you start, check the controls on the display.',
       'Reduce your rival to zero health. During the fight, say forward, back, jump, punch, kick, or block.',
-      'Say start to choose fighters.',
+      'You are Player One and control shared setup. Say start to choose fighters.',
     ]);
-    ada.prompt('start');
+    ada.prompt('star');
     expect(ada.spoken.at(-1)).toBe('Choose your fighter. Say the name or number shown on screen.');
     ada.prompt('Nicks', false);
     expect(game.room.state().players.find(player => player.playerId === ada.playerId)?.fighterId).toBeNull();
@@ -140,10 +140,42 @@ describe('fighter voice session', () => {
     ]);
 
     expect(ada.spoken.some(line => line.includes('Bob joined as your opponent and locked in Wraith'))).toBe(true);
-    expect(bob.spoken.some(line => line.includes('Player one is choosing the arena'))).toBe(true);
+    expect(bob.spoken.some(line => line.includes('Player One is choosing the arena'))).toBe(true);
     expect(bob.spoken).toContain('Player one, Ada, as Nyx.');
     expect(bob.spoken).toContain('Versus.');
     expect(bob.spoken).toContain('Player two, Bob, as Wraith.');
+  });
+
+  it('executes queued combat commands independently for both callers', () => {
+    const game=voiceGame(),ada=game.connect('CA-A'),bob=game.connect('CA-B');
+    ada.prompt('Ada');bob.prompt('Bob');ada.prompt('start');
+    ada.prompt('Nyx');bob.prompt('Wraith');ada.prompt('next');ada.prompt('second');ada.prompt('fight');
+    game.room.ready(game.room.state().loadingGeneration);game.stateChanged();advanceIntro(game);game.tick(6);
+    ada.prompt('forward punch kick jump');
+    bob.prompt('forward kick punch jump');
+    for(let index=0;index<140;index++)game.tick(0.1);
+    const actions=game.events.filter(event=>event.type==='action');
+    expect(actions.filter(event=>event.fighter==='p1').map(event=>event.command)).toEqual(['forward','punch','kick','jump']);
+    expect(actions.filter(event=>event.fighter==='p2').map(event=>event.command)).toEqual(['forward','kick','punch','jump']);
+  });
+
+  it('uses station participant order instead of connection order for setup authority', () => {
+    const game=voiceGame();
+    const bob=game.connect('CA-B','VOICE',undefined,'Bob',{index:1,count:2});
+    const ada=game.connect('CA-A','VOICE',undefined,'Ada',{index:0,count:2});
+    expect(game.room.canControlSetup(ada.playerId)).toBe(true);
+    expect(game.room.canControlSetup(bob.playerId)).toBe(false);
+    ada.prompt('start');ada.prompt('Nyx');
+    expect(game.room.advance()).toBe(false);
+    bob.prompt('Wraith');
+    expect(game.room.advance()).toBe(true);
+    ada.prompt('second');ada.prompt('fight');
+    game.room.ready(game.room.state().loadingGeneration);game.stateChanged();advanceIntro(game);game.tick(6);
+    ada.prompt('forward punch');bob.prompt('forward kick');
+    for(let index=0;index<40;index++)game.tick(0.1);
+    const actions=game.events.filter(event=>event.type==='action');
+    expect(actions.filter(event=>event.fighter==='p1').map(event=>event.command)).toEqual(['forward','punch']);
+    expect(actions.filter(event=>event.fighter==='p2').map(event=>event.command)).toEqual(['forward','kick']);
   });
 
   it('matches screen numbers, ordinals, normalized IDs, and dynamic names', () => {
@@ -194,7 +226,7 @@ describe('fighter voice session', () => {
       'Boas-vindas, Ana.',
       'Antes de começar, veja os controles na tela.',
       'Reduza os pontos de vida do rival a zero. Durante a luta, diga avançar, recuar, pular, soco, chute ou bloquear.',
-      'Diga começar para escolher os lutadores.',
+      'Você é o Jogador Um e controla a configuração compartilhada. Diga começar para escolher os lutadores.',
     ]);
     ana.prompt('começar');
     expect(ana.spoken.at(-1)).toBe('Escolha seu lutador. Diga o nome ou número exibido na tela.');
@@ -276,11 +308,12 @@ function voiceGame() {
   const room = new FighterRoom('VOICE', 1234);
   const sessions: FighterVoiceSession[] = [];
   const commands: { playerId: string; command: FighterCommand }[] = [];
+  const events: FighterEvent[] = [];
 
   const stateChanged = () => sessions.forEach(session => session.onStateChanged());
   const publishEvents = (events: FighterEvent[]) => {
     if (!events.length) return;
-    for (const session of sessions) for (const event of events) session.onFighterEvent(event);
+    for (const event of events) { for (const session of sessions) session.onFighterEvent(event); }
   };
   const snapshot = (playerId: string): FighterVoiceSnapshot | null => {
     const state = room.state();
@@ -318,13 +351,15 @@ function voiceGame() {
     };
   };
 
-  const connect = (callSid: string, roomCode = 'VOICE', commandLocale?: string, authoritativeName?: string) => {
+  const connect = (callSid: string, roomCode = 'VOICE', commandLocale?: string, authoritativeName?: string,
+    stationAssignment?:{index:number;count:number}) => {
     const spoken: string[] = [];
     let playerId = '';
     const session = new FighterVoiceSession({
       say: text => spoken.push(text),
-      join: (_code,name) => {
-        const joined = room.addPlayer(name);
+      join: (_code,name,_callSid,side,expectedPlayers) => {
+        room.expectHumanPlayers(expectedPlayers??1);
+        const joined = room.addPlayer(name,side);
         if ('error' in joined) return null;
         playerId = joined.playerId; stateChanged(); return { playerId, resumed: false };
       },
@@ -334,13 +369,14 @@ function voiceGame() {
       selectMap: (_code, id, mapId) => { const ok = room.canControlSetup(id) && room.selectMap(mapId); stateChanged(); return ok; },
       advance: (_code, id) => { const ok = room.canControlSetup(id) && room.advance(); stateChanged(); return ok; },
       command: (_code, id, command) => {
-        const events = room.command(id, command); if (events.length) commands.push({ playerId: id, command });
-        publishEvents(room.drainEvents()); stateChanged(); return events.length > 0;
+        const accepted = room.voiceCommand(id, command); if (accepted) commands.push({ playerId: id, command });
+        const emitted=room.drainEvents();events.push(...emitted);publishEvents(emitted);stateChanged();return accepted;
       },
       snapshot: (_code, id) => snapshot(id),
     });
     session.setAuthoritativeName(authoritativeName??null);
     session.setStationManaged(authoritativeName!==undefined);
+    if(stationAssignment)session.setStationAssignment(stationAssignment.index,stationAssignment.count);
     sessions.push(session);
     session.handleMessage(JSON.stringify({ type: 'setup', callSid, customParameters: { roomCode, ...(commandLocale ? { commandLocale } : {}) } }));
     return {
@@ -352,8 +388,8 @@ function voiceGame() {
     };
   };
 
-  const tick = (seconds: number) => { room.tick(seconds); publishEvents(room.drainEvents()); stateChanged(); };
-  return { room, commands, connect, tick, stateChanged };
+  const tick = (seconds: number) => { room.tick(seconds);const emitted=room.drainEvents();events.push(...emitted);publishEvents(emitted);stateChanged(); };
+  return { room, commands, events, connect, tick, stateChanged };
 }
 
 function advanceIntro(game: ReturnType<typeof voiceGame>): void {

@@ -116,6 +116,8 @@ describe('FighterServer WebSocket authority and lifecycle', () => {
     send(a, { type: 'select_fighter', fighterId: 'nyx' });
     await waitFor(host, message => message.type === 'fighter_state' && (message.players as { fighterId: string | null }[]).some(player => player.fighterId === 'nyx'));
     send(host, { type: 'select_fighter', fighterId: 'wraith' });
+    await waitFor(host, message => message.type === 'error' && message.code === 'forbidden');
+    send(b, { type: 'select_fighter', fighterId: 'wraith' });
     await waitFor(host, message => message.type === 'fighter_state' && (message.players as { fighterId: string | null }[]).every(player => player.fighterId));
     send(host, { type: 'advance' }); await waitFor(host, message => message.type === 'fighter_state' && message.phase === 'map_select');
     send(spectator, { type: 'select_map', mapId: 'void' });

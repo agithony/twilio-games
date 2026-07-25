@@ -635,7 +635,7 @@ describe('ArcadeService station journey', () => {
       expectedRevision: locked.station.revision, idempotencyKey: 'drop-player',
       reason: 'player left the event', ...OPERATOR,
     });
-    expect(dropped.match?.participantReadyEntryIds).toContain(entries[4]!.readyEntry.id);
+    expect(dropped.match?.participantReadyEntryIds).toContain(entries[2]!.readyEntry.id);
     expect(h.store.snapshot().stationReadyEntries[entries[1]!.readyEntry.id]?.status).toBe('LEFT');
     expect(h.store.snapshot().wallets.p2?.reservations[0]?.status).toBe('RELEASED');
 

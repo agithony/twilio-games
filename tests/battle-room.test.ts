@@ -50,6 +50,23 @@ describe('BattleRoom', () => {
     expect(s.b.id).not.toBe(a.playerId);         // opponent isn't the human
   });
 
+  it('waits for both expected station players and preserves assigned sides and picks', () => {
+    const r=room();r.expectHumanPlayers(2);
+    const b=r.addPlayer('Bo','b') as {playerId:string};
+    r.advance();r.selectMonster(b.playerId,M1);r.advance();
+    expect(r.phase).toBe('monster_select');
+    const a=r.addPlayer('Ada','a') as {playerId:string};
+    r.selectMonster(a.playerId,M0);r.advance();
+    expect(r.snapshot()).toMatchObject({
+      a:{id:a.playerId,name:'Ada',monsterId:M0},
+      b:{id:b.playerId,name:'Bo',monsterId:M1},
+    });
+    expect(r.chooseAction(b.playerId,{kind:'guard'})).toBe(false);
+    expect(r.chooseAction(a.playerId,{kind:'guard'})).toBe(true);
+    expect(r.activeSide()).toBe('b');
+    expect(r.chooseAction(b.playerId,{kind:'guard'})).toBe(true);
+  });
+
   it('rejects late joins during an active battle instead of corrupting the current matchup', () => {
     const r = room();
     const a = r.addPlayer('Ada') as { playerId: string };

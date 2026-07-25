@@ -23,11 +23,18 @@ import type { LevelLighting, LevelEffects, PlacedProp, GantryOffset, ResolvedCam
 import { DEFAULT_CAMERA } from '../shared/level';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
+import { chaseCameraPose } from './chase-camera';
+import { splitScreenViewports, type SplitScreenViewport } from './split-screen';
+
+export interface RendererOptions {
+  splitScreen?: boolean;
+}
 
 export class Renderer {
   private renderer: THREE.WebGLRenderer;
   private scene = new THREE.Scene();
   private camera: THREE.PerspectiveCamera;
+  private splitCameras: [THREE.PerspectiveCamera, THREE.PerspectiveCamera];
   private carMeshes = new Map<string, THREE.Group>();
   private carIndex = new Map<string, number>();
   private nextCarIndex = 0;
@@ -64,6 +71,10 @@ export class Renderer {
     this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 
     this.camera = new THREE.PerspectiveCamera(46, size.width / size.height, 0.1, 4000);
+    this.splitCameras = [
+      new THREE.PerspectiveCamera(46, size.width / Math.max(1, size.height / 2), 0.1, 4000),
+      new THREE.PerspectiveCamera(46, size.width / Math.max(1, size.height / 2), 0.1, 4000),
+    ];
 
     // Key light (sun) with a real shadow frustum covering the play area.
     this.sun = new THREE.DirectionalLight(0xfff4e2, 2.1);
@@ -83,7 +94,8 @@ export class Renderer {
     // Post-processing: bloom makes the sun, boost pads, neon edges, and bright
     // surfaces GLOW — the "AAA sheen" that reads great on a big screen.
     this.composer = new EffectComposer(this.renderer);
-    this.composer.addPass(new RenderPass(this.scene, this.camera));
+    this.renderPass = new RenderPass(this.scene, this.camera);
+    this.composer.addPass(this.renderPass);
     this.bloom = new UnrealBloomPass(
       new THREE.Vector2(size.width, size.height),
       0.45,   // strength — subtle, not blown out
@@ -97,7 +109,7 @@ export class Renderer {
       const next = this.viewportSize();
       this.camera.aspect = next.width / next.height; this.camera.updateProjectionMatrix();
       this.renderer.setSize(next.width, next.height);
-      this.composer.setSize(next.width, next.height);
+      this.setComposerSize(next.width, this.splitScreenActive ? Math.ceil(next.height / 2) : next.height);
     });
   }
 
@@ -109,7 +121,12 @@ export class Renderer {
   }
 
   private composer!: EffectComposer;
+  private renderPass!: RenderPass;
   private bloom!: UnrealBloomPass;
+  private composerWidth = 0;
+  private composerHeight = 0;
+  private splitScreenActive = false;
+  private splitFovKicks: [number, number] = [0, 0];
   private sky!: THREE.Mesh;            // gradient sky dome; tinted each frame
   private generatedWorld = new THREE.Group();   // our built track (hidden when a map model is used)
   private mapWorld: THREE.Object3D | null = null;
@@ -288,6 +305,10 @@ export class Renderer {
   setCamera(cam: ResolvedCamera | null): void {
     this.cam = cam ?? { ...DEFAULT_CAMERA };
     this.camera.fov = this.cam.fov; this.camera.updateProjectionMatrix();
+    for (const camera of this.splitCameras) {
+      camera.fov = this.cam.fov;
+      camera.updateProjectionMatrix();
+    }
   }
 
   getLightingLocked(): boolean { return this.lightingLocked; }
@@ -653,12 +674,20 @@ export class Renderer {
     (streak.material as THREE.MeshBasicMaterial).opacity = next * 0.5;
   }
 
-  render(snap: WorldSnapshot) {
+  render(snap: WorldSnapshot, options: RendererOptions = {}) {
     const now = performance.now();
     const dt = Math.min((now - this.lastFrame) / 1000, 0.1);
     this.lastFrame = now;
     this.clock += dt;
     this.applyPulse();
+
+    const liveCarIds = new Set(snap.cars.map(car => car.id));
+    for (const [id, wrapper] of this.carMeshes) {
+      if (liveCarIds.has(id)) continue;
+      this.trackContent.remove(wrapper);
+      this.carMeshes.delete(id);
+      this.carIndex.delete(id);
+    }
 
     for (const c of snap.cars) {
       const wrapper = this.ensureCar(c.id, c.color, c.carIndex);
@@ -704,6 +733,14 @@ export class Renderer {
       scaled.rotation.y += dt * HOVER_SPIN;
     }
     this.updatePops(dt);
+    const size = this.viewportSize();
+    const splitViews = options.splitScreen ? splitScreenViewports(snap.cars, size.width, size.height) : [];
+    if (splitViews.length === 2) {
+      this.renderSplitScreen(snap, splitViews as [SplitScreenViewport, SplitScreenViewport], dt, size);
+      return;
+    }
+    this.splitScreenActive = false;
+    this.setComposerSize(size.width, size.height);
     // Camera focus. The shared DISPLAY frames the whole FIELD (every player is on one screen, so we
     // can't chase the leader — that pushes the back of the pack off-screen). A solo keyboard player
     // (own myId, not the spectator display) still follows their own car.
@@ -726,23 +763,7 @@ export class Renderer {
       z = (front + back) / 2;
     }
 
-    if (shouldCycleZones(this.lightingLocked)) {
-      const theme = themeAtZ(z);
-      const fog = this.scene.fog as THREE.FogExp2;
-      fog.color.set(theme.fog);   // keep our gentle far-horizon density (don't pull from theme)
-      (this.ground.material as THREE.MeshStandardMaterial).color.set(theme.ground);
-      this.sun.color.set(theme.sun); this.sun.intensity = Math.max(1.4, theme.sunIntensity * 1.6);
-      this.ambient.color.set(theme.sky);          // sky tint drives hemisphere fill
-      this.ambient.groundColor.set(theme.ground);
-      // Sky dome follows the camera and tints to the zone (top = sky, bottom = lighter haze).
-      setSkyColors(this.sky, theme.sky, theme.fog);
-    }
-    // Sun follows the action: aim its target at the car, and place the light a fixed distance away
-    // ALONG sunDir so the golden-hour rake angle stays consistent and its shadow frustum tracks the
-    // pack. (When zones cycle, sunDir is the default rake; when locked, setLighting set it.)
-    const tgt = new THREE.Vector3(0, 0, z + 20);
-    this.sun.target.position.copy(tgt); this.sun.target.updateMatrixWorld();
-    this.sun.position.copy(tgt).addScaledVector(this.sunDir, 260);
+    this.applyEnvironment(z);
 
     const mx = me ? me.x : 0;
     if (this.cam.mode === 'fixed' && this.cam.pos && this.cam.lookAt) {
@@ -778,17 +799,7 @@ export class Renderer {
       // SOLO CHASE cam: follow my own car. behind + above + slightly lateral, looking down-track.
       // Offsets come from the level (default = the classic 24 back / 9 up / 45 ahead / 10 lateral /
       // 2.2 look-height), so a level with no camera renders exactly as before.
-      const { behind, height, lookAhead, lookHeight, lateral } = this.cam;
-      if (this.path) {
-        // Curve-aware: sample behind/ahead along the curve so the camera swings through bends.
-        const eye = this.path.sample(z - behind, mx * 0.3 + lateral);
-        const look = this.path.sample(z + lookAhead, mx * 0.4);
-        this.camera.position.set(eye.pos.x, eye.pos.y + height, eye.pos.z);
-        this.camera.lookAt(look.pos.x, look.pos.y + lookHeight, look.pos.z);
-      } else {
-        this.camera.position.set(mx * 0.3 + lateral, height, z - behind);
-        this.camera.lookAt(mx * 0.4, lookHeight, z + lookAhead);
-      }
+      this.applyChaseCamera(this.camera, { x: mx, z });
     }
     // NITRO-DASH FOV KICK: when the focused car is dashing, punch the FOV out a few degrees for a
     // "whoosh" sense of speed, then ease back. Purely cosmetic; distinguishes the dash from boost.
@@ -803,4 +814,67 @@ export class Renderer {
     this.composer.render();
   }
   private fovKick = 0;   // current extra FOV degrees from an active dash (eased)
+
+  private setComposerSize(width: number, height: number): void {
+    if (this.composerWidth === width && this.composerHeight === height) return;
+    this.composerWidth = width;
+    this.composerHeight = height;
+    this.composer.setSize(width, height);
+  }
+
+  private applyEnvironment(z: number): void {
+    if (shouldCycleZones(this.lightingLocked)) {
+      const theme = themeAtZ(z);
+      const fog = this.scene.fog as THREE.FogExp2;
+      fog.color.set(theme.fog);
+      (this.ground.material as THREE.MeshStandardMaterial).color.set(theme.ground);
+      this.sun.color.set(theme.sun); this.sun.intensity = Math.max(1.4, theme.sunIntensity * 1.6);
+      this.ambient.color.set(theme.sky);
+      this.ambient.groundColor.set(theme.ground);
+      setSkyColors(this.sky, theme.sky, theme.fog);
+    }
+    const target = new THREE.Vector3(0, 0, z + 20);
+    this.sun.target.position.copy(target); this.sun.target.updateMatrixWorld();
+    this.sun.position.copy(target).addScaledVector(this.sunDir, 260);
+  }
+
+  private applyChaseCamera(camera: THREE.PerspectiveCamera, car: { x: number; z: number }): void {
+    const pose = chaseCameraPose(car, this.cam, this.path ?? undefined);
+    camera.position.set(pose.eye.x, pose.eye.y, pose.eye.z);
+    camera.lookAt(pose.look.x, pose.look.y, pose.look.z);
+  }
+
+  private renderSplitScreen(
+    snap: WorldSnapshot,
+    views: [SplitScreenViewport, SplitScreenViewport],
+    dt: number,
+    size: { width: number; height: number },
+  ): void {
+    this.splitScreenActive = true;
+    this.setComposerSize(size.width, Math.ceil(size.height / 2));
+    const fieldCenter = (Math.max(...snap.cars.map(car => car.z)) + Math.min(...snap.cars.map(car => car.z))) / 2;
+    this.applyEnvironment(fieldCenter);
+    this.renderer.setScissorTest(true);
+    try {
+      for (const index of [0, 1] as const) {
+        const view = views[index];
+        const camera = this.splitCameras[index];
+        camera.aspect = view.width / view.height;
+        this.applyChaseCamera(camera, view.car);
+        const dashTarget = view.car.invulnerable ? 7 : 0;
+        this.splitFovKicks[index] += (dashTarget - this.splitFovKicks[index]) * Math.min(1, dt * 8);
+        camera.fov = this.cam.fov + this.splitFovKicks[index];
+        camera.updateProjectionMatrix();
+        this.sky.position.copy(camera.position);
+        this.renderPass.camera = camera;
+        this.renderer.setViewport(view.x, view.glY, view.width, view.height);
+        this.renderer.setScissor(view.x, view.glY, view.width, view.height);
+        this.composer.render();
+      }
+    } finally {
+      this.renderPass.camera = this.camera;
+      this.renderer.setScissorTest(false);
+      this.renderer.setViewport(0, 0, size.width, size.height);
+    }
+  }
 }

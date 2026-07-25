@@ -10,7 +10,7 @@ import { dwellForEvent, HANDOFF_PAUSE_MS } from '../shared/battle-timing';
 
 export type BattlePhase = 'lobby' | 'monster_select' | 'battle' | 'results';
 
-interface Slot { id: string; name: string; monsterId: string | null; isAi: boolean; }
+interface Slot { id: string; name: string; monsterId: string | null; isAi: boolean; side: Side; }
 
 /** Roster row for the lobby / monster-select screens. */
 export interface BattlePlayer { playerId: string; name: string; monsterId: string | null; isAi: boolean; }
@@ -37,6 +37,7 @@ export class BattleRoom {
   private resultsReadyAt = 0;
   private presentationReadyAt = 0;
   private lastPresentedActionSide: Side | null = null;
+  private expectedHumanPlayers = 1;
 
   constructor(code: string, seed: number) {
     this.code = code;
@@ -65,12 +66,12 @@ export class BattleRoom {
     durationSeconds: number | null;
   }> {
     if (this._phase !== 'results' || !this._result) return [];
-    const winnerIndex = this._result.winner === 'a' ? 0 : 1;
-    return this.slots.map((slot, index) => ({
+    const battleIds = new Set([this.world?.snapshot().a.id, this.world?.snapshot().b.id]);
+    return this.slots.filter(slot => battleIds.has(slot.id)).map(slot => ({
       enginePlayerId: slot.id,
-      rank: index === winnerIndex ? 1 : 2,
+      rank: slot.side === this._result!.winner ? 1 : 2,
       completed: true,
-      won: index === winnerIndex,
+      won: slot.side === this._result!.winner,
       score: null,
       durationSeconds: null,
     }));
@@ -78,14 +79,20 @@ export class BattleRoom {
 
   /** Add a human player. Battles are 1v1, so at most 2 humans. A late second player may join while
    *  results remain visible, but the finished battle stays intact until an explicit rematch. */
-  addPlayer(name: string): { playerId: string } | { error: string } {
+  addPlayer(name: string, preferredSide?: Side): { playerId: string } | { error: string } {
     if (this._phase === 'results' && this.slots.length >= 2) return { error: 'room_full' };
     if (this._phase === 'battle' && this.slots.length >= 2) return { error: 'battle_in_progress' };
     if (this.slots.length >= 2) return { error: 'room_full' };
+    const side = preferredSide ?? (this.slots.some(slot => slot.side === 'a') ? 'b' : 'a');
+    if (this.slots.some(slot => slot.side === side)) return { error: 'room_full' };
     const id = `p${this.nextId++}`;
-    this.slots.push({ id, name: name || `Player ${this.slots.length + 1}`, monsterId: null, isAi: false });
+    this.slots.push({ id, name: name || `Player ${this.slots.length + 1}`, monsterId: null, isAi: false, side });
+    this.slots.sort((left, right) => left.side.localeCompare(right.side));
     return { playerId: id };
   }
+
+  expectHumanPlayers(count: number): void { this.expectedHumanPlayers = count >= 2 ? 2 : 1; }
+  playerSide(playerId: string): Side | null { return this.slots.find(slot => slot.id === playerId)?.side ?? null; }
 
   removePlayer(playerId: string): void {
     const wasInBattle = this.isBattleParticipant(playerId);
@@ -143,6 +150,7 @@ export class BattleRoom {
   /** Ready to battle when at least one human has picked a monster (the 2nd side is the other human
    *  if present + picked, else an AI). */
   private canStart(): boolean {
+    if (this.slots.length < this.expectedHumanPlayers) return false;
     const picked = this.slots.filter(s => s.monsterId);
     if (this.slots.length >= 2) return this.slots.every(s => s.monsterId);   // 2P: both must pick
     return picked.length === 1;                                              // 1P: the human picked
@@ -150,10 +158,10 @@ export class BattleRoom {
 
   private start(): void {
     const humans = this.slots.filter(s => s.monsterId);
-    const a = humans[0]!;
+    const a = humans.find(slot => slot.side === 'a') ?? humans[0]!;
     let bId: string, bName: string, bMonster: string;
     if (this.slots.length >= 2) {
-      const b = this.slots[1]!.id === a.id ? this.slots[0]! : this.slots.find(s => s.id !== a.id)!;
+      const b = humans.find(slot => slot.side === 'b') ?? this.slots.find(s => s.id !== a.id)!;
       bId = b.id; bName = b.name; bMonster = b.monsterId!;
     } else {
       // Single-player: AI opponent gets a random DIFFERENT monster.

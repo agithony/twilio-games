@@ -279,6 +279,11 @@ export class HttpServer {
       if (removal === 'retire') this.retireStationEngine(game, roomCode);
       else this.abortStationEngine(game, roomCode);
     });
+    this.arcadeApi?.setStationParticipantCountHandler?.((game, roomCode, count) => {
+      if (game === 'racer') this.game.findRoom(roomCode)?.expectHumanPlayers(count);
+      else if (game === 'monsters') this.battle.findRoom(roomCode)?.expectHumanPlayers(count);
+      else this.fighter.findRoom(roomCode)?.expectHumanPlayers(count);
+    });
     this.arcadeApi?.setPlayerResetCleanupHandler?.(context => this.cleanupResetPlayerHistory(context));
     const allowBrowserPlayer = (roomCode: string) => !this.arcadeApi?.isStationEngineRoom(roomCode);
     this.game.setBrowserPlayerAdmission(allowBrowserPlayer);
@@ -622,7 +627,7 @@ export class HttpServer {
       resumePlayer: (callSid, code) => this.resumeRacerVoiceCall(callSid, code, adapter),
       // SPEAK to the caller: Conversation Relay TTS-synthesizes {type:'text'} tokens onto the call.
       // `last:true` marks a complete utterance so Relay flushes it promptly.
-      say: (text) => sendRelayText(ws, text, relayLocale),
+      say: (text, isCurrent) => sendRelayText(ws, text, relayLocale, isCurrent),
       register: (roomCode, a) => {
         let set = this.voiceAdapters.get(roomCode);
         if (!set) { set = new Set(); this.voiceAdapters.set(roomCode, set); }
@@ -646,7 +651,7 @@ export class HttpServer {
         // strong name match, not a question), act on it immediately — no LLM round-trip, and it works
         // even with the LLM disabled. This is what makes "two" / "the second one" reliably select.
         const direct = this.directSelection(room, playerId, utterance, locale,stationFirstName!==null);
-        if (direct) return direct;
+        if (direct) return { text: direct, phase: room.phase };
         const context=this.hostContext(room,playerId,locale,stationFirstName!==null);
         context.stationManaged=stationManaged;
         if(utterance.trim().startsWith('(')&&['results','finished'].includes(room.phase))return this.racerResultsRecap(context,locale);
@@ -676,6 +681,8 @@ export class HttpServer {
     let stationReadyEntryId = '';
     let stationFirstName: string | null = null;
     let stationManaged = false;
+    let stationParticipantIndex = 0;
+    let stationParticipantCount = 1;
     const stationConnectionId = randomUUID();
     let socketClosed = false;
     this.voiceSockets.set(ws, () => route === 'battle' ? battle?.boundRoom ?? null
@@ -719,15 +726,18 @@ export class HttpServer {
         if (!battle) battle = this.makeBattleSession(say);
         battle.setAuthoritativeName(stationFirstName);
         battle.setStationManaged(stationManaged);
+        if(stationManaged)battle.setStationAssignment(stationParticipantIndex,stationParticipantCount);
         battle.handleMessage(raw);
       } else if (route === 'fighter') {
         if (!fighter) fighter = this.makeFighterSession(say);
         fighter.setAuthoritativeName(stationFirstName);
         fighter.setStationManaged(stationManaged);
+        if(stationManaged)fighter.setStationAssignment(stationParticipantIndex,stationParticipantCount);
         fighter.handleMessage(raw);
       } else {
         adapter.setAuthoritativeName(stationFirstName);
         adapter.setStationManaged(stationManaged);
+        if(stationManaged)adapter.setStationAssignment(stationParticipantIndex,stationParticipantCount);
         adapter.handleMessage(raw);
       }
       try {
@@ -786,6 +796,8 @@ export class HttpServer {
           stationReadyEntryId = readyEntryId;
           stationFirstName = identity.firstName;
           stationManaged = true;
+          stationParticipantIndex = identity.participantIndex;
+          stationParticipantCount = identity.participantCount;
           const assignedGame = String(setup?.customParameters?.game ?? '').toLowerCase();
           const assignedRoom = String(setup?.customParameters?.roomCode ?? '');
           const racerPhase = assignedGame === 'racer' ? this.game.findRoom(assignedRoom)?.phase : undefined;
@@ -875,7 +887,7 @@ export class HttpServer {
     if (game === 'fighter') {
       const commands = locale === 'pt-BR'
         ? ['frente', 'avançar', 'avance', 'aproximar', 'aproxime-se', 'trás', 'recuar', 'recue', 'afastar', 'afaste-se', 'pular', 'pule', 'saltar', 'soco', 'socar', 'dê um soco', 'golpear', 'chute', 'chutar', 'dê um chute', 'bloquear', 'bloqueie', 'defender', 'defenda-se', 'começar', 'próximo', 'lutar', 'revanche', 'ajuda']
-        : ['forward', 'closer', 'back', 'backward', 'away', 'jump', 'leap', 'hop', 'punch', 'jab', 'strike', 'kick', 'roundhouse', 'block', 'guard', 'defend', 'start', 'next', 'fight', 'fights', 'flight', 'rematch', 'help'];
+        : ['forward', 'closer', 'back', 'backward', 'away', 'jump', 'leap', 'hop', 'punch', 'jab', 'strike', 'kick', 'roundhouse', 'block', 'guard', 'defend', 'start', 'star', 'next', 'fight', 'fights', 'flight', 'rematch', 'help'];
       const fighters = FIGHTER_ROSTER.flatMap(fighter => localizedFighterAliases(fighter.id, fighter.name));
       const maps = this.fighterMaps.flatMap(map => [map.name, localizedFighterMapName(locale, map.id, map.name),
         ...(map.id === 'inakaya'
@@ -891,15 +903,15 @@ export class HttpServer {
     return voiceHintList(commands, numbers, cars, tracks);
   }
 
-  private makeFighterSession(say: (text: string) => void): FighterVoiceSession {
+  private makeFighterSession(say: (text: string, isCurrent?: () => boolean) => void): FighterVoiceSession {
     let session: FighterVoiceSession;
     session = new FighterVoiceSession({
       say,
-      join: (code, name, callSid) => {
+      join: (code, name, callSid, side, expectedPlayers) => {
         code = code.trim().toUpperCase();
         const resumed = this.resumeFighterVoiceCall(code, callSid, session);
         if (resumed) return { playerId: resumed, resumed: true };
-        const playerId = this.fighter.voiceJoin(code, name); if (!playerId) return null;
+        const playerId = this.fighter.voiceJoin(code, name, side, expectedPlayers); if (!playerId) return null;
         this.rememberFighterVoiceCall(callSid, code, playerId, session); this.registerFighterVoiceSession(code, session);
         return { playerId, resumed: false };
       },
@@ -1066,16 +1078,16 @@ export class HttpServer {
   /** Build a Voice Monsters call session wired to the live BattleServer + the battle LLM host. The
    *  session registers itself in `battleVoice` on join (so it hears battle-event commentary) and
    *  unregisters on leave. */
-  private makeBattleSession(say: (t: string) => void): BattleVoiceSession {
+  private makeBattleSession(say: (t: string, isCurrent?: () => boolean) => void): BattleVoiceSession {
     const history: LlmTurn[] = [];
     let session: BattleVoiceSession;   // captured so join/leave can (un)register it for events
     const deps = {
       say,
-      join: (code: string, name: string, callSid: string) => {
+      join: (code: string, name: string, callSid: string, side?: 'a'|'b', expectedPlayers?: number) => {
         this.battle.getOrCreateRoom(code);
         const resumed = this.resumeBattleVoiceCall(code, callSid, session);
         if (resumed) return { playerId: resumed, resumed: true };
-        const id = this.battle.voiceJoin(code, name);
+        const id = this.battle.voiceJoin(code, name, side, expectedPlayers);
         if (id) {
           this.rememberBattleVoiceCall(callSid, code, id, session);
           this.registerBattleVoiceSession(code, session);
@@ -1413,7 +1425,7 @@ export class HttpServer {
   /** Which side (a/b) the caller's playerId is, or null (spectator / not in this battle). */
   private battleSideOf(room: import('./battle-room').BattleRoom, playerId: string): 'a' | 'b' | null {
     const snap = room.snapshot();
-    if (!snap) return null;
+    if (!snap) return room.playerSide(playerId);
     if (snap.a.id === playerId) return 'a';
     if (snap.b.id === playerId) return 'b';
     return null;
@@ -1447,7 +1459,7 @@ export class HttpServer {
         canRematch: room.canRematch,
         foeName: null, foeMonsterName: null, foeMonsterType: null, myHp: null, myMaxHp: null, foeHp: null, foeMaxHp: null,
         myPotions: 2, myGuarding: false, myTaunted: false, foeGuarding: false, foeTaunted: false,
-        turn: null, activeSide: null, activeMenu: 'root', whoseTurn: null, myMoves: [], winnerName: res?.winnerName ?? null,
+        turn: null, activeSide: null, activeMenu: 'root', whoseTurn: null, participating: false, myMoves: [], winnerName: res?.winnerName ?? null,
       };
     }
     const me = side === 'a' ? snap.a : snap.b;
@@ -1468,6 +1480,7 @@ export class HttpServer {
       foeGuarding: foe.guarding, foeTaunted: foe.taunted,
       turn: snap.turn,
       activeSide,
+      participating: true,
       activeMenu: room.activeMenu(),
       whoseTurn: room.phase === 'battle' && activeSide ? (activeSide === side ? 'me' : 'foe') : null,
       myMoves: me.moves.map(move => ({ id: move.id, name: localizedMoveName(locale, move.id) })),
@@ -2278,21 +2291,23 @@ function relayQueue(ws: WebSocket): RelayQueue {
   return queue;
 }
 
-function sendRelayText(ws: WebSocket, text: string, locale: SupportedLocale = DEFAULT_LOCALE): void {
+function sendRelayText(ws: WebSocket, text: string, locale: SupportedLocale = DEFAULT_LOCALE, isCurrent?: () => boolean): void {
   const chunks = relayTextChunks(text, locale);
-  if (!chunks.length || ws.readyState !== ws.OPEN) return;
+  if (!chunks.length || ws.readyState !== ws.OPEN || (isCurrent && !isCurrent())) return;
   const queue = relayQueue(ws);
   if(queue.ending||queue.ended)return;
   const generation = queue.generation;
   queue.tail = queue.tail.then(async () => {
     for (const token of chunks) {
+      if (isCurrent && !isCurrent()) return;
       if (generation !== queue.generation) return;
       const elapsed = queue.lastAt > 0 ? Date.now() - queue.lastAt : RELAY_CHUNK_GAP_MS;
       if (elapsed < RELAY_CHUNK_GAP_MS) await sleep(RELAY_CHUNK_GAP_MS - elapsed);
       if (generation !== queue.generation) return;
       if (ws.readyState !== ws.OPEN) return;
       const speechToken = relaySpeechMarkup(token, locale);
-      ws.send(JSON.stringify({ type: 'text', token: speechToken, last: true, lang: locale }));
+      ws.send(JSON.stringify({ type: 'text', token: speechToken, last: true, lang: locale,
+        ...(isCurrent ? { preemptible: true } : {}) }));
       queue.pendingPlayback.push(speechToken);
       queue.lastAt = Date.now();
     }

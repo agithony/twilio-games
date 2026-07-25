@@ -7,7 +7,16 @@
   <link rel="stylesheet" href="./racer.css" />
 </head>
 <body>
-  <div id="app"></div>
+  <div id="app">
+    <div id="split-labels" class="split-labels" aria-label="Split-screen racers" hidden>
+      <div class="split-player">
+        <div class="split-player-card"><span id="split-role-1">Player 1</span><strong id="split-name-1"></strong></div>
+      </div>
+      <div class="split-player">
+        <div class="split-player-card"><span id="split-role-2">Player 2</span><strong id="split-name-2"></strong></div>
+      </div>
+    </div>
+  </div>
 
   <a class="game-home" href="/" aria-label="Return to Twilio Games home">
     <svg viewBox="0 0 24 24" aria-hidden="true">

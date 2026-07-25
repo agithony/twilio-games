@@ -48,6 +48,8 @@ function localizeStaticPage(): void {
   setText('hint-brake', 'hud.command.brake');
   setText('hint-nitro', 'hud.command.nitro');
   setText('gPowerLabel', 'hud.power.readyInitial');
+  document.getElementById('split-role-1')!.textContent = text('hud.player', { number: 1 });
+  document.getElementById('split-role-2')!.textContent = text('hud.player', { number: 2 });
   document.getElementById('gBoost')?.setAttribute('title', text('hud.boostBrakeTitle'));
 }
 
@@ -77,6 +79,18 @@ if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
 const buffer = new InterpolationBuffer(150);
 const big = document.getElementById('big')!;
 const lobbyEl = document.getElementById('lobby')!;
+const splitLabelsEl = document.getElementById('split-labels')!;
+const splitNameEls = [document.getElementById('split-name-1')!, document.getElementById('split-name-2')!];
+
+function paintSplitLabels(snap: import('../shared/types').WorldSnapshot | null): void {
+  const show = snap?.cars.length === 2;
+  splitLabelsEl.hidden = !show;
+  if (!show || !snap) return;
+  snap.cars.forEach((car, index) => {
+    splitNameEls[index]!.textContent = car.name;
+    splitNameEls[index]!.parentElement!.style.setProperty('--player-color', car.color);
+  });
+}
 
 // Inject music toggle button
 injectMusicToggle('music-toggle-container');
@@ -225,6 +239,7 @@ setTimeout(liftVeil, 8000);   // safety: never trap the user behind the veil
 // track, never primitive boxes mid-assembly.
 const attract = new AttractMode((snap) => {
   renderer.render(snap);
+  paintSplitLabels(null);
   // Keep the veil up through the renderer's stuttery warmup (shader compile, shadow-map init, first
   // dt spikes). ~30 smooth frames behind the veil → the reveal is a steady scene, not the jank.
   if (!veilLifted && ++attractFrames >= 30) liftVeil();
@@ -523,10 +538,12 @@ function boot() {
   function frame() {
     requestAnimationFrame(frame);
     // Attract mode owns the canvas while it runs (its own rAF renders the demo) — don't double-render.
-    if (attract.isRunning) { big.textContent = ''; paintGauge(null); return; }
+    if (attract.isRunning) { big.textContent = ''; paintGauge(null); paintSplitLabels(null); return; }
     const snap = buffer.sample(performance.now());
     if (snap) {
-      renderer.render(snap);
+      const splitScreen = raceLive && snap.cars.length === 2;
+      renderer.render(snap, { splitScreen });
+      paintSplitLabels(splitScreen ? snap : null);
       // Keep the big countdown number visible even though the "Get Ready" overlay is up; clear it
       // once racing starts (GO! is set by the event handler and self-clears).
       if (snap.phase === 'countdown') big.textContent = countdownDisplay(snap.countdown, locale);
@@ -545,8 +562,8 @@ function boot() {
       lastPowerActive = nowActive;
     }
     // Before the first server message (and before attract starts), show a branded waiting beat.
-    else if (!started && !screens.isVisible) big.textContent = `${commonText('connection.connecting')}…`;
-    else if (screens.isVisible) big.textContent = '';
+    else if (!started && !screens.isVisible) { big.textContent = `${commonText('connection.connecting')}…`; paintSplitLabels(null); }
+    else if (screens.isVisible) { big.textContent = ''; paintSplitLabels(null); }
     paintGauge(snap);
   }
   requestAnimationFrame(frame);

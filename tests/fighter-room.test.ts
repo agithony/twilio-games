@@ -32,6 +32,17 @@ describe('fighter room', () => {
     expect(room.command(b.playerId, 'jump')[0]).toEqual({ type: 'action', fighter: 'p2', command: 'jump' });
     expect(room.command('unknown', 'punch')).toEqual([]);
   });
+  it('waits for both expected station callers and preserves assigned sides', () => {
+    const room=new FighterRoom('4821');room.expectHumanPlayers(2);
+    const b=room.addPlayer('B','p2');if('error' in b)throw new Error(b.error);
+    room.advance();room.selectFighter(b.playerId,'wraith');expect(room.advance()).toBe(false);
+    const a=room.addPlayer('A','p1');if('error' in a)throw new Error(a.error);
+    room.selectFighter(a.playerId,'nyx');expect(room.advance()).toBe(true);
+    expect(room.lobbyPlayers()).toEqual(expect.arrayContaining([
+      expect.objectContaining({playerId:a.playerId,side:'p1',fighterId:'nyx'}),
+      expect.objectContaining({playerId:b.playerId,side:'p2',fighterId:'wraith'}),
+    ]));
+  });
   it('gates advancement on valid selections', () => {
     const room = new FighterRoom('4821'); const joined = room.addPlayer('A'); if ('error' in joined) throw new Error('join failed');
     room.advance(); expect(room.advance()).toBe(false); expect(room.selectFighter(joined.playerId, 'missing')).toBe(false);

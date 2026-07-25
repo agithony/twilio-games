@@ -4,7 +4,7 @@ import type { Duplex } from 'stream';
 import { FighterRoom } from './fighter-room';
 import { FIGHTER_MAPS, FIGHTER_ROSTER } from '../shared/fighter-roster';
 import { parseFighterClientMessage, type FighterServerMessage } from '../shared/fighter-protocol';
-import type { FighterCommand, FighterEvent } from '../shared/fighter-world';
+import type { FighterCommand, FighterEvent, FighterId } from '../shared/fighter-world';
 import { DEFAULT_LOCALE, type SupportedLocale } from '../shared/i18n/locales';
 
 interface Conn { ws: WebSocket; roomCode?: string; playerId?: string; sessionId?: string; display?: boolean; hostAuthorized?: boolean; displayAuthenticated?: boolean; locale?: SupportedLocale; }
@@ -152,9 +152,9 @@ export class FighterServer {
     const isHost = this.hosts.get(room.code) === conn;
     switch (msg.type) {
       case 'select_fighter': {
-        // A display can also own a local keyboard player. In that case card clicks always edit its
-        // own pick; spectator-only hosts fill the next unselected phone caller.
-        const target = conn.playerId ?? (isHost ? room.nextUnselectedPlayerId() : undefined);
+        // Fighter choice belongs to the joined caller. A spectator display must never overwrite a
+        // phone player's personal selection.
+        const target = conn.playerId;
         if (!target) { this.rejectAuthority(conn); break; }
         if (target && !room.selectFighter(target, msg.fighterId)) this.send(conn, { type: 'error', code: 'select_rejected', message: 'That fighter is unavailable.' });
         break;
@@ -269,7 +269,10 @@ export class FighterServer {
     this.hosts.delete(code); this.rooms.delete(code);
   }
 
-  voiceJoin(code: string, name: string): string | null { code = canonicalRoomCode(code); const result = this.room(code).addPlayer(name); if ('error' in result) return null; this.pushState(code); return result.playerId; }
+  voiceJoin(code: string, name: string, preferredSide?: FighterId, expectedPlayers = 1): string | null {
+    code = canonicalRoomCode(code); const room = this.room(code); room.expectHumanPlayers(expectedPlayers);
+    const result = room.addPlayer(name, preferredSide); if ('error' in result) return null; this.pushState(code); return result.playerId;
+  }
   voiceLeave(code: string, id: string): void { code = canonicalRoomCode(code); this.rooms.get(code)?.removePlayer(id); this.pushState(code); this.reap(code); }
   voiceSetName(code: string, id: string, name: string): void { code = canonicalRoomCode(code); this.rooms.get(code)?.setName(id, name); this.pushState(code); }
   voiceSelectFighter(code: string, id: string, fighterId: string): boolean { code = canonicalRoomCode(code); const ok = this.rooms.get(code)?.selectFighter(id, fighterId) ?? false; this.pushState(code); return ok; }

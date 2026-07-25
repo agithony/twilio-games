@@ -42,7 +42,8 @@ export function parseCrMessage(raw: string): CrMessage {
 }
 
 export type RoomLike = {
-  addPlayer(name: string): { playerId: string; lane: number } | { error: string };
+  addPlayer(name: string, color?: string, preferredIndex?: number): { playerId: string; lane: number } | { error: string };
+  expectHumanPlayers?(count: number): void;
   applyIntent(id: string, intent: Intent): void;
   removePlayer(id: string): void;
 };
@@ -62,7 +63,7 @@ export interface AdapterDeps {
   /** Rebind a reconnecting Conversation Relay transport to its existing Racer player. */
   resumePlayer?: (callSid: string, roomCode: string) => { playerId: string; lane: number; resumed?: boolean; name?:string } | null;
   /** Speak a line to the caller (host wires this to a Relay `{type:'text'}` WS send). */
-  say?: (text: string) => void;
+  say?: (text: string, isCurrent?: () => boolean) => void;
   /** Register/unregister this adapter to receive its room's game events (greeting/countdown/result). */
   register?: (roomCode: string, adapter: ConversationRelayAdapter) => void;
   unregister?: (adapter: ConversationRelayAdapter) => void;
@@ -74,7 +75,7 @@ export interface AdapterDeps {
    *  SAY back (having also executed any game actions), or null to fall back to scripted behavior.
    *  Wired to the LLM game-host. Absent → no conversational AI (scripted-only, current behavior).
    *  `phase` lets the caller decide command-vs-chat routing. */
-  converse?: (roomCode: string, playerId: string, utterance: string, locale: SupportedLocale) => Promise<string | null>;
+  converse?: (roomCode: string, playerId: string, utterance: string, locale: SupportedLocale) => Promise<string | { text: string; phase: string } | null>;
   /** The room's current phase, so the adapter routes: race → fast commands; else → conversation. */
   phaseOf?: (roomCode: string) => string;
   /** Accepted semantic commands only; raw transcripts are deliberately never exposed to analytics. */
@@ -96,12 +97,19 @@ export class ConversationRelayAdapter {
   private commandLocale: SupportedLocale = DEFAULT_LOCALE;
   private authoritativeName: string | null = null;
   private stationManaged=false;
+  private stationParticipantIndex = 0;
+  private stationParticipantCount = 1;
+  private active=true;
   constructor(private deps: AdapterDeps) {}
 
   setAuthoritativeName(name: string | null): void {
     this.authoritativeName = name?.trim().slice(0, 50) || null;
   }
   setStationManaged(active:boolean):void{this.stationManaged=active;}
+  setStationAssignment(index: number, count: number): void {
+    this.stationParticipantIndex = index === 1 ? 1 : 0;
+    this.stationParticipantCount = count >= 2 ? 2 : 1;
+  }
 
   /** The caller's bound player id (null until setup binds them) — for event targeting. */
   get boundPlayerId(): string | null { return this.playerId; }
@@ -133,6 +141,7 @@ export class ConversationRelayAdapter {
       this.lateRacingPromptActive = false;
     }
     if (ev.kind === 'enter_car_select' || ev.kind === 'enter_map_select') {
+      this.turnEpoch++;
       if (this.lastMenuPrompt?.kind === ev.kind && this.clockMs - this.lastMenuPrompt.at < 1000) return;
       this.lastMenuPrompt = { kind: ev.kind, at: this.clockMs };
     }
@@ -153,7 +162,12 @@ export class ConversationRelayAdapter {
       return;
     }
     const line = lineForEvent(ev, this.playerId, this.lineSeq, this.commandLocale);
-    if (line) { this.lineSeq++; this.deps.say?.(line); }
+    if (line) {
+      this.lineSeq++;
+      const expectedPhase = ev.kind === 'enter_car_select' ? 'car_select'
+        : ev.kind === 'enter_map_select' ? 'map_select' : null;
+      this.deps.say?.(line, expectedPhase ? this.phaseGuard(expectedPhase) : undefined);
+    }
   }
 
   async whenSpeechSettled(): Promise<void> {
@@ -178,7 +192,7 @@ export class ConversationRelayAdapter {
     const prompt = createTranslator(this.commandLocale, RACER_MESSAGES)('voice.raceOverPrompt');
     let speech!: Promise<void>;
     speech = this.deps.converse(this.roomCode, this.playerId, prompt, this.commandLocale)
-      .then(reply => { if (epoch === this.turnEpoch) this.speakResultRecap(reply || fallback()); })
+      .then(reply => { if (epoch === this.turnEpoch) this.speakResultRecap((typeof reply==='string'?reply:reply?.text) || fallback()); })
       .catch(() => { if (epoch === this.turnEpoch) this.speakResultRecap(fallback()); })
       .finally(() => this.pendingSpeech.delete(speech));
     this.pendingSpeech.add(speech);
@@ -207,8 +221,10 @@ export class ConversationRelayAdapter {
         if (!code) { console.log('[CR] no roomCode → unbound'); return; }
         const room = this.deps.findOrCreateRoom(code);
         if (!room) { console.log(`[CR] room ${code} not found → unbound`); return; }
+        if (this.stationManaged) room.expectHumanPlayers?.(this.stationParticipantCount);
         const resumed=this.deps.resumePlayer?.(msg.callSid,code)??null;
-        const res = resumed??room.addPlayer(this.authoritativeName ?? playerName(msg.from, this.commandLocale));
+        const res = resumed??room.addPlayer(this.authoritativeName ?? playerName(msg.from, this.commandLocale), undefined,
+          this.stationManaged ? this.stationParticipantIndex : undefined);
         if ('error' in res) {
           console.log(`[CR] addPlayer rejected: ${res.error} → unbound (caller cannot drive)`);
           this.deps.say?.(createTranslator(this.commandLocale, RACER_MESSAGES)('voice.roomFull'));
@@ -226,6 +242,7 @@ export class ConversationRelayAdapter {
         break;
       }
       case 'prompt': {
+        const requestEpoch = msg.last ? ++this.turnEpoch : this.turnEpoch;
         if(msg.last&&this.stationManaged&&this.roomCode&&['results','finished'].includes(this.deps.phaseOf?.(this.roomCode)??'')){
           this.firedIntents=[];
           if(!this.recapDone)this.requestResultRecap();
@@ -240,7 +257,7 @@ export class ConversationRelayAdapter {
               : phase === 'results' || phase === 'finished' ? 'voice.helpResults'
                 : phase === 'racing' || phase === 'countdown' ? 'voice.help'
                   : this.authoritativeName ? 'voice.helpLobbyNamed' : 'voice.helpLobby';
-          this.deps.say?.(createTranslator(this.commandLocale, RACER_MESSAGES)(key));
+          this.deps.say?.(createTranslator(this.commandLocale, RACER_MESSAGES)(key), phase ? this.phaseGuard(phase) : undefined);
           break;
         }
         // ROUTE by phase: during a live RACE, keep the fast local command path (no LLM latency in the
@@ -267,9 +284,16 @@ export class ConversationRelayAdapter {
           // again or barged in since (epoch moved), in which case the stale reply is dropped.
           const text = msg.voicePrompt.trim();
           if (text) {
-            const epoch = ++this.turnEpoch;
+            const epoch = requestEpoch;
+            const requestPhase = this.deps.phaseOf?.(this.roomCode) ?? null;
             void this.deps.converse(this.roomCode, this.playerId, text, this.commandLocale)
-              .then(reply => { if (reply && epoch === this.turnEpoch) this.deps.say?.(reply); })
+              .then(result => {
+                if (!result || epoch !== this.turnEpoch || !this.active) return;
+                const reply=typeof result==='string'?result:result.text;
+                const expectedPhase=typeof result==='string'?requestPhase:result.phase;
+                if (expectedPhase && this.deps.phaseOf?.(this.roomCode!) !== expectedPhase) return;
+                this.deps.say?.(reply, expectedPhase ? this.phaseGuard(expectedPhase) : undefined);
+              })
               .catch(() => { /* LLM failure → stay quiet, never break the call */ });
           }
         }
@@ -320,10 +344,11 @@ export class ConversationRelayAdapter {
       :phase==='racing'||phase==='countdown'?'voice.help'
       :phase==='results'||phase==='finished'?(this.stationManaged?'voice.waitOperator':'voice.helpResults')
       :'voice.helpLobbyNamed';
-    this.deps.say?.(text(key));
+    this.deps.say?.(text(key), this.phaseGuard(phase));
   }
 
   handleClose(preservePlayer = false): void {
+    this.active=false;this.turnEpoch++;
     this.deps.unregister?.(this);
     // Prefer leaveRoom (drops the slot AND reaps an empty room); fall back to plain removePlayer.
     if (this.playerId && !preservePlayer) {
@@ -331,6 +356,10 @@ export class ConversationRelayAdapter {
       else this.room?.removePlayer(this.playerId);
     }
     this.room = null; this.playerId = null; this.roomCode = null;
+  }
+
+  private phaseGuard(expectedPhase:string):()=>boolean{
+    return()=>this.active&&Boolean(this.roomCode)&&this.deps.phaseOf?.(this.roomCode!)===expectedPhase;
   }
 }
 

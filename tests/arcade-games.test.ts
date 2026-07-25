@@ -9,7 +9,7 @@ import {
 describe('Arcade game registry', () => {
   it('defines the approved playable capacities from one source', () => {
     expect(PLAYABLE_ARCADE_GAMES.map(game => [game.id, game.humanCapacity])).toEqual([
-      ['racer', 4], ['monsters', 2], ['fighter', 2],
+      ['racer', 2], ['monsters', 2], ['fighter', 2],
     ]);
     expect(arcadeGameDefinition('racer').route).toBe('/play.html');
   });

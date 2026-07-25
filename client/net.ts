@@ -73,8 +73,14 @@ export class GameConnection {
     if (this.ws.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(o));
     else this.ws.addEventListener('open', () => this.ws.send(JSON.stringify(o)), { once: true });
   }
-  join(roomCode: string, name: string) { this.identity = { type: 'join', roomCode, name, ...(this.locale ? { locale: this.locale } : {}) }; this.send(this.identity); }
-  spectate(roomCode: string, displayToken?: string) { this.identity = { type: 'spectate', roomCode, ...(this.locale ? { locale: this.locale } : {}), ...(displayToken ? { displayToken } : {}) }; this.send(this.identity); }
+  join(roomCode: string, name: string) {
+    this.identity = { type: 'join', roomCode, name, ...(this.locale ? { locale: this.locale } : {}) };
+    this.rawSend(this.identity); // onopen sends it when the initial socket is still connecting
+  }
+  spectate(roomCode: string, displayToken?: string) {
+    this.identity = { type: 'spectate', roomCode, ...(this.locale ? { locale: this.locale } : {}), ...(displayToken ? { displayToken } : {}) };
+    this.rawSend(this.identity); // onopen sends it when the initial socket is still connecting
+  }
   /** Drop this connection's player slot but stay connected as a spectator (shared-screen toggle). */
   leave() { if (this.identity?.type === 'join') this.identity = { type: 'spectate', roomCode: this.identity.roomCode, ...(this.locale ? { locale: this.locale } : {}) }; this.send({ type: 'leave' }); }
   ready() { this.send({ type: 'ready' }); }

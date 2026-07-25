@@ -117,7 +117,7 @@ describe('Arcade Voice routing', () => {
   it('does not route a retained admitted match after the event is paused', async () => {
     const retainedRoute: NonNullable<StationVoiceRoute> = {
       game: 'racer', roomCode: 'STALE-ROOM', matchId: 'stale-match', launchGeneration: 2,
-      admitted: true, readyEntryId: 'stale-ready-entry',
+      admitted: true, readyEntryId: 'stale-ready-entry', participantIndex: 0, participantCount: 1,
     };
     const { port, stationVoiceRoute } = await harness({ active: false, route: retainedRoute });
     const xml = await (await incomingCall(port)).text();
@@ -131,7 +131,7 @@ describe('Arcade Voice routing', () => {
   it('drops a station route if the event is paused while routing the call', async () => {
     const route: NonNullable<StationVoiceRoute> = {
       game: 'racer', roomCode: 'JUST-PAUSED', matchId: 'paused-match', launchGeneration: 3,
-      admitted: true, readyEntryId: 'paused-ready-entry',
+      admitted: true, readyEntryId: 'paused-ready-entry', participantIndex: 0, participantCount: 1,
     };
     const { port, stationVoiceRoute } = await harness({
       active: true, activeChecks: [true, false], route,
@@ -147,7 +147,7 @@ describe('Arcade Voice routing', () => {
   it('does not bypass disabled Voice when an event pauses during call routing', async () => {
     const route: NonNullable<StationVoiceRoute> = {
       game: 'racer', roomCode: 'JUST-PAUSED', matchId: 'paused-match', launchGeneration: 3,
-      admitted: true, readyEntryId: 'paused-ready-entry',
+      admitted: true, readyEntryId: 'paused-ready-entry', participantIndex: 0, participantCount: 1,
     };
     const { port } = await harness({
       active: true, activeChecks: [true, false], route,
@@ -188,7 +188,7 @@ describe('Arcade Voice routing', () => {
   it.each(['en-US', 'pt-BR'] as const)('keeps active-event admitted Monsters routing within Flux keyterm limits (%s)', async locale => {
     const route: NonNullable<StationVoiceRoute> = {
       game: 'monsters', roomCode: 'EVENT-ROOM', matchId: 'match-1', launchGeneration: 4,
-      admitted: true, readyEntryId: 'ready-1',
+      admitted: true, readyEntryId: 'ready-1', participantIndex: 0, participantCount: 2,
     };
     const { port, stationVoiceRoute } = await harness({ active: true, route, locale });
     const xml = await (await incomingCall(port, { callSid: 'CA-active' })).text();

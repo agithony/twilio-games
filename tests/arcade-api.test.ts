@@ -1478,7 +1478,7 @@ describe('Arcade API', () => {
     expect(await api.resolveStationVoiceSetup({
       callSid:'CA-known-name',readyEntryId:routed!.readyEntryId!,matchId:routed!.matchId,
       launchGeneration:routed!.launchGeneration,game:routed!.game,roomCode:routed!.roomCode,
-    })).toEqual({ firstName: REGISTRATION.lead.firstName, terminal: false });
+    })).toEqual({ firstName: REGISTRATION.lead.firstName, terminal: false, participantIndex: 0, participantCount: 2 });
     const displayReady=await resources.service.markStationDisplayReady({
       stationId:'ARCADE-01',expectedRevision:launching.station.revision,idempotencyKey:'identity-route-display',
       authorization:resources.operatorAuthorization('test@twilio.com'),matchId:launching.match!.id,launchGeneration:launching.match!.launchGeneration,
@@ -1492,7 +1492,7 @@ describe('Arcade API', () => {
     expect(await api.resolveStationVoiceSetup({
       callSid:'CA-known-name',readyEntryId:routed!.readyEntryId!,matchId:routed!.matchId,
       launchGeneration:routed!.launchGeneration,game:routed!.game,roomCode:routed!.roomCode,
-    })).toEqual({firstName:REGISTRATION.lead.firstName,terminal:true});
+    })).toEqual({firstName:REGISTRATION.lead.firstName,terminal:true,participantIndex:0,participantCount:2});
 
   });
 
