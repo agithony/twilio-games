@@ -91,7 +91,7 @@ export function buildSystemPrompt(ctx: HostContext, locale: SupportedLocale = DE
     }
   }
   if (ctx.phase === 'map_select') {
-    lines.push(`SCREEN: TRACK VOTE — the tracks are on the display. This is a VOTE (each player votes; most votes wins, ties broken randomly). The ONLY tracks that exist are, in order: ${numberedList(ctx.maps)}.`);
+    lines.push(`SCREEN: TRACK VOTE — the tracks are on the display. This is a VOTE (each player votes; most votes wins, ties use the deterministic station tie-breaker). The ONLY tracks that exist are, in order: ${numberedList(ctx.maps)}.`);
     lines.push('CRITICAL — TRACK NAMES: say each track name EXACTLY as written above, word-for-word — do NOT translate it, spell it out, add flavor words, or invent a fancier name. If a name looks odd or you are unsure how to say it, refer to it by its NUMBER instead ("track two"). Never speak a track name that is not verbatim in the list. Prefer numbers — it is a shared screen and numbers are unambiguous.');
     lines.push(`${ctx.selectedMap ? `Currently leading: ${ctx.selectedMap}. ` : ''}Ask which track they want (you can say "say a track name or number") and CALL select_map to cast THEIR vote; tell them it is a vote. Only CALL start_race once they say they are ready to race.`);
   }
@@ -101,7 +101,8 @@ export function buildSystemPrompt(ctx: HostContext, locale: SupportedLocale = DE
       : 'A race is LIVE — the caller should be DRIVING (shouting left/right/boost/brake/nitro), and the scripted announcer handles the play-by-play. Do NOT narrate unprompted. But if they ASK you something mid-race ("what place am I?", "how do I use nitro?"), answer in a SNAPPY few words so it does not bury their next command. Otherwise stay quiet.');
   }
   if (ctx.phase === 'results' || ctx.phase === 'finished') {
-    if (ctx.myPlace === 1) lines.push('The caller won the race. Congratulate them warmly, but keep it calm and concise.');
+    if (ctx.myPlace === 1 && ctx.myFinishTime !== null) lines.push('The caller won the race. Congratulate them warmly, but keep it calm and concise.');
+    else if (ctx.myPlace && ctx.myFinishTime === null) lines.push(`The caller did not finish the race and was placed ${ctx.myPlace}. Encourage them without claiming they finished or won.`);
     else lines.push(`The race is over — the caller finished ${ctx.myPlace ? `in place ${ctx.myPlace}` : 'the race'}. ${ctx.stationManaged?'Encourage them without suggesting another race; they must return through the message queue.':'Encourage them to try again, without sounding disappointed or overly dramatic.'}`);
     if(ctx.myCurrentTrackRank&&ctx.currentTrackRankedRunCount){
       lines.push(`AUTHORITATIVE CURRENT-TRACK RANK: this run is number ${ctx.myCurrentTrackRank} out of ${ctx.currentTrackRankedRunCount} retained completed runs on ${ctx.selectedMap??'this track'}. Never calculate a different rank and never confuse it with place ${ctx.myPlace??'unknown'} in the current race.`);
@@ -232,8 +233,10 @@ function isQuestion(spoken: string, locale: SupportedLocale): boolean {
   const q = normalizeForMatching(spoken, locale);
   if (spoken.trim().endsWith('?')) return true;
   return locale === 'pt-BR'
-    ? /^(qual|quais|o que|quem|como|por que|quando|onde|pode|posso|devo|explique|me diga)\b/.test(q)
-    : /^(which|what|who|how|why|when|where|can |could |should |do |does |is |are |tell me|explain)/.test(q);
+    ? /\b(qual|quais|o que|quem|como|por que|quando|onde)\b/.test(q)
+      || /^(pode|posso|devo|explique|me diga)\b/.test(q)
+    : /\b(which|what|who|how|why|when|where)\b/.test(q)
+      || /^(can |could |should |do |does |is |are |tell me|explain)/.test(q);
 }
 
 /** A DETERMINISTIC selection: return the chosen index when the caller CLEARLY picked one (an in-range
@@ -253,14 +256,19 @@ export function clearSelectionIndex(spoken: string, choices: string[], locale: S
 export function fuzzyMatch(spoken: string, choices: string[], locale: SupportedLocale = DEFAULT_LOCALE): number {
   const q = normalizeForMatching(spoken, locale);
   if (!q) return -1;
+  const generic = locale === 'pt-BR'
+    ? new Set(['carro', 'carros', 'pista', 'pistas', 'mapa', 'mapas', 'quero', 'escolha'])
+    : new Set(['car', 'cars', 'track', 'tracks', 'map', 'maps', 'want', 'choose', 'pick']);
+  if (generic.has(q)) return -1;
   const normalizedChoices = choices.map(choice => normalizeForMatching(choice, locale));
   // exact / substring first
   let idx = normalizedChoices.findIndex(choice => choice === q);
   if (idx >= 0) return idx;
-  idx = normalizedChoices.findIndex(choice => choice.includes(q) || q.includes(choice));
+  idx = normalizedChoices.findIndex(choice => (q.length >= 3 && choice.includes(q)) || q.includes(choice));
   if (idx >= 0) return idx;
   // word-overlap: any shared significant word
-  const qWords = new Set(q.split(/\s+/).filter(w => w.length > 2));
+  const qWords = new Set(q.split(/\s+/).filter(w => w.length > 2 && !generic.has(w)));
+  if (!qWords.size) return -1;
   idx = normalizedChoices.findIndex(choice => choice.split(/\s+/).some(word => qWords.has(word)));
   return idx;
 }

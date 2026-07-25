@@ -570,4 +570,22 @@ describe('Arcade station reducer', () => {
     expect(state.matches['match-no-show']).toMatchObject({ launchGeneration: 2, launchRequestedAt: at(93) });
     expect(() => assertStationInvariants(state)).not.toThrow();
   });
+
+  it('fills the exact vacated player slot without changing a connected player side', () => {
+    let state = createArcadeStation('ARCADE-01', T0);
+    for (let index = 1; index <= 3; index++) state = insert(state, `player-${index}`, index);
+    state = closeStationRecruiting(state, { at: at(90), expectedRevision: state.station.revision });
+    state = selectStationGame(state, {
+      game: 'monsters', matchId: 'slot-match', engineRoomCode: 'SLOT', at: at(91),
+      expectedRevision: state.station.revision,
+    });
+    state = requestStationLaunch(state, { at: at(92), expectedRevision: state.station.revision });
+    state = dropStationAdmittedEntry(state, {
+      readyEntryId: 'ready-1', at: at(93), expectedRevision: state.station.revision,
+    });
+
+    expect(state.matches['slot-match']?.participantReadyEntryIds).toEqual(['ready-3', 'ready-2']);
+    expect(state.matches['slot-match']?.overflowReadyEntryIds).toEqual([]);
+    expect(() => assertStationInvariants(state)).not.toThrow();
+  });
 });

@@ -44,11 +44,13 @@ export const FIGHTER_RUN_FORWARD_DISTANCE = 3.82;
 export const FIGHTER_RUN_BACKWARD_DISTANCE = 2.37;
 export const FIGHTER_RUN_FORWARD_DURATION = 0.7333333492279053;
 export const FIGHTER_RUN_BACKWARD_DURATION = 0.6333333253860474;
-const MIN_SEPARATION = 0.82;
+export const FIGHTER_MIN_SEPARATION = 0.82;
 
 export function createFighterWorld(bounds: [number, number] = [-9, 9]): FighterWorld {
-  const center = (bounds[0] + bounds[1]) / 2;
-  const openingSeparation = Math.min(5, Math.max(MIN_SEPARATION, bounds[1] - bounds[0] - 2));
+  const arenaMin = Math.min(bounds[0], bounds[1]), arenaMax = Math.max(bounds[0], bounds[1]);
+  const width = arenaMax - arenaMin;
+  const center = (arenaMin + arenaMax) / 2;
+  const openingSeparation = Math.min(5, width, Math.max(FIGHTER_MIN_SEPARATION, width - 2));
   return {
     now: 0,
     status: 'fighting',
@@ -56,8 +58,8 @@ export function createFighterWorld(bounds: [number, number] = [-9, 9]): FighterW
     p1: { health: 100, x: center - openingSeparation / 2, busyUntil: 0, blockingUntil: 0, airborneUntil: 0 },
     p2: { health: 100, x: center + openingSeparation / 2, busyUntil: 0, blockingUntil: 0, airborneUntil: 0 },
     pending: [],
-    arenaMin: bounds[0],
-    arenaMax: bounds[1],
+    arenaMin,
+    arenaMax,
   };
 }
 
@@ -79,9 +81,10 @@ export function applyFighterCommand(
     const from = self.x;
     let to = clamp(from + delta, world.arenaMin, world.arenaMax);
     if (command === 'forward') {
-      if (toward > 0) to = Math.min(to, opponent.x - MIN_SEPARATION);
-      else to = Math.max(to, opponent.x + MIN_SEPARATION);
+      if (toward > 0) to = Math.min(to, opponent.x - FIGHTER_MIN_SEPARATION);
+      else to = Math.max(to, opponent.x + FIGHTER_MIN_SEPARATION);
     }
+    to = separatedPosition(to, opponent.x, -toward, world.arenaMin, world.arenaMax);
     self.x = to;
     self.busyUntil = world.now + (forward ? FIGHTER_RUN_FORWARD_DURATION : FIGHTER_RUN_BACKWARD_DURATION);
     events.push({ type: 'move', fighter, from, to });
@@ -98,9 +101,9 @@ export function applyFighterCommand(
     self.airborneUntil = world.now + 0.72;
     self.busyUntil = world.now + 0.9;
     const opponent = world[other(fighter)];
-    const toward = Math.sign(opponent.x - self.x) || 1;
+    const toward = Math.sign(opponent.x - self.x) || (fighter === 'p1' ? 1 : -1);
     const from = self.x;
-    self.x = clamp(opponent.x + toward * 1.25, world.arenaMin, world.arenaMax);
+    self.x = separatedPosition(opponent.x + toward * 1.25, opponent.x, toward, world.arenaMin, world.arenaMax);
     events.push({ type: 'move', fighter, from, to: self.x, jump: true });
     return events;
   }
@@ -153,4 +156,14 @@ function other(fighter: FighterId): FighterId {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
+}
+
+function separatedPosition(position: number, opponent: number, preferredSide: number, min: number, max: number): number {
+  const bounded = clamp(position, min, max);
+  const separation = Math.min(FIGHTER_MIN_SEPARATION, max - min);
+  if (Math.abs(bounded - opponent) >= separation) return bounded;
+  const direction = preferredSide < 0 ? -1 : 1;
+  const preferred = opponent + direction * separation;
+  if (preferred >= min && preferred <= max) return preferred;
+  return clamp(opponent - direction * separation, min, max);
 }

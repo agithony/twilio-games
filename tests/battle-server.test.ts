@@ -3,6 +3,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { WebSocket } from 'ws';
 import { BattleServer } from '../server/battle-server';
+import { ROSTER } from '../shared/monster-roster';
 
 let server: BattleServer;
 afterEach(async () => { await server?.stop(); });
@@ -258,5 +259,12 @@ describe('BattleServer', () => {
     expect(server.abortRoom('ABORT')).toBe(true);
     expect(server.findRoom('ABORT')).toBeUndefined();
     expect(server.abortRoom('ABORT')).toBe(false);
+  });
+
+  it('pushes a retained caller state update when expected station players decrease', async () => {
+    server=new BattleServer({port:0});await server.start();let updates=0;server.setOnRoomState(()=>updates++);
+    const id=server.voiceJoin('EXPECT','Bo','b',2)!;server.voiceAdvance('EXPECT');server.voiceSelectMonster('EXPECT',id,ROSTER[0]!.id);
+    const before=updates;server.voiceExpectHumanPlayers('EXPECT',1);
+    expect(server.findRoom('EXPECT')?.playerSide(id)).toBe('a');expect(updates).toBeGreaterThan(before);
   });
 });

@@ -7,6 +7,7 @@ import {
   BATTLE_OUTCOME_RECTS,
   BATTLE_SCREEN_RECT,
   BATTLE_SPRITE_RECTS,
+  battleNameplateLines,
   outcomeBadgePresentation,
   outcomesBySide,
   type HudRect,
@@ -21,6 +22,18 @@ const isWithin = (inner: HudRect, outer: HudRect): boolean =>
   && inner.y + inner.height <= outer.y + outer.height;
 
 describe('Voice Monsters battle HUD outcomes', () => {
+  it('shows player and monster identities for human and AI sides', () => {
+    expect(battleNameplateLines('Ada', 'Sparkmouse')).toEqual({
+      player: 'Ada', monster: 'Sparkmouse',
+    });
+    expect(battleNameplateLines('Rival', 'Embertail')).toEqual({
+      player: 'Rival', monster: 'Embertail',
+    });
+    expect(battleNameplateLines('A very long player name', 'AnOverlongMonster')).toEqual({
+      player: 'A very long playe.', monster: 'AnOverlong.',
+    });
+  });
+
   it('maps global A/B outcomes without a local-player perspective', () => {
     expect(outcomesBySide('a', 'b')).toEqual({ a: 'winner', b: 'fainted' });
     expect(outcomesBySide('b', 'a')).toEqual({ a: 'fainted', b: 'winner' });
@@ -81,6 +94,7 @@ describe('Voice Monsters battle HUD outcomes', () => {
     expect(renderer).toContain("className = 'battle-outcome-layer'");
     expect(renderer).toContain("this.outcomeAnnouncer.setAttribute('role', 'status')");
     expect(renderer).toContain("this.outcomeAnnouncer.setAttribute('aria-live', 'polite')");
+    expect(renderer).toContain('battleNameplateLines(st.name, st.monsterName)');
     expect(renderer).toContain('new ResizeObserver(() => this.resize())');
     expect(renderer).toContain("this.outcomeAnnouncer.textContent = announcements.join('. ')");
     expect(renderer).not.toContain('drawTrophy');

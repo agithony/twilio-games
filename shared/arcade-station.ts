@@ -696,15 +696,18 @@ export function dropStationAdmittedEntry(
   if (!target || target.status !== 'ADMITTED' || !match.participantReadyEntryIds.includes(readyEntryId)) {
     throw new ArcadeStationError('READY_ENTRY_NOT_ADMITTED', 'ready entry is not an admitted player');
   }
-  const ordered = [...match.participantReadyEntryIds.filter(id => id !== readyEntryId), ...match.overflowReadyEntryIds]
-    .map(id => state.readyEntries[id]!)
-    .sort(compareReadyEntries);
+  const targetIndex = match.participantReadyEntryIds.indexOf(readyEntryId);
+  const retained = match.participantReadyEntryIds.filter(id => id !== readyEntryId)
+    .map(id => state.readyEntries[id]!);
+  const waiting = match.overflowReadyEntryIds.map(id => state.readyEntries[id]!).sort(compareReadyEntries);
   const capacity = match.humanCapacity;
-  const participants = ordered.slice(0, capacity);
+  const promoted = waiting.slice(0, Math.max(0, capacity - retained.length));
+  const participants = [...retained];
+  participants.splice(Math.min(targetIndex, participants.length), 0, ...promoted);
   if (participants.length < arcadeGameDefinition(match.game).minimumHumans!) {
     throw new ArcadeStationError('MINIMUM_PLAYERS_REQUIRED', 'cannot remove the final admitted player');
   }
-  const overflow = ordered.slice(capacity);
+  const overflow = waiting.slice(promoted.length);
   const renewedLaunch = state.station.phase === 'LAUNCHING';
   const readyEntries = cloneRecord(state.readyEntries);
   readyEntries[readyEntryId] = Object.freeze({ ...target, status: 'LEFT', overflowOrdinal: null });
@@ -1030,10 +1033,11 @@ export function assertStationInvariants(value: ArcadeStationAggregate): void {
     }
     const ordered = allIds.map(id => value.readyEntries[id]!).sort(compareReadyEntries);
     const expectedParticipants = ordered.slice(0, match.participantReadyEntryIds.length).map(entry => entry.id);
-    if (expectedParticipants.some((id, index) => id !== match.participantReadyEntryIds[index])) {
-      throw new ArcadeStationError('INVALID_STATION', 'match assignment is not FIFO');
+    const participantSet = new Set(match.participantReadyEntryIds);
+    if (expectedParticipants.some(id => !participantSet.has(id))) {
+      throw new ArcadeStationError('INVALID_STATION', 'match participant membership is not FIFO');
     }
-    const expectedOverflow = ordered.slice(match.participantReadyEntryIds.length).map(entry => entry.id);
+    const expectedOverflow = ordered.filter(entry => !participantSet.has(entry.id)).map(entry => entry.id);
     if (expectedOverflow.some((id, index) => id !== match.overflowReadyEntryIds[index])) {
       throw new ArcadeStationError('INVALID_STATION', 'match overflow assignment is not FIFO');
     }

@@ -6,6 +6,22 @@ import { createTranslator } from '../../shared/i18n/translate';
 export interface HudRect { x: number; y: number; width: number; height: number }
 export type BattleOutcome = 'winner' | 'fainted';
 
+const fitNameplateLine = (value: string, maximum: number): string => {
+  const clean = value.trim();
+  return clean.length <= maximum ? clean : `${clean.slice(0, maximum - 1)}.`;
+};
+
+/** Player identity above monster identity inside a fixed-width Game Boy HP panel. */
+export function battleNameplateLines(
+  playerName: string,
+  monsterName: string,
+): { player: string; monster: string } {
+  return {
+    player: fitNameplateLine(playerName, 18),
+    monster: fitNameplateLine(monsterName, 11),
+  };
+}
+
 export const BATTLE_SCREEN_RECT: HudRect = { x: 0, y: 0, width: 160, height: 144 };
 export const BATTLE_COMMAND_RECT: HudRect = { x: 4, y: 88, width: 152, height: 56 };
 export const BATTLE_SPRITE_RECTS: Record<Side, HudRect> = {

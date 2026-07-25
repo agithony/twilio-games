@@ -4,7 +4,7 @@ import { FIGHTER_INTRO_SECONDS, type FighterLobbyPlayer, type FighterPhase, type
 
 interface Player { playerId: string; name: string; fighterId: string | null; side: FighterId; }
 
-export const FIGHTER_LOADING_TIMEOUT_SECONDS = 15;
+export const FIGHTER_LOADING_TIMEOUT_SECONDS = 90;
 export const FIGHTER_VICTORY_SECONDS = 10.5;
 const MAX_VOICE_COMMAND_QUEUE = 12;
 
@@ -37,7 +37,13 @@ export class FighterRoom {
     this.players.push(player); this.players.sort((left, right) => left.side.localeCompare(right.side));
     return { playerId: player.playerId };
   }
-  expectHumanPlayers(count: number): void { this.expectedHumanPlayers = count >= 2 ? 2 : 1; }
+  expectHumanPlayers(count: number): void {
+    this.expectedHumanPlayers = count >= 2 ? 2 : 1;
+    if (this.expectedHumanPlayers === 1 && this.players.length === 1
+      && (this.phase === 'lobby' || this.phase === 'fighter_select' || this.phase === 'map_select')) {
+      this.players[0]!.side = 'p1';
+    }
+  }
   removePlayer(id: string): void {
     this.players = this.players.filter((player) => player.playerId !== id);
     this.voiceCommands.delete(id);
@@ -155,12 +161,16 @@ export class FighterRoom {
   state(): FighterState {
     const winner = this.world?.winner ?? null;
     return { roomCode: this.code, phase: this.phase, players: this.lobbyPlayers(), selectedMap: this.selectedMap,
-      world: this.world, loadingGeneration: this.loadingGeneration, intro: this.phase === 'intro' ? this.intro : null,
+      world: this.world, expectedPlayerCount: this.expectedHumanPlayers, hasExpectedPlayers: this.hasExpectedPlayers,
+      loadingGeneration: this.loadingGeneration, intro: this.phase === 'intro' ? this.intro : null,
       countdown: this.phase === 'countdown' ? this.countdown : null,
       result: winner ? { winner, winnerName: this.nameForSide(winner) } : null };
   }
   hasPlayer(id: string): boolean { return this.players.some(player => player.playerId === id); }
   canControlSetup(id: string): boolean { return this.players.find(player => player.playerId === id)?.side === 'p1'; }
+  get playerCount(): number { return this.players.length; }
+  get expectedPlayerCount(): number { return this.expectedHumanPlayers; }
+  get hasExpectedPlayers(): boolean { return this.players.length >= this.expectedHumanPlayers; }
   get isEmpty(): boolean { return this.players.length === 0; }
 
   private nameForSide(side: FighterId): string { return this.lobbyPlayers().find(p => p.side === side)?.name ?? 'Rival'; }

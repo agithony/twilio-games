@@ -106,11 +106,11 @@ The generated TwiML uses these settings:
 |---|---|---|
 | `transcriptionProvider` | `Deepgram` | Required transcription provider |
 | `speechModel` | `flux` | Low-latency speech recognition |
-| `partialPrompts` | `true` | Sends interim transcripts for low-latency controls |
+| `partialPrompts` | `true` | Sends interim transcripts so a newer utterance can cancel stale work; gameplay waits for the final transcript |
 | `transcriptionLanguage` | Active display locale (`en-US` or `pt-BR`) | Recognition language |
 | `ttsLanguage` | Active display locale (`en-US` or `pt-BR`) | Spoken response language |
-| `interruptible` | `speech` | Caller speech stops active TTS |
-| `reportInputDuringAgentSpeech` | `speech` | Delivers caller speech while TTS is playing |
+| `interruptible` | `any` | Caller speech or keypad input stops active TTS |
+| `reportInputDuringAgentSpeech` | `any` | Delivers speech and keypad input while TTS is playing |
 | `interruptSensitivity` | `medium` | Balances command barge-in against room noise |
 | `ignoreBackchannel` | `true` | Reduces interruption from short acknowledgements |
 | `dtmfDetection` | `true` | Enables keypad events |
@@ -119,7 +119,7 @@ The generated TwiML uses these settings:
 
 The server supplies localized, game-specific recognition hints. It leaves `welcomeGreeting` empty because each game speaks its own onboarding after the `/voice` WebSocket receives the `setup` frame. See [Localization](localization.md) for locale routing and extension details.
 
-Talk-back is active. The server sends `{ "type": "text", "token": "...", "last": true }` messages for onboarding, menu guidance, countdowns, events, and results. It spaces queued lines by at least 420 ms. A new prompt or interrupt clears unsent talk-back so old instructions do not play over the caller.
+Talk-back is active. The server sends `{ "type": "text", "token": "...", "last": true }` messages for onboarding, menu guidance, countdowns, events, and results. It waits for Relay's `tokensPlayed` acknowledgement before sending the next line. A new prompt or interrupt clears unsent talk-back so old instructions do not play over the caller.
 
 Speech barge-in stops Relay TTS. Voice Racer and Voice Monsters also invalidate stale in-flight conversational replies. Voice Fighter resets its interim-command state after an interrupt so a corrected command or selection can be recognized cleanly.
 
@@ -138,7 +138,7 @@ The voice flow is:
 
 Car and track selection has a deterministic name/number path and does not require OpenAI. A caller cannot advance from car selection without choosing a car or start from track selection without choosing a track.
 
-During countdown and racing, interim transcripts use the fast local intent path. Accumulating partials are deduplicated, appended commands can fire in order, and an ASR correction can issue the corrected command.
+During countdown and racing, finalized transcripts use the fast local intent path. Command bursts can fire in order, while revisable interim hypotheses never mutate the car.
 
 | Action | Speech |
 |---|---|
@@ -148,7 +148,7 @@ During countdown and racing, interim transcripts use the fast local intent path.
 | Brake | `brake`, `slow`, `stop` |
 | Use power | `nitro`, `power` |
 
-Keypad fallback is `1` left, `2` boost, `3` right, `4` brake, and `5` power. The keypad mapping applies only to Voice Racer.
+Racer keypad fallback is `1` left, `2` boost, `3` right, `4` brake, and `5` power. Monsters uses its displayed menu numbers and `0` to back out of the move list. Fighter uses `0` for fighter 10, `*` for fighter 11, and `#` for fighter 12; during combat, `1` through `6` map to forward, back, jump, punch, kick, and block.
 
 The caller hears onboarding, menu prompts, the final countdown, `Go`, selected race events, their finish, and a race-over recap. Mid-race commentary is throttled so it does not continuously cover commands. A full room leaves the call connected but unbound, so commands do not move a car; check the server log for `addPlayer rejected`.
 
@@ -203,7 +203,7 @@ Combat commands are:
 | Kick | `kick`, `roundhouse` |
 | Block | `block`, `guard`, `defend` |
 
-Fighter and arena choices can apply from a recognized interim transcript; the matching final transcript is not applied twice. During combat, the server waits for two matching interim frames before firing one low-latency command. Final transcripts can contain a chain such as `forward then block` or a repeat such as `punch five times`; command bursts are capped at six actions.
+Fighter and arena choices and combat commands act only on finalized transcripts, preventing revised interim speech from firing the wrong move. Final transcripts can contain a chain such as `forward then block` with up to 12 actions, or a repeat such as `punch five times` with a maximum repeat count of six.
 
 A Voice Fighter reconnect with the same call SID resumes the existing player for 30 seconds. Hit and miss cues are throttled, and the phone host narrates the intro, countdown, health context, and result.
 
@@ -241,11 +241,11 @@ Voice Racer may already have two players. Voice Monsters may have two occupied s
 
 ### Speech works only after the caller finishes talking
 
-Confirm the returned TwiML contains `partialPrompts="true"`, `speechModel="flux"`, and `transcriptionProvider="Deepgram"`. Voice Monsters intentionally acts only on final transcripts. Voice Racer uses partials during countdown and racing. Voice Fighter uses partials for selection and requires two matching interim command frames during combat.
+Confirm the returned TwiML contains `partialPrompts="true"`, `speechModel="flux"`, and `transcriptionProvider="Deepgram"`. All three games act only on finalized gameplay transcripts so revised interim speech cannot execute the wrong command.
 
 ### Barge-in does not stop the host
 
-Inspect the returned TwiML for `interruptible="speech"` and `reportInputDuringAgentSpeech="speech"`. Relay should send an `interrupt` frame when speech cuts off TTS. Background noise may not interrupt because sensitivity is `medium` and backchannels are ignored.
+Inspect the returned TwiML for `interruptible="any"` and `reportInputDuringAgentSpeech="any"`. Relay should send an `interrupt` frame when speech or keypad input cuts off TTS. Background noise may not interrupt because sensitivity is `medium` and backchannels are ignored.
 
 ### Menus are quiet without an OpenAI key
 

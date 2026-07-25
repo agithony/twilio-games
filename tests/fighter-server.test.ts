@@ -249,4 +249,10 @@ describe('FighterServer WebSocket authority and lifecycle', () => {
     expect(fighter!.findRoom('ABORT')).toBeUndefined();
     expect(fighter!.abortRoom('ABORT')).toBe(false);
   });
+
+  it('pushes a retained caller state update when expected station players decrease', async () => {
+    await start();let updates=0;fighter!.setOnRoomState(()=>updates++);
+    const id=fighter!.voiceJoin('EXPECT','Bo','p2',2)!;const before=updates;fighter!.voiceExpectHumanPlayers('EXPECT',1);
+    expect(fighter!.findRoom('EXPECT')?.canControlSetup(id)).toBe(true);expect(updates).toBeGreaterThan(before);
+  });
 });

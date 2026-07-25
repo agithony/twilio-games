@@ -1,6 +1,6 @@
 import { parseCrMessage } from './conversation-relay';
 import { parseSpokenName as parseEnglishSpokenName, isAdvanceWord as isEnglishAdvanceWord } from './battle-voice';
-import { matchFighterCommand, matchFighterCommands } from '../shared/fighter-intent';
+import { matchFighterCommands } from '../shared/fighter-intent';
 import type { FighterCommand, FighterEvent } from '../shared/fighter-world';
 import { FIGHTER_INTRO_SECONDS, fighterIntroStage, type FighterIntroStage, type FighterPhase } from '../shared/fighter-protocol';
 import { DEFAULT_LOCALE, resolveLocale, type SupportedLocale } from '../shared/i18n/locales';
@@ -28,6 +28,7 @@ export interface FighterVoiceSnapshot {
   playerTwoName: string | null;
   playerTwoFighterName: string | null;
   playerCount: number;
+  hasExpectedPlayers?: boolean;
   allFightersSelected: boolean;
   isController: boolean;
   fighters: { id: string; name: string }[];
@@ -108,27 +109,22 @@ export class FighterVoiceSession {
       }
       return;
     }
+    if (message.type === 'dtmf' && this.code && this.playerId) {
+      const snapshot = this.deps.snapshot(this.code, this.playerId, this.commandLocale);
+      if (!snapshot || !/^[0-9*#]$/.test(message.digit)) return;
+      const fightCommands = ['forward', 'back', 'jump', 'punch', 'kick', 'block'];
+      const spoken = snapshot.phase === 'fight'
+        ? fightCommands[Number(message.digit) - 1]
+        : message.digit === '0' ? '10' : message.digit === '*' ? '11' : message.digit === '#' ? '12' : message.digit;
+      if (spoken) this.handleUtterance(spoken);
+      return;
+    }
     if (message.type === 'interrupt') { this.resetInterim(); return; }
     if (message.type === 'prompt' && this.code && this.playerId) {
       const snapshot = this.deps.snapshot(this.code, this.playerId, this.commandLocale);
       if (!message.last) {
-        if (snapshot?.phase === 'fighter_select' || snapshot?.phase === 'map_select') return;
-        if (snapshot?.phase !== 'fight') return;
-        const command = matchFighterCommand(message.voicePrompt, this.commandLocale);
-        if (!command) { this.interimCandidate = null; this.interimCount = 0; return; }
-        if (command === this.interimCandidate) this.interimCount += 1;
-        else { this.interimCandidate = command; this.interimCount = 1; }
-        // Two matching interim frames provide low latency without acting on one unstable ASR guess.
-        if (this.interimCount >= 2 && !this.interimFiredCommand && this.deps.command(this.code, this.playerId, command)) this.interimFiredCommand = command;
-        return;
-      }
-      if (this.interimFiredCommand) {
-        const commands = matchFighterCommands(message.voicePrompt, this.commandLocale);
-        const repeatsFiredCommand = commands[0] === this.interimFiredCommand;
-        if (repeatsFiredCommand) commands.shift();
-        const correctedSingle = !repeatsFiredCommand && commands.length === 1;
+        // Interim hypotheses can be revised. Never mutate fighter state until the final transcript.
         this.resetInterim();
-        if (!correctedSingle) for (const command of commands) this.deps.command(this.code, this.playerId, command);
         return;
       }
       this.resetInterim(); this.handleUtterance(message.voicePrompt);
@@ -168,7 +164,8 @@ export class FighterVoiceSession {
           const next = this.deps.snapshot(this.code!, this.playerId!, this.commandLocale) ?? snapshot;
           const namePrompt = unnamed ? this.t('voice.namePromptSuffix') : '';
           const values = { name: fighter.name, namePrompt };
-          if (!next.allFightersSelected) this.deps.say(this.t('voice.fighterLockedWaiting', values));
+          if (!this.hasExpectedPlayers(next)) this.deps.say(this.t('voice.fighterLockedWaitingPlayerTwo', values));
+          else if (!next.allFightersSelected) this.deps.say(this.t('voice.fighterLockedWaiting', values));
           else if (next.isController) this.deps.say(this.t('voice.fighterLockedNext', values));
           else this.deps.say(this.t('voice.fighterLockedPlayerOne', values));
         }
@@ -251,6 +248,7 @@ export class FighterVoiceSession {
   private advanceOrExplain(snapshot: FighterVoiceSnapshot): void {
     if (!snapshot.isController) { this.sayWaitOnce(this.t('voice.sharedMenuControl')); return; }
     if (!this.authoritativeName&&this.isPlaceholderName(snapshot.myName) && snapshot.phase === 'lobby') { this.deps.say(this.t('voice.nameBeforeStart')); return; }
+    if (snapshot.phase === 'fighter_select' && !this.hasExpectedPlayers(snapshot)) { this.sayWaitOnce(this.t('voice.waitingPlayerTwo')); return; }
     if (!this.deps.advance(this.code!, this.playerId!)) {
       this.deps.say(this.t(snapshot.phase === 'fighter_select' ? 'voice.waitingFighterChoices'
         : snapshot.phase === 'map_select' ? 'voice.chooseArenaFirst'
@@ -265,8 +263,9 @@ export class FighterVoiceSession {
       else if (snapshot.isController) say(this.t('voice.sayStart'));
       else say(this.t('voice.waitingPlayerOneStart'));
     } else if (snapshot.phase === 'fighter_select') {
-      if (snapshot.myFighterName) say(this.t(snapshot.allFightersSelected && snapshot.isController
-        ? 'voice.yourFighterNext' : 'voice.yourFighterWaiting', { name: snapshot.myFighterName }));
+      if (snapshot.myFighterName) say(!this.hasExpectedPlayers(snapshot) ? this.t('voice.waitingPlayerTwo')
+        : this.t(snapshot.allFightersSelected && snapshot.isController
+          ? 'voice.yourFighterNext' : 'voice.yourFighterWaiting', { name: snapshot.myFighterName }));
       else say(this.t('voice.choiceFighter'));
     } else if (snapshot.phase === 'map_select') {
       if (!snapshot.isController) say(this.t('voice.playerOneChoosingArena'));
@@ -308,6 +307,12 @@ export class FighterVoiceSession {
 
   private isPlaceholderName(name: string | null): boolean {
     return !name || name === 'Caller' || name === 'Jogador';
+  }
+
+  private hasExpectedPlayers(snapshot: FighterVoiceSnapshot): boolean {
+    return snapshot.hasExpectedPlayers ?? (this.stationAssignment
+      ? snapshot.playerCount >= this.stationAssignment.expectedPlayers
+      : true);
   }
 
   private resetInterim(): void { this.interimCandidate = null; this.interimCount = 0; this.interimFiredCommand = null; }

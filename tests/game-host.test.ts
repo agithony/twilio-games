@@ -82,6 +82,13 @@ describe('clearSelectionIndex (deterministic pre-LLM pick)', () => {
     expect(clearSelectionIndex('what do you recommend', cars)).toBeNull();
     expect(clearSelectionIndex('how does boost work', cars)).toBeNull();
     expect(clearSelectionIndex('tell me about the cars', cars)).toBeNull();
+    expect(clearSelectionIndex('I want to know which car is fastest', cars)).toBeNull();
+  });
+  it('does not select from generic menu words', () => {
+    expect(clearSelectionIndex('car', ['Batmobile', 'Cartoon Sports Car'])).toBeNull();
+    expect(clearSelectionIndex('track', ['Silver Lake', 'Drift Track'])).toBeNull();
+    expect(clearSelectionIndex('give me a car', ['Batmobile', 'Cartoon Sports Car'])).toBeNull();
+    expect(clearSelectionIndex('choose a track', ['Silver Lake', 'Drift Track'])).toBeNull();
   });
   it('does not intercept an out-of-range number', () => {
     expect(clearSelectionIndex('car 99', cars)).toBeNull();
@@ -98,6 +105,15 @@ describe('buildSystemPrompt', () => {
   it('mentions the tracks during map_select', () => {
     const p = buildSystemPrompt(ctx({ phase: 'map_select', maps: ['Silver Lake'] }));
     expect(p).toContain('Silver Lake');
+  });
+  it('describes deterministic tie-breaking and never calls a DNF racer the winner', () => {
+    const mapPrompt=buildSystemPrompt(ctx({phase:'map_select'}));
+    expect(mapPrompt).toContain('deterministic station tie-breaker');
+    expect(mapPrompt).not.toMatch(/ties broken randomly/i);
+    const resultPrompt=buildSystemPrompt(ctx({phase:'results',myPlace:1,myFinishTime:null,
+      raceStandings:[{name:'Ada',place:1,time:null,finished:false}]}));
+    expect(resultPrompt).toMatch(/did not finish/i);
+    expect(resultPrompt).not.toMatch(/caller won/i);
   });
   it('tells it to keep quiet during a live race', () => {
     const p = buildSystemPrompt(ctx({ phase: 'racing' }));

@@ -419,6 +419,9 @@ export class BattleServer {
     const room = this.rooms.get(code); if (!room) return;
     room.setPlayerInfo(playerId, { name }); this.pushState(code);
   }
+  voiceExpectHumanPlayers(code: string, count: number): void {
+    const room=this.rooms.get(code);if(!room)return;room.expectHumanPlayers(count);this.pushState(code);
+  }
   voiceSelectMonster(code: string, playerId: string, monsterId: string): void {
     const room = this.rooms.get(code); if (!room) return;
     room.selectMonster(playerId, monsterId); this.pushState(code);

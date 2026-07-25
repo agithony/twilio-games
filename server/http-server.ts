@@ -91,16 +91,18 @@ export function isLateRacerGameplayPrompt(spoken: string, locale: SupportedLocal
 interface BattleVoiceCallBinding {
   code: string;
   playerId: string;
+  locale: SupportedLocale;
   activeSession: BattleVoiceSession | null;
   leaveTimer: ReturnType<typeof setTimeout> | null;
 }
 interface FighterVoiceCallBinding {
-  code: string; playerId: string; activeSession: FighterVoiceSession | null;
+  code: string; playerId: string; locale: SupportedLocale; activeSession: FighterVoiceSession | null;
   leaveTimer: ReturnType<typeof setTimeout> | null;
 }
 interface RacerVoiceCallBinding {
   code: string;
   playerId: string;
+  locale: SupportedLocale;
   activeAdapter: ConversationRelayAdapter | null;
   leaveTimer: ReturnType<typeof setTimeout> | null;
 }
@@ -173,13 +175,18 @@ export class HttpServer {
   private racerVoiceCallBindings = new Map<string, RacerVoiceCallBinding>();
   private fighterVoice = new Map<string, Set<FighterVoiceSession>>();
   private fighterVoiceCallBindings = new Map<string, FighterVoiceCallBinding>();
+  private stationVoiceReconnectRoutes = new Map<string, {
+    game: 'racer'|'monsters'|'fighter'; roomCode: string; readyEntryId: string;
+    matchId: string; launchGeneration: number; locale: SupportedLocale;
+  }>();
+  private voiceReconnectAttempts = new Map<string, number>();
   private standaloneDisplays = new Map<'racer'|'battle'|'fighter',Map<WebSocket,number>>();
   private fighterMaps: FighterMapEntry[] = FIGHTER_MAPS;
   private readonly fighterMapsPath: string;
   private readonly bundledFighterMapsPath: string;
   private readonly fighterPreviewDir: string;
   private readonly activeStationEngines = new Set<string>();
-  private readonly voiceSockets = new Map<WebSocket, () => string | null>();
+  private readonly voiceSockets = new Map<WebSocket, () => { game: 'racer'|'monsters'|'fighter'; roomCode: string } | null>();
   /** The conversational AI host (OpenAI, or a null no-op when OPENAI_API_KEY is unset → scripted
    *  fallback). Turns a caller's natural-language menu utterances into spoken replies + game actions. */
   private llm: LlmClient;
@@ -281,8 +288,8 @@ export class HttpServer {
     });
     this.arcadeApi?.setStationParticipantCountHandler?.((game, roomCode, count) => {
       if (game === 'racer') this.game.findRoom(roomCode)?.expectHumanPlayers(count);
-      else if (game === 'monsters') this.battle.findRoom(roomCode)?.expectHumanPlayers(count);
-      else this.fighter.findRoom(roomCode)?.expectHumanPlayers(count);
+      else if (game === 'monsters') this.battle.voiceExpectHumanPlayers(roomCode,count);
+      else this.fighter.voiceExpectHumanPlayers(roomCode,count);
     });
     this.arcadeApi?.setPlayerResetCleanupHandler?.(context => this.cleanupResetPlayerHistory(context));
     const allowBrowserPlayer = (roomCode: string) => !this.arcadeApi?.isStationEngineRoom(roomCode);
@@ -376,6 +383,19 @@ export class HttpServer {
         && new URL(req.url ?? '/', 'http://localhost').searchParams.get('display') === '1'
         && !(this.arcadeApi?.requiresStationVoiceAssignment() ?? false);
       if (path === '/voice') {
+        if (this.validateSignatures) {
+          const header = req.headers['x-twilio-signature'];
+          const signature = Array.isArray(header) ? header[0] : header;
+          const signedUrl = `${this.publicBaseUrl.replace(/^http/, 'ws')}${req.url ?? '/voice'}`;
+          const valid = this.authTokens.some(authToken => validateTwilioSignature({
+            authToken, signature, url: signedUrl, params: {},
+          }));
+          if (!valid) {
+            socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
+            socket.destroy();
+            return;
+          }
+        }
         this.voiceWss.handleUpgrade(req, socket, head, (ws) => this.onVoiceConnection(ws));
       } else if (path === '/game') {
         this.game.handleUpgrade(req, socket, head, ws => {
@@ -421,8 +441,9 @@ export class HttpServer {
   }
 
   private abortStationEngine(game: 'racer' | 'monsters' | 'fighter', roomCode: string): void {
-    for (const [socket, boundRoom] of this.voiceSockets) {
-      if (boundRoom() === roomCode) socket.close(4002, 'station recovery');
+    for (const [socket, binding] of this.voiceSockets) {
+      const bound = binding();
+      if (bound?.game === game && bound.roomCode === roomCode) socket.close(4002, 'station recovery');
     }
     if (game === 'racer') {
       for (const adapter of [...(this.voiceAdapters.get(roomCode) ?? [])]) adapter.handleClose();
@@ -451,10 +472,10 @@ export class HttpServer {
   }
 
   private retireStationEngine(game: 'racer' | 'monsters' | 'fighter', roomCode: string): void {
-    const sockets = [...this.voiceSockets].filter(([, boundRoom]) => boundRoom() === roomCode);
     const endCalls = () => {
-      for (const [socket, boundRoom] of sockets) {
-        if (boundRoom() === roomCode) endRelayAfterPlayback(socket);
+      for (const [socket, binding] of this.voiceSockets) {
+        const bound = binding();
+        if (bound?.game === game && bound.roomCode === roomCode) endRelayAfterPlayback(socket);
       }
     };
     const finalize = () => {
@@ -641,18 +662,22 @@ export class HttpServer {
       // Drop the caller's slot + reap the room if empty (a phone caller never hits the WS reap paths).
       leaveRoom: (roomCode, playerId) => this.game.voiceLeave(roomCode, playerId),
       phaseOf: (roomCode) => this.game.findRoom(roomCode)?.phase ?? 'lobby',
+      hasPlayerName: (roomCode, playerId) => {
+        const name = this.game.findRoom(roomCode)?.lobbyPlayers().find(player => player.playerId === playerId)?.name ?? '';
+        return Boolean(name && !/^(Racer|Piloto)(\s|$)/.test(name));
+      },
       onIntent: () => this.analyticsObserver.voiceCommand('racer'),
       // Conversational AI turn: build the host context from the live room, run the LLM (with history),
       // return what to say. Null when the LLM is disabled → adapter stays quiet (scripted fallback).
-      converse: async (roomCode, playerId, utterance, locale) => {
+      converse: async (roomCode, playerId, utterance, locale, isCurrent) => {
         const room = this.game.findRoom(roomCode);
-        if (!room) return null;
+        if (!room || !isCurrent()) return null;
         // DETERMINISTIC fast-path: in car/map select, if the caller CLEARLY picked one (a number or a
         // strong name match, not a question), act on it immediately — no LLM round-trip, and it works
         // even with the LLM disabled. This is what makes "two" / "the second one" reliably select.
         const direct = this.directSelection(room, playerId, utterance, locale,stationFirstName!==null);
         if (direct) return { text: direct, phase: room.phase };
-        const context=this.hostContext(room,playerId,locale,stationFirstName!==null);
+        const context=this.hostContext(room,playerId,locale,stationFirstName!==null,isCurrent);
         context.stationManaged=stationManaged;
         if(utterance.trim().startsWith('(')&&['results','finished'].includes(room.phase))return this.racerResultsRecap(context,locale);
         // Portuguese gameplay is fully deterministic. Keep optional free-form LLM replies disabled
@@ -661,6 +686,7 @@ export class HttpServer {
         if (!this.llm.enabled) return null;
         history.push({ role: 'user', content: utterance });
         const reply = await hostTurn(this.llm, context, history, locale);
+        if (!isCurrent()) return null;
         if (reply) history.push({ role: 'assistant', content: reply });
         // Bound history so a long call doesn't grow unbounded (keep the last ~12 turns).
         if (history.length > 12) history.splice(0, history.length - 12);
@@ -685,9 +711,11 @@ export class HttpServer {
     let stationParticipantCount = 1;
     const stationConnectionId = randomUUID();
     let socketClosed = false;
-    this.voiceSockets.set(ws, () => route === 'battle' ? battle?.boundRoom ?? null
-      : route === 'fighter' ? fighter?.boundRoomCode ?? null
-        : adapter.boundRoomCode);
+    this.voiceSockets.set(ws, () => route === 'battle'
+      ? (battle?.boundRoom ? { game: 'monsters', roomCode: battle.boundRoom } : null)
+      : route === 'fighter'
+        ? (fighter?.boundRoomCode ? { game: 'fighter', roomCode: fighter.boundRoomCode } : null)
+        : (adapter.boundRoomCode ? { game: 'racer', roomCode: adapter.boundRoomCode } : null));
     const say = (text: string) => sendRelayText(ws, text, relayLocale);
     const processFrame = (raw: string) => {
       if (route === null) {
@@ -705,7 +733,9 @@ export class HttpServer {
         const frame = JSON.parse(raw);
         const type = frame?.type;
         if (type === 'error') {
-          console.error(`[CR] relay error: ${String(frame?.description ?? 'unknown error').slice(0, 300)}`);
+          const description = String(frame?.description ?? 'unknown error').slice(0, 300);
+          console.error(`[CR] relay error: ${description}`);
+          if (/\b6411[12]\b/.test(description)) settleRelayPlayback(ws);
         }
         const roomCode = adapter.boundRoomCode;
         const racerResultsPrompt = type === 'prompt' && route === 'racer'
@@ -719,7 +749,7 @@ export class HttpServer {
           adapter.ignoreLateRacingPrompt(frame?.last === true);
           return;
         }
-        if (type === 'prompt' || type === 'interrupt') clearRelayTextQueue(ws, type === 'interrupt');
+        if (type === 'prompt' || type === 'interrupt' || type === 'dtmf') clearRelayTextQueue(ws, type === 'interrupt');
       } catch { /* adapter will ignore bad frames */ }
       if (route === null) route = this.pickVoiceGame(raw);
       if (route === 'battle') {
@@ -763,7 +793,9 @@ export class HttpServer {
         if (handleRelayPlaybackEvent(ws, raw)) return;
         const relayState = relayQueues.get(ws);
         if (relayState?.ending || relayState?.ended) {
-          if (relayState.ending && isRelayInterrupt(raw)) clearRelayTextQueue(ws, true);
+          if (relayState.ending && (isRelayInterrupt(raw) || isRelayDtmf(raw) || isRelayTtsError(raw))) {
+            clearRelayTextQueue(ws, true);
+          }
           return;
         }
         let setup: Record<string, any> | null = null;
@@ -801,8 +833,12 @@ export class HttpServer {
           const assignedGame = String(setup?.customParameters?.game ?? '').toLowerCase();
           const assignedRoom = String(setup?.customParameters?.roomCode ?? '');
           const racerPhase = assignedGame === 'racer' ? this.game.findRoom(assignedRoom)?.phase : undefined;
-          if ((identity.terminal || racerPhase === 'finished' || racerPhase === 'results')
-            && !this.hasResumableRacerVoiceCall(stationCallSid, assignedRoom)) {
+          const resumable = assignedGame === 'monsters'
+            ? this.hasResumableBattleVoiceCall(stationCallSid, assignedRoom)
+            : assignedGame === 'fighter'
+              ? this.hasResumableFighterVoiceCall(stationCallSid, assignedRoom)
+              : this.hasResumableRacerVoiceCall(stationCallSid, assignedRoom);
+          if ((identity.terminal || racerPhase === 'finished' || racerPhase === 'results') && !resumable) {
             ws.close(1008, 'finished station assignment');
             return;
           }
@@ -829,6 +865,7 @@ export class HttpServer {
         adapter.handleClose(true);
       } else adapter.handleClose();
     });
+    ws.on('error', () => settleRelayPlayback(ws));
   }
 
   /** Decide which game a voice call joins, from its first frame. Explicit `game=monsters|racer` Relay
@@ -876,13 +913,16 @@ export class HttpServer {
     const numbers = selectionNumberHints(locale);
     if (game === 'battle') {
       const commands = locale === 'pt-BR'
-        ? ['lutar', 'lute', 'atacar', 'ataque', 'defender', 'defenda-se', 'bloquear', 'bloqueie', 'proteger', 'proteja-se', 'item', 'poção', 'curar', 'provocar', 'provoque', 'zombar', 'zombe', 'voltar', 'volte', 'cancelar', 'começar', 'batalhar', 'revanche', 'próximo', 'sim']
-        : ['fight', 'guard', 'item', 'potion', 'taunt', 'attack', 'heal', 'back', 'cancel', 'start', 'battle', 'rematch', 'next'];
-      const content = rosterEntries().flatMap(monster => [
+        ? ['lutar', 'atacar', 'defender', 'bloquear', 'item', 'poção', 'curar', 'provocar', 'voltar', 'cancelar', 'começar', 'revanche']
+        : ['fight', 'guard', 'item', 'potion', 'taunt', 'attack', 'heal', 'back', 'start', 'rematch'];
+      const monsters = rosterEntries();
+      const primaryNames = monsters.map(monster => localizedMonsterName(locale, monster.id));
+      const primaryMoves = monsters.flatMap(monster => monster.moves.map(move => localizedMoveName(locale, move.id)));
+      const extraAliases = monsters.flatMap(monster => [
         ...localizedMonsterAliases(monster.id, monster.name),
         ...monster.moves.flatMap(move => localizedMoveAliases(move.id, move.name)),
       ]);
-      return voiceHintList(commands, numbers, content);
+      return voiceHintList(commands, numbers.slice(0, 24), primaryNames, primaryMoves, extraAliases);
     }
     if (game === 'fighter') {
       const commands = locale === 'pt-BR'
@@ -948,6 +988,7 @@ export class HttpServer {
       playerOneName: playerOne?.name ?? null, playerOneFighterName: fighterName(playerOne?.fighterId),
       playerTwoName: playerTwo?.name ?? null, playerTwoFighterName: fighterName(playerTwo?.fighterId),
       playerCount: state.players.filter(player => !player.isAi).length,
+      hasExpectedPlayers: state.hasExpectedPlayers,
       allFightersSelected: state.players.filter(player => !player.isAi).length > 0 && state.players.filter(player => !player.isAi).every(player => player.fighterId),
       isController: room.canControlSetup(playerId),
       fighters: FIGHTER_ROSTER.map(fighter => ({ id: fighter.id, name: localizedFighterName(locale, fighter.id, fighter.name) })),
@@ -973,7 +1014,7 @@ export class HttpServer {
       this.game.voiceLeave(prior.code, prior.playerId);
     }
     this.racerVoiceCallBindings.set(sid, {
-      code, playerId, activeAdapter: adapter, leaveTimer: null,
+      code, playerId, locale: adapter.locale, activeAdapter: adapter, leaveTimer: null,
     });
   }
 
@@ -1020,7 +1061,7 @@ export class HttpServer {
     }, RACER_VOICE_RECONNECT_GRACE_MS);
     leaveTimer.unref?.();
     this.racerVoiceCallBindings.set(sid, {
-      code, playerId, activeAdapter: null, leaveTimer,
+      code, playerId, locale: binding?.locale ?? adapter.locale, activeAdapter: null, leaveTimer,
     });
   }
 
@@ -1043,7 +1084,7 @@ export class HttpServer {
     const prior = this.fighterVoiceCallBindings.get(sid); if (prior?.leaveTimer) clearTimeout(prior.leaveTimer);
     if (prior?.activeSession && prior.activeSession !== session) { this.unregisterFighterVoiceSession(prior.activeSession); prior.activeSession.handleReplaced(); }
     if (prior && (prior.code !== code || prior.playerId !== playerId)) this.fighter.voiceLeave(prior.code, prior.playerId);
-    this.fighterVoiceCallBindings.set(sid, { code, playerId, activeSession: session, leaveTimer: null });
+    this.fighterVoiceCallBindings.set(sid, { code, playerId, locale: session.locale, activeSession: session, leaveTimer: null });
   }
   private resumeFighterVoiceCall(code: string, callSid: string, session: FighterVoiceSession): string | null {
     const sid = callSid.trim(); if (!sid) return null;
@@ -1052,6 +1093,10 @@ export class HttpServer {
     if (binding.leaveTimer) { clearTimeout(binding.leaveTimer); binding.leaveTimer = null; }
     if (binding.activeSession && binding.activeSession !== session) { this.unregisterFighterVoiceSession(binding.activeSession); binding.activeSession.handleReplaced(); }
     binding.activeSession = session; this.registerFighterVoiceSession(code, session); return binding.playerId;
+  }
+  private hasResumableFighterVoiceCall(callSid: string, code: string): boolean {
+    const binding = this.fighterVoiceCallBindings.get(callSid.trim());
+    return Boolean(binding && binding.code === code && this.fighter.findRoom(code)?.hasPlayer(binding.playerId));
   }
   private scheduleFighterVoiceLeave(code: string, playerId: string, callSid: string, session: FighterVoiceSession): void {
     const sid = callSid.trim(); if (!sid) { this.fighter.voiceLeave(code, playerId); return; }
@@ -1063,7 +1108,7 @@ export class HttpServer {
       this.fighterVoiceCallBindings.delete(sid); this.fighter.voiceLeave(code, playerId);
     }, FIGHTER_VOICE_RECONNECT_GRACE_MS);
     (leaveTimer as { unref?: () => void }).unref?.();
-    this.fighterVoiceCallBindings.set(sid, { code, playerId, activeSession: null, leaveTimer });
+    this.fighterVoiceCallBindings.set(sid, { code, playerId, locale: binding?.locale ?? session.locale, activeSession: null, leaveTimer });
   }
   private endFighterVoiceCall(callSid: string): void {
     const sid = callSid.trim(), binding = this.fighterVoiceCallBindings.get(sid); if (!binding) return;
@@ -1148,7 +1193,7 @@ export class HttpServer {
       prev.activeSession.handleReplaced();
     }
     if (prev && (prev.code !== code || prev.playerId !== playerId)) this.battle.voiceLeave(prev.code, prev.playerId);
-    this.battleVoiceCallBindings.set(sid, { code, playerId, activeSession: session, leaveTimer: null });
+    this.battleVoiceCallBindings.set(sid, { code, playerId, locale: session.locale, activeSession: session, leaveTimer: null });
   }
 
   private resumeBattleVoiceCall(code: string, callSid: string, session: BattleVoiceSession): string | null {
@@ -1171,6 +1216,10 @@ export class HttpServer {
     this.registerBattleVoiceSession(code, session);
     return binding.playerId;
   }
+  private hasResumableBattleVoiceCall(callSid: string, code: string): boolean {
+    const binding = this.battleVoiceCallBindings.get(callSid.trim());
+    return Boolean(binding && binding.code === code && this.battleRoomHasPlayer(code, binding.playerId));
+  }
 
   private scheduleBattleVoiceLeave(code: string, playerId: string, callSid: string, session: BattleVoiceSession): void {
     const sid = callSid.trim();
@@ -1187,7 +1236,7 @@ export class HttpServer {
       this.battle.voiceLeave(code, playerId);
     }, BATTLE_VOICE_RECONNECT_GRACE_MS);
     (leaveTimer as { unref?: () => void }).unref?.();
-    this.battleVoiceCallBindings.set(sid, { code, playerId, activeSession: null, leaveTimer });
+    this.battleVoiceCallBindings.set(sid, { code, playerId, locale: prev?.locale ?? session.locale, activeSession: null, leaveTimer });
   }
 
   private endBattleVoiceCall(callSid: string): void {
@@ -1226,17 +1275,26 @@ export class HttpServer {
     if (utterance.trim().startsWith('(')) return null;
 
     // NAME CAPTURE (deterministic, LLM-independent): the FIRST thing we ask is the caller's name, so in
-    // the LOBBY, while they still have the auto placeholder name, treat a name-like reply as their name
-    // + confirm and guide forward. Without this, giving your name relied entirely on the LLM (dead air
-    // if it's off/slow). Only in the lobby — in car_select a car pick must win over a name guess.
-    if (!nameLocked&&room.phase === 'lobby') {
-      const me = room.lobbyPlayers().find(p => p.playerId === playerId);
-      const hasRealName = me && !/^(Racer|Piloto)(\s|$)/.test(me.name);
+    // the LOBBY, while they still have the auto placeholder name, treat a name-like reply as their name.
+    // Late callers may answer the same prompt in selection, but an actual car/map match wins.
+    const explicitName = locale === 'pt-BR'
+      ? /^(?:meu nome é|meu nome e|eu sou|pode me chamar de)\b/i.test(utterance.trim())
+      : /^(?:my name is|i am|i'm|im|call me|this is)\b/i.test(utterance.trim());
+    const me = room.lobbyPlayers().find(p => p.playerId === playerId);
+    const hasRealName = me && !/^(Racer|Piloto)(\s|$)/.test(me.name);
+    const parsedName = !hasRealName ? parseSpokenName(utterance, locale) : null;
+    const bareLateName = room.phase !== 'lobby' && parsedName
+      && utterance.trim().split(/\s+/).length <= 2
+      && clearSelectionIndex(utterance, carChoices, locale) === null
+      && clearSelectionIndex(utterance, mapChoices, locale) === null;
+    if (!nameLocked && (room.phase === 'lobby' || explicitName || bareLateName)) {
       if (!hasRealName && !isRacerAdvanceWord(utterance, locale)) {
-        const name = parseSpokenName(utterance, locale);
+        const name = parsedName;
         if (name) {
           this.game.voiceSetName(room.code, playerId, name);
-          return text('voice.niceMeetStart', { name, controls });
+          return room.phase === 'lobby'
+            ? text('voice.niceMeetStart', { name, controls })
+            : `${text('voice.niceMeet', { name })} ${text('voice.helpCar')}`;
         }
       }
     }
@@ -1255,6 +1313,13 @@ export class HttpServer {
       return null;
     }
     if (room.phase === 'map_select') {
+      const current = room.lobbyPlayers().find(player => player.playerId === playerId);
+      if ((current?.carIndex ?? null) === null) {
+        const carIndex = clearSelectionIndex(utterance, carChoices, locale);
+        if (carIndex === null) return null;
+        this.game.voiceSelectCar(room.code, playerId, carIndex);
+        return `${text('voice.lockedCar', { car: localizedCarName(locale, room.carName(carIndex)) })} ${text('voice.chooseTrack')}`;
+      }
       const i = clearSelectionIndex(utterance, mapChoices, locale);
       if (i === null) {
         if (!isRacerAdvanceWord(utterance, locale)) return null;
@@ -1289,7 +1354,8 @@ export class HttpServer {
   /** Build the AI host's view of a live room for one caller: what it can see + the actions it can take
    *  (pick a car/map by fuzzy name, start the race). Actions delegate to the same Room methods + the
    *  game-server broadcast, so a voice-driven pick shows up on the screen exactly like a texted one. */
-  private hostContext(room: Room, playerId: string, locale: SupportedLocale = DEFAULT_LOCALE,nameLocked=false): HostContext {
+  private hostContext(room: Room, playerId: string, locale: SupportedLocale = DEFAULT_LOCALE,
+    nameLocked=false, isCurrent: () => boolean = () => true): HostContext {
     const text = createTranslator(locale, RACER_MESSAGES);
     const controls = text('voice.controlsIntro');
     const canonicalCars = this.roomConfigCache.carNames;
@@ -1325,7 +1391,7 @@ export class HttpServer {
       allTimeBest: board.bestName !== null && board.bestTime !== null
         ? { name: board.bestName, time: board.bestTime } : null,
       setName: (name) => {
-        if(nameLocked)return null;
+        if(nameLocked || !isCurrent())return null;
         const clean = name.trim().slice(0, 20);
         if (!clean) return null;
         this.game.voiceSetName(room.code, playerId, clean);
@@ -1336,6 +1402,7 @@ export class HttpServer {
           : text('voice.niceMeet', { name: clean });
       },
       selectCarByName: (name) => {
+        if (!isCurrent()) return null;
         const i = matchChoice(name, carChoices, locale);
         // No match → the model likely invented a name; DON'T act, and tell it (so it re-asks with the
         // real list) rather than confirming a car that doesn't exist.
@@ -1346,6 +1413,7 @@ export class HttpServer {
         return text('voice.lockedCar', { car: localizedCarName(locale, room.carName(i)) });
       },
       selectMapByName: (name) => {
+        if (!isCurrent()) return null;
         const i = matchChoice(name, mapChoices, locale);
         if (i < 0) return null;   // invented/unknown track → do nothing (no hallucinated confirmation)
         if (room.phase !== 'map_select') return null;
@@ -1353,7 +1421,7 @@ export class HttpServer {
         return text('voice.voteTrack', { map: localizedTrackName(locale, room.mapChoices[i]!) });
       },
       startRace: () => {
-        if (room.phase !== capturedPhase) return null;
+        if (!isCurrent() || room.phase !== capturedPhase) return null;
         // Guard against SKIPPING a step: don't leave car_select until THIS caller has actually picked
         // a car (the "it jumped to track select while I was still choosing" bug). The LLM is also told
         // this in the prompt; this is the hard backstop.
@@ -1405,20 +1473,21 @@ export class HttpServer {
     const time=(seconds:number)=>locale==='pt-BR'?seconds.toFixed(2).replace('.',','):seconds.toFixed(2);
     const outro=createTranslator(locale,RACER_MESSAGES)('voice.waitOperator');
     if(locale==='pt-BR'){
-      const race=context.myPlace?`Você terminou esta corrida na posição ${context.myPlace}${context.myFinishTime?`, com o tempo de ${time(context.myFinishTime)} segundos`:''}.`:'A corrida terminou.';
+      const race=context.myPlace?(context.myFinishTime?`Você terminou esta corrida na posição ${context.myPlace}, com o tempo de ${time(context.myFinishTime)} segundos.`:`Você não concluiu a corrida e ficou na posição ${context.myPlace}.`):'A corrida terminou.';
       const leader=context.allTimeBest?`O melhor tempo em ${map} é de ${context.allTimeBest.name}, com ${time(context.allTimeBest.time)} segundos.`:`Veja a classificação da pista na tela.`;
       const board=rank&&count?`Seu tempo ficou em ${rank}º lugar entre ${count} corridas concluídas nesta pista.`:'';
       return `${race} ${leader}${board?` ${board}`:''} ${context.stationManaged?outro:'Diga revanche quando quiser correr novamente.'}`;
     }
-    const race=context.myPlace?`You finished this race in place ${context.myPlace}${context.myFinishTime?`, with a time of ${time(context.myFinishTime)} seconds`:''}.`:'The race is complete.';
+    const race=context.myPlace?(context.myFinishTime?`You finished this race in place ${context.myPlace}, with a time of ${time(context.myFinishTime)} seconds.`:`You did not finish the race and placed ${context.myPlace}.`):'The race is complete.';
     const leader=context.allTimeBest?`${context.allTimeBest.name} leads ${map} with the fastest time of ${time(context.allTimeBest.time)} seconds.`:'Check the track leaderboard on the display.';
     const board=rank&&count?`Your run ranks number ${rank} out of ${count} completed runs on this track.`:'';
     return `${race} ${leader}${board?` ${board}`:''} ${context.stationManaged?outro:'Say rematch when you want to race again.'}`;
   }
 
   /** Test seam for verifying voice host context. */
-  hostContextForTest(room: Room, playerId: string, locale: SupportedLocale = DEFAULT_LOCALE): HostContext {
-    return this.hostContext(room, playerId, locale);
+  hostContextForTest(room: Room, playerId: string, locale: SupportedLocale = DEFAULT_LOCALE,
+    isCurrent: () => boolean = () => true): HostContext {
+    return this.hostContext(room, playerId, locale, false, isCurrent);
   }
 
   // ── Voice Monsters voice helpers: flatten a battle room for one caller ────────────────────────────
@@ -1438,10 +1507,7 @@ export class HttpServer {
     const monsterNames = rosterEntries().map(monster => localizedMonsterName(locale, monster.id));
     const players = room.lobbyPlayers();
     const player = players.find(p => p.playerId === playerId);
-    const pickedCount = players.filter(p => p.monsterId).length;
-    const canStartBattle = room.phase === 'monster_select'
-      ? (players.length >= 2 ? players.every(p => !!p.monsterId) : pickedCount === 1)
-      : false;
+    const canStartBattle = room.canStart();
     const rawName = player?.name ?? '';
     const myName = /^(Challenger|Player|Desafiante|Jogador)(\s|$)/.test(rawName) ? null : (rawName || null);
     const snap = room.snapshot();
@@ -1729,6 +1795,14 @@ export class HttpServer {
         : this.recentVoiceGame();
       if(!voiceGame){res.writeHead(200,VOICE_XML_HEADERS).end(unavailableXml);return;}
       const voiceLocale = dialedLocale ?? this.recentVoiceLocale(voiceGame, roomCode);
+      const callSid = (params['CallSid'] ?? '').trim();
+      if (callSid) this.voiceReconnectAttempts.set(callSid, 0);
+      if (callSid && stationRoute?.admitted && stationRoute.readyEntryId) {
+        this.stationVoiceReconnectRoutes.set(callSid, {
+          game: stationRoute.game, roomCode, readyEntryId: stationRoute.readyEntryId,
+          matchId: stationRoute.matchId, launchGeneration: stationRoute.launchGeneration, locale: voiceLocale,
+        });
+      }
       const xml = twimlConnectRelay({
         wsUrl: `${this.publicBaseUrl.replace(/^http/, 'ws')}/voice`,
         sessionEndedUrl: `${this.publicBaseUrl}/voice/session-ended`,
@@ -1775,6 +1849,48 @@ export class HttpServer {
       const errorCode = (params['ErrorCode'] ?? '').trim().slice(0, 20);
       const errorMessage = (params['ErrorMessage'] ?? '').trim().replace(/\s+/g, ' ').slice(0, 300);
       console.log(`[CR] session ended call=${callSid.slice(0, 8) || 'unknown'} status=${sessionStatus}${errorCode ? ` error=${errorCode}` : ''}${errorMessage ? ` message=${errorMessage}` : ''}`);
+      const callStatus = (params['CallStatus'] ?? '').trim().toLowerCase();
+      const attempts = this.voiceReconnectAttempts.get(callSid) ?? 0;
+      const recoverableError = !errorCode || ['39001','64103','64105','64111','64112'].includes(errorCode);
+      if (callSid && sessionStatus.toLowerCase() === 'failed' && callStatus === 'in-progress'
+        && recoverableError && attempts < 2) {
+        let station = this.stationVoiceReconnectRoutes.get(callSid);
+        if (station && this.arcadeApi) {
+          try {
+            const refreshed = await this.arcadeApi.stationVoiceRoute(params['From'] ?? '', callSid);
+            if (refreshed?.admitted && refreshed.readyEntryId) {
+              station = {
+                game: refreshed.game, roomCode: refreshed.roomCode, readyEntryId: refreshed.readyEntryId,
+                matchId: refreshed.matchId, launchGeneration: refreshed.launchGeneration, locale: station.locale,
+              };
+              this.stationVoiceReconnectRoutes.set(callSid, station);
+            }
+          } catch { /* fall back to the last validated route; setup validation still fails closed */ }
+        }
+        const racer = this.racerVoiceCallBindings.get(callSid);
+        const battle = this.battleVoiceCallBindings.get(callSid);
+        const fighter = this.fighterVoiceCallBindings.get(callSid);
+        const game = station?.game ?? (battle ? 'monsters' : fighter ? 'fighter' : racer ? 'racer' : null);
+        const roomCode = station?.roomCode ?? battle?.code ?? fighter?.code ?? racer?.code;
+        const locale = station?.locale ?? battle?.locale ?? fighter?.locale ?? racer?.locale ?? this.defaultLocale;
+        if (game && roomCode) {
+          this.voiceReconnectAttempts.set(callSid, attempts + 1);
+          const xml = twimlConnectRelay({
+            wsUrl: `${this.publicBaseUrl.replace(/^http/, 'ws')}/voice`,
+            sessionEndedUrl: `${this.publicBaseUrl}/voice/session-ended`,
+            roomCode, ttsProvider: 'ElevenLabs',
+            voice: locale === 'pt-BR' ? (process.env.CR_TTS_VOICE_PT_BR ?? '').trim() : this.crVoice,
+            game, readyEntryId: station?.readyEntryId, matchId: station?.matchId,
+            launchGeneration: station?.launchGeneration, locale,
+            relayToken: this.voiceRelayToken || undefined,
+            hints: this.voiceHints(game === 'monsters' ? 'battle' : game, locale), welcomeGreeting: '',
+          });
+          res.writeHead(200, VOICE_XML_HEADERS).end(xml);
+          return;
+        }
+      }
+      this.voiceReconnectAttempts.delete(callSid);
+      this.stationVoiceReconnectRoutes.delete(callSid);
       this.arcadeApi?.stationVoiceCallEnded(callSid);
       this.endRacerVoiceCall(callSid); this.endBattleVoiceCall(callSid); this.endFighterVoiceCall(callSid);
       res.writeHead(200, VOICE_XML_HEADERS).end(twimlHangup());
@@ -2270,11 +2386,19 @@ const RELAY_CHUNK_GAP_MS = 700;
 const RELAY_END_GRACE_MS = 750;
 const RELAY_END_TIMEOUT_MS = 20_000;
 const RELAY_SPEECH_SETTLE_TIMEOUT_MS = 10_000;
+const RELAY_PLAYBACK_TIMEOUT_MS = 20_000;
+type RelayPlayback = {
+  token: string;
+  generation: number;
+  settle: () => void;
+  timer: ReturnType<typeof setTimeout>;
+};
 type RelayQueue = {
   tail: Promise<void>;
   lastAt: number;
   generation: number;
-  pendingPlayback: string[];
+  tokenSequence: number;
+  pendingPlayback: RelayPlayback | null;
   ending: boolean;
   ended: boolean;
   endGraceScheduled: boolean;
@@ -2285,7 +2409,7 @@ const relayQueues = new WeakMap<WebSocket, RelayQueue>();
 function relayQueue(ws: WebSocket): RelayQueue {
   let queue = relayQueues.get(ws);
   if (!queue) {
-    queue = { tail: Promise.resolve(), lastAt: 0, generation: 0, pendingPlayback: [], ending: false, ended:false, endGraceScheduled:false, endTimer: null };
+    queue = { tail: Promise.resolve(), lastAt: 0, generation: 0, tokenSequence: 0, pendingPlayback: null, ending: false, ended:false, endGraceScheduled:false, endTimer: null };
     relayQueues.set(ws, queue);
   }
   return queue;
@@ -2306,10 +2430,14 @@ function sendRelayText(ws: WebSocket, text: string, locale: SupportedLocale = DE
       if (generation !== queue.generation) return;
       if (ws.readyState !== ws.OPEN) return;
       const speechToken = relaySpeechMarkup(token, locale);
-      ws.send(JSON.stringify({ type: 'text', token: speechToken, last: true, lang: locale,
-        ...(isCurrent ? { preemptible: true } : {}) }));
-      queue.pendingPlayback.push(speechToken);
+      // A silent word-joiner sequence makes playback acknowledgements unique without changing speech.
+      const marker = (++queue.tokenSequence).toString(2)
+        .replace(/0/g, '\u2060').replace(/1/g, '\u200B');
+      const wireToken = `${speechToken}${marker}`;
+      const played = waitForRelayPlayback(queue, wireToken, generation);
+      ws.send(JSON.stringify({ type: 'text', token: wireToken, last: true, lang: locale }));
       queue.lastAt = Date.now();
+      await played;
     }
   }).catch(() => {
     // TTS pacing must never break the game loop.
@@ -2324,7 +2452,7 @@ function clearRelayTextQueue(ws: WebSocket, endImmediately = false): void {
   queue.generation++;
   queue.tail = Promise.resolve();
   queue.lastAt = 0;
-  queue.pendingPlayback = [];
+  settleRelayPlayback(ws);
   queue.endGraceScheduled = false;
   maybeEndRelay(ws, queue, endImmediately);
 }
@@ -2336,10 +2464,29 @@ function handleRelayPlaybackEvent(ws: WebSocket, raw: string): boolean {
   if (info.type !== 'info' || info.name !== 'tokensPlayed') return false;
   const queue = relayQueues.get(ws);
   if (!queue) return true;
-  const index=queue.pendingPlayback.indexOf(String(info.value??''));
-  if(index>=0)queue.pendingPlayback.splice(index,1);
+  if (queue.pendingPlayback?.token === String(info.value ?? '')) queue.pendingPlayback.settle();
   maybeEndRelay(ws, queue);
   return true;
+}
+
+function waitForRelayPlayback(queue: RelayQueue, token: string, generation: number): Promise<void> {
+  return new Promise(resolve => {
+    let settled = false;
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (queue.pendingPlayback?.settle === settle) queue.pendingPlayback = null;
+      resolve();
+    };
+    const timer = setTimeout(settle, RELAY_PLAYBACK_TIMEOUT_MS);
+    timer.unref?.();
+    queue.pendingPlayback = { token, generation, settle, timer };
+  });
+}
+
+function settleRelayPlayback(ws: WebSocket): void {
+  relayQueues.get(ws)?.pendingPlayback?.settle();
 }
 
 function isRelayInterrupt(raw: string): boolean {
@@ -2347,22 +2494,34 @@ function isRelayInterrupt(raw: string): boolean {
   catch { return false; }
 }
 
+function isRelayDtmf(raw: string): boolean {
+  try { return JSON.parse(raw)?.type === 'dtmf'; }
+  catch { return false; }
+}
+
+function isRelayTtsError(raw: string): boolean {
+  try {
+    const message = JSON.parse(raw);
+    return message?.type === 'error' && /\b6411[12]\b/.test(String(message.description ?? ''));
+  } catch { return false; }
+}
+
 function endRelayAfterPlayback(ws: WebSocket): void {
   const queue = relayQueue(ws);
   if (queue.ending||queue.ended) return;
   queue.ending = true;
+  queue.endTimer = setTimeout(() => sendRelayEnd(ws, queue), RELAY_END_TIMEOUT_MS);
+  queue.endTimer.unref?.();
   void queue.tail.then(() => {
     if(!queue.ending)return;
-    queue.endTimer = setTimeout(() => sendRelayEnd(ws, queue), RELAY_END_TIMEOUT_MS);
-    queue.endTimer.unref?.();
     maybeEndRelay(ws, queue);
   });
 }
 
 function maybeEndRelay(ws: WebSocket, queue: RelayQueue, immediately = false): void {
-  if (!queue.ending || queue.pendingPlayback.length > 0) return;
+  if (!queue.ending || queue.pendingPlayback) return;
   void queue.tail.then(() => {
-    if (!queue.ending || queue.pendingPlayback.length > 0) return;
+    if (!queue.ending || queue.pendingPlayback) return;
     if (immediately) { sendRelayEnd(ws, queue); return; }
     if (queue.endGraceScheduled) return;
     queue.endGraceScheduled = true;
@@ -2378,7 +2537,8 @@ function sendRelayEnd(ws: WebSocket, queue: RelayQueue): void {
   queue.ended=true;
   queue.generation++;
   queue.tail=Promise.resolve();
-  queue.pendingPlayback=[];
+  queue.pendingPlayback?.settle();
+  queue.pendingPlayback=null;
   queue.endGraceScheduled=false;
   if (queue.endTimer) clearTimeout(queue.endTimer);
   queue.endTimer = null;
@@ -2390,6 +2550,7 @@ function sendRelayEnd(ws: WebSocket, queue: RelayQueue): void {
 function disposeRelayQueue(ws: WebSocket): void {
   const queue = relayQueues.get(ws);
   if (queue?.endTimer) clearTimeout(queue.endTimer);
+  queue?.pendingPlayback?.settle();
   relayQueues.delete(ws);
 }
 

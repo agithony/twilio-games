@@ -35,13 +35,25 @@ describe('fighter room', () => {
   it('waits for both expected station callers and preserves assigned sides', () => {
     const room=new FighterRoom('4821');room.expectHumanPlayers(2);
     const b=room.addPlayer('B','p2');if('error' in b)throw new Error(b.error);
+    expect(room.state()).toMatchObject({ expectedPlayerCount: 2, hasExpectedPlayers: false });
     room.advance();room.selectFighter(b.playerId,'wraith');expect(room.advance()).toBe(false);
     const a=room.addPlayer('A','p1');if('error' in a)throw new Error(a.error);
+    expect(room.state()).toMatchObject({ expectedPlayerCount: 2, hasExpectedPlayers: true });
     room.selectFighter(a.playerId,'nyx');expect(room.advance()).toBe(true);
     expect(room.lobbyPlayers()).toEqual(expect.arrayContaining([
       expect.objectContaining({playerId:a.playerId,side:'p1',fighterId:'nyx'}),
       expect.objectContaining({playerId:b.playerId,side:'p2',fighterId:'wraith'}),
     ]));
+  });
+
+  it('promotes a lone retained Player Two into Player One setup authority after a no-show drop', () => {
+    const room=new FighterRoom('4821');room.expectHumanPlayers(2);
+    const b=room.addPlayer('B','p2');if('error' in b)throw new Error(b.error);
+    room.advance();room.selectFighter(b.playerId,'wraith');room.expectHumanPlayers(1);
+
+    expect(room.canControlSetup(b.playerId)).toBe(true);
+    expect(room.state()).toMatchObject({expectedPlayerCount:1,hasExpectedPlayers:true,players:[expect.objectContaining({playerId:b.playerId,side:'p1'})]});
+    expect(room.advance()).toBe(true);
   });
   it('gates advancement on valid selections', () => {
     const room = new FighterRoom('4821'); const joined = room.addPlayer('A'); if ('error' in joined) throw new Error('join failed');
@@ -83,7 +95,10 @@ describe('fighter room', () => {
     room.advance(); room.selectFighter(player.playerId, 'nyx'); room.advance(); room.selectMap('void'); room.advance();
     const generation = room.state().loadingGeneration;
     expect(room.ready(generation + 1)).toBe(false);
-    room.tick(FIGHTER_LOADING_TIMEOUT_SECONDS);
+    expect(FIGHTER_LOADING_TIMEOUT_SECONDS).toBeGreaterThan(15);
+    room.tick(15);
+    expect(room.phase).toBe('loading');
+    room.tick(FIGHTER_LOADING_TIMEOUT_SECONDS - 15);
     expect(room.phase).toBe('map_select');
     expect(room.state().world).toBeNull();
   });

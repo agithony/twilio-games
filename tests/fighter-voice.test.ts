@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { FighterVoiceSession, matchVoiceChoice, type FighterVoiceSnapshot } from '../server/fighter-voice';
-import { FIGHTER_VICTORY_SECONDS, FighterRoom } from '../server/fighter-room';
+import { FIGHTER_LOADING_TIMEOUT_SECONDS, FIGHTER_VICTORY_SECONDS, FighterRoom } from '../server/fighter-room';
 import { FIGHTER_MAPS, FIGHTER_ROSTER } from '../shared/fighter-roster';
 import { FIGHTER_INTRO_SECONDS } from '../shared/fighter-protocol';
 import type { FighterCommand, FighterEvent } from '../shared/fighter-world';
@@ -178,6 +178,73 @@ describe('fighter voice session', () => {
     expect(actions.filter(event=>event.fighter==='p2').map(event=>event.command)).toEqual(['forward','kick']);
   });
 
+  it('tells a lone assigned Player One to wait for Player Two instead of choosing the arena', () => {
+    const game=voiceGame();
+    const ada=game.connect('CA-A','VOICE',undefined,'Ada',{index:0,count:2});
+    ada.prompt('start');ada.prompt('Nyx');
+
+    expect(game.room.state()).toMatchObject({ expectedPlayerCount: 2, hasExpectedPlayers: false });
+    expect(ada.spoken.at(-1)).toBe('Nyx locked in. Waiting for Player Two to join before choosing the arena.');
+    expect(ada.spoken).not.toContain('Nyx locked in. Say next to choose the arena.');
+
+    ada.prompt('next');
+    expect(game.room.phase).toBe('fighter_select');
+    expect(ada.spoken.at(-1)).toBe('Waiting for Player Two to join before choosing the arena.');
+  });
+
+  it('describes both fighter and arena loading when the extended deadline expires', () => {
+    const game=voiceGame();const ada=game.connect('CA-LOAD','VOICE',undefined,'Ada');
+    ada.prompt('start');ada.prompt('Nyx');ada.prompt('next');ada.prompt('second');ada.prompt('fight');
+
+    game.tick(15);
+    expect(game.room.phase).toBe('loading');
+    game.tick(FIGHTER_LOADING_TIMEOUT_SECONDS-15);
+
+    expect(game.room.phase).toBe('map_select');
+    expect(ada.spoken.at(-1)).toBe('The fighters or arena did not finish loading. Choose an arena and try again.');
+  });
+
+  it('narrates the same hit from each caller perspective', () => {
+    const game=voiceGame(),{ada,bob}=startTwoCallerFight(game);
+    ada.spoken.length=0;bob.spoken.length=0;
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(2_000);
+      const hit: FighterEvent={type:'hit',attacker:'p1',defender:'p2',damage:9,blocked:false};
+      ada.session.onFighterEvent(hit);bob.session.onFighterEvent(hit);
+      expect(ada.spoken).toEqual(['Hit for 9.']);
+      expect(bob.spoken).toEqual(['You took 9.']);
+
+      vi.advanceTimersByTime(1_201);
+      const blocked: FighterEvent={type:'hit',attacker:'p2',defender:'p1',damage:3,blocked:true};
+      ada.session.onFighterEvent(blocked);bob.session.onFighterEvent(blocked);
+      expect(ada.spoken.at(-1)).toBe('Blocked.');
+      expect(bob.spoken.at(-1)).toBe('They blocked.');
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('throttles commentary per caller and narrates misses only to the attacker', () => {
+    const game=voiceGame(),{ada,bob}=startTwoCallerFight(game);
+    ada.spoken.length=0;bob.spoken.length=0;
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(2_000);
+      const hit: FighterEvent={type:'hit',attacker:'p1',defender:'p2',damage:9,blocked:false};
+      ada.session.onFighterEvent(hit);bob.session.onFighterEvent(hit);
+      vi.advanceTimersByTime(1_200);
+      const throttled: FighterEvent={type:'hit',attacker:'p2',defender:'p1',damage:15,blocked:false};
+      ada.session.onFighterEvent(throttled);bob.session.onFighterEvent(throttled);
+      expect(ada.spoken).toEqual(['Hit for 9.']);
+      expect(bob.spoken).toEqual(['You took 9.']);
+
+      vi.advanceTimersByTime(1);
+      const miss: FighterEvent={type:'miss',attacker:'p1'};
+      ada.session.onFighterEvent(miss);bob.session.onFighterEvent(miss);
+      expect(ada.spoken).toEqual(['Hit for 9.','Missed. Move closer.']);
+      expect(bob.spoken).toEqual(['You took 9.']);
+    } finally { vi.useRealTimers(); }
+  });
+
   it('matches screen numbers, ordinals, normalized IDs, and dynamic names', () => {
     const choices = [
       { id: 'neon-foundry', name: 'Neon Foundry' },
@@ -262,14 +329,14 @@ describe('fighter voice session', () => {
     expect(bia.spoken.some(line => line.includes('Luta por Voz, Bia'))).toBe(true);
   });
 
-  it('expands a finalized command burst after a low-latency interim command', () => {
+  it('ignores combat interims and expands only finalized command bursts', () => {
     const commands: FighterCommand[] = [], spoken: string[] = [];
     const snapshot: FighterVoiceSnapshot = {
       phase: 'fight', myName: 'Ada', myFighterId: 'nyx', myFighterName: 'Nyx', foeName: 'Rival',
       foeFighterId: 'wraith', foeFighterName: 'Wraith', selectedMap: 'void', mySide: 'p1', myHealth: 100,
       foeHealth: 100, countdown: null, intro: null, winnerName: null, winnerSide: null,
       playerOneName: 'Ada', playerOneFighterName: 'Nyx', playerTwoName: 'Rival', playerTwoFighterName: 'Wraith',
-      playerCount: 1, allFightersSelected: true, isController: true,
+      playerCount: 1, hasExpectedPlayers: true, allFightersSelected: true, isController: true,
       fighters: FIGHTER_ROSTER.map(fighter => ({ id: fighter.id, name: fighter.name })),
       maps: FIGHTER_MAPS.map(map => ({ id: map.id, name: map.name })),
     };
@@ -288,9 +355,27 @@ describe('fighter voice session', () => {
     session.handleMessage(JSON.stringify({ type: 'interrupt', utteranceUntilInterrupt: '', durationUntilInterruptMs: 100 }));
     prompt('kick', false);
     expect(commands).toHaveLength(7);
-    prompt('kick', false);
+    prompt('kick', true);
     expect(commands.at(-1)).toBe('kick');
     expect(spoken.join(' ')).not.toContain('Say forward');
+  });
+
+  it('maps Fighter DTMF choices and fight controls through the active phase', () => {
+    const game=voiceGame(),ada=game.connect('CA-DTMF');
+    ada.prompt('Ada');ada.prompt('start');
+    ada.session.handleMessage(JSON.stringify({type:'dtmf',digit:'1'}));
+    expect(game.room.state().players.find(player=>player.playerId===ada.playerId)?.fighterId).toBe(FIGHTER_ROSTER[0]!.id);
+    ada.prompt('next');ada.session.handleMessage(JSON.stringify({type:'dtmf',digit:'2'}));ada.prompt('fight');
+    game.room.ready(game.room.state().loadingGeneration);game.stateChanged();advanceIntro(game);game.tick(6);
+    const before=game.commands.length;
+    ada.session.handleMessage(JSON.stringify({type:'dtmf',digit:'4'}));
+    expect(game.commands.slice(before).map(entry=>entry.command)).toContain('punch');
+  });
+
+  it.each([['0',9],['*',10],['#',11]] as const)('maps Fighter DTMF %s to roster option %s', (digit,index) => {
+    const game=voiceGame(),ada=game.connect(`CA-DTMF-${digit}`);ada.prompt('Ada');ada.prompt('start');
+    ada.session.handleMessage(JSON.stringify({type:'dtmf',digit}));
+    expect(game.room.state().players.find(player=>player.playerId===ada.playerId)?.fighterId).toBe(FIGHTER_ROSTER[index]!.id);
   });
 
   it('lets a corrected character selection through after barge-in', () => {
@@ -344,6 +429,7 @@ function voiceGame() {
       playerTwoName: playerTwo?.name ?? null,
       playerTwoFighterName: fighterName(playerTwo?.fighterId),
       playerCount: humans.length,
+      hasExpectedPlayers: state.hasExpectedPlayers,
       allFightersSelected: humans.length > 0 && humans.every(player => player.fighterId),
       isController: room.canControlSetup(playerId),
       fighters: FIGHTER_ROSTER.map(fighter => ({ id: fighter.id, name: fighter.name })),
@@ -390,6 +476,14 @@ function voiceGame() {
 
   const tick = (seconds: number) => { room.tick(seconds);const emitted=room.drainEvents();events.push(...emitted);publishEvents(emitted);stateChanged(); };
   return { room, commands, events, connect, tick, stateChanged };
+}
+
+function startTwoCallerFight(game: ReturnType<typeof voiceGame>) {
+  const ada=game.connect('CA-COMMENTARY-A','VOICE',undefined,'Ada');
+  const bob=game.connect('CA-COMMENTARY-B','VOICE',undefined,'Bob');
+  ada.prompt('start');ada.prompt('Nyx');bob.prompt('Wraith');ada.prompt('next');ada.prompt('second');ada.prompt('fight');
+  game.room.ready(game.room.state().loadingGeneration);game.stateChanged();advanceIntro(game);game.tick(6);
+  return {ada,bob};
 }
 
 function advanceIntro(game: ReturnType<typeof voiceGame>): void {

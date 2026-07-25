@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { WebSocket } from 'ws';
+import twilio from 'twilio';
 import { HttpServer } from '../server/http-server';
 import type { GameServer } from '../server/game-server';
 
@@ -7,9 +8,67 @@ let srv: HttpServer;
 afterEach(async () => { vi.restoreAllMocks(); await srv?.stop(); });
 const wait = (ms: number) => new Promise(r => setTimeout(r, ms));
 const closeWs = (ws: WebSocket) => { if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) ws.close(); };
+const acknowledgeText = (ws: WebSocket, message: Record<string, unknown>): void => {
+  if (message.type === 'text') ws.send(JSON.stringify({ type: 'info', name: 'tokensPlayed', value: message.token }));
+};
 const DISPLAY_TOKEN = 'test-standalone-display-token';
 
 describe('voice integration (fake Conversation Relay client)', () => {
+  it('validates the Conversation Relay WebSocket handshake signature', async () => {
+    const authToken='voice-websocket-auth-token';
+    srv=new HttpServer({port:0,publicBaseUrl:'http://localhost',validateSignatures:true,authToken});
+    const port=await srv.start();
+    const signature=twilio.getExpectedTwilioSignature(authToken,'ws://localhost/voice',{});
+    const valid=new WebSocket(`ws://127.0.0.1:${port}/voice`,{headers:{'X-Twilio-Signature':signature}});
+    await new Promise<void>((resolve,reject)=>{valid.once('open',resolve);valid.once('error',reject);});
+    closeWs(valid);
+
+    const invalid=new WebSocket(`ws://127.0.0.1:${port}/voice`,{headers:{'X-Twilio-Signature':'invalid'}});
+    const status=await new Promise<number>((resolve,reject)=>{
+      invalid.once('unexpected-response',(_request,response)=>resolve(response.statusCode??0));
+      invalid.once('error',reject);
+    });
+    expect(status).toBe(403);
+  });
+
+  it('waits for playback completion before sending the next spoken line', async () => {
+    srv = new HttpServer({ port: 0, publicBaseUrl: 'http://localhost', validateSignatures: false });
+    const port = await srv.start();
+    const voice = new WebSocket(`ws://127.0.0.1:${port}/voice`);
+    const messages: Record<string, unknown>[] = [];
+    voice.on('message', data => {
+      const message = JSON.parse(data.toString()) as Record<string, unknown>;
+      if (message.type === 'text') messages.push(message);
+    });
+    await new Promise<void>(resolve => voice.on('open', resolve));
+    voice.send(JSON.stringify({ type: 'setup', callSid: 'CA-paced', customParameters: { roomCode: 'PACED' } }));
+
+    await wait(100);
+    expect(messages).toHaveLength(1);
+    await wait(800);
+    expect(messages).toHaveLength(1);
+    acknowledgeText(voice, messages[0]!);
+    await wait(50);
+    expect(messages).toHaveLength(2);
+    acknowledgeText(voice, messages[1]!);
+    closeWs(voice);
+  });
+
+  it('releases a failed speech token so later guidance is not stranded', async () => {
+    vi.spyOn(console,'error').mockImplementation(()=>undefined);
+    srv = new HttpServer({ port:0,publicBaseUrl:'http://localhost',validateSignatures:false });
+    const port=await srv.start();const voice=new WebSocket(`ws://127.0.0.1:${port}/voice`);
+    const messages:Record<string,unknown>[]=[];
+    voice.on('message',data=>{const message=JSON.parse(data.toString()) as Record<string,unknown>;if(message.type==='text')messages.push(message);});
+    await new Promise<void>(resolve=>voice.on('open',resolve));
+    voice.send(JSON.stringify({type:'setup',callSid:'CA-tts-error',customParameters:{roomCode:'TTSERR'}}));
+    try {
+      await wait(50);expect(messages).toHaveLength(1);
+      voice.send(JSON.stringify({type:'error',description:'64111 TTS provider failure'}));
+      await wait(750);expect(messages).toHaveLength(2);
+    } finally { closeWs(voice); }
+  });
+
   it('retires a station voice session after queued speech plays without a WebSocket failure', async () => {
     srv = new HttpServer({ port: 0, publicBaseUrl: 'http://localhost', validateSignatures: false });
     const port = await srv.start();
@@ -75,6 +134,23 @@ describe('voice integration (fake Conversation Relay client)', () => {
     closeWs(voice);
   });
 
+  it.each([
+    ['DTMF', {type:'dtmf',digit:'1'}],
+    ['TTS error', {type:'error',description:'64111 TTS provider failure'}],
+  ])('ends retirement promptly after a %s stops active speech', async (_label,frame) => {
+    vi.spyOn(console,'error').mockImplementation(()=>undefined);
+    srv=new HttpServer({port:0,publicBaseUrl:'http://localhost',validateSignatures:false});
+    const port=await srv.start();const voice=new WebSocket(`ws://127.0.0.1:${port}/voice`);
+    const ended=new Promise<void>((resolve,reject)=>{
+      const timeout=setTimeout(()=>reject(new Error('Relay end was not received promptly')),2_000);
+      voice.on('message',data=>{if(JSON.parse(data.toString()).type==='end'){clearTimeout(timeout);resolve();}});
+    });
+    await new Promise<void>(resolve=>voice.on('open',resolve));
+    voice.send(JSON.stringify({type:'setup',callSid:`CA-retire-${_label}`,customParameters:{roomCode:`RETIRE-${_label}`}}));
+    await wait(50);(srv as unknown as {retireStationEngine(game:'racer',roomCode:string):void}).retireStationEngine('racer',`RETIRE-${_label}`);
+    voice.send(JSON.stringify(frame));await ended;closeWs(voice);
+  });
+
   it('keeps the Racer scoreboard and recap when a final go transcript arrives after the finish', async () => {
     srv = new HttpServer({ port:0,publicBaseUrl:'http://localhost',validateSignatures:false,standaloneVoiceEnabled:true });
     const port = await srv.start();
@@ -93,7 +169,7 @@ describe('voice integration (fake Conversation Relay client)', () => {
       const message=JSON.parse(data.toString()) as Record<string,unknown>;
       if(message.type==='text'){
         spoken.push(String(message.token));
-        voice.send(JSON.stringify({type:'info',name:'tokensPlayed',value:message.token}));
+        acknowledgeText(voice, message);
       }
     });
     await new Promise<void>((resolve,reject)=>{voice.once('open',resolve);voice.once('error',reject);});
@@ -193,6 +269,36 @@ describe('voice integration (fake Conversation Relay client)', () => {
     expect(log).toHaveBeenCalledWith('[CR] session ended call=CA-ended status=failed error=64106 message=Invalid voice configuration');
   });
 
+  it('returns reconnect TwiML after a recoverable Relay transport failure', async () => {
+    srv = new HttpServer({ port: 0, publicBaseUrl: 'http://localhost', validateSignatures: false });
+    const port = await srv.start();
+    const voice = new WebSocket(`ws://127.0.0.1:${port}/voice`);
+    await new Promise<void>(resolve => voice.on('open', resolve));
+    voice.send(JSON.stringify({ type:'setup', callSid:'CA-reconnect-action', customParameters:{ roomCode:'RECONNECT' } }));
+    await wait(40); voice.close(); await new Promise<void>(resolve => voice.once('close', resolve));
+
+    const response = await fetch(`http://127.0.0.1:${port}/voice/session-ended`, {
+      method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
+      body:'CallSid=CA-reconnect-action&CallStatus=in-progress&SessionStatus=failed&ErrorCode=39001',
+    });
+    const xml = await response.text();
+    expect(xml).toContain('<ConversationRelay');
+    expect(xml).toContain('<Parameter name="roomCode" value="RECONNECT"');
+    expect(xml).not.toContain('<Hangup />');
+  });
+
+  it('does not retry a permanent Relay configuration failure even with a resumable caller', async () => {
+    srv=new HttpServer({port:0,publicBaseUrl:'http://localhost',validateSignatures:false});const port=await srv.start();
+    const voice=new WebSocket(`ws://127.0.0.1:${port}/voice`);await new Promise<void>(resolve=>voice.on('open',resolve));
+    voice.send(JSON.stringify({type:'setup',callSid:'CA-permanent',customParameters:{roomCode:'PERMANENT'}}));
+    await wait(40);voice.close();await new Promise<void>(resolve=>voice.once('close',resolve));
+    const response=await fetch(`http://127.0.0.1:${port}/voice/session-ended`,{
+      method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
+      body:'CallSid=CA-permanent&CallStatus=in-progress&SessionStatus=failed&ErrorCode=64106',
+    });
+    const xml=await response.text();expect(xml).toContain('<Hangup />');expect(xml).not.toContain('<ConversationRelay');
+  });
+
   it('inherits Twilio STT and TTS locale from the active display room', async () => {
     srv = new HttpServer({
       port: 0, publicBaseUrl: 'http://localhost', validateSignatures: false,
@@ -271,9 +377,10 @@ describe('voice integration (fake Conversation Relay client)', () => {
 
     const voice = new WebSocket(`ws://127.0.0.1:${port}/voice`);
     const spoken: string[] = [];
+    const spokenMessages: Record<string, unknown>[] = [];
     voice.on('message', d => {
-      const msg = JSON.parse(d.toString());
-      if (msg.type === 'text') spoken.push(String(msg.token));
+      const msg = JSON.parse(d.toString()) as Record<string, unknown>;
+      if (msg.type === 'text') { spoken.push(String(msg.token)); spokenMessages.push(msg); acknowledgeText(voice, msg); }
     });
     await new Promise<void>(r => voice.on('open', () => r()));
     voice.send(JSON.stringify({
@@ -286,6 +393,7 @@ describe('voice integration (fake Conversation Relay client)', () => {
       voice.send(JSON.stringify({ type: 'prompt', voicePrompt: 'Ada', last: true }));
       await wait(900);
       expect(spoken.join(' ').toLowerCase()).toMatch(/controls on the screen|say left|nitro/);
+      expect(spokenMessages.some(message => message.preemptible === true)).toBe(false);
       voice.send(JSON.stringify({ type: 'prompt', voicePrompt: 'start', last: true }));
       await wait(50);
       voice.send(JSON.stringify({ type: 'prompt', voicePrompt: 'one', last: true }));
@@ -330,7 +438,7 @@ describe('voice integration (fake Conversation Relay client)', () => {
     const spoken: { token: string; lang?: string }[] = [];
     voice.on('message', data => {
       const message = JSON.parse(data.toString());
-      if (message.type === 'text') spoken.push(message);
+      if (message.type === 'text') { spoken.push(message); acknowledgeText(voice, message); }
     });
     await new Promise<void>(resolve => voice.on('open', resolve));
     voice.send(JSON.stringify({
@@ -377,7 +485,7 @@ describe('voice integration (fake Conversation Relay client)', () => {
 
     const voice = new WebSocket(`ws://127.0.0.1:${port}/voice`);
     const spoken: { token: string; lang?: string }[] = [];
-    voice.on('message', data => { const message = JSON.parse(data.toString()); if (message.type === 'text') spoken.push(message); });
+    voice.on('message', data => { const message = JSON.parse(data.toString()) as Record<string, unknown>; if (message.type === 'text') { spoken.push({ token: String(message.token), lang: typeof message.lang === 'string' ? message.lang : undefined }); acknowledgeText(voice, message); } });
     await new Promise<void>(resolve => voice.on('open', resolve));
     voice.send(JSON.stringify({
       type: 'setup', callSid: 'CA-PT-MONSTERS', from: '+5511888888888',
@@ -430,7 +538,7 @@ describe('voice integration (fake Conversation Relay client)', () => {
       const ws = new WebSocket(`ws://127.0.0.1:${port}/voice`);
       ws.on('message', d => {
         const msg = JSON.parse(d.toString());
-        if (msg.type === 'text') spoken.push(String(msg.token));
+        if (msg.type === 'text') { spoken.push(String(msg.token)); acknowledgeText(ws, msg); }
       });
       await new Promise<void>(r => ws.on('open', () => r()));
       ws.send(JSON.stringify({
@@ -489,7 +597,7 @@ describe('voice integration (fake Conversation Relay client)', () => {
 
     const voice = new WebSocket(`ws://127.0.0.1:${port}/voice`);
     const spoken: { token: string; lang?: string }[] = [];
-    voice.on('message', data => { const message = JSON.parse(data.toString()); if (message.type === 'text') spoken.push(message); });
+    voice.on('message', data => { const message = JSON.parse(data.toString()) as Record<string, unknown>; if (message.type === 'text') { spoken.push({ token: String(message.token), lang: typeof message.lang === 'string' ? message.lang : undefined }); acknowledgeText(voice, message); } });
     await new Promise<void>(resolve => voice.on('open', resolve));
     voice.send(JSON.stringify({
       type: 'setup', callSid: 'CA-PT-FIGHTER', from: '+5511777777777',
@@ -527,7 +635,7 @@ describe('voice integration (fake Conversation Relay client)', () => {
     await new Promise<void>(resolve => display.on('open', resolve)); display.send(JSON.stringify({ type: 'spectate', roomCode }));
     const connect = async (spoken: string[]) => {
       const voice = new WebSocket(`ws://127.0.0.1:${port}/voice`);
-      voice.on('message', data => { const message = JSON.parse(data.toString()); if (message.type === 'text') spoken.push(String(message.token)); });
+      voice.on('message', data => { const message = JSON.parse(data.toString()) as Record<string, unknown>; if (message.type === 'text') { spoken.push(String(message.token)); acknowledgeText(voice, message); } });
       await new Promise<void>(resolve => voice.on('open', resolve));
       voice.send(JSON.stringify({ type: 'setup', callSid, from: '+15550001111', customParameters: { roomCode: ` ${roomCode.toLowerCase()} `, game: 'fighter' } }));
       return voice;

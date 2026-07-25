@@ -75,9 +75,11 @@ export interface AdapterDeps {
    *  SAY back (having also executed any game actions), or null to fall back to scripted behavior.
    *  Wired to the LLM game-host. Absent → no conversational AI (scripted-only, current behavior).
    *  `phase` lets the caller decide command-vs-chat routing. */
-  converse?: (roomCode: string, playerId: string, utterance: string, locale: SupportedLocale) => Promise<string | { text: string; phase: string } | null>;
+  converse?: (roomCode: string, playerId: string, utterance: string, locale: SupportedLocale,
+    isCurrent: () => boolean) => Promise<string | { text: string; phase: string } | null>;
   /** The room's current phase, so the adapter routes: race → fast commands; else → conversation. */
   phaseOf?: (roomCode: string) => string;
+  hasPlayerName?: (roomCode: string, playerId: string) => boolean;
   /** Accepted semantic commands only; raw transcripts are deliberately never exposed to analytics. */
   onIntent?: (intent: Intent) => void;
 }
@@ -124,7 +126,6 @@ export class ConversationRelayAdapter {
    *  audio never buries the caller's own left/right/boost. Safe no-op if no `say` sink. */
   private lineSeq = 0;
   private lastChattyAt = -1e9;
-  private clockMs = 0;   // advanced from event cadence; monotonic enough for throttling
   private recapDone = false;   // one proactive results recap per race (reset on a new countdown/go)
   private pendingSpeech = new Set<Promise<void>>();
   private lateRacingPromptUntil = 0;
@@ -132,7 +133,7 @@ export class ConversationRelayAdapter {
   private myFinishPlace: number | null = null;
   private lastMenuPrompt: { kind: 'enter_car_select' | 'enter_map_select'; at: number } | null = null;
   onGameEvent(ev: GameEvent): void {
-    this.clockMs += 50;   // events arrive on the ~20Hz broadcast; approx a wall clock for throttling
+    const now = Date.now();
     if ('spokenReplyPlayerId' in ev && ev.spokenReplyPlayerId === this.playerId) return;
     if (ev.kind === 'go' || ev.kind === 'countdown') {
       this.recapDone = false;
@@ -142,13 +143,13 @@ export class ConversationRelayAdapter {
     }
     if (ev.kind === 'enter_car_select' || ev.kind === 'enter_map_select') {
       this.turnEpoch++;
-      if (this.lastMenuPrompt?.kind === ev.kind && this.clockMs - this.lastMenuPrompt.at < 1000) return;
-      this.lastMenuPrompt = { kind: ev.kind, at: this.clockMs };
+      if (this.lastMenuPrompt?.kind === ev.kind && now - this.lastMenuPrompt.at < 1000) return;
+      this.lastMenuPrompt = { kind: ev.kind, at: now };
     }
     if (isChattyEvent(ev.kind)) {
-      if (this.clockMs - this.lastChattyAt < CHATTY_GAP_MS) return;   // too soon → stay quiet
+      if (now - this.lastChattyAt < CHATTY_GAP_MS) return;   // too soon → stay quiet
       const line = lineForEvent(ev, this.playerId, this.lineSeq, this.commandLocale);
-      if (line) { this.lastChattyAt = this.clockMs; this.lineSeq++; this.deps.say?.(line); }
+      if (line) { this.lastChattyAt = now; this.lineSeq++; this.deps.say?.(line); }
       return;
     }
     if (ev.kind === 'finish' && this.playerId && ev.playerId === this.playerId) {
@@ -191,7 +192,8 @@ export class ConversationRelayAdapter {
     const epoch = ++this.turnEpoch;
     const prompt = createTranslator(this.commandLocale, RACER_MESSAGES)('voice.raceOverPrompt');
     let speech!: Promise<void>;
-    speech = this.deps.converse(this.roomCode, this.playerId, prompt, this.commandLocale)
+    const isCurrent = () => epoch === this.turnEpoch && this.active;
+    speech = this.deps.converse(this.roomCode, this.playerId, prompt, this.commandLocale, isCurrent)
       .then(reply => { if (epoch === this.turnEpoch) this.speakResultRecap((typeof reply==='string'?reply:reply?.text) || fallback()); })
       .catch(() => { if (epoch === this.turnEpoch) this.speakResultRecap(fallback()); })
       .finally(() => this.pendingSpeech.delete(speech));
@@ -242,7 +244,7 @@ export class ConversationRelayAdapter {
         break;
       }
       case 'prompt': {
-        const requestEpoch = msg.last ? ++this.turnEpoch : this.turnEpoch;
+        const requestEpoch = ++this.turnEpoch;
         if(msg.last&&this.stationManaged&&this.roomCode&&['results','finished'].includes(this.deps.phaseOf?.(this.roomCode)??'')){
           this.firedIntents=[];
           if(!this.recapDone)this.requestResultRecap();
@@ -268,42 +270,39 @@ export class ConversationRelayAdapter {
           : true;   // no phaseOf → behave as before (command path)
 
         if (racing || !this.deps.converse) {
-          // Fast command path. CR sends ACCUMULATING partials that ASR also REVISES ("left" →
-          // "right"); dedup by CONTENT (longest common prefix) so a corrected word still fires and
-          // true appends/repeats don't double-fire.
-          const cur = intentsFromTranscript(msg.voicePrompt, this.commandLocale);
-          const p = commonPrefixLen(this.firedIntents, cur);
-          const fresh = cur.slice(p);
-          console.log(`[CR] prompt last=${msg.last} text="${msg.voicePrompt}" → fired ${fresh.length} new: [${fresh.join(',')}]${this.playerId ? '' : ' (NOT BOUND — dropped)'}`);
-          if (this.room && this.playerId) for (const intent of fresh) { this.room.applyIntent(this.playerId, intent); this.deps.onIntent?.(intent); }
-          this.firedIntents = cur;
-          if (msg.last) this.firedIntents = [];
+          // Interim hypotheses are revisable. Mutate authoritative race state only from the final
+          // transcript so a correction such as left -> right cannot execute both commands.
+          if (!msg.last) break;
+          const intents = intentsFromTranscript(msg.voicePrompt, this.commandLocale);
+          if (!intents.length) {
+            const phase = this.roomCode ? this.deps.phaseOf?.(this.roomCode) ?? null : null;
+            if (this.deps.converse && this.roomCode && this.playerId) {
+              this.requestConversation(msg.voicePrompt.trim(), requestEpoch, phase);
+            } else this.speakPhaseFallback(phase);
+            break;
+          }
+          console.log(`[CR] prompt last=true text="${msg.voicePrompt}" → fired ${intents.length} new: [${intents.join(',')}]${this.playerId ? '' : ' (NOT BOUND — dropped)'}`);
+          if (this.room && this.playerId) for (const intent of intents) { this.room.applyIntent(this.playerId, intent); this.deps.onIntent?.(intent); }
+          this.firedIntents = [];
         } else if (msg.last && this.roomCode && this.playerId) {
           // Conversational path — only on the FINAL transcript (partials would spam the LLM). Fire and
           // forget; the reply is spoken via deps.say when it resolves — UNLESS the caller has spoken
           // again or barged in since (epoch moved), in which case the stale reply is dropped.
           const text = msg.voicePrompt.trim();
-          if (text) {
-            const epoch = requestEpoch;
-            const requestPhase = this.deps.phaseOf?.(this.roomCode) ?? null;
-            void this.deps.converse(this.roomCode, this.playerId, text, this.commandLocale)
-              .then(result => {
-                if (!result || epoch !== this.turnEpoch || !this.active) return;
-                const reply=typeof result==='string'?result:result.text;
-                const expectedPhase=typeof result==='string'?requestPhase:result.phase;
-                if (expectedPhase && this.deps.phaseOf?.(this.roomCode!) !== expectedPhase) return;
-                this.deps.say?.(reply, expectedPhase ? this.phaseGuard(expectedPhase) : undefined);
-              })
-              .catch(() => { /* LLM failure → stay quiet, never break the call */ });
-          }
+          if (text) this.requestConversation(text, requestEpoch, this.deps.phaseOf?.(this.roomCode) ?? null);
         }
         break;
       }
       case 'dtmf': {
         console.log(`[CR] dtmf digit=${msg.digit}${this.playerId ? '' : ' (NOT BOUND)'}`);
         if (!this.room || !this.playerId) return;
-        const intent = DTMF_TO_INTENT[msg.digit];
-        if (intent) { this.room.applyIntent(this.playerId, intent); this.deps.onIntent?.(intent); }
+        const phase = this.roomCode ? this.deps.phaseOf?.(this.roomCode) : null;
+        if (phase === 'racing' || phase === 'countdown' || !this.deps.phaseOf) {
+          const intent = DTMF_TO_INTENT[msg.digit];
+          if (intent) { this.room.applyIntent(this.playerId, intent); this.deps.onIntent?.(intent); }
+        } else if (/^\d+$/.test(msg.digit)) {
+          this.handleMessage(JSON.stringify({ type: 'prompt', voicePrompt: msg.digit, last: true }));
+        }
         break;
       }
       case 'interrupt': {
@@ -361,6 +360,33 @@ export class ConversationRelayAdapter {
   private phaseGuard(expectedPhase:string):()=>boolean{
     return()=>this.active&&Boolean(this.roomCode)&&this.deps.phaseOf?.(this.roomCode!)===expectedPhase;
   }
+
+  private requestConversation(text: string, epoch: number, requestPhase: string | null): void {
+    if (!text || !this.deps.converse || !this.roomCode || !this.playerId) return;
+    const roomCode = this.roomCode, playerId = this.playerId;
+    const isCurrent = () => epoch === this.turnEpoch && this.active;
+    void this.deps.converse(roomCode, playerId, text, this.commandLocale, isCurrent)
+      .then(result => {
+        if (!isCurrent()) return;
+        if (!result) { this.speakPhaseFallback(requestPhase); return; }
+        const reply=typeof result==='string'?result:result.text;
+        const expectedPhase=typeof result==='string'?requestPhase:result.phase;
+        if (expectedPhase && this.deps.phaseOf?.(roomCode) !== expectedPhase) return;
+        this.deps.say?.(reply, expectedPhase ? this.phaseGuard(expectedPhase) : undefined);
+      })
+      .catch(() => { if (isCurrent()) this.speakPhaseFallback(requestPhase); });
+  }
+
+  private speakPhaseFallback(phase: string | null): void {
+    const text = createTranslator(this.commandLocale, RACER_MESSAGES);
+    const key = phase === 'car_select' ? 'voice.helpCar'
+      : phase === 'map_select' ? 'voice.helpMap'
+        : phase === 'results' || phase === 'finished' ? 'voice.helpResults'
+          : phase === 'racing' || phase === 'countdown' ? 'voice.help'
+            : this.authoritativeName || (this.roomCode && this.playerId
+              && this.deps.hasPlayerName?.(this.roomCode, this.playerId)) ? 'voice.helpLobbyNamed' : 'voice.helpLobby';
+    this.deps.say?.(text(key), phase ? this.phaseGuard(phase) : undefined);
+  }
 }
 
 function playerName(from: string | undefined, locale: SupportedLocale): string {
@@ -374,13 +400,4 @@ function isHelpRequest(spoken: string, locale: SupportedLocale): boolean {
   return locale === 'pt-BR'
     ? /\b(ajuda|instrucoes|comandos|como jogar|o que posso dizer)\b/.test(text)
     : /\b(help|instructions|commands|how do i play|what can i say)\b/.test(text);
-}
-
-/** Length of the shared leading run of two intent arrays (how many already-fired intents the new
- *  transcript still agrees with). Everything past this in the new array is genuinely new → fire it. */
-function commonPrefixLen(a: Intent[], b: Intent[]): number {
-  const n = Math.min(a.length, b.length);
-  let i = 0;
-  while (i < n && a[i] === b[i]) i++;
-  return i;
 }
