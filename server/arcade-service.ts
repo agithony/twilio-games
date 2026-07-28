@@ -417,6 +417,7 @@ export interface ProcessInboundStationMessageInput {
   readonly stationId: string;
   readonly preferredLocale: string;
   readonly idempotencyKey: string;
+  readonly whatsappAvailable?: boolean;
   readonly conversationProfileId?: string | null;
   readonly conversationId?: string | null;
 }
@@ -776,7 +777,8 @@ type MessagingCopyKey = 'wrongStation' | 'joinFirst' | 'joined' | 'help' | 'stat
   | 'registeredFree' | 'leftFree' | 'poolFullFree' | 'readyFree' | 'continueInBrowser'
   | 'coinScreen' | 'readyFreeScreen' | 'notReadyFree' | 'capacity' | 'gameChoice' | 'gameChoiceInvalid'
   | 'gameChoiceUnavailable' | 'gameChoiceClosed' | 'alreadyReadyVote' | 'moreNone' | 'morePage'
-  | 'named' | 'namedFree';
+  | 'named' | 'namedFree' | 'whatsappOnly' | 'whatsappOrBrowser' | 'browserOnly'
+  | 'portugueseUnavailable';
 
 const MESSAGING_COPY: Record<'en-US' | 'pt-BR', Record<MessagingCopyKey, string>> = {
   'en-US': {
@@ -817,6 +819,10 @@ const MESSAGING_COPY: Record<'en-US' | 'pt-BR', Record<MessagingCopyKey, string>
     morePage: 'More challenges are available. Reply MORE {page} for the next link.',
     named: "You're set, {name}!\n\nGame coins: {balance}.\n\nAt the display, reply COIN or 🪙 to line up for a voice-powered game.",
     namedFree: "You're set, {name}!\n\nAt the display, reply READY to line up for a voice-powered game.",
+    whatsappOnly: 'Brazilian Portuguese messaging entry is available only through WhatsApp. Scan the QR and choose WhatsApp.',
+    whatsappOrBrowser: 'Brazilian Portuguese messaging entry is available only through WhatsApp. Use WhatsApp (recommended), or continue in your browser.',
+    browserOnly: 'SMS is not available for Brazilian Portuguese entry. Scan the QR and continue in your browser.',
+    portugueseUnavailable: 'Brazilian Portuguese entry is unavailable right now. Please ask booth staff for help.',
   },
   'pt-BR': {
     wrongStation: 'Esse QR é de uma rodada anterior. Escaneie novamente o QR na tela principal ou responda ENTRAR.',
@@ -856,6 +862,10 @@ const MESSAGING_COPY: Record<'en-US' | 'pt-BR', Record<MessagingCopyKey, string>
     morePage: 'Há mais desafios disponíveis. Responda MAIS {page} para receber o próximo link.',
     named: 'Tudo pronto, {name}!\n\nMoedas: {balance}.\n\nDiante da tela, responda MOEDA ou 🪙 para entrar em um jogo controlado por voz.',
     namedFree: 'Tudo pronto, {name}!\n\nDiante da tela, responda PRONTO para entrar em um jogo controlado por voz.',
+    whatsappOnly: 'A entrada por mensagem em português está disponível somente pelo WhatsApp. Escaneie o QR e escolha WhatsApp.',
+    whatsappOrBrowser: 'A entrada por mensagem em português está disponível somente pelo WhatsApp. Use o WhatsApp (recomendado) ou continue no navegador.',
+    browserOnly: 'O SMS não está disponível para entrada em português. Escaneie o QR e continue no navegador.',
+    portugueseUnavailable: 'A entrada em português não está disponível agora. Peça ajuda à equipe.',
   },
 };
 
@@ -2502,6 +2512,24 @@ export class ArcadeService {
           return { reply, playerId, command, locale, stationRevision, ...(challengeLink ? { challengeLink } : {}) };
         };
 
+        const latestLinkedLocale = Object.values(state.channelAddresses)
+          .filter(candidate => candidate.normalizedAddress === normalizedAddress)
+          .sort((left, right) => Date.parse(right.lastSeenAt) - Date.parse(left.lastSeenAt))[0]
+          ?.preferredLocale;
+        const policyLocale = normalizeMessagingLocale(
+          join?.locale ?? join?.inferredLocale ?? latestLinkedLocale
+          ?? (playerId ? state.players[playerId]?.preferredLocale : null) ?? locale,
+        );
+        if (input.channel === 'sms' && policyLocale === 'pt-BR') {
+          locale = 'pt-BR';
+          const policyCopy = (input.whatsappAvailable ?? config.channels.whatsapp)
+            ? config.arcade.mode === 'lead_capture' ? 'whatsappOrBrowser' : 'whatsappOnly'
+            : config.arcade.mode === 'lead_capture' ? 'browserOnly' : 'portugueseUnavailable';
+          return finish(
+            'CHANNEL_POLICY',
+            messagingCopy(locale, policyCopy),
+          );
+        }
         if (join && join.stationId !== null && join.stationId !== stationId.toUpperCase()) {
           return finish('JOIN', messagingCopy(locale, 'wrongStation', { station: stationId }));
         }

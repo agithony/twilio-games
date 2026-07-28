@@ -1198,9 +1198,10 @@ describe('Arcade API', () => {
   });
 
   it('routes signed-provider SMS commands through durable Arcade messaging when enabled', async () => {
-    const { baseUrl, store, playerRuntime, api } = await harness({ playerMode: 'coin_only' });
+    const{baseUrl,store,playerRuntime,api}=await harness({playerMode:'coin_only',whatsappNumber:'+15005550007'});
     const enabled = settings('coin_only') as Record<string, any>;
     enabled.channels.sms = true;
+    enabled.channels.whatsapp = true;
     await store.update({
       expectedVersion: 2,
       idempotencyKey: 'enable-arcade-sms',
@@ -1263,7 +1264,42 @@ describe('Arcade API', () => {
     expect(await api.processMessagingWebhook({
       from: '+5511999999999', body: 'ENTRAR', providerMessageId: 'SM-API-ENTRAR',
       recalledLocale: 'en-US',
+    })).toContain('somente pelo WhatsApp');
+    expect(await api.processMessagingWebhook({
+      from:'whatsapp:+5511999999999',body:'ENTRAR',providerMessageId:'SM-API-ENTRAR-WHATSAPP',
+      recalledLocale:'en-US',
     })).toContain('primeiro nome');
+    const rejectedSwitch = {
+      from:'+5511999999999',body:'MOEDA',providerMessageId:'SM-API-PT-SWITCH-TO-SMS',
+    };
+    const rejectedSwitchReply = await api.processMessagingWebhook(rejectedSwitch);
+    expect(rejectedSwitchReply).toContain('somente pelo WhatsApp');
+    expect(await api.processMessagingWebhook(rejectedSwitch)).toBe(rejectedSwitchReply);
+    const policyState = resources.store.snapshot();
+    expect(Object.values(policyState.inboundMessages).find(receipt => (
+      receipt.providerMessageId === 'SM-API-PT-SWITCH-TO-SMS'
+    ))).toMatchObject({ command: 'CHANNEL_POLICY' });
+    expect(Object.values(policyState.channelAddresses).some(address => (
+      address.normalizedAddress === '+5511999999999' && address.channel === 'sms'
+    ))).toBe(false);
+    expect(await api.processMessagingWebhook({
+      from: '+5511999999999', body: 'JOIN ARCADE-01 LANG en-US',
+      providerMessageId: 'SM-API-PT-SWITCH-TO-ENGLISH-SMS',
+    })).toContain('first name');
+    expect(await api.processMessagingWebhook({
+      from: '+5511999999999', body: 'Ada',
+      providerMessageId: 'SM-API-PT-CONTINUE-IN-ENGLISH-SMS',
+    })).toContain('Reply YES');
+    expect(await api.processMessagingWebhook({
+      from: 'whatsapp:+5511999999999', body: 'ENTRAR',
+      providerMessageId: 'SM-API-SWITCH-BACK-TO-PORTUGUESE',
+    })).toContain('Responda SIM');
+    const restoredPolicyInput = {
+      from: '+5511999999999', body: 'MOEDA', providerMessageId: 'SM-API-RESTORED-PT-SMS-POLICY',
+    };
+    const restoredPolicyReply = await api.processMessagingWebhook(restoredPolicyInput);
+    expect(restoredPolicyReply).toContain('somente pelo WhatsApp');
+    expect(await api.processMessagingWebhook(restoredPolicyInput)).toBe(restoredPolicyReply);
     expect(await api.processMessagingWebhook({
       from: '+14155550222', body: 'ENTRAR ARCADE-01 LANG en-US', providerMessageId: 'SM-API-LANG',
       recalledLocale: 'pt-BR',
@@ -1295,6 +1331,43 @@ describe('Arcade API', () => {
     });
     expect(await api.stationVoiceRoute('+14155550199')).toMatchObject({ game: 'racer', admitted: true });
     expect(await api.stationVoiceRoute('+14155550000')).toMatchObject({ game: 'racer', admitted: false });
+  });
+
+  it('durably enforces Portuguese channel policy when a channel is disabled', async () => {
+    const { api, store, playerRuntime } = await harness({
+      playerMode: 'coin_only', whatsappNumber: '+15005550007',
+    });
+    const whatsappOnly = settings('coin_only') as Record<string, any>;
+    whatsappOnly.channels.sms = false;
+    whatsappOnly.channels.whatsapp = true;
+    await store.update({
+      expectedVersion: 2, idempotencyKey: 'whatsapp-only-policy',
+      updatedBy: 'test@twilio.com', settings: whatsappOnly as ArcadeConfigSettings,
+    });
+    const rejected = {
+      from: '+5511999999999', body: 'ENTRAR', providerMessageId: 'SM-DISABLED-PT-SMS',
+    };
+    const reply = await api.processMessagingWebhook(rejected);
+    expect(reply).toContain('somente pelo WhatsApp');
+    expect(await api.processMessagingWebhook(rejected)).toBe(reply);
+    const state = (await playerRuntime.getActive()).store.snapshot();
+    expect(Object.values(state.inboundMessages).find(receipt => (
+      receipt.providerMessageId === rejected.providerMessageId
+    ))).toMatchObject({ command: 'CHANNEL_POLICY' });
+    expect(Object.keys(state.players)).toHaveLength(0);
+
+    const smsOnly = settings('coin_only') as Record<string, any>;
+    smsOnly.channels.sms = true;
+    smsOnly.channels.whatsapp = false;
+    await store.update({
+      expectedVersion: 3, idempotencyKey: 'sms-only-policy',
+      updatedBy: 'test@twilio.com', settings: smsOnly as ArcadeConfigSettings,
+    });
+    const unavailable = await api.processMessagingWebhook({
+      from: 'whatsapp:+5511888888888', body: 'ENTRAR', providerMessageId: 'SM-DISABLED-PT-WA',
+    });
+    expect(unavailable).toContain('Peça ajuda à equipe');
+    expect(unavailable).not.toContain('Use SMS');
   });
 
   it('bounds inbound messaging by address and process without charging durable provider replays', async () => {
@@ -1549,47 +1622,51 @@ describe('Arcade API', () => {
 
   });
 
-  it('returns the localized call number only for an admitted browser lead during launch', async () => {
-    const { baseUrl, store, playerRuntime } = await harness({ playerMode: 'lead_capture' });
+  it('accepts localized Portuguese browser registration in lead-capture mode', async () => {
+    const { baseUrl, api, store, playerRuntime } = await harness({ playerMode: 'lead_capture' });
     const localized = settings('lead_capture') as Record<string, any>;
     localized.channels.voiceNumbers = {
       'en-US': '+14155550100',
       'pt-BR': '+551155555555',
     };
     await store.update({
-      expectedVersion: 2,
-      idempotencyKey: 'browser-call-numbers',
-      updatedBy: 'test@twilio.com',
-      settings: localized,
+      expectedVersion: 2, idempotencyKey: 'portuguese-browser-call-numbers',
+      updatedBy: 'test@twilio.com', settings: localized as ArcadeConfigSettings,
     });
-    const cookie = cookieFrom(await createPlayerSession(baseUrl, 'browser-call-player'));
+    expect(await api.processMessagingWebhook({
+      from: '+5511888888888', body: 'ENTRAR', providerMessageId: 'SM-PT-LEAD-BROWSER-GUIDANCE',
+    })).toContain('continue no navegador');
+    const cookie = cookieFrom(await createPlayerSession(baseUrl, 'portuguese-browser-player'));
     const registration = await fetch(`${baseUrl}/api/arcade/register`, {
       method: 'POST',
       headers: {
         Cookie: cookie, Origin: 'http://localhost',
-        'Content-Type': 'application/json', 'Idempotency-Key': 'browser-call-register',
+        'Content-Type': 'application/json', 'Idempotency-Key': 'portuguese-browser-register',
       },
       body: JSON.stringify({ ...REGISTRATION, preferredLocale: 'pt-BR' }),
     });
     expect(registration.status).toBe(200);
-    const resources = await playerRuntime.getActive();
+    expect(await registration.json()).toMatchObject({
+      registered: true, firstName: REGISTRATION.lead.firstName, preferredLocale: 'pt-BR',
+    });
     expect((await fetch(`${baseUrl}/api/arcade/station/coin`, {
       method: 'POST',
       headers: {
         Cookie: cookie, Origin: 'http://localhost',
-        'Content-Type': 'application/json', 'Idempotency-Key': 'browser-call-coin',
+        'Content-Type': 'application/json', 'Idempotency-Key': 'portuguese-browser-coin',
       },
       body: '{}',
     })).status).toBe(200);
-    const station = await resources.service.getStation('ARCADE-01');
+    const resources = await playerRuntime.getActive();
+    const recruiting = await resources.service.getStation('ARCADE-01');
     const selecting = await resources.service.closeStationRecruiting({
-      stationId: 'ARCADE-01', expectedRevision: station!.station.revision,
-      idempotencyKey: 'browser-call-close',
+      stationId: 'ARCADE-01', expectedRevision: recruiting!.station.revision,
+      idempotencyKey: 'portuguese-browser-close',
       authorization: resources.operatorAuthorization('test@twilio.com'),
     });
     const locked = await resources.station.selectGame({
       game: 'racer', expectedRevision: selecting.station.revision,
-      idempotencyKey: 'browser-call-select',
+      idempotencyKey: 'portuguese-browser-select',
       authorization: resources.operatorAuthorization('test@twilio.com'),
     });
     expect(await (await fetch(`${baseUrl}/api/arcade/station/me`, {
@@ -1597,7 +1674,7 @@ describe('Arcade API', () => {
     })).json()).toMatchObject({ phase: 'LOCKED', ready: { status: 'ADMITTED' }, callNumber: null });
     await resources.service.requestStationLaunch({
       stationId: 'ARCADE-01', expectedRevision: locked.station.revision,
-      idempotencyKey: 'browser-call-launch',
+      idempotencyKey: 'portuguese-browser-launch',
       authorization: resources.operatorAuthorization('test@twilio.com'),
     });
     expect(await (await fetch(`${baseUrl}/api/arcade/station/me`, {

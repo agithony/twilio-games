@@ -100,7 +100,7 @@ async function inbound(
 async function createThreeReadyPlayers(h: Awaited<ReturnType<typeof harness>>): Promise<void> {
   for (const [index, locale] of ['en-US', 'pt-BR', 'pt-BR'].entries()) {
     const from = `+1415555010${index + 1}`;
-    const channel=index<2?'whatsapp':'sms';
+    const channel = 'whatsapp';
     await inbound(h.service, `SM-JOIN-${index}`, `JOIN ARCADE-01 LANG ${locale}`, from,channel);
     await inbound(h.service, `SM-NAME-${index}`, `Player${index + 1}`, from,channel);
     await inbound(h.service, `SM-TERMS-${index}`, locale === 'pt-BR' ? 'SIM' : 'YES', from,channel);
@@ -321,10 +321,10 @@ describe('Arcade station outbound outbox', () => {
   it('suppresses call-now notices when the selected locale has no voice number', async () => {
     const h = await harness();
     h.setVoice(true, { 'en-US': '+14155550100', 'pt-BR': null });
-    await inbound(h.service, 'SM-NO-CALL-JOIN', 'JOIN ARCADE-01 LANG pt-BR', '+5511999999999');
-    await inbound(h.service, 'SM-NO-CALL-NAME', 'Bia', '+5511999999999');
-    await inbound(h.service, 'SM-NO-CALL-TERMS', 'SIM', '+5511999999999');
-    await inbound(h.service, 'SM-NO-CALL-COIN', 'MOEDA', '+5511999999999');
+    await inbound(h.service, 'SM-NO-CALL-JOIN', 'JOIN ARCADE-01 LANG pt-BR', '+5511999999999', 'whatsapp');
+    await inbound(h.service, 'SM-NO-CALL-NAME', 'Bia', '+5511999999999', 'whatsapp');
+    await inbound(h.service, 'SM-NO-CALL-TERMS', 'SIM', '+5511999999999', 'whatsapp');
+    await inbound(h.service, 'SM-NO-CALL-COIN', 'MOEDA', '+5511999999999', 'whatsapp');
     const recruiting = await h.service.getStation('ARCADE-01');
     const selecting = await h.service.closeStationRecruiting({
       stationId: 'ARCADE-01', expectedRevision: recruiting!.station.revision,

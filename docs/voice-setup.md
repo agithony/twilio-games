@@ -33,7 +33,7 @@ When Conversation Relay ends a session, Twilio calls `POST /voice/session-ended`
 ## Requirements
 
 - Node.js 22.13 or later
-- A primary Twilio account with the English Voice number, a separate SMS-capable number, and an optional WhatsApp sender
+- A primary Twilio account with the English Voice number, a separate SMS-capable number, and an approved WhatsApp sender required for preferred Portuguese Messaging entry; lead-capture mode retains a browser fallback
 - A second Twilio account with the Portuguese Voice number
 - Both account Auth Tokens for webhook signature validation
 - A public HTTPS URL that forwards to the server on port `8080`

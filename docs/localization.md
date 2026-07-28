@@ -2,6 +2,8 @@
 
 Twilio Games supports US English (`en-US`) and Brazilian Portuguese (`pt-BR`) across the home page, all three game displays, deterministic voice commands, Conversation Relay transcription, and spoken responses.
 
+Station entry channels are also localized. English visitors may enter through configured SMS or WhatsApp channels. Portuguese visitors use WhatsApp rather than SMS, and the server rejects Portuguese SMS even if a visitor bypasses the chooser. Lead-capture mode offers localized browser registration to both locales as a visually secondary fallback; messaging remains the preferred path. A phone identity that selected Portuguese on WhatsApp cannot switch to SMS unless it explicitly selects English.
+
 ## Display Locale
 
 The browser resolves its display locale in this order:
