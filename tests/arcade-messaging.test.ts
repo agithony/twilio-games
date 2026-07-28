@@ -165,6 +165,7 @@ describe('Arcade messaging commands', () => {
 
   it('accepts standalone coin and money emojis as COIN on SMS and WhatsApp', async () => {
     const h = await harness('coin_only', 'per_player', value => {
+      value.channels.whatsapp = true;
       value.registration.termsAcknowledgementRequired = false;
       value.coins.startingBalance = 20;
     });
@@ -258,6 +259,7 @@ describe('Arcade messaging commands', () => {
 
   it('localizes the durable challenge reward message with replay guidance', async () => {
     const h = await harness('coin_only', 'per_player', value => {
+      value.channels.whatsapp = true;
       value.registration.termsAcknowledgementRequired = false;
       value.earning.challenges = [{
         id: 'docs', title: 'Documentação', message: 'Leia a documentação.',
@@ -266,9 +268,9 @@ describe('Arcade messaging commands', () => {
       }];
     }, undefined, undefined, () => {});
     const from = '+5511999999999';
-    await message(h.service, 'REWARD-PT-JOIN', 'ENTRAR', from);
-    await message(h.service, 'REWARD-PT-NAME', 'Ana', from);
-    const more = await message(h.service, 'REWARD-PT-MORE', 'MAIS', from);
+    await message(h.service, 'REWARD-PT-JOIN', 'ENTRAR', from, 'whatsapp');
+    await message(h.service, 'REWARD-PT-NAME', 'Ana', from, 'whatsapp');
+    const more = await message(h.service, 'REWARD-PT-MORE', 'MAIS', from, 'whatsapp');
     const link = /(http:\/\/localhost\/challenge\/\?locale=pt-BR#\S+)/.exec(more.reply)?.[1];
     const token = decodeURIComponent(new URL(link!).hash.slice(1));
     await h.service.visitChallengeFromPortal(token, 'docs');
@@ -323,9 +325,9 @@ describe('Arcade messaging commands', () => {
   it('persists the Conversation Memory profile from the first TAC interaction', async () => {
     const h = await harness('coin_only');
     const result = await h.service.processInboundStationMessage({
-      channel: 'sms',
+      channel: 'whatsapp',
       normalizedAddress: '+14155550199',
-      providerAddress: '+14155550199',
+      providerAddress: 'whatsapp:+14155550199',
       providerMessageId: 'comm-first-memory',
       body: 'JOIN ARCADE-01 LANG pt-BR',
       stationId: 'ARCADE-01',
@@ -353,9 +355,9 @@ describe('Arcade messaging commands', () => {
     expect(Object.values(h.store.snapshot().channelAddresses).filter(address => address.playerId === result.playerId))
       .toHaveLength(2);
     await expect(h.service.processInboundStationMessage({
-      channel: 'sms',
+      channel: 'whatsapp',
       normalizedAddress: '+14155550199',
-      providerAddress: '+14155550199',
+      providerAddress: 'whatsapp:+14155550199',
       providerMessageId: 'comm-profile-conflict',
       body: 'HELP',
       stationId: 'ARCADE-01',
@@ -487,10 +489,16 @@ describe('Arcade messaging commands', () => {
 
   it('infers locale from JOIN verbs while explicit LANG takes precedence', async () => {
     const h = await harness('coin_only');
-    const portuguese = await h.service.processInboundStationMessage({
+    const rejectedSms = await h.service.processInboundStationMessage({
       channel: 'sms', normalizedAddress: '+5511999999999', providerAddress: '+5511999999999',
+      providerMessageId: 'SM-LOCALE-PT-SMS', body: 'ENTRAR', stationId: 'ARCADE-01',
+      preferredLocale: 'en-US', idempotencyKey: providerKey('SM-LOCALE-PT-SMS', '+5511999999999'),
+    });
+    expect(rejectedSms.reply).toContain('Peça ajuda à equipe');
+    const portuguese = await h.service.processInboundStationMessage({
+      channel: 'whatsapp', normalizedAddress: '+5511999999999', providerAddress: 'whatsapp:+5511999999999',
       providerMessageId: 'SM-LOCALE-PT', body: 'ENTRAR', stationId: 'ARCADE-01',
-      preferredLocale: 'en-US', idempotencyKey: providerKey('SM-LOCALE-PT', '+5511999999999'),
+      preferredLocale: 'en-US', idempotencyKey: providerKey('SM-LOCALE-PT', 'whatsapp:+5511999999999'),
     });
     expect(portuguese.locale).toBe('pt-BR');
     expect(portuguese.reply).toContain('primeiro nome');
@@ -543,10 +551,10 @@ describe('Arcade messaging commands', () => {
     await message(h.service, 'SM-CLOSED-EN-NAME', 'Ada', englishFrom);
     await message(h.service, 'SM-CLOSED-EN-TERMS', 'YES', englishFrom);
     const englishCoin = await message(h.service, 'SM-CLOSED-EN-COIN', 'COIN', englishFrom);
-    await message(h.service, 'SM-CLOSED-PT-JOIN', 'ENTRAR', portugueseFrom);
-    await message(h.service, 'SM-CLOSED-PT-NAME', 'Bia', portugueseFrom);
-    await message(h.service, 'SM-CLOSED-PT-TERMS', 'SIM', portugueseFrom);
-    const portugueseCoin = await message(h.service, 'SM-CLOSED-PT-COIN', 'MOEDA', portugueseFrom);
+    await message(h.service, 'SM-CLOSED-PT-JOIN', 'ENTRAR', portugueseFrom, 'whatsapp');
+    await message(h.service, 'SM-CLOSED-PT-NAME', 'Bia', portugueseFrom, 'whatsapp');
+    await message(h.service, 'SM-CLOSED-PT-TERMS', 'SIM', portugueseFrom, 'whatsapp');
+    const portugueseCoin = await message(h.service, 'SM-CLOSED-PT-COIN', 'MOEDA', portugueseFrom, 'whatsapp');
     expect(englishCoin.reply).toContain('next countdown');
     expect(portugueseCoin.reply).toContain('próxima contagem regressiva');
     const recruiting = await h.service.getStation('ARCADE-01');
@@ -562,7 +570,7 @@ describe('Arcade messaging commands', () => {
       "Voting is closed. Watch the display; we'll tell you if you're in and when it's time to call.",
     );
     h.setNow(deadline + 1);
-    const late = await message(h.service, 'SM-CLOSED-LATE', '2', portugueseFrom);
+    const late = await message(h.service, 'SM-CLOSED-LATE', '2', portugueseFrom, 'whatsapp');
     expect(late.reply).toBe(
       'A votação terminou. Acompanhe a tela; avisaremos se você entrou e quando será hora de ligar.',
     );

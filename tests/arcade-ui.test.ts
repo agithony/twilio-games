@@ -597,6 +597,9 @@ describe('Arcade browser UI', () => {
     expect(joinCss).toContain('.channel:focus-visible');
     expect(joinCss).toContain('box-shadow:var(--action-shadow)');
     expect(joinCss).toContain('.channel:active{transform:translateY(5px)');
+    expect(joinCss).toContain('.channel--browser{--channel-accent:var(--muted)');
+    expect(joinCss).toContain('background:transparent;box-shadow:none');
+    expect(joinCss).toContain('.channel-fallback-label');
   });
 
   it('provides a guarded operator control for persistent Racer scores', () => {
@@ -623,5 +626,16 @@ describe('Arcade browser UI', () => {
     expect(racerCopy).toContain('After every racer votes, either racer can say start.');
     expect(monstersCopy).toContain("'voice.helpSelect': 'Choose your own monster");
     expect(monstersCopy).toContain("'voice.resumeLobbyNamed': 'You are back, {name}. Waiting for the other player.'");
+  });
+
+  it('offers Portuguese WhatsApp and lead-capture browser entry while excluding SMS',()=>{
+    expect(joinScript).toContain('const sms = !portuguese && arcade.channels.sms && Boolean(smsNumber)');
+    expect(joinScript).toContain("if (mode === 'lead_capture')");
+    expect(joinScript).toContain("portuguese ? 'Continuar no navegador' : 'Continue in browser'");
+    expect(homeScript).toContain("smsAvailable = locale !== 'pt-BR' && config.channels.sms");
+    expect(homeScript).toContain('WhatsApp recomendado · navegador como alternativa');
+    expect(homeScript).toContain("leadCaptureMode = config.arcade.mode === 'lead_capture'");
+    expect(stationDisplay).toContain('Entre pelo WhatsApp e responda <b>MOEDA</b>');
+    expect(stationDisplay).toContain('WhatsApp recomendado · navegador como alternativa após escanear.');
   });
 });

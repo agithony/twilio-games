@@ -31,8 +31,8 @@ flow. It is not the current operational source of truth.
 | Public terminology | Use **station**, **round**, **ready for next game**, and **coin inserted** |
 | Hidden identifiers | Station ID and engine room IDs are internal and never shown to visitors |
 | Persistent entry | One localized station QR remains discoverable before, during, and after games |
-| Primary onboarding | SMS or WhatsApp through a mobile channel chooser |
-| Fallback onboarding | Browser registration for visitors who cannot use Messaging |
+| Primary onboarding | English: SMS or WhatsApp; Brazilian Portuguese: WhatsApp |
+| Fallback onboarding | Browser registration for either locale when lead capture permits it |
 | Coin ownership | Server-side wallet; never a transferable text code |
 | Coin insertion | Player replies `COIN`; server reserves one coin for the station ready pool |
 | Coin cost | One coin per human per game; AI never consumes coins |
@@ -60,8 +60,8 @@ The operator console applies the same minimum and does not expose variable stati
 The booth behaves like one physical arcade machine:
 
 1. Scan the station QR.
-2. Choose SMS or WhatsApp.
-3. Complete quick conversational registration.
+2. Choose a preferred messaging channel: SMS or WhatsApp in English, WhatsApp in Portuguese.
+3. Complete quick conversational registration or, in lead-capture mode, use the visually secondary browser registration if Messaging is not practical.
 4. Receive one wallet coin.
 5. Reply `COIN` when ready to play.
 6. Watch the display animate the inserted coin and add the player to the ready pool.
@@ -200,11 +200,14 @@ No PII, balance, player ID, round ID, or bearer credential appears in the QR.
 
 ## 7. Mobile Join and Messaging
 
-`/join` is a small localized channel chooser:
+`/join` is a small localized channel chooser. English entry can offer:
 
 - Continue with SMS
 - Continue with WhatsApp
 - Continue with browser registration when lead capture permits it
+
+Brazilian Portuguese entry offers WhatsApp instead of SMS. Lead-capture mode offers browser
+registration in both locales, while the server still rejects Portuguese SMS attempts.
 
 Opening `/join` directly resolves the current cabinet automatically. A station query is used only to
 detect genuinely stale printed or cached QR links.

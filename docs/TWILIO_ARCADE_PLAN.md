@@ -74,6 +74,7 @@ These decisions are approved unless explicitly revisited later.
 | Historical communications direction | Use Twilio Agent Connect as the communications/agent gateway |
 | Voice transport | Direct Conversation Relay owns Voice gameplay |
 | Messaging transport | Signed `POST /sms` owns deterministic SMS/WhatsApp commands and immediate replies |
+| Locale entry policy | English supports configured SMS or WhatsApp; Brazilian Portuguese supports WhatsApp but not SMS; lead capture adds a secondary browser fallback for both |
 | Orchestrator/TAC scope | Captured-message lifecycle processing and Conversation Memory enrichment only; no game command or reply ownership |
 | Gameplay authority | Existing deterministic game servers remain authoritative |
 | LLM role | Optional conversational assistance only; never authoritative for commands, scores, coins, queue order, or rewards |

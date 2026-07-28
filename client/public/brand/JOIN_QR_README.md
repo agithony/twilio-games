@@ -36,7 +36,7 @@ The home and player views generate this QR at 520 pixels. The in-game station ra
 
 For station `ARCADE-01` on the configured production origin, `stationQrAsset()` selects `arcade-en.png` or `arcade-pt.png` before generating a QR. Those committed PNGs encode `https://twil.io/arcade-en?qr=1` and `https://twil.io/arcade-pt?qr=1`; the short links redirect to the locale-specific `/join` URLs. `resolveStationQrImage()` probes the selected image and generates the direct station join URL if the image cannot load. Other station IDs and origins always use a generated QR. There is no general image-element error-handler contract beyond this explicit resolution step.
 
-Scanning a station QR starts the `/join` registration, wallet, and queue flow. When the caller reaches an active match, the server routes the call from its persisted station assignment to the selected game and that match's dynamically generated engine room. The launched display receives the same assigned room. Replacing a PNG cannot override those assignments or bind callers to a fixed room.
+Scanning a station QR starts the `/join` registration, wallet, and queue flow. English join pages expose configured SMS and WhatsApp entry; Portuguese join pages expose WhatsApp but not SMS. Lead-capture mode also exposes a secondary browser fallback for both locales. When the caller reaches an active match, the server routes the call from its persisted station assignment to the selected game and that match's dynamically generated engine room. The launched display receives the same assigned room. Replacing a PNG cannot override those assignments or bind callers to a fixed room.
 
 ### Updating The Files
 

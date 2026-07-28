@@ -55,15 +55,45 @@ export function createStationDisplay(): StationDisplay {
     if (configRefreshing) { configRefreshPending = true; return; }
     configRefreshing = true;
     try {
-      const config = await fetchPublicArcadeConfig();
+      const bootstrapRequest: Promise<{ smsNumber?: unknown; whatsappNumber?: unknown }> = fetch('/api/config', { cache: 'no-store' })
+        .then(async response => response.ok
+          ? await response.json() as { smsNumber?: unknown; whatsappNumber?: unknown }
+          : {})
+        .catch(() => ({}));
+      const [config, bootstrap] = await Promise.all([
+        fetchPublicArcadeConfig(),
+        bootstrapRequest,
+      ]);
+      const whatsappAvailable = config.channels.whatsapp
+        && typeof bootstrap.whatsappNumber === 'string'
+        && bootstrap.whatsappNumber.trim().length > 0;
+      const smsAvailable = config.channels.sms
+        && typeof bootstrap.smsNumber === 'string'
+        && bootstrap.smsNumber.trim().length > 0;
+      const englishMessaging = smsAvailable && whatsappAvailable
+        ? 'SMS or WhatsApp'
+        : smsAvailable ? 'SMS' : whatsappAvailable ? 'WhatsApp' : '';
+      const browserFallback = config.arcade.mode === 'lead_capture';
       railMode = config.station.qrRail;
       setRailVisible(railShouldShow());
-      rail.instructions.innerHTML = config.coins.chargePolicy === 'free'
+      rail.instructions.innerHTML = locale === 'pt-BR' && !whatsappAvailable
+        ? browserFallback
+          ? 'WhatsApp indisponível · escaneie e continue no navegador.'
+          : 'A entrada por mensagem em português exige WhatsApp, indisponível no momento.'
+        : locale === 'pt-BR' && browserFallback
+          ? 'WhatsApp recomendado · navegador como alternativa após escanear.'
+        : locale !== 'pt-BR' && !smsAvailable && !whatsappAvailable && !browserFallback
+          ? 'Messaging entry unavailable · ask booth staff.'
+        : locale !== 'pt-BR' && browserFallback
+          ? englishMessaging
+            ? `${englishMessaging} recommended · browser fallback after scanning.`
+            : 'Scan and continue in your browser.'
+        : config.coins.chargePolicy === 'free'
         ? locale === 'pt-BR'
-          ? 'Comece pelo telefone e responda <b>PRONTO</b> quando estiver na tela.'
+          ? 'Entre pelo WhatsApp e responda <b>PRONTO</b> quando estiver na tela.'
           : 'Start on your phone, then reply <b>READY</b> when you are at the screen.'
         : locale === 'pt-BR'
-          ? 'Comece pelo telefone e responda <b>MOEDA</b> quando estiver na tela.'
+          ? 'Entre pelo WhatsApp e responda <b>MOEDA</b> quando estiver na tela.'
           : 'Start on your phone, then reply <b>COIN</b> when you are at the screen.';
     } catch {
       // Keep the last known rail policy until the next event or poll.
@@ -237,7 +267,7 @@ function buildRail(): {
   root.setAttribute('aria-label', 'Join the next Twilio Games match');
   root.innerHTML = `
     <div class="station-rail-brand"><img src="/brand/Twilio_Logo_Bug_White.svg" alt=""><strong>Twilio Games</strong></div>
-    <div class="station-rail-copy"><span>${portuguese ? 'Próximo jogo' : 'Next game'}</span><h2>${portuguese ? 'Escaneie para entrar' : 'Scan to join'}</h2><p>${portuguese ? 'Comece pelo telefone e responda <b>MOEDA</b> quando estiver na tela.' : 'Start on your phone, then reply <b>COIN</b> when you are at the screen.'}</p></div>
+    <div class="station-rail-copy"><span>${portuguese ? 'Próximo jogo' : 'Next game'}</span><h2>${portuguese ? 'Escaneie para entrar' : 'Scan to join'}</h2><p>${portuguese ? 'Entre pelo WhatsApp e responda <b>MOEDA</b> quando estiver na tela.' : 'Start on your phone, then reply <b>COIN</b> when you are at the screen.'}</p></div>
     <div class="station-rail-qr"><img alt="Join Twilio Games QR code"></div>
     <div class="station-rail-count"><strong>0</strong><span>${portuguese ? 'prontos para o próximo' : 'ready next'}</span></div>
     <div class="station-rail-status" role="status">${portuguese ? 'Conectando' : 'Connecting to station'}</div>`;

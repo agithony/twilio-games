@@ -4,7 +4,7 @@
   <img src="docs/assets/twilio-games-icon.png" alt="Twilio Games: Play together. Talk to play." width="460">
 </p>
 
-Twilio Games is a shared-screen platform for three voice-controlled games. In an active station, players register by browser, SMS, or WhatsApp, enter the ready pool, and call the locale-specific Twilio number when admitted. Conversation Relay sends speech and DTMF events directly to the Node.js server, which applies deterministic commands to authoritative game state and returns updates to the display and caller.
+Twilio Games is a shared-screen platform for three voice-controlled games. In an active station, English players enter through SMS or WhatsApp, with a browser fallback in lead-capture mode; Portuguese players use WhatsApp or the same lead-capture browser fallback. Messaging is always presented as the preferred path. Players then enter the ready pool and call the locale-specific Twilio number when admitted. Conversation Relay sends speech and DTMF events directly to the Node.js server, which applies deterministic commands to authoritative game state and returns updates to the display and caller.
 
 ![CI](https://img.shields.io/github/actions/workflow/status/agithony/twilio-games/ci.yml) ![Top language](https://img.shields.io/github/languages/top/agithony/twilio-games) ![Last commit](https://img.shields.io/github/last-commit/agithony/twilio-games) ![Twilio](https://img.shields.io/badge/Twilio-EF223A?logo=twilio&logoColor=white)
 
@@ -102,7 +102,7 @@ One `/voice` WebSocket serves all games. In station mode, persisted admission se
 flowchart TD
   Home[Open the mode-dependent home page] --> Mode{Runtime mode}
 
-  Mode -->|coin_only or lead_capture| Join[Scan the station QR and join by SMS, WhatsApp, or browser]
+  Mode -->|coin_only or lead_capture| Join[Scan the station QR and use an allowed locale-specific entry channel]
   Join --> Ready[Register, receive or retain a wallet, and enter the ready pool]
   Ready --> Vote[Ready players vote during GAME_SELECTION]
   Vote --> Lock[LOCKED admits 1-2 players FIFO and carries overflow forward]
@@ -177,12 +177,12 @@ The home route changes with the runtime mode. Mode `off` shows the standalone th
 | Editors | <http://localhost:5173/editor> | Choose the Racer level, Monsters arena, or Fighter map editor |
 | Garage | <http://localhost:5173/garage> | Inspect and configure Racer models and manifest entries |
 | Activation analytics | <http://localhost:5173/analytics> | Private date-filtered engagement dashboard and PDF reports |
-| Visitor join | <http://localhost:5173/join> | Choose SMS, WhatsApp, or browser registration |
+| Visitor join | <http://localhost:5173/join> | English: configured SMS or WhatsApp; Portuguese: WhatsApp; both locales: browser fallback in lead-capture mode |
 | Browser player page | <http://localhost:5173/player> | Registration, wallet, challenges, and ready-pool controls |
 | Operator console | <http://localhost:5173/operator> | Staff-only station configuration, monitoring, and recovery |
 | Challenge portal | <http://localhost:5173/challenge/> | No-store reward portal opened by signed Messaging links; a valid fragment token is required |
 
-The shared screen and operator preview display a visitor QR that opens `/join`. Messaging buttons open a prefilled `JOIN` command (`ENTRAR` in Portuguese), and every reply states the next required answer. During game selection, ready players vote by game name/number or from `/player`; ties and missing votes use the configured automatic fallback. Browser registration remains available in lead-capture mode.
+The shared screen and operator preview display a visitor QR that opens `/join`. English entry offers configured SMS and WhatsApp buttons; Portuguese entry offers WhatsApp with a prefilled `ENTRAR` command. Lead-capture mode adds browser registration for both locales as a visually secondary fallback, while the server continues to reject Portuguese SMS entry attempts. Every accepted reply states the next required answer. During game selection, ready players vote by game name/number or from `/player`; ties and missing votes use the configured automatic fallback.
 
 Standalone shared displays start as spectators and do not consume a player slot; `P` adds or removes a local keyboard tester. Manual display-keyboard phase control applies only to standalone play: `Enter` advances supported menu phases, while Racer also uses left arrow to go back and right arrow to advance. Station-managed displays disable local players and display-driven setup advancement. Admitted Racer callers advance after completing their individual choices; Monsters and Fighter advance automatically.
 

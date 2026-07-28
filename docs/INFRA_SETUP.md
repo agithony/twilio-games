@@ -10,7 +10,7 @@ The workflow uses service-principal JSON credentials, Azure CLI provisioning, a 
 - Permission to create resources in the target subscription or resource group.
 - GitHub repository administrator access for Actions secrets and variables.
 - Git LFS objects available to GitHub Actions. Both CI and deploy explicitly check them out.
-- A primary Twilio account with an English Voice number and a separate SMS-capable number, plus a second account with the Portuguese Voice number. WhatsApp is optional.
+- A primary Twilio account with an English Voice number and a separate SMS-capable number, plus a second account with the Portuguese Voice number. An approved WhatsApp sender is required for preferred Portuguese Messaging entry; lead-capture mode retains a browser fallback.
 - Asset redistribution rights appropriate for the deployment. See [Asset licensing](#asset-licensing).
 
 No local Docker installation is required for the GitHub deployment because `az acr build` runs in Azure. Azure CLI is required only for manual setup and operations.
@@ -217,6 +217,8 @@ POST <base>/sms
 
 Configure the approved WhatsApp sender's incoming-message webhook with the same `POST <base>/sms` URL. The signed direct `/sms` route owns deterministic game commands and immediate replies for both SMS and WhatsApp, so player entry still works if an Orchestrator callback is delayed or unavailable. Conversation Orchestrator delivers captured communications to `/tac/webhook` for Conversation Memory profile enrichment only; it does not execute the game command or send a second reply. Keep the sender in the same Orchestrator capture configuration, open the generated join link, and verify that the prefilled `JOIN` command creates one Conversation, one Memory profile, and one deterministic reply.
 
+The visitor entry policy is locale-specific. English (`en-US`) may use configured SMS or WhatsApp entry. Brazilian Portuguese (`pt-BR`) uses WhatsApp instead of SMS: `/join` hides SMS, station displays prefer WhatsApp, and the signed `/sms` route rejects Portuguese SMS attempts with localized guidance. In lead-capture mode, both locales also receive a visually secondary browser fallback. Keep the primary SMS sender enabled for English even though it is not offered for Portuguese entry.
+
 ```mermaid
 flowchart LR
   Player[Player sends SMS or WhatsApp] --> Provider[Twilio Messaging]
@@ -285,9 +287,9 @@ Keep runtime mode `off` during provisioning. After item 1 passes, open the event
 
 1. Confirm `/livez` and `/healthz` return `200` while mode is `off`.
 2. After opening the event, confirm `/healthz` returns `200` again. Active mode requires TAC and Conversation Memory to be connected; a post-open `503` is a real readiness failure even when the pre-open check passed.
-3. In the primary account, send `JOIN` by SMS and confirm exactly one reply, one Conversation, and one Memory profile. Send `ENTRAR` to verify Portuguese inference; legacy `LANG` commands remain supported.
-4. Send the WhatsApp join message and confirm it resolves to the same profile for the same phone identity.
-5. Register through `/player` and confirm the player can join immediately without an OTP.
+3. In the primary account, send `JOIN` by SMS and confirm exactly one reply, one Conversation, and one Memory profile. Send `ENTRAR` by SMS and confirm it is durably rejected with guidance to use WhatsApp or the lead-capture browser fallback; legacy `LANG` commands remain supported.
+4. Send `ENTRAR` through WhatsApp and confirm it resolves to the same profile for the same phone identity.
+5. In lead-capture mode, register through `/player` once in English and once in Portuguese. Confirm both players can join immediately without an OTP and that `/join` presents browser registration below the preferred Messaging actions.
 6. Run a paid two-player game. During game selection, vote by SMS with `1` or `RACER`, change the vote by sending another enabled game, and confirm the browser player can vote from `/player`. Confirm the shared display shows looping previews and live totals. When gameplay starts, confirm one coin is redeemed from each admitted player and an overflow player's coin remains reserved.
 7. Switch the event to free play and confirm no wallet grants, reservations, or redemptions are created.
 8. Call the English number and confirm either configured Voice Auth Token can validate the request, the English `To` number selects English recognition/TTS, and the call reaches its assigned generated room.

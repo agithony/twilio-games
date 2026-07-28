@@ -15,11 +15,12 @@ describe('Arcade client completeness', () => {
     expect([...new Set(lookups)].filter(id => !ids.has(id))).toEqual([]);
   });
 
-  it('routes no-lead browser players back to join without offering browser registration', () => {
+  it('routes no-lead coin-only players back to join and limits browser registration to lead capture', () => {
     expect(arcade).toContain("currentConfig.arcade.mode==='coin_only'&&redirectNoLeadPlayer()");
     expect(arcade).toContain('effectivePublicVisitorBaseUrl(state.deployment?.publicBaseUrl)');
     expect(arcade).toContain('location.replace(`${target.pathname}${target.search}`)');
     expect(join).toMatch(/if \(mode === 'lead_capture'\) \{[\s\S]*?'Continue in browser'/);
+    expect(join).toContain("portuguese ? 'Continuar no navegador' : 'Continue in browser'");
   });
 
   it('keeps lead-capture player state live over station/config SSE with polling fallback', () => {
@@ -96,8 +97,11 @@ describe('Arcade client completeness', () => {
     expect(join).toContain('https://wa.me/${digits}?text=${encodeURIComponent(command)}');
     expect(join).toContain('const smsNumber = availableNumber(bootstrap.smsNumber)');
     expect(join).toContain('const whatsappNumber = availableNumber(bootstrap.whatsappNumber)');
-    expect(join).toContain('const sms = arcade.channels.sms && Boolean(smsNumber)');
+    expect(join).toContain(".catch(() => ({}))");
+    expect(join).toContain('const sms = !portuguese && arcade.channels.sms && Boolean(smsNumber)');
     expect(join).toContain('const whatsapp = arcade.channels.whatsapp && Boolean(whatsappNumber)');
+    expect(join).toContain("mode === 'lead_capture'");
+    expect(join).toContain('fallbackLabel()');
     expect(join).not.toContain("' primary'");
     expect(join).toContain("'sms'");
     expect(join).toContain("'whatsapp'");

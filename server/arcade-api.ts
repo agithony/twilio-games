@@ -403,7 +403,13 @@ export class ArcadeApi {
         const knownAddress=Object.values(storedState.channelAddresses).find(address=>(
           address.channel===channel&&address.normalizedAddress===normalizedAddress
         ));
-        if (knownAddress) language = knownAddress.preferredLocale;
+        const latestLinkedAddress = channel === 'sms'
+          ? Object.values(storedState.channelAddresses)
+            .filter(address => address.normalizedAddress === normalizedAddress)
+            .sort((left, right) => Date.parse(right.lastSeenAt) - Date.parse(left.lastSeenAt))[0]
+          : null;
+        if (latestLinkedAddress) language = latestLinkedAddress.preferredLocale;
+        else if (knownAddress) language = knownAddress.preferredLocale;
         else {
           const remembered = storedState.idempotencyRecords[standaloneLocaleKey];
           const rememberedLocale = remembered?.operation === 'PROCESS_STATION_MESSAGE'
@@ -474,11 +480,29 @@ export class ArcadeApi {
       }
       return reply;
     }
-    if (!config.channels[channel]) {
-      const portuguese = String(language).toLowerCase().startsWith('pt');
-      return channel === 'whatsapp'
-        ? portuguese ? 'O WhatsApp não está disponível agora. Use SMS ou escaneie o QR na tela principal.' : "WhatsApp isn't available right now. Use SMS or scan the QR on the display."
-        : portuguese ? 'O SMS não está disponível agora. Use WhatsApp ou escaneie o QR na tela principal.' : "SMS isn't available right now. Use WhatsApp or scan the QR on the display.";
+    const portuguese = String(language).toLowerCase().startsWith('pt');
+    const channelPolicyAttempt = channel === 'sms' && portuguese;
+    const smsAvailable = config.channels.sms && this.messagingCapabilities.sms;
+    const whatsappAvailable = config.channels.whatsapp && this.messagingCapabilities.whatsapp;
+    const channelAvailable = channel === 'sms' ? smsAvailable : whatsappAvailable;
+    if (!channelAvailable && !channelPolicyAttempt) {
+      const browserAvailable = config.arcade.mode === 'lead_capture';
+      if (portuguese) {
+        if (whatsappAvailable && browserAvailable) {
+          return 'Use o WhatsApp (recomendado) ou escaneie o QR e continue no navegador.';
+        }
+        if (whatsappAvailable) return 'Use o WhatsApp para entrar em português.';
+        if (browserAvailable) return 'Escaneie o QR e continue no navegador.';
+        return 'A entrada em português não está disponível agora. Peça ajuda à equipe.';
+      }
+      const alternativeAvailable = channel === 'sms' ? whatsappAvailable : smsAvailable;
+      const alternative = channel === 'sms' ? 'WhatsApp' : 'SMS';
+      if (alternativeAvailable && browserAvailable) {
+        return `Use ${alternative} (recommended), or scan the QR and continue in your browser.`;
+      }
+      if (alternativeAvailable) return `Use ${alternative} to join.`;
+      if (browserAvailable) return 'Scan the QR and continue in your browser.';
+      return 'Messaging entry is unavailable right now. Please ask booth staff for help.';
     }
     this.requireStationRuntimeCapabilities(config);
     const runtime = this.requirePlayerRuntime();
@@ -494,6 +518,7 @@ export class ArcadeApi {
       stationId: config.arcade.cabinetId,
       preferredLocale: language,
       idempotencyKey: key,
+      whatsappAvailable,
       conversationProfileId,
       conversationId: input.conversationId,
     });

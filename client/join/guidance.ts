@@ -16,34 +16,36 @@ export interface JoinGuidance {
 }
 
 export function buildJoinGuidance(input: JoinGuidanceInput): JoinGuidance {
-  const { portuguese, mode, sms, whatsapp } = input;
+  const { portuguese, mode, whatsapp } = input;
+  const sms = !portuguese && input.sms;
   const command = portuguese ? 'ENTRAR' : 'JOIN';
   const messaging = sms || whatsapp;
-  const channel = sms && whatsapp ? 'SMS ou WhatsApp' : sms ? 'SMS' : whatsapp ? 'WhatsApp' : '';
   const englishChannel = sms && whatsapp ? 'SMS or WhatsApp' : sms ? 'SMS' : whatsapp ? 'WhatsApp' : '';
   let intro: string;
-  if (mode === 'lead_capture') {
+  if (portuguese) {
+    intro = mode === 'lead_capture'
+      ? whatsapp
+        ? `Envie ${command} por WhatsApp (recomendado) ou continue no navegador.`
+        : 'Continue no navegador para entrar.'
+      : whatsapp
+        ? `Envie ${command} por WhatsApp.`
+        : 'A entrada por mensagem em português está disponível somente pelo WhatsApp.';
+  } else if (mode === 'lead_capture') {
     intro = messaging
-      ? portuguese
-        ? `Cadastre-se no navegador ou envie ${command} por ${channel}.`
-        : `Register in your browser or send ${command} by ${englishChannel}.`
-      : portuguese
-        ? 'Cadastre-se no navegador para entrar.'
-        : 'Register in your browser to join.';
+      ? `Send ${command} by ${englishChannel} (recommended), or continue in your browser.`
+      : 'Register in your browser to join.';
   } else {
-    intro = portuguese
-      ? `Envie ${command} por ${channel}.`
-      : `Send ${command} by ${englishChannel}.`;
+    intro = `Send ${command} by ${englishChannel}.`;
   }
   return {
     command,
     messaging,
     intro,
     channelDetail: portuguese
-      ? `Abre ${command} preenchido; basta tocar em Enviar`
-      : `Opens ${command} prefilled; just tap Send`,
+      ? `Recomendado · abre ${command} preenchido; basta tocar em Enviar`
+      : `Recommended · opens ${command} prefilled; just tap Send`,
     browserDetail: portuguese
-      ? 'Cadastre-se e entre na fila sem abrir um aplicativo de mensagens'
-      : 'Register and join without opening a messaging app',
+      ? 'Alternativa · cadastre-se e entre sem abrir um aplicativo de mensagens'
+      : 'Fallback · register and join without opening a messaging app',
   };
 }

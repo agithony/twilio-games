@@ -35,6 +35,13 @@ function channelLink(label: string, detail: string, href: string,kind:'sms'|'wha
   return link;
 }
 
+function fallbackLabel(): HTMLParagraphElement {
+  const label = document.createElement('p');
+  label.className = 'channel-fallback-label';
+  label.textContent = portuguese ? 'Outra opção' : 'Another option';
+  return label;
+}
+
 function availableNumber(value: string | undefined): string {
   const number = value?.trim().replace(/^whatsapp:/i, '') ?? '';
   return /^\+[1-9][0-9]{7,14}$/.test(number) ? number : '';
@@ -44,11 +51,13 @@ async function initialize(): Promise<void> {
   localizePage();
   wireTheme();
   try {
-    const [arcade, bootstrapResponse] = await Promise.all([
+    const bootstrapRequest: Promise<BootstrapConfig> = fetch('/api/config', { cache: 'no-store' })
+      .then(async response => response.ok ? await response.json() as BootstrapConfig : {})
+      .catch(() => ({}));
+    const [arcade, bootstrap] = await Promise.all([
       fetchPublicArcadeConfig(),
-      fetch('/api/config', { cache: 'no-store' }),
+      bootstrapRequest,
     ]);
-    const bootstrap = await bootstrapResponse.json() as BootstrapConfig;
     const station = requestedStation ?? arcade.arcade.cabinetId;
     const mode = arcade.arcade.mode;
     if (mode === 'off') {
@@ -64,7 +73,7 @@ async function initialize(): Promise<void> {
     const freePlay = arcade.coins.chargePolicy === 'free';
     const smsNumber = availableNumber(bootstrap.smsNumber);
     const whatsappNumber = availableNumber(bootstrap.whatsappNumber);
-    const sms = arcade.channels.sms && Boolean(smsNumber);
+    const sms = !portuguese && arcade.channels.sms && Boolean(smsNumber);
     const whatsapp = arcade.channels.whatsapp && Boolean(whatsappNumber);
     if (mode === 'coin_only' && !sms && !whatsapp) {
       throw new Error(portuguese
@@ -97,6 +106,7 @@ async function initialize(): Promise<void> {
       ));
     }
     if (mode === 'lead_capture') {
+      if (guidance.messaging) available.push(fallbackLabel());
       available.push(channelLink(
         portuguese ? 'Continuar no navegador' : 'Continue in browser',
         guidance.browserDetail,

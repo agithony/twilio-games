@@ -31,7 +31,7 @@ const copy = locale === 'pt-BR' ? {
   attractEyebrow: 'Twilio Games', phaseTitle: 'Sua voz é o controle.',
   phaseDescription: 'Escaneie, entre e responda MOEDA ou 🪙 quando estiver pronto na tela.',
   joinEyebrow: 'Entre pelo seu telefone', joinTitle: 'Escaneie para jogar',
-  joinStepOne: 'Escolha SMS ou WhatsApp', joinStepTwo: 'Conclua a apresentação rápida',
+  joinStepOne: 'Abra a conversa no WhatsApp', joinStepTwo: 'Conclua a apresentação rápida',
   joinStepThree: 'Responda MOEDA ou 🪙 na tela', selectionEyebrow: 'Escolha dos jogadores',
   selectionTitle: 'Escolham o próximo jogo.',
   selectionDescription: 'Jogadores prontos: respondam por mensagem com o número mostrado ou o nome do jogo. Se o tempo acabar ou houver empate, a estação decide automaticamente.',
@@ -57,7 +57,7 @@ const copy = locale === 'pt-BR' ? {
   racerBlurb: 'Uma corrida por uma pista neon controlada por voz.',
   monstersBlurb: 'Comande os golpes em uma batalha tática de criaturas.',
   fighterBlurb: 'Transforme cada golpe gritado em um confronto na arena.',
-  freeDescription: 'Escaneie, entre e responda PRONTO quando estiver pronto na tela.',
+  freeDescription: 'Escaneie, entre pelo WhatsApp e responda PRONTO quando estiver pronto na tela.',
   freeStep: 'Responda PRONTO na tela',
   vote: 'voto', votes: 'votos', leader: 'Na liderança', tiedLeader: 'Líder empatado', textCommand: 'Envie',
 } : {
@@ -147,6 +147,7 @@ let qrRailMode: 'auto' | 'always' | 'hidden' = 'auto';
 let configuring = false;
 let configurationPending = false;
 let freePlay = false;
+let leadCaptureMode = false;
 let enabledGames = new Set(['racer','monsters','fighter']);
 let smsAvailable = false;
 let whatsappAvailable = false;
@@ -402,28 +403,56 @@ function localizeStaticPage(): void {
 
 function renderEntryPolicyCopy(): void {
   const messaging = smsAvailable || whatsappAvailable;
+  const entryAvailable = messaging || leadCaptureMode;
   const command = freePlay ? locale === 'pt-BR' ? 'PRONTO' : 'READY' : locale === 'pt-BR' ? 'MOEDA' : 'COIN';
-  const channelStep = smsAvailable && whatsappAvailable
-    ? copy.joinStepOne
-    : smsAvailable
-      ? locale === 'pt-BR' ? 'Abra o SMS preenchido' : 'Open the prefilled SMS'
-      : whatsappAvailable
-        ? locale === 'pt-BR' ? 'Abra a conversa no WhatsApp' : 'Open the WhatsApp chat'
-        : locale === 'pt-BR' ? 'Escaneie o QR' : 'Scan the QR';
-  document.getElementById('joinStepOne')!.textContent = channelStep;
-  document.getElementById('joinStepTwo')!.textContent = messaging
-    ? copy.joinStepTwo
-    : locale === 'pt-BR' ? 'Siga as instrucoes no telefone' : 'Follow the instructions on your phone';
-  document.getElementById('phaseDescription')!.innerHTML = messaging
+  const englishMessaging = smsAvailable && whatsappAvailable
+    ? 'SMS or WhatsApp'
+    : smsAvailable ? 'SMS' : whatsappAvailable ? 'WhatsApp' : '';
+  const channelStep = leadCaptureMode
     ? locale === 'pt-BR'
-      ? `Escaneie, entre e responda <b>${command}</b> quando estiver pronto na tela.`
-      : `Scan, join, and reply <b>${command}</b> when you are ready at the screen.`
+      ? whatsappAvailable
+        ? 'WhatsApp recomendado · navegador como alternativa'
+        : 'Continue no navegador'
+      : messaging
+        ? `${englishMessaging} recommended · browser as fallback`
+        : 'Continue in browser'
+    : smsAvailable && whatsappAvailable
+      ? copy.joinStepOne
+      : smsAvailable
+        ? 'Open the prefilled SMS'
+        : whatsappAvailable
+          ? locale === 'pt-BR' ? 'Abra a conversa no WhatsApp' : 'Open the WhatsApp chat'
+          : locale === 'pt-BR' ? 'WhatsApp indisponível no momento' : 'Messaging unavailable';
+  document.getElementById('joinStepOne')!.textContent = channelStep;
+  document.getElementById('joinStepTwo')!.textContent = entryAvailable
+    ? copy.joinStepTwo
+    : locale === 'pt-BR' ? 'A entrada em português exige WhatsApp' : 'Ask booth staff for help';
+  document.getElementById('phaseDescription')!.innerHTML = leadCaptureMode
+    ? locale === 'pt-BR'
+      ? whatsappAvailable
+        ? 'Escaneie e entre pelo WhatsApp (recomendado) ou continue no navegador.'
+        : 'Escaneie e continue no navegador para entrar.'
+      : messaging
+        ? `Scan and use ${englishMessaging} (recommended), or continue in your browser.`
+        : 'Scan and continue in your browser to join.'
+    : messaging
+      ? locale === 'pt-BR'
+        ? `Escaneie, entre pelo WhatsApp e responda <b>${command}</b> quando estiver pronto na tela.`
+        : `Scan, join, and reply <b>${command}</b> when you are ready at the screen.`
     : locale === 'pt-BR'
-      ? 'Escaneie o QR e siga as instrucoes no telefone.'
-      : 'Scan the QR and follow the instructions on your phone.';
-  document.getElementById('joinStepThree')!.innerHTML = messaging
-    ? locale === 'pt-BR' ? `Responda <b>${command}</b> na tela` : `Reply <b>${command}</b> at the screen`
-    : locale === 'pt-BR' ? 'Fique pronto perto da tela' : 'Get ready near the shared screen';
+      ? 'A entrada em português exige WhatsApp, que está indisponível no momento.'
+      : 'Messaging entry is unavailable right now.';
+  document.getElementById('joinStepThree')!.innerHTML = leadCaptureMode
+    ? locale === 'pt-BR'
+      ? whatsappAvailable
+        ? `WhatsApp: responda <b>${command}</b> · navegador: toque em Entrar`
+        : 'No navegador, toque em Entrar no próximo jogo'
+      : messaging
+        ? `Messaging: reply <b>${command}</b> · browser: tap Join`
+        : 'In your browser, tap Join the next game'
+    : messaging
+      ? locale === 'pt-BR' ? `Responda <b>${command}</b> na tela` : `Reply <b>${command}</b> at the screen`
+    : locale === 'pt-BR' ? 'Fale com a equipe do estande' : 'Ask booth staff for help';
   document.getElementById('joinTitle')!.textContent = copy.joinTitle;
   (document.getElementById('joinQr') as HTMLImageElement).hidden = false;
 }
@@ -444,9 +473,10 @@ async function refreshConfiguration(): Promise<void> {
     ]);
     joinBaseUrl = effectivePublicVisitorBaseUrl(bootstrap.publicBaseUrl);
     standaloneMode = config.arcade.mode === 'off';
+    leadCaptureMode = config.arcade.mode === 'lead_capture';
     document.body.classList.toggle('standalone-mode',standaloneMode);
     freePlay = config.coins.chargePolicy === 'free';
-    smsAvailable = config.channels.sms && Boolean(bootstrap.smsNumber);
+    smsAvailable = locale !== 'pt-BR' && config.channels.sms && Boolean(bootstrap.smsNumber);
     whatsappAvailable = config.channels.whatsapp && Boolean(bootstrap.whatsappNumber);
     enabledGames = config.channels.voice&&Boolean(bootstrap.voiceNumbers?.[locale])?new Set(Object.entries(config.station.games)
       .filter(([, settings]) => settings.enabled)

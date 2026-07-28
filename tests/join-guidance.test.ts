@@ -33,8 +33,8 @@ describe('join guidance', () => {
     const guidance = buildJoinGuidance({ ...base, mode: 'lead_capture', sms: true, whatsapp: false });
     expect(guidance.messaging).toBe(true);
     expect(guidance.command).toBe('JOIN');
-    expect(guidance.intro).toBe('Register in your browser or send JOIN by SMS.');
-    expect(guidance.channelDetail).toBe('Opens JOIN prefilled; just tap Send');
+    expect(guidance.intro).toBe('Send JOIN by SMS (recommended), or continue in your browser.');
+    expect(guidance.channelDetail).toBe('Recommended · opens JOIN prefilled; just tap Send');
   });
 
   it('localizes the concise channel subtitle', () => {
@@ -42,5 +42,19 @@ describe('join guidance', () => {
     expect(guidance.command).toBe('ENTRAR');
     expect(guidance.intro).toBe('Envie ENTRAR por WhatsApp.');
     expect(guidance.intro).not.toContain('SMS');
+  });
+
+  it('offers Portuguese browser fallback while keeping WhatsApp recommended',()=>{
+    const guidance=buildJoinGuidance({...base,portuguese:true,mode:'lead_capture',sms:true,whatsapp:true});
+    expect(guidance.messaging).toBe(true);
+    expect(guidance.intro).toBe('Envie ENTRAR por WhatsApp (recomendado) ou continue no navegador.');
+    expect(guidance.intro).not.toContain('SMS');
+    expect(guidance.browserDetail).toContain('Alternativa');
+  });
+
+  it('offers Portuguese browser-only fallback when WhatsApp is unavailable',()=>{
+    const guidance=buildJoinGuidance({...base,portuguese:true,mode:'lead_capture',sms:true,whatsapp:false});
+    expect(guidance.messaging).toBe(false);
+    expect(guidance.intro).toBe('Continue no navegador para entrar.');
   });
 });
