@@ -183,6 +183,7 @@ describe('voice integration (fake Conversation Relay client)', () => {
 
       const room=game.findRoom('LATEGO')!;
       const player=room.lobbyPlayers()[0]!;
+      room.setPlayerInfo(player.playerId,{name:'Ada'});
       room.advance();room.selectCar(player.playerId,0);room.advance();room.selectMap('Silver Lake');room.advance();
       for(let i=0;i<100&&room.phase!=='racing';i++)game.stepRoomForTest(room,0.1);
       expect(room.phase).toBe('racing');
@@ -349,6 +350,8 @@ describe('voice integration (fake Conversation Relay client)', () => {
       customParameters: { roomCode: '4821' },
     }));
     await wait(50);
+    voice.send(JSON.stringify({ type: 'prompt', voicePrompt: 'Ada', last: true }));
+    await wait(50);
 
     // The voice player is now in room 4821. The spectator/operator console starts
     // the race: restart() calls room.start() with no playerId required on the conn.
@@ -384,6 +387,9 @@ describe('voice integration (fake Conversation Relay client)', () => {
       await wait(80);const room=game.findRoom('TWO-RACERS')!;const [playerA,playerB]=room.lobbyPlayers();
       expect(playerA?.playerId).not.toBe(playerB?.playerId);
       expect(room.phase).toBe('lobby');
+      a.send(JSON.stringify({type:'prompt',voicePrompt:'Ada',last:true}));
+      b.send(JSON.stringify({type:'prompt',voicePrompt:'Bo',last:true}));
+      await wait(80);
       a.send(JSON.stringify({type:'prompt',voicePrompt:'start',last:true}));await wait(1_600);expect(room.phase).toBe('car_select');
       a.send(JSON.stringify({type:'prompt',voicePrompt:'one',last:true}));await wait(60);
       expect(room.lobbyPlayers()).toEqual(expect.arrayContaining([

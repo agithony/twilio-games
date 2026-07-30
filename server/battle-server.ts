@@ -403,11 +403,11 @@ export class BattleServer {
   }
 
   /** A caller joins `code` as a player. Returns the new playerId, or null if the room is full. */
-  voiceJoin(code: string, name: string, preferredSide?: 'a' | 'b', expectedPlayers?:number): string | null {
+  voiceJoin(code: string, name: string, preferredSide?: 'a' | 'b', expectedPlayers?:number, nameConfirmed = true): string | null {
     const room = this.room(code);
-    if(expectedPlayers!==undefined)room.expectHumanPlayers(expectedPlayers);
-    else if(room.playerCount>=1)room.expectHumanPlayers(2);
-    const res = room.addPlayer(name, preferredSide);
+    if(expectedPlayers!==undefined)room.expectHumanPlayers(expectedPlayers,preferredSide!==undefined);
+    else if(room.playerCount>=1)room.expectHumanPlayers(2,false);
+    const res = room.addPlayer(name, preferredSide, nameConfirmed);
     if ('error' in res) return null;
     this.pushState(code);
     return res.playerId;
@@ -418,7 +418,7 @@ export class BattleServer {
   }
   voiceSetName(code: string, playerId: string, name: string): void {
     const room = this.rooms.get(code); if (!room) return;
-    room.setPlayerInfo(playerId,{name});room.expectHumanPlayers(Math.max(1,room.playerCount));this.pushState(code);
+    room.setPlayerInfo(playerId,{name});room.expectHumanPlayers(Math.max(1,room.playerCount),false);this.pushState(code);
   }
   voiceExpectHumanPlayers(code:string,count:number,activeEnginePlayerIds?:readonly string[]):void {
     const room=this.rooms.get(code);if(!room)return;
@@ -426,7 +426,7 @@ export class BattleServer {
       const retained=new Set(activeEnginePlayerIds);
       for(const player of room.lobbyPlayers())if(!player.isAi&&!retained.has(player.playerId))room.removePlayer(player.playerId);
     }
-    room.expectHumanPlayers(count);this.pushState(code);
+    room.expectHumanPlayers(count,true);this.pushState(code);
   }
   voiceSelectMonster(code: string, playerId: string, monsterId: string): void {
     const room = this.rooms.get(code); if (!room) return;

@@ -30,7 +30,7 @@ export interface BattleHostContext {
   setName(name: string): string | null;
   selectMonster(name: string): string | null;   // fuzzy-match a monster name → pick it
   chooseAction(action: string): string | null;   // 'fight:<move>' | 'guard' | 'item' | 'taunt'
-  advance(): string | null;                       // start battle / rematch / next phase
+  advance(): string | null;                       // rematch / next phase
 }
 
 /** Tools the model may call to drive the battle by voice. */
@@ -41,7 +41,7 @@ export const BATTLE_HOST_TOOLS: ToolSpec[] = [
     parameters: { type: 'object', properties: { name: { type: 'string', description: 'monster name to pick' } }, required: ['name'] } },
   { name: 'choose_action', description: "Take the caller's turn action during a battle. `action` is 'guard', 'item' (use a Potion), 'taunt', or 'fight:<move name>' to attack with one of their moves (e.g. 'fight:Thunder Jolt'). Only valid during battle, on the caller's turn.",
     parameters: { type: 'object', properties: { action: { type: 'string', description: "'guard' | 'item' | 'taunt' | 'fight:<move name>'" } }, required: ['action'] } },
-  { name: 'advance', description: 'Move the game forward when the caller is ready: start the battle from monster select, or rematch from the results screen.',
+  { name: 'advance', description: 'Start a rematch from the results screen. Monster battles start automatically after every player chooses.',
     parameters: { type: 'object', properties: {} } },
 ];
 
@@ -92,8 +92,8 @@ export function buildBattleSystemPrompt(ctx: BattleHostContext, locale: Supporte
   if (ctx.phase === 'monster_select') {
     lines.push(`SCREEN: the MONSTER-PICKING screen — a grid of creatures is on the display RIGHT NOW. Tell the caller to PICK their monster (say a name or a number). The ONLY monsters are, in order: ${numberedList(ctx.monsters)}. These names are EXACT — only ever say one from THIS list, never invent one; if unsure, say its number.`);
     if (ctx.myMonster) lines.push(locale === 'pt-BR'
-      ? `A pessoa escolheu ${ctx.myMonster}. Se estiver satisfeita, diga para falar "batalhar"; para trocar, escolha outro monstro.`
-      : `The caller picked ${ctx.myMonster} (their square is highlighted on screen). If they're happy, tell them to say "battle" to start; to change, pick a different monster for them.`);
+      ? `A pessoa escolheu ${ctx.myMonster}. A batalha começa automaticamente quando todos terminarem suas escolhas; para trocar, escolha outro monstro.`
+      : `The caller picked ${ctx.myMonster} (their square is highlighted on screen). The battle starts automatically when everyone finishes choosing; to change, pick a different monster for them.`);
     else lines.push('The caller has NOT picked yet. Prompt them to choose — suggest one with a fun one-liner about its type — and record their pick when they name one. Do NOT start the battle until they have a monster.');
   }
   if (ctx.phase === 'battle') {

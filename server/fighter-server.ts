@@ -176,6 +176,10 @@ export class FighterServer {
         if (!isHost) this.rejectAuthority(conn);
         else if (!room.ready(msg.loadingGeneration)) this.send(conn, { type: 'error', code: 'stale_ready', message: 'The arena is not awaiting this ready signal.' });
         break;
+      case 'retry_loading':
+        if (!isHost) this.rejectAuthority(conn);
+        else if (!room.retryLoading(msg.loadingGeneration)) this.send(conn, { type: 'error', code: 'stale_ready', message: 'The arena is not awaiting this retry.' });
+        break;
       case 'back': if (!isHost) this.rejectAuthority(conn); else room.back(); break;
       case 'leave':
         if (conn.playerId) {
@@ -270,20 +274,20 @@ export class FighterServer {
     this.hosts.delete(code); this.rooms.delete(code);
   }
 
-  voiceJoin(code: string, name: string, preferredSide?: FighterId, expectedPlayers?:number): string | null {
-    code=canonicalRoomCode(code);const room=this.room(code);if(expectedPlayers!==undefined)room.expectHumanPlayers(expectedPlayers);
-    else if(room.playerCount>=1)room.expectHumanPlayers(2);
-    const result = room.addPlayer(name, preferredSide); if ('error' in result) return null; this.pushState(code); return result.playerId;
+  voiceJoin(code: string, name: string, preferredSide?: FighterId, expectedPlayers?:number, nameConfirmed = true): string | null {
+    code=canonicalRoomCode(code);const room=this.room(code);if(expectedPlayers!==undefined)room.expectHumanPlayers(expectedPlayers,preferredSide!==undefined);
+    else if(room.playerCount>=1)room.expectHumanPlayers(2,false);
+    const result = room.addPlayer(name, preferredSide, nameConfirmed); if ('error' in result) return null; this.pushState(code); return result.playerId;
   }
   voiceLeave(code: string, id: string): void { code = canonicalRoomCode(code); this.rooms.get(code)?.removePlayer(id); this.pushState(code); this.reap(code); }
   voiceSetName(code:string,id:string,name:string):void {
     code=canonicalRoomCode(code);const room=this.rooms.get(code);if(!room)return;
-    room.setName(id,name);room.expectHumanPlayers(Math.max(1,room.playerCount));this.pushState(code);
+    room.setName(id,name);room.expectHumanPlayers(Math.max(1,room.playerCount),false);this.pushState(code);
   }
   voiceExpectHumanPlayers(code:string,count:number,activeEnginePlayerIds?:readonly string[]):void {
     code=canonicalRoomCode(code);const room=this.rooms.get(code);if(!room)return;
     if(activeEnginePlayerIds){const retained=new Set(activeEnginePlayerIds);for(const player of room.lobbyPlayers())if(!player.isAi&&!retained.has(player.playerId))room.removePlayer(player.playerId);}
-    room.expectHumanPlayers(count);this.pushState(code);
+    room.expectHumanPlayers(count,true);this.pushState(code);
   }
   voiceSelectFighter(code: string, id: string, fighterId: string): boolean { code = canonicalRoomCode(code); const ok = this.rooms.get(code)?.selectFighter(id, fighterId) ?? false; this.pushState(code); return ok; }
   voiceSelectMap(code: string, id: string, mapId: string): boolean {

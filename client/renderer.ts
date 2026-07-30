@@ -16,6 +16,8 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { AssetLoader } from './asset-loader';
+
+const RENDER_ASSET_TIMEOUT_MS = 30_000;
 import { buildCar,buildPlayerMarker } from './car-factory';
 import { themeAtZ } from '../shared/zones';
 import { shouldCycleZones } from './zone-gate';
@@ -262,20 +264,25 @@ export class Renderer {
   }
 
   /** Load + place decoration props (visual-only) in the track content group. */
-  setProps(props: PlacedProp[]): void {
+  async setProps(props: PlacedProp[]): Promise<void> {
     this.trackContent.remove(this.propsGroup);
     this.propsGroup = new THREE.Group();
     this.trackContent.add(this.propsGroup);
-    for (const p of props) {
+    const target = this.propsGroup;
+    await Promise.all(props.map(p => new Promise<void>(resolve => {
+      let settled = false;
+      const finish = () => { if (!settled) { settled = true; clearTimeout(timer); resolve(); } };
+      const timer = setTimeout(finish, RENDER_ASSET_TIMEOUT_MS);
       this.propLoader.load(`/assets/${p.file}`, (gltf) => {
+        if (settled || target !== this.propsGroup) { finish(); return; }
         const g = new THREE.Group(); g.add(gltf.scene);
         g.position.set(p.pos[0]!, p.pos[1]!, p.pos[2]!);
         g.rotation.set(p.rotDeg[0]! * Math.PI / 180, p.rotDeg[1]! * Math.PI / 180, p.rotDeg[2]! * Math.PI / 180);
         g.scale.setScalar(p.scale);
         g.userData.propId = p.id;
-        this.propsGroup.add(g);
-      }, undefined, () => { /* skip a failed prop, keep the scene */ });
-    }
+        target.add(g); finish();
+      }, undefined, finish);
+    })));
   }
 
   /** Set the per-car scale multiplier (keyed by car index) the game applies in ensureCar. ALSO
@@ -309,6 +316,16 @@ export class Renderer {
       camera.fov = this.cam.fov;
       camera.updateProjectionMatrix();
     }
+  }
+
+  resetLevelPresentation(): void {
+    this.lightingLocked = false;
+    this.sunDir.set(-180, 70, -120).normalize();
+    this.renderer.toneMappingExposure = 1.15;
+    this.bloom.strength = 0.45; this.bloom.radius = 0.7; this.bloom.threshold = 0.85;
+    const fog = this.scene.fog as THREE.FogExp2;
+    fog.color.set(0x0b1020); fog.density = 0.0016;
+    this.trackEmissive = 1; this.pulse = { speed: 0, amount: 0 };
   }
 
   getLightingLocked(): boolean { return this.lightingLocked; }
@@ -398,28 +415,37 @@ export class Renderer {
   })();
   /** Remembered files so setPath() can re-place the gantries onto a freshly-set curve. */
   private lineFiles: { start?: string; finish?: string } = {};
+  private lineLoadGeneration = 0;
 
   /**
    * Load + place the start and finish gantry models so they bookend the track. Each is auto-fit so
    * its widest dimension spans a bit beyond the track, grounded on the surface, and turned to face
    * across the track. Pass either/both files; missing ones keep the primitive fallback gantry.
    */
-  setStartFinishLines(files: { start?: string; finish?: string },
-                      offsets: { start?: GantryOffset; finish?: GantryOffset } = {}): void {
+  async setStartFinishLines(files: { start?: string; finish?: string },
+                      offsets: { start?: GantryOffset; finish?: GantryOffset } = {}): Promise<void> {
+    const generation = ++this.lineLoadGeneration;
     this.lineFiles = files;
     this.lineOffsets = offsets;
     // clear any previously-built gantries (models + fallback) and rebuild
     this.lineGroup.clear();
     if (!files.start && !files.finish) { this.buildFallbackGantry(0x10141c, 'finish'); return; }
-    if (files.start) this.loadLine(files.start, 0, offsets.start);
-    if (files.finish) this.loadLine(files.finish, RACE_LEN, offsets.finish);
+    const loads: Promise<void>[] = [];
+    if (files.start) loads.push(this.loadLine(files.start, 0, offsets.start, generation));
+    if (files.finish) loads.push(this.loadLine(files.finish, RACE_LEN, offsets.finish, generation));
     // keep a fallback finish gantry only if no finish model was supplied
     if (!files.finish) this.buildFallbackGantry(0x10141c, 'finish');
+    await Promise.all(loads);
   }
   private lineOffsets: { start?: GantryOffset; finish?: GantryOffset } = {};
 
-  private loadLine(file: string, z: number, offset?: GantryOffset): void {
-    this.lineLoader.load(`/assets/${file}`, (gltf) => {
+  private loadLine(file: string, z: number, offset: GantryOffset | undefined, generation: number): Promise<void> {
+    return new Promise(resolve => {
+      let settled = false;
+      const finish = () => { if (!settled) { settled = true; clearTimeout(timer); resolve(); } };
+      const timer = setTimeout(finish, RENDER_ASSET_TIMEOUT_MS);
+      this.lineLoader.load(`/assets/${file}`, (gltf) => {
+      if (settled || generation !== this.lineLoadGeneration) { finish(); return; }
       const model = gltf.scene;
       stripDisplayBases(model);
       // Auto-fit so the gantry's longest axis spans a little wider than the full track width.
@@ -439,7 +465,9 @@ export class Renderer {
       if (offset) wrapper.userData.offset = offset;   // author-pinned transform (overrides auto-place)
       this.lineGroup.add(wrapper);
       this.placeLine(wrapper, z);
-    }, undefined, () => { /* model failed: keep whatever fallback exists */ });
+      finish();
+    }, undefined, finish);
+    });
   }
 
   /** Position one gantry wrapper at sim-z (lane center x=0), onto the curve when a path is set —

@@ -134,7 +134,22 @@ export const CANONICAL_TRACK: MapTransform = { pos: [...TRACK_CENTER], rotDeg: [
  */
 export function wrapMapScene(scene: THREE.Object3D): THREE.Group {
   const wrap = new THREE.Group();
-  const center = new THREE.Box3().setFromObject(scene).getCenter(new THREE.Vector3());
+  let meshCount = 0;
+  const bounds = new THREE.Box3();
+  scene.updateMatrixWorld(true);
+  scene.traverse(object => {
+    const mesh = object as THREE.Mesh;
+    if (!mesh.isMesh || (mesh.geometry?.getAttribute('position')?.count ?? 0) < 3) return;
+    for (let current: THREE.Object3D | null = mesh; current; current = current.parent) if (!current.visible) return;
+    const materials = Array.isArray(mesh.material) ? mesh.material : mesh.material ? [mesh.material] : [];
+    if (materials.length === 0 || materials.every(material => !material.visible)) return;
+    bounds.union(new THREE.Box3().setFromObject(mesh));
+    meshCount += 1;
+  });
+  const size = bounds.getSize(new THREE.Vector3());
+  if (meshCount === 0 || bounds.isEmpty() || ![size.x, size.y, size.z].every(Number.isFinite)
+    || Math.max(size.x, size.y, size.z) <= 1e-6) throw new Error('map has no renderable geometry');
+  const center = bounds.getCenter(new THREE.Vector3());
   scene.position.sub(center);   // recenter: model's visual center → wrap's local origin
   wrap.add(scene);
   return wrap;

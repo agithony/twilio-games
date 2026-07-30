@@ -47,7 +47,7 @@ export interface BattleVoiceSnapshot {
 
 /** Everything the session needs from its host (the HTTP server wires these to the BattleServer + LLM). */
 export interface BattleVoiceDeps {
-  join(code: string, name: string, callSid: string, side?: 'a' | 'b', expectedPlayers?: number): { playerId: string; resumed: boolean } | null;
+  join(code: string, name: string, callSid: string, side?: 'a' | 'b', expectedPlayers?: number, nameConfirmed?: boolean): { playerId: string; resumed: boolean } | null;
   leave(code: string, playerId: string, callSid: string): void;
   setName(code: string, playerId: string, name: string): void;
   selectMonster(code: string, playerId: string, monsterId: string): void;
@@ -66,6 +66,8 @@ export interface BattleVoiceDeps {
 const GREETING_KEYS = [
   'voice.greetingWelcome', 'voice.greetingRelay', 'voice.askName',
 ] as const satisfies readonly MonstersMessageKey[];
+const FINAL_REPEAT_GUARD_MS = 5_000;
+const SAME_CONTEXT_REPEAT_GUARD_MS = 400;
 
 export class BattleVoiceSession {
   private code: string | null = null;
@@ -81,6 +83,8 @@ export class BattleVoiceSession {
   private authoritativeName: string | null = null;
   private stationManaged=false;
   private stationAssignment: { side: 'a' | 'b'; expectedPlayers: number } | null = null;
+  private lastFinalCommand: { text: string; beforeContext: string; afterContext: string; at: number } | null = null;
+  private awaitingName = false;
   private text: (key: MonstersMessageKey, values?: MessageValues) => string = createTranslator(DEFAULT_LOCALE, MONSTERS_MESSAGES);
 
   constructor(private deps: BattleVoiceDeps) {}
@@ -111,13 +115,15 @@ export class BattleVoiceSession {
           this.code = null; this.playerId = null; this.callSid = null;
         }
         const joined=this.deps.join(code,this.authoritativeName??playerName(msg.from,this.commandLocale),msg.callSid,
-          this.stationAssignment?.side,this.stationAssignment?.expectedPlayers??(this.authoritativeName?1:undefined));
+          this.stationAssignment?.side,this.stationAssignment?.expectedPlayers??(this.authoritativeName?1:undefined),
+          this.authoritativeName !== null);
         if (!joined) { this.deps.say(this.text('voice.roomUnavailable')); return; }
         this.code = code; this.playerId = joined.playerId; this.callSid = msg.callSid;
+        const current = this.deps.snapshot(code, joined.playerId, this.commandLocale);
+        const snap = current&&this.authoritativeName?{...current,myName:this.authoritativeName}:current;
+        this.awaitingName = !this.authoritativeName && !snap?.myName;
         if (joined.resumed) this.speakResumeCue();
         else {
-          const current = this.deps.snapshot(code, joined.playerId, this.commandLocale);
-          const snap = current&&this.authoritativeName?{...current,myName:this.authoritativeName}:current;
           this.lastPhase = snap?.phase ?? null;
           this.lastCanRematch = snap?.canRematch ?? false;
           if (snap?.phase === 'battle' && !snap.myMonsterId) {
@@ -147,14 +153,31 @@ export class BattleVoiceSession {
       }
       case 'prompt': {
         if (!this.code || !this.playerId) return;
-        this.turnEpoch++;
         const text = msg.voicePrompt.trim();
-        if (!msg.last) return;
-        if (text) this.handleUtterance(text);
+        if (!msg.last) { this.turnEpoch++; return; }
+        if (text) {
+          const normalized = normalizeForMatching(text, this.commandLocale);
+          const snap = this.deps.snapshot(this.code, this.playerId, this.commandLocale);
+          const beforeContext = this.finalCommandContext(snap);
+          const now = Date.now();
+          const previousCrossedBoundary = this.lastFinalCommand
+            ? this.crossedFinalCommandBoundary(this.lastFinalCommand.beforeContext, this.lastFinalCommand.afterContext)
+            : false;
+          const repeatedTransition = previousCrossedBoundary && this.lastFinalCommand?.afterContext === beforeContext;
+          const repeatedSameContext = this.lastFinalCommand?.beforeContext === beforeContext
+            && this.lastFinalCommand.afterContext === beforeContext;
+          const repeatWindow = repeatedTransition ? FINAL_REPEAT_GUARD_MS : SAME_CONTEXT_REPEAT_GUARD_MS;
+          if (this.lastFinalCommand?.text === normalized && now - this.lastFinalCommand.at < repeatWindow
+            && (repeatedTransition || repeatedSameContext)) return;
+          this.handleUtterance(text);
+          const afterContext = this.finalCommandContext(this.deps.snapshot(this.code, this.playerId, this.commandLocale));
+          this.lastFinalCommand = { text: normalized, beforeContext, afterContext, at: now };
+        }
         break;
       }
       case 'interrupt':
         this.turnEpoch++;   // caller barged in → drop any in-flight LLM reply
+        this.lastFinalCommand = null;
         break;
       case 'dtmf': {
         if (!this.code || !this.playerId) return;
@@ -180,8 +203,13 @@ export class BattleVoiceSession {
     const current = this.deps.snapshot(this.code!, this.playerId!, this.commandLocale);
     const snap = current&&this.authoritativeName?{...current,myName:this.authoritativeName}:current;
     if (!snap) { void this.converse(text); return; }
+    if (this.awaitingName) {
+      if (this.captureName(text, snap.phase, true)) { this.awaitingName = false; return; }
+      this.deps.say(this.text('voice.askName'));
+      return;
+    }
     if (isBattleHelpRequest(text, this.commandLocale)) {
-      const key = snap.phase === 'lobby' ? this.authoritativeName ? 'voice.helpLobbyNamed' : 'voice.helpLobby'
+      const key = snap.phase === 'lobby' ? (this.authoritativeName || snap.myName ? 'voice.helpLobbyNamed' : 'voice.helpLobby')
         : snap.phase === 'monster_select' ? 'voice.helpSelect'
           : snap.phase === 'results' ? this.stationManaged?'voice.waitOperator':'voice.helpResults' : 'voice.howTo';
       this.deps.say(this.text(key));
@@ -225,7 +253,11 @@ export class BattleVoiceSession {
       }
       if (snap.phase === 'results') {
         if (!this.deps.advance(this.code!, this.playerId!)) this.deps.say(this.text('voice.sharedMenuControl'));
-        else this.deps.say(this.text('voice.rematch'));
+        else {
+          const next=this.deps.snapshot(this.code!,this.playerId!,this.commandLocale);
+          this.deps.say(this.text(next?.phase==='lobby'
+            ?next.myName?'voice.helpLobbyNamed':'voice.askName':'voice.rematch'));
+        }
         return;
       }
     }
@@ -290,34 +322,48 @@ export class BattleVoiceSession {
     this.deps.say(this.text('voice.moves', { moves: list }));
   }
 
+  private finalCommandContext(snap: BattleVoiceSnapshot | null): string {
+    return snap
+      ? `${snap.phase}:${snap.turn ?? ''}:${snap.activeSide ?? ''}:${snap.activeMenu}:${snap.whoseTurn ?? ''}:${this.draining ? 1 : 0}:${this.evQ.length}`
+      : 'unavailable';
+  }
+
+  private crossedFinalCommandBoundary(before: string, after: string): boolean {
+    return before.startsWith('lobby:') && after.startsWith('monster_select:')
+      || before.startsWith('monster_select:') && after.startsWith('battle:')
+      || before.includes(':root:') && after.includes(':fight:');
+  }
+
   private looksLikeBattleCommand(text: string, snap: BattleVoiceSnapshot): boolean {
     if (matchBattleAction(text, { moves: snap.myMoves, potions: snap.myPotions, level: snap.activeMenu }, this.commandLocale)) return true;
     const normalized = normalizeForMatching(text, this.commandLocale);
     if (/^[0-4]$/.test(normalized) || isItemRequest(text, snap.activeMenu, this.commandLocale)) return true;
     return this.commandLocale === 'pt-BR'
-      ? /\b(lutar|atacar|golpe|defender|bloquear|proteger|item|pocao|curar|provocar|zombar|voltar|cancelar)\b/.test(normalized)
-      : /\b(fight|attack|move|guard|item|potion|taunt|go|hit|strike|back|cancel|return)\b/.test(normalized);
+      ? /\b(lutar|luta|lute|batalhar|combater|atacar|ataque|ataca|golpe|defender|bloquear|proteger|item|pocao|curar|provocar|zombar|voltar|cancelar)\b/.test(normalized)
+      : /\b(fight|fights|flight|five|attack|move|guard|item|potion|taunt|go|hit|strike|back|cancel|return)\b/.test(normalized);
   }
 
   private backCommand(): string { return this.commandLocale === 'pt-BR' ? 'voltar' : 'back'; }
 
-  private captureName(text: string, phase: BattleVoiceSnapshot['phase']): boolean {
-    const name = phase === 'monster_select'
+  private captureName(text: string, phase: BattleVoiceSnapshot['phase'], allowBare = false): boolean {
+    const name = phase === 'monster_select' && !allowBare
       ? parseExplicitSpokenName(text, this.commandLocale)
       : parseSpokenName(text, this.commandLocale);
     if (!name) return false;
     this.deps.setName(this.code!, this.playerId!, name);
+    const next = this.deps.snapshot(this.code!, this.playerId!, this.commandLocale);
+    const currentPhase = next?.phase ?? phase;
     this.deps.say(this.text(
-      phase === 'lobby' ? 'voice.nameLobby'
-        : phase === 'results' ? 'voice.nameResults'
-          : phase === 'battle' ? 'voice.nameBattle' : 'voice.nameSelect',
+      currentPhase === 'lobby' ? 'voice.nameLobby'
+        : currentPhase === 'results' ? 'voice.nameResults'
+          : currentPhase === 'battle' ? 'voice.nameBattle' : 'voice.nameSelect',
       { name },
     ));
-    if (phase === 'lobby') {
+    if (currentPhase === 'lobby') {
       this.deps.say(this.text('voice.greetingRules'));
       this.deps.say(this.text('voice.greetingActions'));
       this.deps.say(this.text('voice.helpLobbyNamed'));
-    }
+    } else if (currentPhase === 'monster_select') this.deps.say(this.text('voice.helpSelect'));
     return true;
   }
 
@@ -475,6 +521,7 @@ export class BattleVoiceSession {
       if (previous === 'battle' && snap?.phase === 'monster_select') {
         const pick = snap.myMonsterName ? this.text('voice.pickLocked', { monster: snap.myMonsterName }) : '';
         this.deps.say(this.text('voice.playerLeft', { pick }));
+        if (!snap.myMonsterId) this.deps.say(this.text('voice.helpSelect'));
       }
       if (snap?.phase === 'monster_select' || snap?.phase === 'lobby') {
         this.introDone = false;
@@ -670,14 +717,18 @@ export function parseSpokenName(spoken: string, locale: SupportedLocale = DEFAUL
   // Not a name: obvious questions or game commands (so "start"/"which one?" don't become the name).
   if (/[?]/.test(spoken)) return null;
   const command = locale === 'pt-BR'
-    ? /^(comecar|iniciar|ir|proximo|lutar|atacar|defender|bloquear|proteger|item|pocao|curar|provocar|zombar|sim|nao|pronto|pronta|ajuda|qual|quem|como|por que|quando|onde)\b/
-    : /^(start|go|next|fight|attack|guard|item|potion|taunt|yes|no|ready|help|what|which|who|how|why|when|where)\b/;
+    ? /^(comecar|iniciar|ir|proximo|lutar|luta|lute|batalhar|combater|atacar|ataque|ataca|defender|bloquear|proteger|item|pocao|curar|provocar|zombar|sim|nao|pronto|pronta|ajuda|qual|quem|como|por que|quando|onde)\b/
+    : /^(start|go|next|fight|fights|flight|five|attack|guard|item|potion|taunt|yes|no|ready|help|what|which|who|how|why|when|where)\b/;
   if (command.test(low)) return null;
   // Strip a lead-in ("my name is", "i'm", "i am", "this is", "it's", "call me").
   const leadIn = locale === 'pt-BR'
     ? /^(?:meu nome [ée]|eu sou|sou|me chamo|pode me chamar de|aqui [ée])\s+/iu
     : /^(?:my name is|i am|i'm|im|this is|it's|its|call me|the name's|name's)\s+/i;
+  const beforeLeadIn = q;
   q = q.replace(leadIn, '');
+  if (command.test(normalizeForMatching(q, locale))) return null;
+  if (q === beforeLeadIn && q.split(/\s+/).length > 2) return null;
+  if (locale === 'pt-BR' ? /^(?:o|a|um|uma)\s/i.test(q) : /^(?:the|a|an)\s/i.test(q)) return null;
   // Take the first 1-2 words, letters/hyphen/apostrophe only; reject if nothing name-like remains.
   const words = q.split(/\s+/).filter(w => /^\p{L}[\p{L}'’-]*$/u.test(w)).slice(0, 2);
   if (!words.length) return null;

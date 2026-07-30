@@ -39,6 +39,7 @@ export class Room {
   private expectedHumanPlayers = 1;
   private stationManaged = false;
   private stationSlots = new Map<number, string>();
+  private confirmedPlayerNames = new Set<string>();
   private recentSetupChoice: {
     phase: 'car_select' | 'map_select'; choice: string; playerId: string; at: number;
   } | null = null;
@@ -102,7 +103,7 @@ export class Room {
     }));
   }
 
-  addPlayer(name: string, color?: string, preferredIndex?: number): { playerId: string; lane: number } | { error: string } {
+  addPlayer(name: string, color?: string, preferredIndex?: number, nameConfirmed = true): { playerId: string; lane: number } | { error: string } {
     // A finished/results race is reusable: a new joiner reopens the room to a fresh lobby.
     if (this._phase === 'finished' || this._phase === 'results') this.reset();
     if (this.lobby.playerCount >= MAX_PLAYERS) return { error: 'room_full' };
@@ -113,6 +114,10 @@ export class Room {
     const palette = COLORS[(stationIndex ?? this.lobby.playerCount) % COLORS.length]!;
     const color2 = safeColor(color, palette);   // reject unsafe colors (stored-XSS guard)
     this.lobby.addPlayer(id, name, color2, stationIndex);
+    if (nameConfirmed) this.confirmedPlayerNames.add(id);
+    else if (this._phase === 'car_select' || this._phase === 'map_select') {
+      this.lobby.returnToLobby(); this._phase = 'lobby';
+    }
     if (stationIndex !== undefined) this.stationSlots.set(stationIndex, id);
     // If a race is already running, slot this player into the live world so they get a car.
     if (this.world && (this._phase === 'countdown' || this._phase === 'racing')) {
@@ -123,9 +128,11 @@ export class Room {
 
   removePlayer(playerId: string): void {
     this.lobby.removePlayer(playerId);
+    this.confirmedPlayerNames.delete(playerId);
     for (const [index, id] of this.stationSlots) if (id === playerId) this.stationSlots.delete(index);
     if (this.recentSetupChoice?.playerId === playerId) this.recentSetupChoice = null;
     this.world?.removeCar(playerId);
+    if (!this.stationManaged && this.lobby.playerCount > 0) this.expectedHumanPlayers = this.lobby.playerCount;
     // An abandoned race (everyone disconnected) must not lock the room forever.
     if (this.lobby.playerCount === 0 && this._phase !== 'lobby') this.reset();
     else this.lobby.retainMapVotes(new Set(this.lobby.players().map(player=>player.id)));
@@ -143,6 +150,12 @@ export class Room {
   setPlayerInfo(playerId: string, info: { name?: string; color?: string }): void {
     const clean = { ...info, ...(info.color !== undefined ? { color: safeColor(info.color, '#36d1dc') } : {}) };
     this.lobby.setPlayerInfo(playerId, clean);
+    if (info.name?.trim()) this.confirmedPlayerNames.add(playerId);
+  }
+  hasConfirmedName(playerId: string): boolean { return this.confirmedPlayerNames.has(playerId); }
+  private allNamesConfirmed(): boolean {
+    const players = this.lobby.players();
+    return players.length > 0 && players.every(player => this.confirmedPlayerNames.has(player.id));
   }
 
   anonymizePlayer(playerId: string): void {
@@ -184,12 +197,13 @@ export class Room {
     if (this._phase === 'results' || this._phase === 'finished') {
       this.world = null; this.lastResults = []; this.raceMap = null;
       this.lobby.reset();           // back to lobby with cleared cars/map, same players
-      this.lobby.advance();         // → car_select (roster is non-empty)
+      if (this.allNamesConfirmed()) this.lobby.advance(); // → car_select (roster is non-empty)
       this._phase = this.lobby.phase;
       this.recentSetupChoice=null;
       return this._phase!==before;
     }
     if(this.stationManaged&&this.lobby.playerCount<this.expectedHumanPlayers)return false;
+    if(this._phase==='lobby'&&!this.allNamesConfirmed())return false;
     if (this._phase === 'map_select' && this.stationManaged && !this.lobby.allPlayersVoted()) return false;
     if (this._phase === 'map_select' && this.requiredHumanPlayers >= 2 && !this.lobby.allPlayersVoted()) return false;
     if (this._phase === 'map_select' && this.lobby.canStart()) { this.start(); return this._phase!==before; }
@@ -216,13 +230,14 @@ export class Room {
     this.recentSetupChoice = null;
   }
 
-  start(): void {
-    if (this.lobby.playerCount < this.requiredHumanPlayers) return;
+  start(): boolean {
+    if (this.lobby.playerCount < this.requiredHumanPlayers || !this.allNamesConfirmed()) return false;
     // Evolve the seed each start so every race gets a NEW (deterministic-per-race) course.
     this.seed = (Math.imul(this.seed ^ (this.seed >>> 15), 0x2c1b3c6d) + 0x9e3779b9) >>> 0;
     this.raceMap = this.lobby.selectedMap;
     this.world = new RaceWorld(this.lobby.toRaceInits(), this.seed);
     this._phase = this.world.phase;
+    return true;
   }
 
   applyIntent(playerId: string, intent: Intent): boolean {

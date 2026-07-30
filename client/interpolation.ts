@@ -12,6 +12,8 @@ export class InterpolationBuffer {
     while (this.buf.length > 60) this.buf.shift();
   }
 
+  clear(): void { this.buf = []; }
+
   sample(renderT: number): WorldSnapshot | null {
     if (this.buf.length === 0) return null;
     const target = renderT - this.delayMs;

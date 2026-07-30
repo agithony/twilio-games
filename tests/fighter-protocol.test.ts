@@ -18,10 +18,11 @@ describe('fighter protocol', () => {
     expect(parseFighterClientMessage('{"type":"select_fighter","fighterId":"nyx"}')).toEqual({ type: 'select_fighter', fighterId: 'nyx' });
     expect(parseFighterClientMessage('{"type":"select_map","mapId":"void"}')).toEqual({ type: 'select_map', mapId: 'void' });
     expect(parseFighterClientMessage('{"type":"advance"}')).toEqual({ type: 'advance' });
-    expect(parseFighterClientMessage('{"type":"ready"}')).toEqual({ type: 'ready' });
+    expect(parseFighterClientMessage('{"type":"ready"}')).toMatchObject({ type: 'error', code: 'bad_ready' });
     expect(parseFighterClientMessage('{"type":"display_auth","roomCode":"4821","token":"secret"}')).toEqual({ type: 'display_auth', roomCode: '4821', token: 'secret' });
     expect(parseFighterClientMessage('{"type":"ready","loadingGeneration":2}')).toEqual({ type: 'ready', loadingGeneration: 2 });
     expect(parseFighterClientMessage('{"type":"ready","loadingGeneration":0}')).toMatchObject({ type: 'error', code: 'bad_ready' });
+    expect(parseFighterClientMessage('{"type":"retry_loading","loadingGeneration":2}')).toEqual({ type: 'retry_loading', loadingGeneration: 2 });
   });
   it('uses one authoritative timeline for every intro segment', () => {
     expect(fighterIntroStage(14)).toBe('p1');

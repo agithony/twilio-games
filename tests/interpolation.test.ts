@@ -13,6 +13,12 @@ describe('InterpolationBuffer', () => {
   it('returns null before any snapshot', () => {
     expect(new InterpolationBuffer().sample(1000)).toBeNull();
   });
+  it('clears stale snapshots before a new race', () => {
+    const b = new InterpolationBuffer();
+    b.push(snap(1, 10), 1000);
+    b.clear();
+    expect(b.sample(1100)).toBeNull();
+  });
   it('interpolates car z between two snapshots', () => {
     const b = new InterpolationBuffer(100); // 100ms delay
     b.push(snap(1, 0),   1000);

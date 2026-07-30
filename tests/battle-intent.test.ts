@@ -69,6 +69,16 @@ describe('matchBattleAction — ROOT keywords', () => {
     expect(matchBattleAction('fight', ctx())).toEqual({ kind: 'openFight' });
     expect(matchBattleAction('attack!', ctx())).toEqual({ kind: 'openFight' });
     expect(matchBattleAction('let me fight', ctx())).toEqual({ kind: 'openFight' });
+    expect(matchBattleAction('flight', ctx())).toEqual({ kind: 'openFight' });
+    expect(matchBattleAction('five', ctx())).toEqual({ kind: 'openFight' });
+    expect(matchBattleAction('luta', ctx(), 'pt-BR')).toEqual({ kind: 'openFight' });
+    expect(matchBattleAction('batalhar', ctx(), 'pt-BR')).toEqual({ kind: 'openFight' });
+    expect(matchBattleAction('combater', ctx(), 'pt-BR')).toEqual({ kind: 'openFight' });
+  });
+
+  it('keeps a repeated fight command idempotent while the move menu is open', () => {
+    expect(matchBattleAction('fight', { ...ctx(), level: 'fight' })).toEqual({ kind: 'openFight' });
+    expect(matchBattleAction('lutar', { ...ctx(), level: 'fight' }, 'pt-BR')).toEqual({ kind: 'openFight' });
   });
 
   it('"guard"/"block"/"brace"/"defend" → guard', () => {

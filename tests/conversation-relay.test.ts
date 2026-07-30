@@ -7,13 +7,16 @@ function fakeRoom() {
   const applied: { id:string; intent:Intent }[] = [];
   const assignments: Array<number | undefined> = [];
   const expectedPlayers: number[] = [];
+  const nameConfirmations: Array<boolean | undefined> = [];
   let n = 0;
   return {
     applied,
     assignments,
     expectedPlayers,
-    addPlayer: (_name:string, _color?: string, preferredIndex?: number) => {
+    nameConfirmations,
+    addPlayer: (_name:string, _color?: string, preferredIndex?: number, nameConfirmed?: boolean) => {
       assignments.push(preferredIndex);
+      nameConfirmations.push(nameConfirmed);
       return { playerId:`p${++n}`, lane:preferredIndex ?? n-1 };
     },
     expectHumanPlayers: (count: number) => { expectedPlayers.push(count); },
@@ -73,6 +76,7 @@ describe('ConversationRelayAdapter', () => {
 
     expect(room.expectedPlayers).toEqual([2]);
     expect(room.assignments).toEqual([1]);
+    expect(room.nameConfirmations).toEqual([false]);
   });
 
   it('ignores prompts before setup (no room bound)', () => {
@@ -162,7 +166,7 @@ describe('ConversationRelayAdapter', () => {
     const room = { addPlayer: () => { added++; return { playerId:'new-player', lane:1 }; },
       applyIntent: () => {}, removePlayer: (id:string) => { removed = id; } };
     const first = new ConversationRelayAdapter({ findOrCreateRoom: () => room,
-      resumePlayer: () => ({ playerId:'p1', lane:0,resumed:true,name:'Ada' }) });
+      resumePlayer: () => ({ playerId:'p1', lane:0,resumed:true,name:'Racer X' }),hasPlayerName:()=>true });
     first.handleMessage(JSON.stringify({ type:'setup', callSid:'CA1', customParameters:{ roomCode:'4821' } }));
     expect(first.boundPlayerId).toBe('p1');
     first.handleClose(true);
@@ -170,11 +174,12 @@ describe('ConversationRelayAdapter', () => {
     expect(added).toBe(0);
 
     const said:string[]=[];const resumed = new ConversationRelayAdapter({ findOrCreateRoom: () => room,
-      resumePlayer: () => ({ playerId:'p1', lane:0,resumed:true,name:'Ada' }),say:text=>said.push(text),phaseOf:()=> 'lobby' });
+      resumePlayer: () => ({ playerId:'p1', lane:0,resumed:true,name:'Racer X' }),hasPlayerName:()=>true,
+      say:text=>said.push(text),phaseOf:()=> 'lobby' });
     resumed.handleMessage(JSON.stringify({ type:'setup', callSid:'CA1', customParameters:{ roomCode:'4821' } }));
     expect(resumed.boundPlayerId).toBe('p1');
     expect(added).toBe(0);
-    expect(said.join(' ')).toMatch(/Welcome back.*Ada/i);
+    expect(said.join(' ')).toMatch(/Welcome back.*Racer X/i);
     expect(said.join(' ').toLowerCase()).not.toContain('what\'s your name');
   });
 

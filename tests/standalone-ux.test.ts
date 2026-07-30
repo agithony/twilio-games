@@ -60,7 +60,18 @@ describe('standalone and station display UX', () => {
     expect(home).toContain("station.phase === 'RESULTS' ? station.nextReadyCount : station.currentReadyCount");
     expect(home).toContain("document.getElementById('persistentJoinQr')");
     expect(stationDisplay).toContain("if(railMode==='always')return true");
-    expect(stationDisplay).toContain("latest?.station.phase==='PLAYING'||latest?.station.phase==='RESULTS'");
+    expect(stationDisplay).toContain("latest?.station.phase==='LAUNCHING'||latest?.station.phase==='PLAYING'||latest?.station.phase==='RESULTS'");
+  });
+
+  it('warms the exact Racer scene before releasing a station countdown', () => {
+    const script = readClient('main.ts');
+    expect(script).toContain('assets.waitForGameplayAssets(first.cars.map(car => car.carIndex))');
+    expect(script).toContain('renderer.render(first, { splitScreen })');
+    expect(script).toContain('if (stationDisplay.active) conn.ready()');
+    expect(script).toContain('buffer.clear()');
+    expect(script).toContain('() => !stationDisplay.active || !raceLive');
+    expect(script).toContain('cancelPendingRaceSnapshot()');
+    expect(script).toMatch(/conn\.onLobby[\s\S]*?if \(raceLive\)[\s\S]*?liftVeil\(\)/);
   });
 
   it('earns challenge coins from one trusted click after opening the destination', () => {

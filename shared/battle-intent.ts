@@ -68,11 +68,11 @@ const COMMAND_WORDS: Record<SupportedLocale, {
     guard: ['guard', 'block', 'brace', 'defend', 'shield'],
     item: ['item', 'potion', 'heal', 'bag', 'medicine'],
     taunt: ['taunt', 'mock', 'provoke', 'jeer', 'insult'],
-    fight: ['fight', 'fights', 'attack', 'flight'],
+    fight: ['fight', 'fights', 'attack', 'flight', 'five'],
     back: ['back', 'cancel', 'return', 'never mind', 'undo'],
   },
   'pt-BR': {
-    fight: ['lutar', 'lute', 'atacar', 'ataque', 'ataca'],
+    fight: ['lutar', 'luta', 'lute', 'batalhar', 'combater', 'atacar', 'ataque', 'ataca'],
     guard: ['defender', 'defende', 'defenda-se', 'bloquear', 'bloqueia', 'bloqueie', 'proteger', 'proteja-se'],
     item: ['item', 'poção', 'curar', 'cura'],
     taunt: ['provocar', 'provoque', 'zombar', 'zombe'],
@@ -135,7 +135,7 @@ export function matchBattleAction(spoken: string, ctx: BattleMenuCtx, locale: Su
   if (saysAny(spoken, words.guard, locale)) return { kind: 'guard' };
   if (saysAny(spoken, words.item, locale)) return item();          // null when out of potions
   if (saysAny(spoken, words.taunt, locale)) return { kind: 'taunt' };
-  if (ctx.level === 'root' && saysAny(spoken, words.fight, locale)) {
+  if (saysAny(spoken, words.fight, locale)) {
     return { kind: 'openFight' };
   }
 

@@ -96,7 +96,8 @@ let playerId: string | null = null;
 let roster: FighterRosterEntry[] = [];
 let maps: FighterMapEntry[] = [];
 let phoneNumber = t('phone.fallback');
-const FIGHTER_ACTOR_FALLBACK_MS = 15_000;
+const FIGHTER_ACTOR_TIMEOUT_MS = 105_000;
+const FIGHTER_MAP_TIMEOUT_MS = 30_000;
 let phoneQr = '/brand/join-qr.png?v=2';
 let movement: Partial<Record<FighterId, { from: number; to: number; elapsed: number; jump: boolean; duration: number }>> = {};
 const actionDurations: Record<FighterId, number> = { p1: FIGHTER_RUN_FORWARD_DURATION, p2: FIGHTER_RUN_FORWARD_DURATION };
@@ -105,6 +106,7 @@ let lastOverlayKey = '';
 let lastPhase = '';
 let loadedMapId = '';
 let mapReadyId = '';
+let failedMapKey = '';
 let readySentFor = '';
 let readyTimer: ReturnType<typeof setTimeout> | null = null;
 let mapModel: THREE.Object3D | null = null;
@@ -121,9 +123,11 @@ let flowMessage = '';
 let animationSources: Awaited<ReturnType<typeof loadAnimationSources>> | null = null;
 const actorLoads = new Map<string, Promise<FighterActor>>();
 let preparedFightKey = '';
+let actorLoadFailedKey = '';
 let fightStartedKey = '';
 let bufferedEvents: FighterEvent[] = [];
 let initializationAttempt = 0;
+let initializationFailed = false;
 let numericBuffer = '';
 let numericTimer: ReturnType<typeof setTimeout> | null = null;
 let focusBeforeError: HTMLElement | null = null;
@@ -132,6 +136,8 @@ let resultRevealAt = 0;
 let resultTimer: ReturnType<typeof setTimeout> | null = null;
 let introSegment = '';
 let countdownSoundPlayed = false;
+let assetRetryGeneration: number | null = null;
+let assetRetryTimer: ReturnType<typeof setTimeout> | null = null;
 
 connection.onRoster((fighters, mapEntries) => { roster = fighters; maps = mapEntries; renderFlow(); });
 connection.onJoined(id => { playerId = id; renderFlow(); });
@@ -141,8 +147,16 @@ connection.onHostIdentity(host => { isHost = host; lastOverlayKey = ''; renderFl
 connection.onConnectionState(status => {
   connectionStatus.dataset.state = status;
   connectionStatus.textContent = commonText(status === 'closed' ? 'connection.closed' : `connection.${status}`);
+  if (status === 'reconnecting') {
+    readySentFor = '';
+    if (readyTimer) { clearTimeout(readyTimer); readyTimer = null; }
+  }
 });
 connection.onState(next => {
+  if (assetRetryGeneration !== null && next.loadingGeneration > assetRetryGeneration) {
+    if (assetRetryTimer) clearTimeout(assetRetryTimer);
+    location.reload(); return;
+  }
   const previousPhase = state?.phase;
   const phaseChanged = next.phase !== previousPhase;
   const choiceChanged = next.selectedMap !== state?.selectedMap
@@ -154,13 +168,12 @@ connection.onState(next => {
     flowMessage = ''; numericBuffer = ''; if (numericTimer) { clearTimeout(numericTimer); numericTimer = null; }
   }
   if (phaseChanged) {
-    if (next.phase === 'loading') { preparedFightKey = ''; fightStartedKey = ''; bufferedEvents = []; }
+    if (next.phase === 'loading') { preparedFightKey = ''; actorLoadFailedKey = ''; fightStartedKey = ''; bufferedEvents = []; }
     if (next.phase === 'loading' || next.phase === 'intro') countdownSoundPlayed = false;
     if (next.phase !== 'results' && resultTimer) { clearTimeout(resultTimer); resultTimer = null; resultRevealAt = 0; }
     if (['lobby', 'fighter_select', 'map_select', 'loading'].includes(next.phase)) getMusicManager().switchContext('lobby');
   }
   state = next;
-  maybeMarkStationDisplayReady();
   if (next.phase === 'countdown') {
     const count = Math.ceil(next.countdown ?? 0);
     if (locale === 'en-US' && isCountdownSoundCue(count) && !countdownSoundPlayed) { countdownSoundPlayed = true; getSoundEffectsManager().playCountdown(); }
@@ -174,7 +187,7 @@ connection.onState(next => {
   }
   updateNames(next);
   if (next.selectedMap && ['loading', 'intro', 'countdown', 'fight', 'victory', 'results'].includes(next.phase)) applyMapTheme(next.selectedMap);
-  if ((next.phase === 'loading' || next.phase === 'intro' || next.phase === 'countdown') && (phaseChanged || !actors)) prepareFight(next);
+  if ((next.phase === 'loading' || next.phase === 'intro' || next.phase === 'countdown') && (phaseChanged || selectionChanged || !actors)) prepareFight(next);
   if (phaseChanged && next.phase === 'intro') beginIntro(next);
   if (previousPhase === 'intro' && next.phase === 'countdown') endIntro(next);
   if (next.phase === 'loading') maybeSignalReady();
@@ -211,6 +224,7 @@ function setLoading(progress: number, label: string): void {
 
 async function initialize(): Promise<void> {
   const attempt = ++initializationAttempt;
+  initializationFailed = false;
   loading.classList.remove('done'); loading.setAttribute('aria-busy', 'true'); hideAssetError();
   setLoading(.05, t('loading.openingLobby'));
   setTimeout(() => {
@@ -221,16 +235,18 @@ async function initialize(): Promise<void> {
     animationSources = await loadAnimationSources((loaded, total) => setLoading(loaded / total, t('loading.preparingAssets')));
     if (attempt !== initializationAttempt) return;
     setLoading(1, t('loading.ready'));
-    maybeMarkStationDisplayReady();
     if (state?.phase === 'loading' || state?.phase === 'intro' || state?.phase === 'countdown' || state?.phase === 'fight') prepareFight(state);
     maybeSignalReady(); renderFlow();
   } catch (error) {
     if (attempt !== initializationAttempt) return;
     loading.classList.add('done'); loading.setAttribute('aria-busy', 'false');
-    showAssetError(t('error.animations'), error, [
-      { label: t('action.retry'), action: () => void initialize() },
-      { label: t('action.cancel'), secondary: true, action: () => { hideAssetError(); connection.back(); } },
-    ]);
+    initializationFailed = true;
+    showAssetError(t('error.animations'), error, stationDisplay.active
+      ? [{ label: t('action.retry'), action: reloadForAssetRetry }]
+      : [
+        { label: t('action.retry'), action: () => void initialize() },
+        { label: t('action.cancel'), secondary: true, action: () => { hideAssetError(); connection.back(); } },
+      ]);
   }
 }
 
@@ -316,6 +332,13 @@ function hideAssetError(): void {
   const target = focusBeforeError?.isConnected ? focusBeforeError : overlay.querySelector<HTMLElement>('button:not(:disabled), h1');
   focusBeforeError = null; requestAnimationFrame(() => target?.focus());
 }
+function reloadForAssetRetry(): void {
+  if (state?.phase !== 'loading') { location.reload(); return; }
+  assetRetryGeneration = state.loadingGeneration;
+  connection.retryLoading();
+  if (assetRetryTimer) clearTimeout(assetRetryTimer);
+  assetRetryTimer = setTimeout(() => location.reload(), 10_000);
+}
 
 function wireFlowButtons(): void {
   $('flow-next')?.addEventListener('click', () => { flowMessage = ''; connection.advance(); });
@@ -386,9 +409,10 @@ function prepareFight(next: FighterState): void {
   const p1 = next.players.find(player => player.side === 'p1'); const p2 = next.players.find(player => player.side === 'p2');
   if (!p1?.fighterId || !p2?.fighterId) return;
   const key = `${p1.fighterId}:${p2.fighterId}`;
+  if (actorLoadFailedKey === key) return;
   if (!loadedActors.has(p1.fighterId) || !loadedActors.has(p2.fighterId)) { void ensureFightActors(p1.fighterId, p2.fighterId, key); return; }
   if (key !== actorKey) {
-    for (const actor of loadedActors.values()) scene.remove(actor.root);
+    if (actors) { scene.remove(actors.p1.root, actors.p2.root); actors = null; }
     const left = loadedActors.get(p1.fighterId), right = loadedActors.get(p2.fighterId); if (!left || !right) return;
     actors = { p1: left, p2: right }; actorKey = key;
     scene.add(left.root, right.root);
@@ -412,24 +436,11 @@ async function ensureFightActors(p1Id: string, p2Id: string, expectedKey: string
     let pending = actorLoads.get(id);
     if (!pending) {
       const spec = FIGHTERS.find(fighter => fighter.id === id); if (!spec) return Promise.reject(new Error(t('error.unknownFighter', { id })));
-      pending = FighterActor.load(spec, animationSources!); actorLoads.set(id, pending);
+      pending = loadFighterActor(spec); actorLoads.set(id, pending);
       void pending.then(actor => { loadedActors.set(id, actor); trimActorCache(new Set([p1Id, p2Id])); })
         .finally(() => actorLoads.delete(id)).catch(() => {});
     }
-    let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
-    const fallback = new Promise<FighterActor>(resolve => {
-      fallbackTimer = setTimeout(() => {
-        const existing = loadedActors.get(id);
-        if (existing) { resolve(existing); return; }
-        const color = roster.find(fighter => fighter.id === id)?.color ?? '#ef223a';
-        const actor = FighterActor.fallback(color);
-        loadedActors.set(id, actor);
-        resolve(actor);
-      }, FIGHTER_ACTOR_FALLBACK_MS);
-    });
-    return Promise.race([pending, fallback]).finally(() => {
-      if (fallbackTimer) clearTimeout(fallbackTimer);
-    });
+    return pending;
   };
   try {
     const results = await Promise.allSettled([load(p1Id), load(p2Id)]);
@@ -437,24 +448,38 @@ async function ensureFightActors(p1Id: string, p2Id: string, expectedKey: string
     if (failed?.status === 'rejected') throw failed.reason;
     const current = `${state?.players.find(player => player.side === 'p1')?.fighterId}:${state?.players.find(player => player.side === 'p2')?.fighterId}`;
     if (state && current === expectedKey && (state.phase === 'loading' || state.phase === 'intro' || state.phase === 'countdown' || state.phase === 'fight')) {
+      actorLoadFailedKey = '';
       prepareFight(state); if (state.phase === 'intro') beginIntro(state); maybeSignalReady();
     }
   } catch (error) {
-    console.warn('Fighter model failed to load; using fallback actors.', error);
-    installFallbackActors(p1Id, p2Id, expectedKey);
+    const current = `${state?.players.find(player => player.side === 'p1')?.fighterId}:${state?.players.find(player => player.side === 'p2')?.fighterId}`;
+    if (state?.phase !== 'loading' || current !== expectedKey) return;
+    actorLoadFailedKey = expectedKey;
+    console.error('Fighter model failed to load; blocking match readiness.', error);
+    showAssetError(t('error.fighterLoad'), error, stationDisplay.active
+      ? [{ label: t('action.retry'), action: reloadForAssetRetry }]
+      : [
+        { label: t('action.retry'), action: () => { actorLoadFailedKey = ''; hideAssetError(); void ensureFightActors(p1Id, p2Id, expectedKey); } },
+        { label: t('action.cancel'), secondary: true, action: () => { hideAssetError(); connection.back(); } },
+      ]);
   }
 }
 
-function installFallbackActors(p1Id: string, p2Id: string, expectedKey: string): void {
-  for (const id of [p1Id, p2Id]) {
-    if (loadedActors.has(id)) continue;
-    const color = roster.find(fighter => fighter.id === id)?.color ?? '#ef223a';
-    loadedActors.set(id, FighterActor.fallback(color));
-  }
-  hideAssetError();
-  const p1 = state?.players.find(player => player.side === 'p1')?.fighterId;
-  const p2 = state?.players.find(player => player.side === 'p2')?.fighterId;
-  if (state && `${p1}:${p2}` === expectedKey) { prepareFight(state); maybeSignalReady(); }
+function loadFighterActor(spec: (typeof FIGHTERS)[number]): Promise<FighterActor> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      settled = true;
+      reject(new Error(`fighter model timed out after ${FIGHTER_ACTOR_TIMEOUT_MS / 1000} seconds`));
+    }, FIGHTER_ACTOR_TIMEOUT_MS);
+    void FighterActor.load(spec, animationSources!).then(actor => {
+      if (settled) { actor.dispose(); return; }
+      settled = true; clearTimeout(timer); resolve(actor);
+    }, error => {
+      if (settled) return;
+      settled = true; clearTimeout(timer); reject(error);
+    });
+  });
 }
 
 function beginFight(next: FighterState): void {
@@ -571,12 +596,17 @@ function setFightControlsEnabled(enabled: boolean): void { for (const button of 
 function applyMapTheme(mapId: string): void {
   // Fight state arrives at 20 Hz. Reapplying the saved camera on every snapshot fights the smooth
   // tracking camera and produces a visible judder; map setup is a one-time phase transition.
-  if (loadedMapId === mapId) { maybeSignalReady(); return; }
+  const loadKey = `${state?.loadingGeneration ?? 0}:${mapId}`;
+  if (loadedMapId === mapId) {
+    if (failedMapKey === loadKey) return;
+    if (!failedMapKey) { maybeSignalReady(); return; }
+  }
   const config = maps.find(map => map.id === mapId); if (!config) return;
   const attempt = ++mapLoadAttempt;
   loadedMapId = mapId;
   mapReadyId = '';
-  hideAssetError();
+  failedMapKey = '';
+  if (!initializationFailed) hideAssetError();
   disposeCurrentMap();
   theme.ring.material.color.set(config.color); theme.red.color.set(config.color);
   theme.foundry.visible = mapId === 'foundry'; theme.voidStage.visible = mapId === 'void';
@@ -603,12 +633,20 @@ function applyMapTheme(mapId: string): void {
   const draco = new DRACOLoader(); draco.setDecoderPath('/draco/');
   const loader = new GLTFLoader(); loader.setDRACOLoader(draco);
   const fallbackTimer = setTimeout(() => {
-    if (loadedMapId === mapId && attempt === mapLoadAttempt && mapReadyId !== mapId) { draco.dispose(); useProceduralFallback(mapId); }
-  }, 12000);
+    if (loadedMapId === mapId && attempt === mapLoadAttempt && mapReadyId !== mapId) {
+      draco.dispose();
+      handleMapLoadFailure(mapId, loadKey, new Error(`arena timed out after ${FIGHTER_MAP_TIMEOUT_MS / 1000} seconds`));
+    }
+  }, FIGHTER_MAP_TIMEOUT_MS);
   loader.load(`/assets/fighters/maps/${encodeURIComponent(config.file)}?v=${FIGHTER_ASSET_VERSION}`, gltf => {
     clearTimeout(fallbackTimer);
     draco.dispose();
     if (loadedMapId !== mapId || attempt !== mapLoadAttempt) { disposeObjectResources(gltf.scene); return; }
+    if (!hasRenderableTriangle(gltf.scene)) {
+      disposeObjectResources(gltf.scene);
+      handleMapLoadFailure(mapId, loadKey, new Error('arena model has no renderable geometry'));
+      return;
+    }
     mapModel = gltf.scene;
     mapModel.position.set(...(config.pos ?? [0, 0, 0]));
     const rotation = config.rotDeg ?? [0, 0, 0]; mapModel.rotation.set(...rotation.map(value => THREE.MathUtils.degToRad(value)) as [number, number, number]);
@@ -620,19 +658,28 @@ function applyMapTheme(mapId: string): void {
     try { captureMapBackdrop(); }
     catch (error) { console.warn('Unable to cache arena backdrop; using live rendering.', error); customMapStatic = false; renderer.shadowMap.enabled = true; }
     mapReadyId = mapId;
-    hideAssetError();
+    failedMapKey = '';
     maybeSignalReady();
   }, undefined, error => {
     clearTimeout(fallbackTimer);
     draco.dispose();
     if (loadedMapId !== mapId || attempt !== mapLoadAttempt) return;
-    console.warn(`Arena ${mapId} failed to load; using the procedural stage.`, error);
-    useProceduralFallback(mapId);
+    handleMapLoadFailure(mapId, loadKey, error);
   });
+}
+
+function handleMapLoadFailure(mapId: string, loadKey: string, error: unknown): void {
+  if (!stationDisplay.active) { console.warn(`Arena ${mapId} failed to load; using the procedural stage.`, error); useProceduralFallback(mapId); return; }
+  failedMapKey = loadKey;
+  mapLoadAttempt += 1;
+  showAssetError(t('error.mapLoad'), error, [
+    { label: t('action.retry'), action: reloadForAssetRetry },
+  ]);
 }
 
 function useProceduralFallback(mapId: string): void {
   mapLoadAttempt++; disposeCurrentMap(); hideAssetError();
+  failedMapKey = '';
   theme.procedural.visible = true; renderer.shadowMap.enabled = true; customMapStatic = false;
   mapPlane = { origin: [0, 0, 0], rotationY: 0 };
   applyAtmosphereLighting(null);
@@ -661,6 +708,39 @@ function applyAtmosphereLighting(spec: FighterAtmosphereSpec | null): void {
   if (spec) scene.fog = new THREE.FogExp2(spec.fogColor, spec.fogDensity);
 }
 
+function hasRenderableTriangle(root: THREE.Object3D): boolean {
+  root.updateMatrixWorld(true);
+  let renderable = false;
+  root.traverse(object => {
+    if (renderable) return;
+    const mesh = object as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    for (let current: THREE.Object3D | null = mesh; current; current = current.parent) if (!current.visible) return;
+    const materials = Array.isArray(mesh.material) ? mesh.material : mesh.material ? [mesh.material] : [];
+    if (materials.length === 0 || materials.every(material => !material.visible)) return;
+    const positions = mesh.geometry?.getAttribute('position');
+    if (!positions || positions.count < 3) return;
+    const index = mesh.geometry.getIndex();
+    const elementCount = index?.count ?? positions.count;
+    const start = Math.max(0, mesh.geometry.drawRange.start);
+    const requested = mesh.geometry.drawRange.count;
+    const end = Math.min(elementCount, Number.isFinite(requested) ? start + requested : elementCount);
+    const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+    const ab = new THREE.Vector3(), ac = new THREE.Vector3();
+    for (let offset = start; offset + 2 < end; offset += 3) {
+      const ai = index ? index.getX(offset) : offset;
+      const bi = index ? index.getX(offset + 1) : offset + 1;
+      const ci = index ? index.getX(offset + 2) : offset + 2;
+      if (ai >= positions.count || bi >= positions.count || ci >= positions.count) continue;
+      a.fromBufferAttribute(positions, ai).applyMatrix4(mesh.matrixWorld);
+      b.fromBufferAttribute(positions, bi).applyMatrix4(mesh.matrixWorld);
+      c.fromBufferAttribute(positions, ci).applyMatrix4(mesh.matrixWorld);
+      if (ab.subVectors(b, a).cross(ac.subVectors(c, a)).lengthSq() > 1e-12) { renderable = true; break; }
+    }
+  });
+  return renderable;
+}
+
 function disposeObjectResources(root: THREE.Object3D): void {
   const materials = new Set<THREE.Material>(), textures = new Set<THREE.Texture>();
   root.traverse(object => {
@@ -677,21 +757,28 @@ function disposeObjectResources(root: THREE.Object3D): void {
 
 function maybeSignalReady(): void {
   if (!isHost || state?.phase !== 'loading' || !state.selectedMap || mapReadyId !== state.selectedMap) return;
-  const selected = state.players.filter(player => player.side === 'p1' || player.side === 'p2').map(player => player.fighterId);
-  if (selected.length < 2 || selected.some(id => !id || !loadedActors.has(id))) return;
-  if (readySentFor === state.selectedMap || readyTimer) return;
+  const p1Id = state.players.find(player => player.side === 'p1')?.fighterId;
+  const p2Id = state.players.find(player => player.side === 'p2')?.fighterId;
+  if (!p1Id || !p2Id || !loadedActors.has(p1Id) || !loadedActors.has(p2Id)) return;
+  if (!actors || actorKey !== `${p1Id}:${p2Id}`
+    || actors.p1 !== loadedActors.get(p1Id) || actors.p2 !== loadedActors.get(p2Id)) return;
+  const readinessKey = `${state.loadingGeneration}:${state.selectedMap}`;
+  if (readySentFor === readinessKey || readyTimer) return;
   const mapId = state.selectedMap;
   // Let the loading overlay paint and let any first-frame shader compilation block THIS timer. The
   // authoritative countdown begins only after the browser has actually become responsive.
   readyTimer = setTimeout(() => {
     readyTimer = null;
-    if (state?.phase !== 'loading' || state.selectedMap !== mapId) return;
-    readySentFor = mapId; connection.ready();
+    if (state?.phase !== 'loading' || state.selectedMap !== mapId
+      || `${state.loadingGeneration}:${state.selectedMap}` !== readinessKey) return;
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (state?.phase !== 'loading' || state.selectedMap !== mapId || !actors
+        || `${state.loadingGeneration}:${state.selectedMap}` !== readinessKey) return;
+      readySentFor = readinessKey;
+      stationDisplay.markEngineReady();
+      connection.ready();
+    }));
   }, 350);
-}
-
-function maybeMarkStationDisplayReady(): void {
-  if (state && animationSources) stationDisplay.markEngineReady();
 }
 
 /** Custom stages never move, so flatten millions of environment triangles into the authored camera

@@ -165,6 +165,8 @@ export class Lobby {
     }
   }
 
+  returnToLobby(): void { this._phase = 'lobby'; }
+
   /** Ready to kick off the race: in map_select, at least one car picked (rest fall back), map chosen.
    *  Uses anyPicked (not allPicked) for the same reason advance() does — no AFK-player wedge. */
   canStart(): boolean {

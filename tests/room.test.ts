@@ -4,6 +4,25 @@ import { STEP, MAX_PLAYERS } from '../shared/constants';
 import { arcadeGameDefinition } from '../shared/arcade-games';
 
 describe('Room', () => {
+  it('keeps standalone Racer in lobby until every caller confirms a name', () => {
+    const room = new Room('NAMES', 1, { carCount: 2, maps: ['Silver Lake'] });
+    const caller = room.addPlayer('Racer 1234', undefined, undefined, false); if ('error' in caller) throw new Error(caller.error);
+    room.advance(); expect(room.phase).toBe('lobby');
+    room.setPlayerInfo(caller.playerId, { name: 'Ada' });
+    room.advance(); expect(room.phase).toBe('car_select');
+    const late = room.addPlayer('Racer 5678', undefined, undefined, false); if ('error' in late) throw new Error(late.error);
+    expect(room.phase).toBe('lobby');
+  });
+  it('returns a rematch to lobby when a caller joined the race before confirming a name', () => {
+    const room = new Room('REMATCH-NAME', 1, { carCount: 2, maps: ['Silver Lake'] });
+    room.addPlayer('Ada');
+    room.start();
+    const late = room.addPlayer('Racer 5678', undefined, undefined, false); if ('error' in late) throw new Error(late.error);
+    for (let i = 0; i < 60 * 120 && room.phase !== 'results'; i++) room.tick(STEP);
+    expect(room.phase).toBe('results');
+    room.advance();
+    expect(room.phase).toBe('lobby');
+  });
   let room: Room;
   beforeEach(() => { room = new Room('4821', 1); });
 
@@ -85,6 +104,14 @@ describe('Room', () => {
     room.removePlayer(b.playerId);
     if(order==='remove-first')room.expectHumanPlayers(1);
     expect(room.phase).toBe('map_select');expect(room.advance(a.playerId)).toBe(true);expect(room.phase).toBe('countdown');
+  });
+
+  it('lets a standalone survivor continue after the other caller disconnects',()=>{
+    room=new Room('4821',1,{carCount:2,maps:['Silver Lake']});room.expectHumanPlayers(2,false);
+    const a=room.addPlayer('Ada') as {playerId:string};const b=room.addPlayer('Bo') as {playerId:string};
+    room.advance();room.removePlayer(b.playerId);room.selectCar(a.playerId,0);room.advance();
+    room.selectMap('Silver Lake',a.playerId);room.advance();
+    expect(room.phase).toBe('countdown');
   });
 
   it('rejects joins beyond MAX_PLAYERS', () => {

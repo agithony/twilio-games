@@ -200,7 +200,7 @@ export function createStationDisplay(): StationDisplay {
   function railShouldShow():boolean{
     if(railMode==='hidden')return false;
     if(railMode==='always')return true;
-    return latest?.station.phase==='PLAYING'||latest?.station.phase==='RESULTS';
+    return latest?.station.phase==='LAUNCHING'||latest?.station.phase==='PLAYING'||latest?.station.phase==='RESULTS';
   }
 }
 

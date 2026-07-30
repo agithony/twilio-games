@@ -3,6 +3,14 @@ import { FIGHTER_LOADING_TIMEOUT_SECONDS, FIGHTER_VICTORY_SECONDS, FighterRoom }
 import { FIGHTER_INTRO_SECONDS } from '../shared/fighter-protocol';
 
 describe('fighter room', () => {
+  it('keeps standalone Fighter in lobby until every caller confirms a name', () => {
+    const room = new FighterRoom('NAMES', 1);
+    room.expectHumanPlayers(1);
+    const caller = room.addPlayer('Caller', undefined, false); if ('error' in caller) throw new Error(caller.error);
+    expect(room.phase).toBe('lobby');
+    room.setName(caller.playerId, 'Ada');
+    expect(room.phase).toBe('fighter_select');
+  });
   it('runs lobby through selection into a solo AI fight', () => {
     const room = new FighterRoom('4821', 1);
     const joined = room.addPlayer('Ada'); if ('error' in joined) throw new Error(joined.error);
@@ -12,7 +20,7 @@ describe('fighter room', () => {
     expect(room.selectMap(joined.playerId,'void')).toBe(true);
     expect(room.advance()).toBe(true);
     expect(room.phase).toBe('loading');
-    expect(room.ready()).toBe(true);
+    expect(room.ready(room.state().loadingGeneration)).toBe(true);
     expect(room.phase).toBe('intro');
     expect(room.command(joined.playerId, 'punch')).toEqual([]);
     expect(room.state().intro).toBe(FIGHTER_INTRO_SECONDS);
@@ -24,11 +32,23 @@ describe('fighter room', () => {
     expect(room.lobbyPlayers()).toHaveLength(2);
     expect(room.lobbyPlayers()[1]?.isAi).toBe(true);
   });
+  it('refreshes the loading generation and timeout budget for an authenticated retry', () => {
+    const room = new FighterRoom('RETRY', 1);
+    const joined = room.addPlayer('Ada'); if ('error' in joined) throw new Error(joined.error);
+    room.advance(); room.selectFighter(joined.playerId, 'nyx'); room.advance(); room.selectMap(joined.playerId, 'void'); room.advance();
+    const generation = room.state().loadingGeneration;
+    room.tick(FIGHTER_LOADING_TIMEOUT_SECONDS - 5);
+    expect(room.retryLoading(generation)).toBe(true);
+    expect(room.state().loadingGeneration).toBe(generation + 1);
+    room.tick(10);
+    expect(room.phase).toBe('loading');
+    expect(room.retryLoading(generation)).toBe(false);
+  });
   it('binds each human to only their own side', () => {
     const room = new FighterRoom('4821', 1);
     const a = room.addPlayer('A'), b = room.addPlayer('B');
     if ('error' in a || 'error' in b) throw new Error('join failed');
-    room.advance(); room.selectFighter(a.playerId, 'nyx'); room.selectFighter(b.playerId, 'wraith'); room.advance(); room.selectMap(a.playerId,'foundry'); room.advance(); room.ready(); room.tick(FIGHTER_INTRO_SECONDS + 0.1); room.tick(6.1);
+    room.advance(); room.selectFighter(a.playerId, 'nyx'); room.selectFighter(b.playerId, 'wraith'); room.advance(); room.selectMap(a.playerId,'foundry'); room.advance(); room.ready(room.state().loadingGeneration); room.tick(FIGHTER_INTRO_SECONDS + 0.1); room.tick(6.1);
     expect(room.command(b.playerId, 'jump')[0]).toEqual({ type: 'action', fighter: 'p2', command: 'jump' });
     expect(room.command('unknown', 'punch')).toEqual([]);
   });
@@ -59,6 +79,28 @@ describe('fighter room', () => {
     expect(room.canControlSetup(b.playerId)).toBe(true);
     expect(room.state()).toMatchObject({expectedPlayerCount:1,hasExpectedPlayers:true,players:[expect.objectContaining({playerId:b.playerId,side:'p1'})]});
     expect(room.phase).toBe('map_select');expect(room.advance()).toBe(false);
+  });
+  it('lets a standalone survivor continue against AI after the other caller disconnects', () => {
+    const room=new FighterRoom('STANDALONE-DROP');room.expectHumanPlayers(2,false);
+    const a=room.addPlayer('Ada'),b=room.addPlayer('Bo');if('error' in a||'error' in b)throw new Error('join failed');
+    room.removePlayer(b.playerId);
+    room.selectFighter(a.playerId,'nyx');
+    expect(room.phase).toBe('map_select');
+    room.selectMap(a.playerId,'void');
+    expect(room.phase).toBe('loading');
+  });
+  it('rebuilds standalone loading setup when one caller disconnects', () => {
+    const room=new FighterRoom('LOADING-DROP');room.expectHumanPlayers(2,false);
+    const a=room.addPlayer('Ada'),b=room.addPlayer('Bo');if('error' in a||'error' in b)throw new Error('join failed');
+    room.selectFighter(a.playerId,'nyx');room.selectFighter(b.playerId,'wraith');
+    room.selectMap(a.playerId,'void');room.selectMap(b.playerId,'void');
+    expect(room.phase).toBe('loading');
+    room.removePlayer(b.playerId);
+    expect(room.phase).toBe('map_select');
+    expect(room.state().selectedMap).toBeNull();
+    room.selectMap(a.playerId,'void');
+    expect(room.phase).toBe('loading');
+    expect(room.lobbyPlayers().find(player=>player.isAi)?.fighterId).not.toBe('nyx');
   });
   it('gates advancement on valid selections', () => {
     const room = new FighterRoom('4821'); const joined = room.addPlayer('A'); if ('error' in joined) throw new Error('join failed');
@@ -153,7 +195,7 @@ describe('fighter room', () => {
     const room = new FighterRoom('4821'); const a = room.addPlayer('A'), b = room.addPlayer('B');
     if ('error' in a || 'error' in b) throw new Error('join failed');
     room.advance(); room.selectFighter(a.playerId, 'nyx'); room.selectFighter(b.playerId, 'wraith');
-    room.advance(); room.selectMap(a.playerId,'void'); room.advance(); room.ready(); room.tick(FIGHTER_INTRO_SECONDS); room.tick(6);
+    room.advance(); room.selectMap(a.playerId,'void'); room.advance(); room.ready(room.state().loadingGeneration); room.tick(FIGHTER_INTRO_SECONDS); room.tick(6);
     for (let index = 0; index < 12; index++) expect(room.voiceCommand(a.playerId, 'jump')).toBe(true);
     const events = room.drainEvents();
     for (let index = 0; index < 150; index++) { room.tick(0.1); events.push(...room.drainEvents()); }

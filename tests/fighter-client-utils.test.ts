@@ -16,10 +16,17 @@ describe('fighter client shortcuts', () => {
     expect(isInteractiveShortcutTarget({ closest: () => null } as unknown as EventTarget)).toBe(false);
   });
 
-  it('waits for every assigned player and falls back automatically on actor load failure', () => {
+  it('waits for exact assigned actors and blocks readiness on asset failure', () => {
     const source=readFileSync(new URL('../client/fighter/fighter.ts',import.meta.url),'utf8');
     expect(source).toContain('state.hasExpectedPlayers && state.players.length > 0');
-    expect(source).toContain("console.warn('Fighter model failed to load; using fallback actors.'");
-    expect(source).toContain('installFallbackActors(p1Id, p2Id, expectedKey)');
+    expect(source).toContain("console.error('Fighter model failed to load; blocking match readiness.'");
+    expect(source).toContain("showAssetError(t('error.fighterLoad')");
+    expect(source).not.toContain('FighterActor.fallback');
+    expect(source).toContain("actors.p1 !== loadedActors.get(p1Id)");
+    expect(source).toContain('`${state.loadingGeneration}:${state.selectedMap}`');
+    expect(source).toContain("arena model has no renderable geometry");
+    expect(source).toContain("status === 'reconnecting'");
+    expect(source).toContain('failedMapKey === loadKey');
+    expect(source).toContain('hasRenderableTriangle(gltf.scene)');
   });
 });

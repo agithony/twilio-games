@@ -70,6 +70,7 @@ export class GameServer {
   /** Rooms whose finished race we've already reported (cleared when they leave results). */
   private reported = new WeakSet<Room>();
   private started = new WeakSet<Room>();
+  private stationRendererReady = new WeakMap<Room, WebSocket | null>();
   private allowBrowserPlayer: (roomCode: string) => boolean = () => true;
   private readonly displayToken: string;
   private onDisplayAuthenticated: ((ws: WebSocket) => void) | null = null;
@@ -146,6 +147,12 @@ export class GameServer {
     ws.on('error', () => { /* a socket error shouldn't crash the process; close handler cleans up */ });
     ws.on('close', () => {
       const roomCode = conn.roomCode;
+      if (roomCode && conn.stationDisplay) {
+        const room = this.rooms.find(roomCode);
+        if (room?.phase === 'countdown' && this.stationRendererReady.get(room) === conn.ws) {
+          this.stationRendererReady.delete(room);
+        }
+      }
       if (roomCode && conn.playerId) {
         const room=this.rooms.find(roomCode);if(room){const before=room.phase;room.removePlayer(conn.playerId);this.reportAbandonedIfReset(room);this.publishSetupMutation(room,before);}
       }
@@ -181,6 +188,10 @@ export class GameServer {
         // per-race seed for a fresh course. Mid-race Enter is ignored (race already running).
         if (conn.roomCode) {
           const room = this.rooms.find(conn.roomCode);
+          if (conn.stationDisplay && room?.phase === 'countdown') {
+            this.markStationRendererReady(conn.roomCode, conn.ws);
+            break;
+          }
           if(room?.usesStationSetup){
             this.send(conn,{type:'error',code:'station_voice_only',message:'station_voice_only'});
             break;
@@ -190,9 +201,10 @@ export class GameServer {
             break;
           }
           if (room && (room.phase === 'lobby' || room.phase === 'finished')) {
-            room.start();
-            this.reportStartedOnce(room);
-            this.broadcastItems(conn.roomCode);
+            if (room.start()) {
+              this.reportStartedOnce(room);
+              this.broadcastItems(conn.roomCode);
+            } else this.pushLobby(conn.roomCode);
           }
         }
         break;
@@ -235,6 +247,7 @@ export class GameServer {
           const before = room.phase;
           room.advance(conn.playerId);
           const after = room.phase;
+          if (after === 'countdown') this.stationRendererReady.delete(room);
           if (after === 'countdown' || after === 'racing') this.reportStartedOnce(room);
           // Crossing into a race broadcasts items (with the chosen map) to EVERY conn in the room
           // so all displays/players load the right level; otherwise refresh the select screen.
@@ -263,7 +276,9 @@ export class GameServer {
         if (room && !this.allowBrowserPlayer(room.code)) {
           this.send(conn, { type: 'error', code: 'station_requeue_required', message: 'station_requeue_required' });
         } else if (room) {
-          this.reportAbandonedOnce(room); room.start(); this.reportStartedOnce(room); this.broadcastItems(conn.roomCode!);
+          if (room.start()) {
+            this.reportAbandonedOnce(room); this.reportStartedOnce(room); this.broadcastItems(conn.roomCode!);
+          } else this.pushLobby(conn.roomCode!);
         }
         break;
       }
@@ -276,7 +291,7 @@ export class GameServer {
         conn.stationDisplay = stationDisplay;
         conn.hostAuthorized = !stationDisplay || msg.displayToken === this.displayToken;
         if (this.displayToken && msg.displayToken === this.displayToken) this.onDisplayAuthenticated?.(conn.ws);
-        this.room(msg.roomCode);
+        const room = this.room(msg.roomCode);
         conn.roomCode = msg.roomCode;   // no playerId: receives broadcasts, occupies no slot
         this.pushLobby(msg.roomCode);   // send the display the current select/lobby state immediately
         {const room=this.rooms.find(msg.roomCode);if(room&&['countdown','racing'].includes(room.phase))this.send(conn,anyItems(room));}
@@ -372,6 +387,7 @@ export class GameServer {
     const before = room.phase;
     room.advance(spokenReplyPlayerId);
     const after = room.phase;
+    if (after === 'countdown') this.stationRendererReady.delete(room);
     if (after === 'countdown' || after === 'racing') this.reportStartedOnce(room);
     if (after === 'countdown' || after === 'racing') this.broadcastItems(roomCode);
     else this.pushLobby(roomCode);
@@ -384,6 +400,7 @@ export class GameServer {
 
   private publishSetupMutation(room:Room,before:Phase,spokenReplyPlayerId?:string):void {
     const after=room.phase;
+    if(after==='countdown')this.stationRendererReady.delete(room);
     if(after==='countdown'||after==='racing'){
       this.reportStartedOnce(room);this.broadcastItems(room.code);
     }else this.pushLobby(room.code);
@@ -400,6 +417,13 @@ export class GameServer {
   /** Test seam: advance one room's simulation by `dt` (drives the same stepRoom path the loop uses),
    *  so the racing→results→leaderboard reporting can be verified deterministically without real time. */
   stepRoomForTest(room: Room, dt: number): void { this.stepRoom(room, dt); }
+  markStationRendererReady(roomCode: string, display: WebSocket | null = null): boolean {
+    const room = this.rooms.find(roomCode);
+    if (!room?.usesStationSetup || room.phase !== 'countdown') return false;
+    this.stationRendererReady.set(room, display);
+    this.roomAccum.delete(room);
+    return true;
+  }
   /** Number of live rooms (test/diagnostic hook for the room-leak fix). */
   get roomCount(): number { return this.rooms.count; }
   /** Live WS connections (displays + device players). Used by the voice router to auto-join a caller
@@ -458,6 +482,10 @@ export class GameServer {
       else this.reportFinishedOnce(room);   // belt-and-suspenders if it slipped through
       return;
     }
+    if (room.phase === 'countdown' && room.usesStationSetup && !this.stationRendererReady.has(room)) {
+      this.roomAccum.delete(room);
+      return;
+    }
     this.reportStartedOnce(room);
     let acc = (this.roomAccum.get(room) ?? 0) + dt;
     while (acc >= STEP) { room.tick(STEP); acc -= STEP; }
@@ -484,6 +512,7 @@ export class GameServer {
 
   private reportStartedOnce(room: Room): void {
     if (this.started.has(room) || (room.phase !== 'countdown' && room.phase !== 'racing')) return;
+    if (room.usesStationSetup && room.phase === 'countdown' && !this.stationRendererReady.has(room)) return;
     this.started.add(room); this.onRaceStarted?.(room);
   }
 

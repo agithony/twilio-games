@@ -23,6 +23,45 @@ describe('fighter voice session', () => {
     expect(arrival).not.toContain('what is your name');
   });
 
+  it('captures a missing station profile name before fighter selection', () => {
+    const game=voiceGame();
+    const caller=game.connect('CA-station-no-name','VOICE',undefined,undefined,{index:0,count:1});
+    expect(game.room.phase).toBe('lobby');
+    const beforeName=caller.spoken.length;
+    caller.prompt('Ada');
+    expect(game.room.phase).toBe('fighter_select');
+    expect(game.room.state().players[0]?.name).toBe('Ada');
+    expect(caller.spoken.slice(beforeName).join(' ')).not.toMatch(/what is your name/i);
+  });
+
+  it('does not let a delayed duplicate fighter choice select the arena', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+      const game=voiceGame();const caller=game.connect('CA-duplicate-choice');
+      caller.prompt('Ada');
+      vi.advanceTimersByTime(1_000);
+      caller.session.setStationManaged(false);
+      caller.prompt('second');
+      expect(game.room.phase).toBe('map_select');
+      vi.advanceTimersByTime(3_000);
+      caller.session.setStationManaged(false);
+      caller.prompt('second');
+      expect(game.room.phase).toBe('map_select');
+      expect(game.room.state().mapVotesByPlayerId[caller.playerId]).toBeUndefined();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('accepts a repeated choice when the other caller caused the phase transition', () => {
+    const game=voiceGame();const ada=game.connect('CA-boundary-a'),bob=game.connect('CA-boundary-b');
+    ada.prompt('Ada');bob.prompt('Bob');
+    ada.prompt('second');
+    bob.prompt('first');
+    expect(game.room.phase).toBe('map_select');
+    ada.prompt('second');
+    expect(game.room.state().mapVotesByPlayerId[ada.playerId]).toBe('void');
+  });
+
   it('drives the complete solo journey through intro, combat, victory, and rematch', () => {
     const game = voiceGame();
     const ada = game.connect('CA1', ' voice ');
@@ -112,10 +151,10 @@ describe('fighter voice session', () => {
     ada.prompt('start');
 
     const bob = game.connect('CA2');
-    bob.prompt('Wraith');
-    expect(game.room.state().players.find(player => player.playerId === bob.playerId)?.name).toBe('Caller');
-    expect(game.room.state().players.find(player => player.playerId === bob.playerId)?.fighterId).toBe('wraith');
     bob.prompt('my name is Bob');
+    bob.prompt('Wraith');
+    expect(game.room.state().players.find(player => player.playerId === bob.playerId)?.name).toBe('Bob');
+    expect(game.room.state().players.find(player => player.playerId === bob.playerId)?.fighterId).toBe('wraith');
     ada.prompt('Nyx');
 
     expect(game.room.phase).toBe('map_select');
@@ -132,7 +171,6 @@ describe('fighter voice session', () => {
       { playerId: bob.playerId, command: 'back' },
     ]);
 
-    expect(ada.spoken.some(line => line.includes('Bob joined as your opponent and locked in Wraith'))).toBe(true);
     expect(bob.spoken.some(line => line.includes('arena vote'))).toBe(true);
     expect(bob.spoken).toContain('Player one, Ada, as Nyx.');
     expect(bob.spoken).toContain('Versus.');
@@ -278,6 +316,11 @@ describe('fighter voice session', () => {
       'Primeiro, qual é o seu nome?',
     ]);
 
+    ana.prompt('quem são os lutadores');
+    expect(game.room.hasConfirmedName(ana.playerId)).toBe(false);
+    expect(game.room.phase).toBe('lobby');
+    ana.prompt('pode me dizer quais lutadores existem');
+    expect(game.room.hasConfirmedName(ana.playerId)).toBe(false);
     ana.prompt('meu nome é ana');
     expect(ana.spoken.slice(-4)).toEqual([
       'Boas-vindas à Luta por Voz, Ana.',
@@ -401,6 +444,7 @@ function voiceGame() {
     return {
       phase: state.phase,
       myName: me.name,
+      nameConfirmed: room.hasConfirmedName(playerId),
       myFighterId: me.fighterId,
       myFighterName: fighterName(me.fighterId),
       foeName: foe?.name ?? null,
@@ -436,15 +480,15 @@ function voiceGame() {
     let playerId = '';
     const session = new FighterVoiceSession({
       say: text => spoken.push(text),
-      join: (_code,name,_callSid,side,expectedPlayers) => {
-        if(expectedPlayers!==undefined)room.expectHumanPlayers(expectedPlayers);
-        else if(room.playerCount>=1)room.expectHumanPlayers(2);
-        const joined = room.addPlayer(name,side);
+      join: (_code,name,_callSid,side,expectedPlayers,nameConfirmed) => {
+        if(expectedPlayers!==undefined)room.expectHumanPlayers(expectedPlayers,side!==undefined);
+        else if(room.playerCount>=1)room.expectHumanPlayers(2,false);
+        const joined = room.addPlayer(name,side,nameConfirmed);
         if ('error' in joined) return null;
         playerId = joined.playerId; stateChanged(); return { playerId, resumed: false };
       },
       leave: (_code, id) => { room.removePlayer(id); stateChanged(); },
-      setName:(_code,id,name)=>{room.setName(id,name);if(!room.state().automaticSetup)room.expectHumanPlayers(Math.max(1,room.playerCount));stateChanged();},
+      setName:(_code,id,name)=>{room.setName(id,name);room.expectHumanPlayers(Math.max(1,room.playerCount),false);stateChanged();},
       selectFighter: (_code, id, fighterId) => { const ok = room.selectFighter(id, fighterId); stateChanged(); return ok; },
       selectMap: (_code,id,mapId)=>{const ok=room.selectMap(id,mapId);stateChanged();return ok;},
       advance: (_code, id) => { const ok = room.canControlSetup(id) && room.advance(); stateChanged(); return ok; },
@@ -455,7 +499,7 @@ function voiceGame() {
       snapshot: (_code, id) => snapshot(id),
     });
     session.setAuthoritativeName(authoritativeName??null);
-    session.setStationManaged(authoritativeName!==undefined);
+    session.setStationManaged(authoritativeName!==undefined||stationAssignment!==undefined);
     if(stationAssignment)session.setStationAssignment(stationAssignment.index,stationAssignment.count);
     sessions.push(session);
     session.handleMessage(JSON.stringify({ type: 'setup', callSid, customParameters: { roomCode, ...(commandLocale ? { commandLocale } : {}) } }));

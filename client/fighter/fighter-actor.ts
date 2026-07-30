@@ -38,17 +38,7 @@ export class FighterActor {
   ): Promise<FighterActor> {
     const model = await loadFbx(spec.file, onProgress);
     prepareFighterModel(model);
-    return new FighterActor(model, clipsForFighter(model, sources, false));
-  }
-
-  static fallback(color: string): FighterActor {
-    const model = new THREE.Group();
-    const material = new THREE.MeshStandardMaterial({ color, roughness: 0.65, metalness: 0.2 });
-    const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.42, 1.05, 6, 12), material); body.position.y = 1.05;
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.3, 16, 12), material); head.position.y = 2;
-    const stance = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.18, 0.42), material); stance.position.y = 0.12;
-    model.add(body, head, stance);
-    return new FighterActor(model, new Map());
+    return new FighterActor(model, clipsForFighter(model, sources, spec.embeddedIdle === true));
   }
 
   play(id: string, options: { loop?: boolean; hold?: boolean; fade?: number; speed?: number; lockFloor?: boolean } = {}): number {
