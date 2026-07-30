@@ -19,7 +19,8 @@ export interface FighterAnimationSpec {
 }
 
 export const FIGHTER_ASSET_ROOT = '/assets/fighters/source/';
-export const FIGHTER_ASSET_VERSION = '3';
+export const FIGHTER_ASSET_VERSION = '4';
+const FIGHTER_ANIMATION_TIMEOUT_MS = 30_000;
 export const fighterAssetUrl = (file: string) => `${FIGHTER_ASSET_ROOT}${file}?v=${FIGHTER_ASSET_VERSION}`;
 
 export const FIGHTERS: FighterSpec[] = FIGHTER_ROSTER.map(entry => ({ id: entry.id, label: entry.name, file: entry.file, embeddedIdle: entry.embeddedIdle }));
@@ -124,8 +125,10 @@ export function retargetClipNames(source: THREE.AnimationClip, target: THREE.Obj
 }
 
 export function prepareFighterModel(model: THREE.Group, targetHeight = 2.25): void {
+  let meshCount = 0;
   model.traverse((object) => {
     if (!(object as THREE.Mesh).isMesh) return;
+    meshCount += 1;
     const mesh = object as THREE.Mesh;
     mesh.castShadow = true;
     mesh.receiveShadow = true;
@@ -133,6 +136,9 @@ export function prepareFighterModel(model: THREE.Group, targetHeight = 2.25): vo
 
   const initialBox = new THREE.Box3().setFromObject(model);
   const height = initialBox.getSize(new THREE.Vector3()).y;
+  if (meshCount === 0 || initialBox.isEmpty() || !Number.isFinite(height) || height <= 0) {
+    throw new Error('fighter model has no finite renderable geometry');
+  }
   model.scale.multiplyScalar(targetHeight / height);
   model.updateMatrixWorld(true);
   const box = new THREE.Box3().setFromObject(model);
@@ -151,8 +157,13 @@ export async function loadAnimationSources(
   let loaded = 0;
   await Promise.all(specs.map(async (spec) => {
     try {
-      const source = await loadFbx(spec.file), clip = source.animations[0];
-      if (clip) sources.set(spec.id, clip);
+      const source = await Promise.race([
+        loadFbx(spec.file),
+        new Promise<never>((_, reject) => setTimeout(
+          () => reject(new Error(`animation ${spec.id} timed out`)), FIGHTER_ANIMATION_TIMEOUT_MS,
+        )),
+      ]), clip = source.animations[0];
+      if (clip && clip.duration > 0 && clip.tracks.length > 0) sources.set(spec.id, clip);
     } catch { /* Optional variants may fail; required pools are checked below. */ }
     finally { loaded += 1; onLoaded?.(loaded, specs.length, spec.label); }
   }));
@@ -169,16 +180,17 @@ export function clipsForFighter(
 ): Map<string, THREE.AnimationClip> {
   const clips = new Map<string, THREE.AnimationClip>();
   const restorePose = createPoseRestorer(model);
-  const neutral = model.animations[0];
+  const neutral = model.animations.find(clip => clip.duration > 0 && clip.tracks.length > 0);
+  const hasEmbeddedIdle = embeddedIdle && Boolean(neutral);
   if (neutral) {
     const clip = neutral.clone();
-    clip.name = embeddedIdle ? 'idle' : 'pose';
+    clip.name = hasEmbeddedIdle ? 'idle' : 'pose';
     clips.set(clip.name, clip);
   }
   for (const spec of FIGHTER_ANIMATIONS) {
     const source = sources.get(spec.id);
     if (!source) continue;
-    if (embeddedIdle && spec.id === 'idle') continue;
+    if (hasEmbeddedIdle && spec.id === 'idle') continue;
     const retargeted = retargetClipNames(source, model);
     const rooted = spec.stripRootMotion ? withoutHorizontalRootMotion(retargeted) : retargeted;
     const clip = normalizeClipGround(model, rooted, restorePose);

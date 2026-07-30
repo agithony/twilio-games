@@ -10,7 +10,7 @@ import { dwellForEvent, HANDOFF_PAUSE_MS } from '../shared/battle-timing';
 
 export type BattlePhase = 'lobby' | 'monster_select' | 'battle' | 'results';
 
-interface Slot { id: string; name: string; monsterId: string | null; isAi: boolean; side: Side; }
+interface Slot { id: string; name: string; nameConfirmed: boolean; monsterId: string | null; isAi: boolean; side: Side; }
 
 /** Roster row for the lobby / monster-select screens. */
 export interface BattlePlayer { playerId: string; name: string; monsterId: string | null; isAi: boolean; }
@@ -39,6 +39,7 @@ export class BattleRoom {
   private lastPresentedActionSide: Side | null = null;
   private expectedHumanPlayers = 1;
   private automaticSetup=false;
+  private fixedExpectedHumanPlayers=false;
 
   constructor(code: string, seed: number) {
     this.code = code;
@@ -80,21 +81,23 @@ export class BattleRoom {
 
   /** Add a human player. Battles are 1v1, so at most 2 humans. A late second player may join while
    *  results remain visible, but the finished battle stays intact until an explicit rematch. */
-  addPlayer(name: string, preferredSide?: Side): { playerId: string } | { error: string } {
+  addPlayer(name: string, preferredSide?: Side, nameConfirmed = true): { playerId: string } | { error: string } {
     if (this._phase === 'results' && this.slots.length >= 2) return { error: 'room_full' };
     if (this._phase === 'battle' && this.slots.length >= 2) return { error: 'battle_in_progress' };
     if (this.slots.length >= 2) return { error: 'room_full' };
     const side = preferredSide ?? (this.slots.some(slot => slot.side === 'a') ? 'b' : 'a');
     if (this.slots.some(slot => slot.side === side)) return { error: 'room_full' };
     const id = `p${this.nextId++}`;
-    this.slots.push({ id, name: name || `Player ${this.slots.length + 1}`, monsterId: null, isAi: false, side });
+    this.slots.push({ id, name: name || `Player ${this.slots.length + 1}`, nameConfirmed, monsterId: null, isAi: false, side });
     this.slots.sort((left, right) => left.side.localeCompare(right.side));
+    if (!nameConfirmed && this._phase === 'monster_select') this._phase = 'lobby';
     this.reconcileSetup();
     return { playerId: id };
   }
 
-  expectHumanPlayers(count: number): void {
+  expectHumanPlayers(count: number, fixed = true): void {
     this.expectedHumanPlayers = count >= 2 ? 2 : 1;
+    if (fixed) this.fixedExpectedHumanPlayers = true;
     this.automaticSetup=true;
     if (this.expectedHumanPlayers === 1 && this.slots.length === 1 && this._phase !== 'battle') {
       this.slots[0]!.side = 'a';
@@ -109,15 +112,24 @@ export class BattleRoom {
   removePlayer(playerId: string): void {
     const wasInBattle = this.isBattleParticipant(playerId);
     this.slots = this.slots.filter(s => s.id !== playerId);
-    if (this.slots.length === 0 && this._phase !== 'lobby') this.reset();
-    else if (wasInBattle && this._phase === 'battle') this.interruptBattle();
+    if (this.slots.length === 0) {
+      this.reset(); this.automaticSetup = false; this.expectedHumanPlayers = 1; this.fixedExpectedHumanPlayers = false;
+    }
+    else {
+      if (!this.fixedExpectedHumanPlayers) this.expectedHumanPlayers = this.slots.length;
+      if (wasInBattle && this._phase === 'battle') {
+        this.interruptBattle();
+        if (this.automaticSetup && !this.fixedExpectedHumanPlayers) for (const slot of this.slots) slot.monsterId = null;
+      }
+    }
     if(!wasInBattle)this.reconcileSetup();
   }
 
   setPlayerInfo(playerId: string, info: { name?: string }): void {
     const s = this.slots.find(x => x.id === playerId);
-    if (s && info.name) s.name = info.name.slice(0, 20);
+    if (s && info.name) { s.name = info.name.slice(0, 20); s.nameConfirmed = true; this.reconcileSetup(); }
   }
+  hasConfirmedName(playerId: string): boolean { return this.slots.find(slot => slot.id === playerId)?.nameConfirmed === true; }
 
   anonymizePlayer(playerId: string): void {
     const index = this.slots.findIndex(slot => slot.id === playerId);
@@ -146,19 +158,19 @@ export class BattleRoom {
       this.presentationReadyAt = 0;
       this.lastPresentedActionSide = null;
       for (const s of this.slots) s.monsterId = null;
-      this._phase = 'monster_select';
+      this._phase = this.slots.every(slot => slot.nameConfirmed) ? 'monster_select' : 'lobby';
       return;
     }
     if(this.automaticSetup)return;
     if (this._phase === 'lobby') {
-      if (this.slots.length > 0) this._phase = 'monster_select';
+      if (this.slots.length > 0 && this.slots.every(slot => slot.nameConfirmed)) this._phase = 'monster_select';
       return;
     }
     if (this._phase === 'monster_select' && this.canStart()) this.start();
   }
 
   private reconcileSetup():void {
-    if(!this.automaticSetup||this.slots.length<this.expectedHumanPlayers)return;
+    if(!this.automaticSetup||this.slots.length<this.expectedHumanPlayers||!this.slots.every(slot=>slot.nameConfirmed))return;
     if(this._phase==='lobby')this._phase='monster_select';
     if(this._phase==='monster_select'&&this.canStart())this.start();
   }
@@ -356,7 +368,7 @@ export class BattleRoom {
     this.resultsReadyAt = 0;
     this.presentationReadyAt = 0;
     this.lastPresentedActionSide = null;
-    this._phase = this.slots.length > 0 ? 'monster_select' : 'lobby';
+    this._phase = this.slots.length > 0 && this.slots.every(slot => slot.nameConfirmed) ? 'monster_select' : 'lobby';
   }
 
   private canChoose(playerId: string): boolean {

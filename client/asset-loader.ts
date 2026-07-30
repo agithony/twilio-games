@@ -7,9 +7,28 @@ import { parseManifest } from '../shared/asset-manifest';
 import type { Manifest, AssetRef } from '../shared/asset-manifest';
 import { applyModelTransform } from './model-transform';
 
+const RACER_ASSET_TIMEOUT_MS = 45_000;
+type AssetLoadState = 'idle' | 'loading' | 'ready' | 'failed';
+
 /** Count mesh descendants of an object (including itself). */
 function meshCount(o: THREE.Object3D): number {
   let n = 0; o.traverse((c) => { if ((c as THREE.Mesh).isMesh) n++; }); return n;
+}
+
+function visibleGeometryBounds(root: THREE.Object3D): { count: number; bounds: THREE.Box3 } {
+  root.updateMatrixWorld(true);
+  const bounds = new THREE.Box3();
+  let count = 0;
+  root.traverse(object => {
+    const mesh = object as THREE.Mesh;
+    if (!mesh.isMesh || (mesh.geometry?.getAttribute('position')?.count ?? 0) < 3) return;
+    for (let current: THREE.Object3D | null = mesh; current; current = current.parent) if (!current.visible) return;
+    const materials = Array.isArray(mesh.material) ? mesh.material : mesh.material ? [mesh.material] : [];
+    if (materials.length === 0 || materials.every(material => !material.visible)) return;
+    bounds.union(new THREE.Box3().setFromObject(mesh));
+    count += 1;
+  });
+  return { count, bounds };
 }
 
 /**
@@ -60,6 +79,16 @@ export class AssetLoader {
   private cars: (THREE.Group | null)[] = [];
   private barrier: THREE.Group | null = null;
   private boost: THREE.Group | null = null;
+  private manifestLoad: Promise<void> | null = null;
+  private carLoads: Promise<void>[] = [];
+  private carLoadStates: AssetLoadState[] = [];
+  private carLoadGenerations: number[] = [];
+  private barrierLoad: Promise<void> = Promise.resolve();
+  private barrierLoadState: AssetLoadState = 'idle';
+  private barrierLoadGeneration = 0;
+  private boostLoad: Promise<void> = Promise.resolve();
+  private boostLoadState: AssetLoadState = 'idle';
+  private boostLoadGeneration = 0;
 
   constructor() {
     this.loader = new GLTFLoader();
@@ -78,32 +107,166 @@ export class AssetLoader {
    * didn't appear for a long time. Now the menu is interactive immediately; cars upgrade from
    * primitive fallback to real model as they load. `ready` (optional) resolves when ALL have loaded.
    */
-  async loadManifest(): Promise<void> {
+  loadManifest(): Promise<void> {
+    if (!this.manifestLoad) {
+      const attempt = this.loadManifestOnce();
+      this.manifestLoad = attempt;
+      void attempt.catch(() => { if (this.manifestLoad === attempt) this.manifestLoad = null; });
+    }
+    return this.manifestLoad;
+  }
+
+  private async loadManifestOnce(): Promise<void> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15_000);
     try {
-      const res = await fetch('/api/manifest');
-      if (!res.ok) return;   // HTTP error => everything stays primitive (fetch doesn't reject on !ok)
+      const res = await fetch('/api/manifest', { signal: controller.signal });
+      if (!res.ok) throw new Error(`manifest request failed with HTTP ${res.status}`);
       // Run the body through parseManifest (tolerant; returns EMPTY_MANIFEST on bad input).
       this.manifest = parseManifest(await res.text());
       // Pre-size the cars array so carTemplate(i) returns null (→ primitive) until GLB i lands.
       this.cars = new Array(this.manifest.cars.length).fill(null);
       // Kick off ALL loads without awaiting the whole batch — each fills its slot as it resolves.
-      this.carsReady = Promise.all([
-        ...this.manifest.cars.map((r, i) => this.loadRef(r, CAR_TARGET).then(g => { this.cars[i] = g; })),
-        this.manifest.barrier ? this.loadRef(this.manifest.barrier, BARRIER_TARGET).then(g => { this.barrier = g; }) : Promise.resolve(),
-        this.manifest.boostPad ? this.loadRef(this.manifest.boostPad, BOOST_TARGET).then(g => { this.boost = g; }) : Promise.resolve(),
-      ]).then(() => undefined);
-    } catch { return; }   // no manifest => everything stays primitive
+      this.carLoads = new Array(this.manifest.cars.length);
+      this.carLoadStates = new Array(this.manifest.cars.length).fill('idle');
+      this.carLoadGenerations = new Array(this.manifest.cars.length).fill(0);
+      for (let index = 0; index < this.manifest.cars.length; index++) this.startCarLoad(index);
+      this.barrierLoad = this.manifest.barrier ? this.startBarrierLoad() : Promise.resolve();
+      this.boostLoad = this.manifest.boostPad ? this.startBoostLoad() : Promise.resolve();
+      this.carsReady = Promise.all([...this.carLoads, this.barrierLoad, this.boostLoad]).then(() => undefined);
+    } finally { clearTimeout(timeout); }
   }
 
   /** Resolves once every car/barrier/boost GLB has finished loading (or immediately if none). The
    *  thumbnail renderer awaits this so it doesn't snapshot half-loaded templates. */
   carsReady: Promise<void> = Promise.resolve();
 
+  async waitForGameplayAssets(carIndexes: readonly number[]): Promise<void> {
+    await this.loadManifest();
+    if (carIndexes.length > 0 && this.carLoads.length === 0) {
+      this.manifestLoad = null;
+      await this.loadManifest();
+    }
+    if (carIndexes.length > 0 && this.carLoads.length === 0) throw new Error('car manifest failed to load');
+    const indexes = [...new Set(carIndexes.map(index => (
+      this.carLoads.length ? ((index % this.carLoads.length) + this.carLoads.length) % this.carLoads.length : -1
+    )).filter(index => index >= 0))];
+    for (const index of indexes) if (this.carLoadStates[index] === 'failed') this.startCarLoad(index);
+    if (this.manifest.barrier && this.barrierLoadState === 'failed') this.barrierLoad = this.startBarrierLoad();
+    if (this.manifest.boostPad && this.boostLoadState === 'failed') this.boostLoad = this.startBoostLoad();
+    await this.waitForRequiredAssets(indexes);
+    const failedIndexes = indexes.filter(index => this.carLoadStates[index] === 'failed');
+    const retryBarrier = this.manifest.barrier && this.barrierLoadState === 'failed';
+    const retryBoost = this.manifest.boostPad && this.boostLoadState === 'failed';
+    if (failedIndexes.length || retryBarrier || retryBoost) {
+      for (const index of failedIndexes) this.startCarLoad(index);
+      if (retryBarrier) this.barrierLoad = this.startBarrierLoad();
+      if (retryBoost) this.boostLoad = this.startBoostLoad();
+      await this.waitForRequiredAssets(indexes);
+    }
+    if (indexes.some(index => !this.cars[index])) throw new Error('selected car model failed to load');
+    if (this.manifest.barrier && !this.barrier) throw new Error('barrier model failed to load');
+    if (this.manifest.boostPad && !this.boost) throw new Error('boost model failed to load');
+  }
+
+  private startCarLoad(index: number): Promise<void> {
+    const ref = this.manifest.cars[index];
+    if (!ref) return Promise.resolve();
+    const generation = (this.carLoadGenerations[index] ?? 0) + 1;
+    this.carLoadGenerations[index] = generation;
+    this.carLoadStates[index] = 'loading';
+    const load = this.loadRef(ref, CAR_TARGET).then(group => {
+      if (group) {
+        this.cars[index] = group;
+        this.carLoadStates[index] = 'ready';
+        return;
+      }
+      if (this.carLoadGenerations[index] !== generation) return;
+      if (this.carLoadStates[index] === 'ready') return;
+      this.cars[index] = group;
+      this.carLoadStates[index] = 'failed';
+    });
+    this.carLoads[index] = load;
+    return load;
+  }
+
+  private startBarrierLoad(): Promise<void> {
+    const ref = this.manifest.barrier;
+    if (!ref) return Promise.resolve();
+    const generation = ++this.barrierLoadGeneration;
+    this.barrierLoadState = 'loading';
+    return this.loadRef(ref, BARRIER_TARGET).then(group => {
+      if (group) {
+        this.barrier = group;
+        this.barrierLoadState = 'ready';
+        return;
+      }
+      if (this.barrierLoadGeneration !== generation) return;
+      if (this.barrierLoadState === 'ready') return;
+      this.barrier = group;
+      this.barrierLoadState = 'failed';
+    });
+  }
+
+  private startBoostLoad(): Promise<void> {
+    const ref = this.manifest.boostPad;
+    if (!ref) return Promise.resolve();
+    const generation = ++this.boostLoadGeneration;
+    this.boostLoadState = 'loading';
+    return this.loadRef(ref, BOOST_TARGET).then(group => {
+      if (group) {
+        this.boost = group;
+        this.boostLoadState = 'ready';
+        return;
+      }
+      if (this.boostLoadGeneration !== generation) return;
+      if (this.boostLoadState === 'ready') return;
+      this.boost = group;
+      this.boostLoadState = 'failed';
+    });
+  }
+
+  private expireLoadingAssets(indexes: readonly number[]): void {
+    for (const index of indexes) if (this.carLoadStates[index] === 'loading') {
+      this.carLoadStates[index] = 'failed';
+    }
+    if (this.manifest.barrier && this.barrierLoadState === 'loading') {
+      this.barrierLoadState = 'failed';
+    }
+    if (this.manifest.boostPad && this.boostLoadState === 'loading') {
+      this.boostLoadState = 'failed';
+    }
+  }
+
+  private waitForRequiredAssets(indexes: readonly number[]): Promise<void> {
+    const startedAt = performance.now();
+    return new Promise((resolve, reject) => {
+      const check = () => {
+        const loading = indexes.some(index => this.carLoadStates[index] === 'loading')
+          || this.manifest.barrier !== null && this.barrierLoadState === 'loading'
+          || this.manifest.boostPad !== null && this.boostLoadState === 'loading';
+        if (!loading) { resolve(); return; }
+        if (performance.now() - startedAt >= RACER_ASSET_TIMEOUT_MS) {
+          this.expireLoadingAssets(indexes);
+          reject(new Error('Racer gameplay assets timed out'));
+          return;
+        }
+        setTimeout(check, 100);
+      };
+      check();
+    });
+  }
+
   private loadRef(ref: AssetRef, target: number): Promise<THREE.Group | null> {
     return new Promise((resolve) => {
       this.loader.load(`/assets/${ref.file}`, (gltf) => {
         try {
           const g = this.normalize(gltf.scene, ref, target);
+          const visible = visibleGeometryBounds(g);
+          const bounds = visible.bounds;
+          const size = bounds.getSize(new THREE.Vector3());
+          if (visible.count === 0 || bounds.isEmpty() || ![size.x, size.y, size.z].every(Number.isFinite)
+            || Math.max(size.x, size.y, size.z) <= 1e-6) throw new Error('asset has no renderable geometry');
           // Baked clips are OFF by default: on free Sketchfab models they're usually SHOWCASE
           // animations (doors opening, "air out") with an OPEN resting pose that looks broken while
           // driving. Cars then animate via wheel-spin. Opt IN per-model with ref.animate (Models

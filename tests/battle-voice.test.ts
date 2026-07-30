@@ -1,7 +1,7 @@
 // The Voice Monsters CALL session — binds a Conversation Relay caller to a battle room, routes their
 // spoken turns (via the voice matcher + LLM host) into battle actions, and speaks commentary from
 // battle events. Tested against a fake battle backend + fake LLM (no WS/Twilio).
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { BattleVoiceSession, parseSpokenName, isAdvanceWord, type BattleVoiceDeps, type BattleVoiceSnapshot } from '../server/battle-voice';
 import type { BattleEvent } from '../shared/battle-world';
 
@@ -128,6 +128,87 @@ describe('BattleVoiceSession', () => {
     expect(arrival).not.toContain('your name');
     session.handleMessage(prompt('call me Mallory'));
     expect(log).not.toContain('name Mallory');
+  });
+
+  it('keeps a station caller without a profile name in name capture', () => {
+    let confirmedArg: boolean | undefined;
+    let myName: string | null = null;
+    let phase: BattleVoiceSnapshot['phase'] = 'lobby';
+    const { deps, log, said } = fakeDeps({
+      join: (_code, _name, _callSid, _side, _expected, confirmed) => {
+        confirmedArg = confirmed;
+        return { playerId: 'p1', resumed: false };
+      },
+      setName: (_code, _id, name) => { log.push(`name ${name}`); myName = name; phase = 'monster_select'; },
+      snapshot: () => battleSnap({ phase, myName }),
+    });
+    const session = new BattleVoiceSession(deps);
+    session.setStationManaged(true);
+    session.setStationAssignment(0, 1);
+    session.handleMessage(setup());
+    expect(confirmedArg).toBe(false);
+    const beforeName = said.length;
+    session.handleMessage(prompt('Ada'));
+    expect(log).toContain('name Ada');
+    expect(said.slice(beforeName).join(' ')).not.toMatch(/what'?s your name/i);
+  });
+
+  it('does not reinterpret a delayed duplicate name as a monster selection', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+      let myName: string | null = null;
+      let phase: BattleVoiceSnapshot['phase'] = 'lobby';
+      const { deps, log } = fakeDeps({
+        setName: (_code, _id, name) => { log.push(`name ${name}`); myName = name; phase = 'monster_select'; },
+        snapshot: () => battleSnap({ phase, myName }),
+      });
+      const session = new BattleVoiceSession(deps);
+      session.handleMessage(setup());
+      session.handleMessage(prompt('Sparkmouse'));
+      vi.advanceTimersByTime(3_000);
+      session.handleMessage(prompt('Sparkmouse'));
+      expect(log).toContain('name Sparkmouse');
+      expect(log.some(entry => entry.startsWith('monster '))).toBe(false);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('does not cancel an in-flight host response when Relay repeats the final frame', async () => {
+    let resolveReply!: (value: string | null) => void;
+    const { deps, said } = fakeDeps({
+      snapshot: () => activeBattle(),
+      converse: () => new Promise(resolve => { resolveReply = resolve; }),
+    });
+    const session = new BattleVoiceSession(deps);
+    session.handleMessage(setup());said.length=0;
+    session.handleMessage(prompt('tell me a joke'));
+    session.handleMessage(prompt('tell me a joke'));
+    resolveReply('Arena joke delivered.');
+    await Promise.resolve();await Promise.resolve();
+    expect(said).toContain('Arena joke delivered.');
+  });
+
+  it('gives lobby guidance when rematch is waiting on another caller name', () => {
+    let phase:BattleVoiceSnapshot['phase']='results';
+    const {deps,said}=fakeDeps({
+      snapshot:()=>battleSnap({phase,myName:'Ada',winnerName:'Ada',canRematch:true}),
+      advance:()=>{phase='lobby';return true;},
+    });
+    const session=new BattleVoiceSession(deps);session.handleMessage(setup());said.length=0;
+    session.handleMessage(prompt('rematch'));
+    expect(said.join(' ')).toMatch(/waiting for every player/i);
+    expect(said.join(' ')).not.toMatch(/pick your monster/i);
+  });
+
+  it('accepts a repeated choice when another caller caused the phase transition', () => {
+    let phase: BattleVoiceSnapshot['phase'] = 'lobby';
+    const { deps, log } = fakeDeps({ snapshot: () => battleSnap({ phase, myName: 'Ada' }) });
+    const session = new BattleVoiceSession(deps);
+    session.handleMessage(setup());
+    session.handleMessage(prompt('Sparkmouse'));
+    phase = 'monster_select';
+    session.handleMessage(prompt('Sparkmouse'));
+    expect(log).toContain('monster sparkmouse');
   });
 
   it('ignores a repeated setup frame on the same live session', () => {
@@ -262,7 +343,7 @@ describe('BattleVoiceSession', () => {
     expect(log).toContain('monster embertail');
   });
 
-  it('does not mistake a spoken monster name for the caller name on monster select', () => {
+  it('finishes requested name capture before interpreting a matching monster name', () => {
     const { deps, log } = fakeDeps({
       snapshot: () => battleSnap({ myName: null }),
     });
@@ -271,8 +352,8 @@ describe('BattleVoiceSession', () => {
 
     s.handleMessage(prompt('Sparkmouse'));
 
-    expect(log).toContain('monster sparkmouse');
-    expect(log.some(l => l === 'name Sparkmouse')).toBe(false);
+    expect(log).not.toContain('monster sparkmouse');
+    expect(log.some(l => l === 'name Sparkmouse')).toBe(true);
   });
 
   it('does not treat a descriptive monster phrase as option one or as the caller name', async () => {
@@ -286,12 +367,12 @@ describe('BattleVoiceSession', () => {
 
     expect(log.some(l => l.startsWith('monster '))).toBe(false);
     expect(log.some(l => l.startsWith('name '))).toBe(false);
-    expect(said.join(' ')).toMatch(/own monster.*name or number/i);
+    expect(said.join(' ')).toMatch(/what.*name|name.*challenger/i);
   });
 
   it.each([
     { label: 'English named lobby', locale: undefined, snap: battleSnap({ phase: 'lobby', myName: 'Ada' }), utterance: 'what now?', expected: /opens automatically/i },
-    { label: 'Portuguese unnamed lobby', locale: 'pt-BR', snap: battleSnap({ phase: 'lobby', myName: null }), utterance: 'o que devo fazer agora?', expected: /nome.*automaticamente/i },
+    { label: 'Portuguese unnamed lobby', locale: 'pt-BR', snap: battleSnap({ phase: 'lobby', myName: null }), utterance: 'o que devo fazer agora?', expected: /qual.*nome/i },
     { label: 'English monster select', locale: undefined, snap: battleSnap({ myName: 'Ada' }), utterance: 'the fiery-looking one', expected: /own monster.*name or number/i },
     { label: 'Portuguese monster select', locale: 'pt-BR', snap: battleSnap({ myName: 'Ada' }), utterance: 'quero o monstro de fogo', expected: /próprio monstro.*nome ou número/i },
     { label: 'English battle root', locale: undefined, snap: activeBattle(), utterance: 'something else', expected: /fight.*guard.*item.*taunt/i },
@@ -581,6 +662,43 @@ describe('BattleVoiceSession', () => {
     expect(said.some(t => /thunder jolt/i.test(t) && /static zap/i.test(t))).toBe(true);
   });
 
+  it('deduplicates a repeated final fight frame after the menu opens', () => {
+    let menu: 'root' | 'fight' = 'root';
+    const moves = [
+      { id: 'sparkmouse.jolt', name: 'Thunder Jolt' },
+      { id: 'sparkmouse.zap', name: 'Static Zap' },
+    ];
+    const { deps, log, said } = fakeDeps({ snapshot: () => battleSnap({
+      phase: 'battle', myName: 'Ada', myMonsterId: 'sparkmouse', turn: 0,
+      activeSide: 'a', activeMenu: menu, whoseTurn: 'me', myMoves: moves,
+    }) });
+    deps.openFight = () => { log.push('openFight'); menu = 'fight'; };
+    const session = new BattleVoiceSession(deps);
+    session.handleMessage(setup()); said.length = 0;
+    session.handleMessage(prompt('fight'));
+    session.handleMessage(prompt('fight'));
+    expect(log.filter(entry => entry === 'openFight')).toHaveLength(1);
+    expect(said.filter(text => /thunder jolt/i.test(text))).toHaveLength(1);
+  });
+
+  it('does not reinterpret a delayed numeric Fight choice as move one', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+      let menu: 'root' | 'fight' = 'root';
+      const moves = [{ id: 'sparkmouse.jolt', name: 'Thunder Jolt' }];
+      const { deps, log } = fakeDeps({ snapshot: () => activeBattle({ activeMenu: menu, myMoves: moves }) });
+      deps.openFight = () => { log.push('openFight'); menu = 'fight'; };
+      const session = new BattleVoiceSession(deps);
+      session.handleMessage(setup());
+      session.handleMessage(prompt('one'));
+      vi.advanceTimersByTime(3_000);
+      session.handleMessage(prompt('one'));
+      expect(log.filter(entry => entry === 'openFight')).toHaveLength(1);
+      expect(log.some(entry => entry.startsWith('action '))).toBe(false);
+    } finally { vi.useRealTimers(); }
+  });
+
   it('ignores interim fight guesses and applies the corrected final root action', () => {
     const { deps, log, said } = fakeDeps({
       snapshot: () => battleSnap({
@@ -868,7 +986,7 @@ describe('BattleVoiceSession', () => {
     expect(advanced).toBe(false);
   });
 
-  it('explains a mid-battle departure and keeps the survivor monster selected', () => {
+  it('explains a mid-battle departure and asks the survivor to choose again', () => {
     let snap = battleSnap({
       phase: 'battle', myName: 'Ada', myMonsterId: 'sparkmouse', myMonsterName: 'Sparkmouse',
       foeName: 'Bo', foeMonsterName: 'Embertail', whoseTurn: 'me', activeSide: 'a', turn: 2,
@@ -878,13 +996,13 @@ describe('BattleVoiceSession', () => {
     s.handleMessage(setup()); said.length = 0;
     s.onBattleStateChanged(); said.length = 0;
     snap = battleSnap({
-      phase: 'monster_select', myName: 'Ada', myMonsterId: 'sparkmouse', myMonsterName: 'Sparkmouse', canStartBattle: true,
+      phase: 'monster_select', myName: 'Ada', myMonsterId: null, myMonsterName: null, canStartBattle: false,
     });
 
     s.onBattleStateChanged();
 
     expect(said.join(' ')).toMatch(/other player left/i);
-    expect(said.join(' ')).toMatch(/Sparkmouse is still locked in/i);
+    expect(said.join(' ')).toMatch(/choose your own monster/i);
   });
 
   it('announces the winner and loser when the battle ends', () => {

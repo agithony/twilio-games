@@ -42,11 +42,12 @@ export function parseCrMessage(raw: string): CrMessage {
 }
 
 export type RoomLike = {
-  addPlayer(name: string, color?: string, preferredIndex?: number): { playerId: string; lane: number } | { error: string };
+  addPlayer(name: string, color?: string, preferredIndex?: number, nameConfirmed?: boolean): { playerId: string; lane: number } | { error: string };
   expectHumanPlayers?(count:number,stationManaged?:boolean):void;
   applyIntent(id: string, intent: Intent): boolean|void;
   removePlayer(id: string): void;
   readonly playerCount?:number;
+  hasConfirmedName?(playerId: string): boolean;
 };
 
 const DTMF_TO_INTENT: Record<string, Intent> = {
@@ -111,6 +112,7 @@ export class ConversationRelayAdapter {
   private setupPromptPhase:string|null=null;
   private lastFinalCommand:{text:string;at:number;source:'setup'|'race'}|null=null;
   private setupPhaseEnteredAt=0;
+  private awaitingName=false;
   constructor(private deps: AdapterDeps) {}
 
   setAuthoritativeName(name: string | null): void {
@@ -241,9 +243,11 @@ export class ConversationRelayAdapter {
   }
 
   handleMessage(raw: string): void {
+    if (!this.active) return;
     const msg = parseCrMessage(raw);
     switch (msg.type) {
       case 'setup': {
+        if (this.playerId) return;
         const code = msg.customParameters['roomCode'];
         this.commandLocale = resolveLocale(msg.customParameters['commandLocale'] ?? msg.customParameters['locale'], DEFAULT_LOCALE);
         console.log(`[CR] setup callSid=${msg.callSid} roomCode=${code ?? '(none)'} commandLocale=${this.commandLocale}`);
@@ -256,15 +260,18 @@ export class ConversationRelayAdapter {
         else if(this.authoritativeName)room.expectHumanPlayers?.(1,false);
         else if((room.playerCount??0)>=1)room.expectHumanPlayers?.(2,false);
         const resumed=this.deps.resumePlayer?.(msg.callSid,code)??null;
+        const nameConfirmed = this.authoritativeName !== null;
         const res = resumed??room.addPlayer(this.authoritativeName ?? playerName(msg.from, this.commandLocale), undefined,
-          this.stationManaged ? this.stationParticipantIndex : undefined);
+          this.stationManaged ? this.stationParticipantIndex : undefined, nameConfirmed);
         if ('error' in res) {
           console.log(`[CR] addPlayer rejected: ${res.error} → unbound (caller cannot drive)`);
           this.deps.say?.(createTranslator(this.commandLocale, RACER_MESSAGES)('voice.roomFull'));
           return;
         }
-        if(!this.authoritativeName&&resumed?.name&&!/^(Racer|Piloto)(\s|$)/.test(resumed.name))this.authoritativeName=resumed.name.slice(0,50);
+        const confirmed = room.hasConfirmedName?.(res.playerId) ?? this.deps.hasPlayerName?.(code, res.playerId);
+        if(!this.authoritativeName&&resumed?.name&&confirmed===true)this.authoritativeName=resumed.name.slice(0,50);
         this.room = room; this.playerId = res.playerId; this.roomCode = code;
+        this.awaitingName = !nameConfirmed && confirmed === false;
         console.log(`[CR] bound caller to player ${res.playerId} lane ${res.lane} in room ${code}`);
         // Register for this room's game events + greet the caller. Send each greeting SENTENCE as its
         // own utterance so Relay TTS pauses naturally between them (one long string read run-on).
@@ -282,6 +289,19 @@ export class ConversationRelayAdapter {
           &&this.setupPromptPhase===null)this.setupPromptPhase=phaseAtFrame;
         const originatingSetupPhase=msg.last?this.setupPromptPhase:null;
         if(msg.last)this.setupPromptPhase=null;
+        if (msg.last && this.awaitingName && this.roomCode && this.playerId) {
+          this.firedIntents = [];
+          const reply = this.deps.handleSetupUtterance?.(
+            this.roomCode, this.playerId, msg.voicePrompt, this.commandLocale,
+          ) ?? null;
+          const confirmed = this.room?.hasConfirmedName?.(this.playerId)
+            ?? this.deps.hasPlayerName?.(this.roomCode, this.playerId) ?? false;
+          if (confirmed) this.awaitingName = false;
+          const phase = this.deps.phaseOf?.(this.roomCode) ?? phaseAtFrame ?? 'lobby';
+          if (reply) this.deps.say?.(reply, this.phaseGuard(phase));
+          else this.deps.say?.(createTranslator(this.commandLocale, RACER_MESSAGES)('voice.greeting.2'), this.phaseGuard(phase));
+          break;
+        }
         if(msg.last&&originatingSetupPhase&&phaseAtFrame!==originatingSetupPhase){
           this.firedIntents=[];
           this.speakPhaseFallback(phaseAtFrame);
@@ -304,7 +324,7 @@ export class ConversationRelayAdapter {
             : phase === 'map_select' ? 'voice.helpMap'
               : phase === 'results' || phase === 'finished' ? 'voice.helpResults'
                 : phase === 'racing' || phase === 'countdown' ? 'voice.help'
-                  : this.authoritativeName ? 'voice.helpLobbyNamed' : 'voice.helpLobby';
+                  : this.authoritativeName || (this.roomCode && this.playerId && this.deps.hasPlayerName?.(this.roomCode,this.playerId)) ? 'voice.helpLobbyNamed' : 'voice.helpLobby';
           this.deps.say?.(createTranslator(this.commandLocale, RACER_MESSAGES)(key), phase ? this.phaseGuard(phase) : undefined);
           break;
         }

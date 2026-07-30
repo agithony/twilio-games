@@ -224,8 +224,9 @@ const veilEl = document.getElementById('veil')!;
 let veilLifted = false;
 let assetsReady = false;    // manifest (car GLBs) + backdrop map applied (set by loadAssetsInBackground)
 let stationEngineStateReady = false;
+let raceSceneReady = !stationDisplay.active;
 function maybeMarkStationReady(): void {
-  if (assetsReady && stationEngineStateReady) stationDisplay.markEngineReady();
+  if (raceSceneReady && stationEngineStateReady) stationDisplay.markEngineReady();
 }
 let wantAttract = false;    // a menu screen wants the demo running (gated until assetsReady)
 let attractFrames = 0;
@@ -245,7 +246,7 @@ const attract = new AttractMode((snap) => {
   if (!veilLifted && ++attractFrames >= 30) liftVeil();
 });
 function startAttract() {
-  if (raceLive) return;
+  if (stationDisplay.active && raceLive) return;
   wantAttract = true;
   // Don't show the demo until car MODELS + map are loaded — otherwise ensureCar caches primitive
   // BOXES for the demo ids and they never upgrade. The boot veil covers this wait. Once assets are
@@ -265,28 +266,55 @@ function stopAttract() {
   renderer.setSpectator(isDisplay);   // back to the player's chase cam (or stay spectator on a display)
 }
 
+let racePreparationGeneration = 0;
+let latestRaceSnapshot: import('../shared/types').WorldSnapshot | null = null;
+let resolveRaceSnapshot: ((snapshot: import('../shared/types').WorldSnapshot) => void) | null = null;
+let cancelRaceSnapshot: (() => void) | null = null;
+function cancelPendingRaceSnapshot(): void {
+  cancelRaceSnapshot?.();
+  cancelRaceSnapshot = null;
+  resolveRaceSnapshot = null;
+}
 conn.onItems((items, map) => {
-  // The server tells us which level THIS race uses (chosen in the lobby). Load it before building
-  // items so the map world, curve path, per-car/per-item scales, camera, lighting all apply. The
-  // host display has no ?map= URL param, so without this the level + scales were never applied.
-  void applyLevel(map ?? urlMap).then(() => renderer.buildItems(items));
+  cancelPendingRaceSnapshot();
+  const generation = ++racePreparationGeneration;
+  if (!stationDisplay.active) {
+    buffer.clear(); raceLive = true; stopAttract();
+    renderer.buildItems(items);
+    void applyLevel(map ?? urlMap).then(applied => {
+      if (applied && generation === racePreparationGeneration && raceLive) renderer.buildItems(items);
+    });
+    return;
+  }
+  raceSceneReady = false; raceLive = true; latestRaceSnapshot = null; buffer.clear(); stopAttract();
+  veilLifted = false; veilEl.classList.remove('hide');
+  void prepareRaceScene(items, map ?? urlMap, generation);
 });
 conn.onSnapshot((s) => {
   stationEngineStateReady = true; maybeMarkStationReady();
-  raceLive = true; flowPhase = 'other'; flowEpoch++; stopAttract();   // real race takes over the canvas
+  latestRaceSnapshot = s;
+  if (resolveRaceSnapshot) {
+    const resolve = resolveRaceSnapshot;
+    resolveRaceSnapshot = null; cancelRaceSnapshot = null; resolve(s);
+  }
+  raceLive = true; flowPhase = 'other'; flowEpoch++;
   if (s.phase === 'racing' && !started) {
     getMusicManager().switchContext('racer');
   }
-  started = true; buffer.push(s, performance.now());
+  started = true;
+  if (raceSceneReady) buffer.push(s, performance.now());
   // The moment the game STARTS (countdown or racing), drop the menu overlay entirely so the 3-2-1
   // plays full-screen and unobstructed. The controls legend lives in the LOBBY (pre-start) only —
   // by the time the countdown runs, players have already read it; covering the countdown with it
   // was wrong. The big number is painted from the snapshot in the frame loop.
-  screens.hide(); if (s.phase !== 'countdown') big.textContent = '';
+  if (raceSceneReady) { screens.hide(); if (s.phase !== 'countdown') big.textContent = ''; }
 });
 conn.onLobby((m) => {
   stationEngineStateReady = true; maybeMarkStationReady();
-  if (raceLive) return;                       // race already running; ignore stale lobby
+  if (raceLive) {
+    racePreparationGeneration += 1; cancelPendingRaceSnapshot(); latestRaceSnapshot = null; buffer.clear(); raceLive = false;
+    liftVeil();
+  }
   flowPhase = 'lobby'; flowEpoch++; big.textContent = '';
   getMusicManager().switchContext('lobby');
   // Play select sound when a new player joins
@@ -298,6 +326,10 @@ conn.onLobby((m) => {
 });
 conn.onSelectState((m) => {
   stationEngineStateReady = true; maybeMarkStationReady();
+  if (raceLive) {
+    racePreparationGeneration += 1; cancelPendingRaceSnapshot(); latestRaceSnapshot = null; buffer.clear();
+    liftVeil();
+  }
   raceLive = false; flowEpoch++; big.textContent = '';
   if (m.phase === 'car_select') { flowPhase = 'car_select'; screens.renderCarSelect(m.players); }
   else if (m.phase === 'map_select') { flowPhase = 'map_select'; flowMaps = m.maps; screens.renderMapSelect(m.maps, m.selectedMap, m.players, { counts: m.mapVotes ?? {}, tie: m.mapTie ?? false }); }
@@ -310,9 +342,10 @@ conn.onSelectState((m) => {
 // screen renders the same (board-included) view every broadcast → the dedup guard holds → no flicker.
 let lastBoard: { map: string | null; entries: GlobalEntry[] } | null = null;
 conn.onResults((m) => {
+  racePreparationGeneration += 1; cancelPendingRaceSnapshot();
   stationDisplay.markEngineResultsReady();
   stationEngineStateReady = true; maybeMarkStationReady();
-  raceLive = false; flowPhase = 'results'; const epoch = ++flowEpoch; big.textContent = '';
+  raceLive = false; raceSceneReady = !stationDisplay.active; flowPhase = 'results'; const epoch = ++flowEpoch; big.textContent = '';
   getMusicManager().switchContext('leaderboard');
   startAttract();
   // Render with the cached board if it's for THIS map (so a repeat broadcast doesn't strip it back to
@@ -360,8 +393,19 @@ conn.onError((code, message) => {
 });
 
 const GANTRY_FILES = { start: 'racer/track/starting_line.glb', finish: 'racer/track/finish_line.glb' };
+const RACER_CONFIG_TIMEOUT_MS = 15_000;
+const RACER_MAP_TIMEOUT_MS = 45_000;
+const RACER_STANDALONE_MAP_TIMEOUT_MS = 15_000;
 /** The map currently loaded into the renderer, so applyLevel() can skip redundant reloads. */
 let loadedMap: string | null = null;
+let levelLoadGeneration = 0;
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out`)), timeoutMs);
+    void promise.then(value => { clearTimeout(timer); resolve(value); }, error => { clearTimeout(timer); reject(error); });
+  });
+}
 
 /**
  * Load a level (map world + curve + per-level car/item scale + camera + lighting/effects + gantries)
@@ -369,36 +413,102 @@ let loadedMap: string | null = null;
  * lobby chose (the server sends it on the `items` message) — the host display has no ?map= param, so
  * this is the ONLY way its chosen level + per-car scales get applied. Idempotent per map name.
  */
-async function applyLevel(mapName: string | null | undefined): Promise<void> {
+async function applyLevel(mapName: string | null | undefined): Promise<boolean> {
   // No map (or unchanged): just (re)place gantries on whatever track is current and bail.
-  if (!mapName) { renderer.setStartFinishLines(GANTRY_FILES, {}); return; }
-  if (mapName === loadedMap) return;
+  const generation = ++levelLoadGeneration;
+  if (!mapName) { await renderer.setStartFinishLines(GANTRY_FILES, {}); return true; }
+  if (mapName === loadedMap) return true;
   let gantryOffsets: { start?: GantryOffset; finish?: GantryOffset } = {};
+  let applied = false;
   try {
-    const maps = await fetchMaps();
+    const maps = await withTimeout(fetchMaps(), RACER_CONFIG_TIMEOUT_MS, 'map catalog');
     const cfg = maps[mapName];
+    if (!cfg) throw new Error(`map ${mapName} is unavailable`);
     if (cfg) {
       // Normalize the saved config into a full level (fills defaults; optional lighting/effects/props).
       const level = mergeLevel(cfg);
-      const world = await loadMapWorld(cfg);
-      if (world) renderer.setMapWorld(world);
+      const world = stationDisplay.active
+        ? await withTimeout(loadMapWorld(cfg), RACER_MAP_TIMEOUT_MS, `map ${mapName}`)
+        : await withTimeout(loadMapWorld(cfg), RACER_STANDALONE_MAP_TIMEOUT_MS, `map ${mapName}`);
+      if (generation !== levelLoadGeneration) return false;
+      if (!world) throw new Error(`map ${mapName} failed to load`);
+      renderer.setMapWorld(world);
       // Race stays in canonical sim space; the map's saved transform places the scenery.
       applyTrackTransform(renderer.getTrackGroup(), CANONICAL_TRACK);
       // Render-only curved path: cars/items/camera follow the curve; the sim stays straight.
       renderer.setPath(level.path ? new CurvedTrack(level.path) : null, surfaceOptsFromPath(level.path));
       renderer.setLighting(level.lighting ?? null);
       renderer.setEffects(level.effects ?? null);
-      renderer.setProps(level.props);
+      const propsReady = renderer.setProps(level.props);
       // Per-level car sizing keyed by MODEL FILENAME (the editor Cars panel's key); per-item scale.
       renderer.setCarScale((i) => resolveCarScale(level, assets.carFile(i) ?? String(i)));
       renderer.setItemScale((kind) => resolveItemScale(level, kind));
       renderer.setCamera(resolveCamera(level));
       gantryOffsets = { start: level.startLine, finish: level.finishLine };
-      loadedMap = mapName;
+      if (stationDisplay.active) await propsReady;
+      else void propsReady;
+      if (generation !== levelLoadGeneration) return false;
+      applied = true;
     }
-  } catch { /* keep the generated track */ }
+  } catch (error) {
+    if (stationDisplay.active) throw error;
+    if (generation !== levelLoadGeneration) return false;
+    renderer.setMapWorld(null); renderer.setPath(null); renderer.setCamera(null);
+    renderer.resetLevelPresentation();
+    renderer.setCarScale(() => 1); renderer.setItemScale(() => 1); void renderer.setProps([]);
+    loadedMap = null;
+  }
+  if (generation !== levelLoadGeneration) return false;
   // Bookend the track AFTER setPath so the gantry auto-fits the level's track width.
-  renderer.setStartFinishLines(GANTRY_FILES, gantryOffsets);
+  const linesReady = renderer.setStartFinishLines(GANTRY_FILES, gantryOffsets);
+  if (stationDisplay.active) await linesReady;
+  else void linesReady;
+  if (generation !== levelLoadGeneration) return false;
+  if (applied) loadedMap = mapName;
+  return true;
+}
+
+async function prepareRaceScene(
+  items: import('../shared/types').Item[],
+  mapName: string | null | undefined,
+  generation: number,
+  retry = 0,
+): Promise<void> {
+  try {
+    const first = latestRaceSnapshot ?? await new Promise<import('../shared/types').WorldSnapshot>((resolve, reject) => {
+      resolveRaceSnapshot = resolve;
+      cancelRaceSnapshot = () => reject(new Error('race preparation cancelled'));
+    });
+    await assets.waitForGameplayAssets(first.cars.map(car => car.carIndex));
+    if (generation !== racePreparationGeneration) return;
+    if (!await applyLevel(mapName) || generation !== racePreparationGeneration) return;
+    renderer.buildItems(items);
+    renderer.clearCars();
+    const splitScreen = first.cars.length === 2;
+    renderer.render(first, { splitScreen });
+    await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    if (generation !== racePreparationGeneration) return;
+    renderer.render(latestRaceSnapshot ?? first, { splitScreen });
+    buffer.clear();
+    buffer.push(latestRaceSnapshot ?? first, performance.now());
+    raceSceneReady = true;
+    screens.hide(); big.textContent = '';
+    liftVeil();
+    if (stationDisplay.active) conn.ready();
+    maybeMarkStationReady();
+  } catch (error) {
+    if (generation !== racePreparationGeneration) return;
+    console.error('Unable to prepare the selected Voice Racer scene.', error);
+    const title = document.getElementById('veil-title');
+    if (title) title.textContent = locale === 'pt-BR' ? 'Não foi possível carregar a corrida' : 'Unable to load race';
+    if (stationDisplay.active && generation === racePreparationGeneration && retry < 2) {
+      setTimeout(() => {
+        if (generation === racePreparationGeneration && !raceSceneReady) {
+          void prepareRaceScene(items, mapName, generation, retry + 1);
+        }
+      }, 2_000);
+    }
+  }
 }
 
 /** Load GLB templates + per-level config + car-grid thumbnails OFF the critical path, so the menu
@@ -413,7 +523,7 @@ async function loadAssetsInBackground(): Promise<void> {
   try {
     let bg = urlMap;
     if (!bg) { try { bg = Object.keys(await fetchMaps())[0] ?? null; } catch { bg = null; } }
-    await applyLevel(bg);
+    if (!raceLive) await applyLevel(bg);
   } catch { /* keep generated track */ }
   // Models + map are loaded → NOW the attract demo can show real cars on the real track. If a menu
   // already asked for it (wantAttract), kick it off; otherwise startAttract() will once a screen needs it.
@@ -427,16 +537,19 @@ async function loadAssetsInBackground(): Promise<void> {
   // resolves before they're all loaded, so the menu/background show fast) — snapshotting a half-
   // loaded template would render a primitive. renderCarThumbnailsAsync paces to main-thread idle.
   await new Promise(r => setTimeout(r, 1500));
+  if (stationDisplay.active && raceLive) return;
   try { await assets.carsReady; } catch { /* some cars may stay primitive */ }
   // Boost-orb image: shoot the real pad model once, then show it in the HUD gauge + lobby legend so
   // players learn what the glowing orbs on the track actually are (was a generic ⚡ emoji). '' → the
   // gauge/legend keep a plain text label (no broken image).
   try {
+    if (stationDisplay.active && raceLive) return;
     const orb = renderBoostThumbnail(assets);
     if (orb) { setOrbThumb(orb); screens.setBoostThumb(orb); }
   } catch { /* keep text-only nitro label */ }
   try {
-    await renderCarThumbnailsAsync(assets, (i, url) => screens.setCarThumb(i, url));
+    await renderCarThumbnailsAsync(assets, (i, url) => screens.setCarThumb(i, url), 256,
+      () => !stationDisplay.active || !raceLive);
   } catch { /* placeholders remain */ }
 
   // Map previews LAST (heaviest — full scenery GLBs): render each authored map's 3D world to a tile
@@ -446,7 +559,9 @@ async function loadAssetsInBackground(): Promise<void> {
     const maps = await fetchMaps();
     const previews: Record<string, string> = {};
     for (const [name, cfg] of Object.entries(maps)) {
+      if (stationDisplay.active && raceLive) return;
       await whenIdle();
+      if (stationDisplay.active && raceLive) return;
       const url = await renderMapThumbnail(cfg);
       if (url) previews[name] = url;
     }

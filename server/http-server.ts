@@ -780,8 +780,7 @@ export class HttpServer {
       leaveRoom: (roomCode, playerId) => this.game.voiceLeave(roomCode, playerId),
       phaseOf: (roomCode) => this.game.findRoom(roomCode)?.phase ?? 'lobby',
       hasPlayerName: (roomCode, playerId) => {
-        const name = this.game.findRoom(roomCode)?.lobbyPlayers().find(player => player.playerId === playerId)?.name ?? '';
-        return Boolean(name && !/^(Racer|Piloto)(\s|$)/.test(name));
+        return this.game.findRoom(roomCode)?.hasConfirmedName(playerId) === true;
       },
       onSetupChanged:(roomCode,beforePhase)=>this.game.voiceSetupChanged(roomCode,beforePhase as Phase),
       handleSetupUtterance:(roomCode,playerId,utterance,locale)=>{
@@ -844,7 +843,7 @@ export class HttpServer {
       : route === 'fighter'
         ? (fighter?.boundRoomCode ? { game: 'fighter', roomCode: fighter.boundRoomCode } : null)
         : (adapter.boundRoomCode ? { game: 'racer', roomCode: adapter.boundRoomCode } : null));
-    const say = (text: string) => sendRelayText(ws, text, relayLocale);
+    const say = (text: string, isCurrent?: () => boolean) => sendRelayText(ws, text, relayLocale, isCurrent);
     const processFrame = (raw: string) => {
       if (route === null) {
         try {
@@ -1047,8 +1046,8 @@ export class HttpServer {
     const numbers = selectionNumberHints(locale);
     if (game === 'battle') {
       const commands = locale === 'pt-BR'
-        ? ['lutar', 'atacar', 'defender', 'bloquear', 'item', 'poção', 'curar', 'provocar', 'voltar', 'cancelar', 'começar', 'revanche']
-        : ['fight', 'guard', 'item', 'potion', 'taunt', 'attack', 'heal', 'back', 'start', 'rematch'];
+        ? ['lutar', 'luta', 'lute', 'batalhar', 'combater', 'atacar', 'ataque', 'ataca', 'defender', 'bloquear', 'item', 'poção', 'curar', 'provocar', 'voltar', 'cancelar', 'começar', 'revanche']
+        : ['fight', 'fights', 'flight', 'guard', 'item', 'potion', 'taunt', 'attack', 'heal', 'back', 'start', 'rematch'];
       const monsters = rosterEntries();
       const primaryNames = monsters.map(monster => localizedMonsterName(locale, monster.id));
       const primaryMoves = monsters.flatMap(monster => monster.moves.map(move => localizedMoveName(locale, move.id)));
@@ -1081,11 +1080,11 @@ export class HttpServer {
     let session: FighterVoiceSession;
     session = new FighterVoiceSession({
       say,
-      join: (code, name, callSid, side, expectedPlayers) => {
+      join: (code, name, callSid, side, expectedPlayers, nameConfirmed) => {
         code = code.trim().toUpperCase();
         const resumed = this.resumeFighterVoiceCall(code, callSid, session);
         if (resumed) return { playerId: resumed, resumed: true };
-        const playerId = this.fighter.voiceJoin(code, name, side, expectedPlayers); if (!playerId) return null;
+        const playerId = this.fighter.voiceJoin(code, name, side, expectedPlayers, nameConfirmed); if (!playerId) return null;
         this.rememberFighterVoiceCall(callSid, code, playerId, session); this.registerFighterVoiceSession(code, session);
         return { playerId, resumed: false };
       },
@@ -1114,7 +1113,8 @@ export class HttpServer {
       const fighter = FIGHTER_ROSTER.find(entry => entry.id === id);
       return fighter ? localizedFighterName(locale, fighter.id, fighter.name) : null;
     };
-    return { phase: state.phase, myName: me?.name ?? null, myFighterId: me?.fighterId ?? null, myFighterName: fighterName(me?.fighterId),
+    return { phase: state.phase, myName: room.hasConfirmedName(playerId) ? me?.name ?? null : null,
+      nameConfirmed: room.hasConfirmedName(playerId), myFighterId: me?.fighterId ?? null, myFighterName: fighterName(me?.fighterId),
       foeName: foe?.name ?? null, foeFighterId: foe?.fighterId ?? null, foeFighterName: fighterName(foe?.fighterId), selectedMap: state.selectedMap,
       myMapVote:state.mapVotesByPlayerId[playerId]??null,
       allMapVotes:state.players.filter(player=>!player.isAi).every(player=>Boolean(state.mapVotesByPlayerId[player.playerId])),
@@ -1266,11 +1266,11 @@ export class HttpServer {
     let session: BattleVoiceSession;   // captured so join/leave can (un)register it for events
     const deps = {
       say,
-      join: (code: string, name: string, callSid: string, side?: 'a'|'b', expectedPlayers?: number) => {
+      join: (code: string, name: string, callSid: string, side?: 'a'|'b', expectedPlayers?: number, nameConfirmed?: boolean) => {
         this.battle.getOrCreateRoom(code);
         const resumed = this.resumeBattleVoiceCall(code, callSid, session);
         if (resumed) return { playerId: resumed, resumed: true };
-        const id = this.battle.voiceJoin(code, name, side, expectedPlayers);
+        const id = this.battle.voiceJoin(code, name, side, expectedPlayers, nameConfirmed);
         if (id) {
           this.rememberBattleVoiceCall(callSid, code, id, session);
           this.registerBattleVoiceSession(code, session);
@@ -1420,7 +1420,7 @@ export class HttpServer {
       ? /^(?:meu nome é|meu nome e|eu sou|pode me chamar de)\b/i.test(utterance.trim())
       : /^(?:my name is|i am|i'm|im|call me|this is)\b/i.test(utterance.trim());
     const me = room.lobbyPlayers().find(p => p.playerId === playerId);
-    const hasRealName = me && !/^(Racer|Piloto)(\s|$)/.test(me.name);
+    const hasRealName = room.hasConfirmedName(playerId);
     const parsedName = !hasRealName ? parseSpokenName(utterance, locale) : null;
     const bareLateName = room.phase !== 'lobby' && parsedName
       && utterance.trim().split(/\s+/).length <= 2
@@ -1493,6 +1493,7 @@ export class HttpServer {
       void me;
       return landed === 'car_select' ? (room.canSelectCar(playerId)?text('voice.chooseCar'):text('voice.waitingForPlayers'))
         : landed === 'map_select' ? (room.canSelectMap(playerId)?text('voice.chooseTrack'):text('voice.waitingForPlayers'))
+        : landed === 'lobby' ? text('voice.waitingForPlayers')
         : text('voice.goRace');
     }
     return null;
@@ -1661,7 +1662,7 @@ export class HttpServer {
     const player = players.find(p => p.playerId === playerId);
     const canStartBattle = room.canStart();
     const rawName = player?.name ?? '';
-    const myName = /^(Challenger|Player|Desafiante|Jogador)(\s|$)/.test(rawName) ? null : (rawName || null);
+    const myName = room.hasConfirmedName(playerId) ? rawName || null : null;
     const snap = room.snapshot();
     const res = room.result();
     const battleSide = this.battleSideOf(room, playerId);

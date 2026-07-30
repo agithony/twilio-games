@@ -10,6 +10,14 @@ function room() { return new BattleRoom('4821', 42); }
 const M0 = ROSTER[0]!.id, M1 = ROSTER[1]!.id;
 
 describe('BattleRoom', () => {
+  it('keeps standalone Monsters in lobby until every caller confirms a name', () => {
+    const room = new BattleRoom('NAMES', 1);
+    room.expectHumanPlayers(1);
+    const caller = room.addPlayer('Challenger', undefined, false); if ('error' in caller) throw new Error(caller.error);
+    expect(room.phase).toBe('lobby');
+    room.setPlayerInfo(caller.playerId, { name: 'Ada' });
+    expect(room.phase).toBe('monster_select');
+  });
   it('starts in lobby and accepts up to 2 human players', () => {
     const r = room();
     expect(r.phase).toBe('lobby');
@@ -105,6 +113,30 @@ describe('BattleRoom', () => {
     expect(r.snapshot()).toMatchObject({a:{id:b.playerId,name:'Bo',monsterId:M1},b:{id:'cpu',name:'Rival'}});
   });
 
+  it('lets a standalone survivor continue against AI after the other caller disconnects', () => {
+    const r=room();r.expectHumanPlayers(2,false);
+    const a=r.addPlayer('Ada') as {playerId:string};const b=r.addPlayer('Bo') as {playerId:string};
+    r.removePlayer(b.playerId);
+    expect(r.phase).toBe('monster_select');
+    expect(r.lobbyPlayers()[0]?.monsterId).toBeNull();
+    r.selectMonster(a.playerId,M0);
+    expect(r.phase).toBe('battle');
+    expect(r.snapshot()?.b.id).toBe('cpu');
+  });
+
+  it('shows monster selection before restarting an interrupted standalone battle against AI', () => {
+    const r=room();r.expectHumanPlayers(2,false);
+    const a=r.addPlayer('Ada') as {playerId:string};const b=r.addPlayer('Bo') as {playerId:string};
+    r.selectMonster(a.playerId,M0);r.selectMonster(b.playerId,M1);
+    expect(r.phase).toBe('battle');
+    r.removePlayer(b.playerId);
+    expect(r.phase).toBe('monster_select');
+    expect(r.lobbyPlayers()[0]?.monsterId).toBeNull();
+    r.selectMonster(a.playerId,M0);
+    expect(r.phase).toBe('battle');
+    expect(r.snapshot()?.b.id).toBe('cpu');
+  });
+
   it.each(['count-first','remove-first'] as const)('reconciles monster selection when a no-show is dropped %s',order=>{
     const r=room();r.expectHumanPlayers(2);
     const a=r.addPlayer('Ada','a') as {playerId:string};const b=r.addPlayer('Bo','b') as {playerId:string};
@@ -185,6 +217,37 @@ describe('BattleRoom', () => {
     expect(r.phase).toBe('results');
     expect(r.playerCount).toBe(2);
     expect(r.result()).not.toBeNull();
+  });
+
+  it('returns a rematch to lobby when a late caller still needs to confirm a name', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+      const r = room();
+      const a = r.addPlayer('Ada') as { playerId: string };
+      r.advance(); r.selectMonster(a.playerId, M0); r.advance();
+      for (let i = 0; i < 100 && r.phase === 'battle'; i++) {
+        const s = r.snapshot()!;
+        r.chooseMove(a.playerId, s.a.moves[1]!.id);
+        if (r.aiPending()) r.resolveAiTurn();
+      }
+      expect(r.phase).toBe('results');
+      const late = r.addPlayer('Challenger', undefined, false); if ('error' in late) throw new Error(late.error);
+      vi.advanceTimersByTime(r.rematchReadyInMs + 1);
+      r.advance();
+      expect(r.phase).toBe('lobby');
+      expect(r.hasConfirmedName(late.playerId)).toBe(false);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('returns an interrupted battle to lobby when the queued caller still needs a name', () => {
+    const r = room();
+    const a = r.addPlayer('Ada') as { playerId: string };
+    r.advance(); r.selectMonster(a.playerId, M0); r.advance();
+    const late = r.addPlayer('Challenger', undefined, false); if ('error' in late) throw new Error(late.error);
+    r.removePlayer(a.playerId);
+    expect(r.phase).toBe('lobby');
+    expect(r.hasConfirmedName(late.playerId)).toBe(false);
   });
 
   it('does not allow a rematch until the final event sequence has finished', () => {

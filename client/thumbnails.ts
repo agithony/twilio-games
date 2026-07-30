@@ -115,12 +115,15 @@ function whenIdle(): Promise<void> {
  */
 export async function renderCarThumbnailsAsync(
   assets: AssetLoader, onOne: (i: number, url: string) => void, size = 256,
+  shouldContinue: () => boolean = () => true,
 ): Promise<string[]> {
   const n = assets.carCount();
   if (n === 0) return [];
   const out: string[] = new Array(n).fill('');
   for (let i = 0; i < n; i++) {
+    if (!shouldContinue()) break;
     await whenIdle();                            // let attract paint before this synchronous render
+    if (!shouldContinue()) break;
     const url = shootCar(assets.carTemplate(i), size);
     out[i] = url;
     onOne(i, url);

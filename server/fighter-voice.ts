@@ -7,9 +7,13 @@ import { DEFAULT_LOCALE, resolveLocale, type SupportedLocale } from '../shared/i
 import { FIGHTER_MESSAGES, type FighterMessageKey } from '../shared/i18n/fighter';
 import { createTranslator, formatNumber, normalizeForMatching } from '../shared/i18n/translate';
 
+const FINAL_REPEAT_GUARD_MS = 5_000;
+const SAME_CONTEXT_REPEAT_GUARD_MS = 600;
+
 export interface FighterVoiceSnapshot {
   phase: FighterPhase;
   myName: string | null;
+  nameConfirmed?: boolean;
   myFighterId: string | null;
   myFighterName: string | null;
   foeName: string | null;
@@ -38,7 +42,7 @@ export interface FighterVoiceSnapshot {
   maps: { id: string; name: string }[];
 }
 export interface FighterVoiceDeps {
-  join(code: string, name: string, callSid: string, side?: 'p1' | 'p2', expectedPlayers?: number): { playerId: string; resumed: boolean } | null;
+  join(code: string, name: string, callSid: string, side?: 'p1' | 'p2', expectedPlayers?: number, nameConfirmed?: boolean): { playerId: string; resumed: boolean } | null;
   leave(code: string, id: string, callSid: string): void;
   setName(code: string, id: string, name: string): void;
   selectFighter(code: string, id: string, fighterId: string): boolean;
@@ -70,12 +74,17 @@ export class FighterVoiceSession {
   private stationManaged=false;
   private stationAssignment: { side: 'p1' | 'p2'; expectedPlayers: number } | null = null;
   private applyingSelection=false;
+  private awaitingName=false;
+  private lastFinalText:{text:string;beforeContext:string;afterContext:string;at:number}|null=null;
   private t = createTranslator(this.commandLocale, FIGHTER_MESSAGES);
   constructor(private deps: FighterVoiceDeps) {}
   setAuthoritativeName(name: string | null): void {
     this.authoritativeName = name?.trim().slice(0, 50) || null;
   }
-  setStationManaged(active:boolean):void{this.stationManaged=active;}
+  setStationManaged(active:boolean):void{
+    if(this.stationManaged!==active)this.lastFinalText=null;
+    this.stationManaged=active;
+  }
   setStationAssignment(index: number, count: number): void {
     this.stationAssignment = { side: index === 1 ? 'p2' : 'p1', expectedPlayers: count >= 2 ? 2 : 1 };
   }
@@ -88,10 +97,12 @@ export class FighterVoiceSession {
       this.commandLocale = resolveLocale(message.customParameters['commandLocale'] ?? message.customParameters['locale']);
       this.t = createTranslator(this.commandLocale, FIGHTER_MESSAGES);
       const joined=this.deps.join(code,this.authoritativeName??this.t('voice.callerPlaceholder'),message.callSid,
-        this.stationAssignment?.side,this.stationAssignment?.expectedPlayers??(this.authoritativeName?1:undefined));
+        this.stationAssignment?.side,this.stationAssignment?.expectedPlayers??(this.authoritativeName?1:undefined),
+        this.authoritativeName!==null);
       if (!joined) { this.deps.say(this.t('voice.arenaFull')); return; }
       this.code = code; this.playerId = joined.playerId; this.callSid = message.callSid;
       const snapshot = this.deps.snapshot(code, joined.playerId, this.commandLocale); this.lastPhase = snapshot?.phase ?? null;
+      this.awaitingName=!this.authoritativeName&&!(snapshot?.nameConfirmed??!this.isPlaceholderName(snapshot?.myName??null));
       this.lastFoeFighterId = snapshot?.foeFighterId ?? null;
       this.lastFoeName = snapshot?.foeName ?? null;
       if (joined.resumed && snapshot) {
@@ -123,7 +134,7 @@ export class FighterVoiceSession {
       if (spoken) this.handleUtterance(spoken);
       return;
     }
-    if (message.type === 'interrupt') { this.resetInterim(); return; }
+    if (message.type === 'interrupt') { this.resetInterim(); this.lastFinalText=null; return; }
     if (message.type === 'prompt' && this.code && this.playerId) {
       const snapshot = this.deps.snapshot(this.code, this.playerId, this.commandLocale);
       if (!message.last) {
@@ -131,13 +142,37 @@ export class FighterVoiceSession {
         this.resetInterim();
         return;
       }
-      this.resetInterim(); this.handleUtterance(message.voicePrompt);
+      this.resetInterim();
+      const normalized=normalizeForMatching(message.voicePrompt,this.commandLocale),now=Date.now();
+      const beforeContext=this.finalContext(snapshot);
+      const previousCrossedBoundary=this.lastFinalText
+        ?this.crossedSelectionBoundary(this.lastFinalText.beforeContext,this.lastFinalText.afterContext):false;
+      const repeatedTransition=previousCrossedBoundary&&this.lastFinalText?.afterContext===beforeContext;
+      const repeatedSameContext=this.lastFinalText?.beforeContext===beforeContext
+        &&this.lastFinalText.afterContext===beforeContext;
+      const repeatWindow=repeatedTransition?FINAL_REPEAT_GUARD_MS:SAME_CONTEXT_REPEAT_GUARD_MS;
+      if(this.lastFinalText?.text===normalized&&now-this.lastFinalText.at<repeatWindow
+        &&(repeatedTransition||repeatedSameContext))return;
+      this.handleUtterance(message.voicePrompt);
+      this.lastFinalText={text:normalized,beforeContext,
+        afterContext:this.finalContext(this.deps.snapshot(this.code,this.playerId,this.commandLocale)),at:now};
     }
   }
 
   private handleUtterance(spoken: string): void {
     const snapshot = this.deps.snapshot(this.code!, this.playerId!, this.commandLocale); if (!snapshot) return;
-    const unnamed = !this.authoritativeName&&this.isPlaceholderName(snapshot.myName);
+    const unnamed = !this.authoritativeName&&!(snapshot.nameConfirmed??!this.isPlaceholderName(snapshot.myName));
+    if(this.awaitingName){
+      const name=parseFighterSpokenName(spoken,this.commandLocale);
+      if(name&&!isFighterAdvanceWord(spoken,this.commandLocale)&&!isFighterStarAlias(spoken,this.commandLocale)){
+        this.awaitingName=false;this.deps.setName(this.code!,this.playerId!,name);
+        const next=this.deps.snapshot(this.code!,this.playerId!,this.commandLocale)??snapshot;
+        this.deps.say(this.t('voice.welcomeName',{name}));
+        this.deps.say(this.t('voice.controlsIntro'));this.deps.say(this.t('voice.fightHelp'));
+        this.speakContext(next);return;
+      }
+      this.deps.say(this.t('voice.tellName'));return;
+    }
     if (isHelpRequest(spoken, this.commandLocale)) {
       if (snapshot.phase === 'fight') this.deps.say(this.t('voice.fightHelp'));
       else this.speakContext(snapshot);
@@ -261,6 +296,16 @@ export class FighterVoiceSession {
     }
   }
 
+  private finalContext(snapshot: FighterVoiceSnapshot | null): string {
+    return `${snapshot?.phase??'unavailable'}:${snapshot?.myFighterId??''}:${snapshot?.myMapVote??''}`;
+  }
+
+  private crossedSelectionBoundary(before:string,after:string):boolean{
+    return before.startsWith('lobby:')&&after.startsWith('fighter_select:')
+      ||before.startsWith('fighter_select:')&&after.startsWith('map_select:')
+      ||before.startsWith('map_select:')&&after.startsWith('loading:');
+  }
+
   private advanceOrExplain(snapshot: FighterVoiceSnapshot): void {
     if(snapshot.automaticSetup&&['lobby','fighter_select','map_select'].includes(snapshot.phase)){this.speakContext(snapshot);return;}
     if (!this.authoritativeName&&this.isPlaceholderName(snapshot.myName) && snapshot.phase === 'lobby') { this.deps.say(this.t('voice.nameBeforeStart')); return; }
@@ -274,6 +319,7 @@ export class FighterVoiceSession {
 
   private speakContext(snapshot: FighterVoiceSnapshot): void {
     const say=(text:string)=>this.deps.say(text,this.phaseGuard(snapshot.phase));
+    if(this.awaitingName||(!this.authoritativeName&&!(snapshot.nameConfirmed??!this.isPlaceholderName(snapshot.myName)))){say(this.t('voice.tellName'));return;}
     if (snapshot.phase === 'lobby') {
       if (!this.authoritativeName&&this.isPlaceholderName(snapshot.myName)) say(this.t('voice.tellName'));
       else if(snapshot.automaticSetup)say(this.t('voice.waitingPlayerTwo'));
@@ -411,6 +457,9 @@ function parseFighterSpokenName(spoken: string, locale: SupportedLocale): string
   if (locale === 'en-US') return parseEnglishSpokenName(spoken);
   let text = spoken.trim().replace(/[.!?,]+$/u, '');
   if (!text || /[?]/.test(spoken) || isFighterAdvanceWord(text, locale) || isHelpRequest(text, locale)) return null;
+  const normalized = normalizeForMatching(text, locale);
+  if (!isExplicitName(text, locale)
+    && /\b(?:quem|qual|quais|como|onde|quando|por que|porque|o que|que|dizer|lutador|lutadores|personagem|personagens|arena|jogo)\b/.test(normalized)) return null;
   text = text.replace(/^(?:meu nome (?:é|e)|eu sou|sou|me chamo|chame-me de|pode me chamar de)\s+/iu, '');
   const words = text.match(/\p{L}[\p{L}'’-]*/gu)?.slice(0, 2) ?? [];
   if (!words.length) return null;

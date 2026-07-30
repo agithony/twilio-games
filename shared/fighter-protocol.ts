@@ -33,7 +33,8 @@ export type FighterClientMessage =
   | { type: 'select_map'; mapId: string }
   | { type: 'command'; command: FighterCommand }
   | { type: 'advance' }
-  | { type: 'ready'; loadingGeneration?: number }
+  | { type: 'ready'; loadingGeneration: number }
+  | { type: 'retry_loading'; loadingGeneration: number }
   | { type: 'back' }
   | { type: 'leave'; sessionId?: string };
 
@@ -70,8 +71,12 @@ export function parseFighterClientMessage(raw: string): FighterClientMessage | {
     case 'command': return isCommand(m.command) ? { type: 'command', command: m.command } : error('bad_command', 'invalid fighter command');
     case 'advance': return { type: 'advance' };
     case 'ready':
-      if (m.loadingGeneration !== undefined && (!Number.isSafeInteger(m.loadingGeneration) || (m.loadingGeneration as number) < 1)) return error('bad_ready', 'invalid loadingGeneration');
-      return { type: 'ready', ...(typeof m.loadingGeneration === 'number' ? { loadingGeneration: m.loadingGeneration } : {}) };
+      if (!Number.isSafeInteger(m.loadingGeneration) || (m.loadingGeneration as number) < 1) return error('bad_ready', 'invalid loadingGeneration');
+      return { type: 'ready', loadingGeneration: m.loadingGeneration as number };
+    case 'retry_loading':
+      return Number.isSafeInteger(m.loadingGeneration) && (m.loadingGeneration as number) >= 1
+        ? { type: 'retry_loading', loadingGeneration: m.loadingGeneration as number }
+        : error('bad_ready', 'invalid loadingGeneration');
     case 'back': return { type: 'back' };
     case 'leave': return { type: 'leave', ...(typeof m.sessionId === 'string' ? { sessionId: m.sessionId } : {}) };
     default: return error('unknown_type', `unknown type ${String(m.type)}`);

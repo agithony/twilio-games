@@ -41,6 +41,54 @@ describe('GameServer integration', () => {
     expect(c.inbox.some(m => m.type === 'snapshot')).toBe(true);
   });
 
+  it('holds a station countdown until its authenticated display finishes renderer warmup', async () => {
+    server = new GameServer({ port: 0, broadcastHz: 30, displayToken: 'station-display-token' });
+    let starts = 0; server.setOnRaceStarted(() => { starts += 1; });
+    server.setBrowserPlayerAdmission(() => false);
+    server.setRoomConfigProvider(() => ({ carCount: 2, maps: ['Silver Lake'] }));
+    const port = await server.start();
+    const room = server.getOrCreateRoom('WARMUP');
+    room.expectHumanPlayers(1);
+    const player = room.addPlayer('Ada', undefined, 0); if ('error' in player) throw new Error(player.error);
+    expect(server.voiceAdvance('WARMUP', player.playerId)).toBe(true);
+    expect(server.voiceSelectCar('WARMUP', player.playerId, 0)).toBe(true);
+    expect(server.voiceAdvance('WARMUP', player.playerId)).toBe(true);
+    expect(server.voiceSelectMap('WARMUP', 'Silver Lake', player.playerId)).toBe(true);
+    expect(server.voiceAdvance('WARMUP', player.playerId)).toBe(true);
+    const before = room.snapshot()!.countdown;
+    server.stepRoomForTest(room, 2);
+    expect(room.snapshot()!.countdown).toBe(before);
+    expect(starts).toBe(0);
+    const display = connect(port); await display.open();
+    display.ws.send(JSON.stringify({
+      type: 'spectate', roomCode: 'WARMUP', displayToken: 'station-display-token',
+    }));
+    await wait(30);
+    server.stepRoomForTest(room, 1);
+    expect(room.snapshot()!.countdown).toBe(before);
+    expect(starts).toBe(0);
+    display.ws.send(JSON.stringify({ type: 'ready' }));
+    await wait(30);
+    server.stepRoomForTest(room, .5);
+    expect(room.snapshot()!.countdown).toBeLessThan(before);
+    expect(starts).toBe(1);
+    const staleDisplay = connect(port); await staleDisplay.open();
+    staleDisplay.ws.send(JSON.stringify({
+      type: 'spectate', roomCode: 'WARMUP', displayToken: 'station-display-token',
+    }));
+    await wait(30);
+    staleDisplay.ws.close();
+    await wait(30);
+    const beforeStaleClose = room.snapshot()!.countdown;
+    server.stepRoomForTest(room, .25);
+    expect(room.snapshot()!.countdown).toBeLessThan(beforeStaleClose);
+    display.ws.close();
+    await wait(30);
+    const beforeDisconnect = room.snapshot()!.countdown;
+    server.stepRoomForTest(room, 1);
+    expect(room.snapshot()!.countdown).toBe(beforeDisconnect);
+  });
+
   it('two clients in the same room both appear in the snapshot', async () => {
     server = new GameServer({ port: 0, broadcastHz: 30 });
     const port = await server.start();
@@ -239,8 +287,9 @@ describe('GameServer integration', () => {
     server.voiceAdvance('RECOVER',b.playerId);server.voiceSelectMap('RECOVER','Silver Lake',a.playerId);
     server.voiceExpectHumanPlayers('RECOVER',1,[a.playerId]);await wait(30);
     expect(room.phase).toBe('map_select');expect(server.voiceAdvance('RECOVER',a.playerId)).toBe(true);await wait(30);
-    expect(starts).toBe(1);expect(room.phase).toBe('countdown');
+    expect(starts).toBe(0);expect(room.phase).toBe('countdown');
     expect(inbox).toContainEqual(expect.objectContaining({type:'items',map:'Silver Lake'}));display.close();
+    expect(server.markStationRendererReady('RECOVER')).toBe(true);server.stepRoomForTest(room,.1);expect(starts).toBe(1);
   });
 
   it('releases a disconnected station slot before an overflow caller replaces it',async()=>{
@@ -383,6 +432,20 @@ describe('HttpServer voice routing seams', () => {
     expect(room.phase).toBe('results');
   });
 
+  it('keeps rematch guidance in lobby while a late caller still needs a name', async () => {
+    http=new HttpServer({port:0,publicBaseUrl:'http://localhost',validateSignatures:false});await http.start();
+    const game=(http as unknown as {game:GameServer}).game;
+    game.setRoomConfigProvider(()=>({carCount:1,carNames:['Roadster'],maps:['Silver Lake']}));
+    const room=game.getOrCreateRoom('REMATCH-NAME');const player=room.addPlayer('Ada') as {playerId:string};
+    room.advance();room.selectCar(player.playerId,0);room.advance();room.selectMap('Silver Lake');room.advance();
+    room.addPlayer('Racer 5678',undefined,undefined,false);
+    for(let i=0;i<2000&&room.phase!=='results';i++)game.stepRoomForTest(room,0.1);
+    expect(room.phase).toBe('results');
+    const reply=http.directSelectionForTest(room,player.playerId,'rematch');
+    expect(room.phase).toBe('lobby');
+    expect(reply).toMatch(/wait|waiting/i);
+  });
+
   it('does not let a delayed Racer host action cross into a newer results phase', async()=>{
     http=new HttpServer({port:0,publicBaseUrl:'http://localhost',validateSignatures:false});await http.start();
     const game=(http as unknown as {game:GameServer}).game;
@@ -414,11 +477,14 @@ describe('HttpServer voice routing seams', () => {
     game.setRoomConfigProvider(()=>({carCount:2,carNames:['Roadster','Coupe'],maps:['Silver Lake','Drift']}));
     const room=game.getOrCreateRoom('LATEMAP');const first=room.addPlayer('Ada') as {playerId:string};
     room.advance();room.selectCar(first.playerId,0);room.advance();
-    const late=room.addPlayer('Racer 2222') as {playerId:string};
+    const late=room.addPlayer('Racer 2222',undefined,undefined,false) as {playerId:string};
 
+    expect(room.phase).toBe('lobby');
     expect(http.directSelectionForTest(room,late.playerId,'Bo')).toContain('Nice to meet you');
+    expect(game.voiceAdvance(room.code,late.playerId)).toBe(true);
     expect(http.directSelectionForTest(room,late.playerId,'two')).toContain('Coupe');
     expect(room.lobbyPlayers().find(player=>player.playerId===late.playerId)).toMatchObject({name:'Bo',carIndex:1});
+    expect(game.voiceAdvance(room.code,late.playerId)).toBe(true);
     expect(http.directSelectionForTest(room,late.playerId,'one')).toContain("vote's in");
     expect(room.mapVotes().counts).toEqual({'Silver Lake':1});
   });

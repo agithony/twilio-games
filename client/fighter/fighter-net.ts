@@ -116,7 +116,8 @@ export class FighterConnection {
   selectMap(mapId: string): void { this.send({ type: 'select_map', mapId }); }
   command(command: FighterCommand): void { this.send({ type: 'command', command }); }
   advance(): void { this.send({ type: 'advance' }); }
-  ready(): void { this.send({ type: 'ready', loadingGeneration: this.loadingGeneration || undefined }); }
+  ready(): void { if (this.loadingGeneration) this.send({ type: 'ready', loadingGeneration: this.loadingGeneration }); }
+  retryLoading(): void { if (this.loadingGeneration) this.send({ type: 'retry_loading', loadingGeneration: this.loadingGeneration }); }
   back(): void { this.send({ type: 'back' }); }
   onState(cb: (state: FighterState) => void): void { this.stateCb = cb; }
   onEvents(cb: (events: FighterEvent[]) => void): void { this.eventsCb = cb; }

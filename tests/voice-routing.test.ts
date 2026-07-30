@@ -206,6 +206,9 @@ describe('Arcade Voice routing', () => {
     expect(terms).toHaveLength(100);
     expect(new Set(terms.map(term => term.toLowerCase())).size).toBe(terms.length);
     expect(terms).toEqual(expect.arrayContaining(locale === 'pt-BR' ? ['lutar', 'dois'] : ['fight', 'two']));
+    expect(terms).toEqual(expect.arrayContaining(locale === 'pt-BR'
+      ? ['luta', 'lute', 'batalhar', 'combater']
+      : ['fights', 'flight']));
     expect(terms).toEqual(expect.arrayContaining(rosterEntries().map(monster => monsterName(locale, monster.id))));
   });
 
