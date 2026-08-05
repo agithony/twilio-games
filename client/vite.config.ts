@@ -26,7 +26,7 @@ const cleanIndexRoutes = () => ({
       if (url === '/arcade' || url === '/arcade/' || url === '/arcade/index.html') {
         res.writeHead(404, { 'Content-Type': 'text/plain' });res.end();return;
       }
-      if (url === '/editor' || url === '/garage' || url === '/analytics' || url === '/join') {
+      if (url === '/editor' || url === '/garage' || url === '/analytics' || url === '/join' || url === '/instructions') {
         res.writeHead(301, { Location: `${url}/${requestUrl.slice(url.length)}` }); res.end(); return;
       }
       next();
@@ -70,6 +70,7 @@ export default defineConfig(({ mode }) => {
           analytics: resolve(__dirname, 'analytics/index.html'),    // private activation analytics (/analytics)
           arcade: resolve(__dirname, 'arcade/index.html'),          // Twilio Games player and operator pages
           join: resolve(__dirname, 'join/index.html'),              // localized SMS / WhatsApp chooser
+          instructions: resolve(__dirname, 'instructions/index.html'), // Portuguese event instructions
           challenge: resolve(__dirname, 'challenge/index.html'),    // scanner-safe messaging reward claim
         },
       },

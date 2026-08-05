@@ -4,6 +4,7 @@ import { readFileSync, statSync } from 'node:fs';
 const readClient = (path: string) => readFileSync(new URL(`../client/${path}`, import.meta.url), 'utf8');
 const home = readClient('home.ts');
 const html = readClient('index.html');
+const css = readClient('home.css');
 
 function mp4TopLevelBoxes(bytes: Buffer): string[] {
   const boxes: string[] = [];
@@ -58,6 +59,14 @@ describe('home preview media and standalone catalog', () => {
     expect(launcher).toContain('standaloneGames.replaceChildren();');
     expect(launcher).toContain('standaloneGames.append(');
     expect(`${html}\n${home}`).not.toMatch(/\bautoplay\b/i);
+  });
+
+  it('fails closed on missing game settings and keeps portrait previews landscape', () => {
+    expect(home).toContain('let enabledGames = new Set<string>()');
+    expect(home).toMatch(/catch \{[\s\S]*?enabledGames = new Set\(\)/);
+    expect(css).toMatch(/@media \(orientation:portrait\) and \(min-width:601px\)/);
+    expect(css).toMatch(/\.standalone-game \{ aspect-ratio:16\/9/);
+    expect(css).toMatch(/\.game-card-media \{ aspect-ratio:16\/9/);
   });
 
   it('plays only active-view previews and honors constrained clients', () => {

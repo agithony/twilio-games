@@ -171,6 +171,7 @@ The home route changes with the runtime mode. Mode `off` shows the standalone th
 | Page | Development URL | Purpose |
 |---|---|---|
 | Home | <http://localhost:5173/> | Standalone launcher in mode `off`; station display in active modes |
+| Portuguese instructions | <http://localhost:5173/instructions> | Simple touchscreen, QR, phone-call, and voice-control instructions for event visitors |
 | Voice Racer | <http://localhost:5173/play.html?display=1&room=4821> | Spectator and operator display |
 | Voice Monsters | <http://localhost:5173/monsters.html?display=1&room=4821> | Spectator and operator display |
 | Voice Fighter | <http://localhost:5173/fighter.html?display=1&room=4821> | Spectator and operator display |
@@ -179,7 +180,7 @@ The home route changes with the runtime mode. Mode `off` shows the standalone th
 | Activation analytics | <http://localhost:5173/analytics> | Private date-filtered engagement dashboard and PDF reports |
 | Visitor join | <http://localhost:5173/join> | English: configured SMS or WhatsApp; Portuguese: WhatsApp; both locales: browser fallback in lead-capture mode |
 | Browser player page | <http://localhost:5173/player> | Registration, wallet, challenges, and ready-pool controls |
-| Operator console | <http://localhost:5173/operator> | Staff-only station configuration, monitoring, and recovery |
+| Operator console | <http://localhost:5173/operator> | Unauthenticated station configuration, monitoring, and recovery for the current deployment |
 | Challenge portal | <http://localhost:5173/challenge/> | No-store reward portal opened by signed Messaging links; a valid fragment token is required |
 
 The shared screen and operator preview display a visitor QR that opens `/join`. English entry offers configured SMS and WhatsApp buttons; Portuguese entry offers WhatsApp with a prefilled `ENTRAR` command. Lead-capture mode adds browser registration for both locales as a visually secondary fallback, while the server continues to reject Portuguese SMS entry attempts. Every accepted reply states the next required answer. During game selection, ready players vote by game name/number or from `/player`; ties and missing votes use the configured automatic fallback.
@@ -244,13 +245,11 @@ The application runs locally without Twilio or OpenAI credentials. Configure the
 | `GOOGLE_OAUTH_CLIENT_SECRET` | Google OAuth web client secret | Analytics access disabled when unset |
 | `ANALYTICS_ALLOWED_EMAIL` | One exact verified Google email allowed in addition to `@twilio.com` accounts | No exception account |
 | `ANALYTICS_PATH` | Persistent daily analytics rollup file | `data/analytics.json` |
-| `ARCADE_ADMIN_EMAILS` | Comma-separated Google-authenticated emails allowed to update Arcade runtime configuration | Admin APIs disabled when unset |
 | `ARCADE_CONFIG_DIRECTORY` | Persistent Arcade configuration and audit directory | `data/` |
 | `ARCADE_SIGNING_SECRET` | Exactly 64 hexadecimal characters used to derive player-session and challenge-token keys when station mode is enabled | Not read while station mode is `off` |
 | `ARCADE_STATE_PATH` | Persistent players, wallets, queue and station state, Messaging identities, receipts, and notification outbox | `data/arcade-state.json` |
 | `ARCADE_DISPLAY_TOKEN` | Server-held kiosk capability used by Racer, Monsters, and Fighter station displays; production requires at least 16 characters | Unset |
 | `ARCADE_STANDALONE_VOICE_ENABLED` | Allows standalone-mode calls to join the game currently open on the shared display | `false` in production; `true` otherwise |
-| `ARCADE_DEV_ADMIN` | Explicit local-only admin bypass used by `dev:arcade:server`; ignored in production | `false` |
 | `ARCADE_TAC_ENABLED` | Enables the TAC gateway for Orchestrator capture and Conversation Memory enrichment | Enabled unless set to `false`; `dev:arcade:server` disables it |
 | `ARCADE_OUTBOUND_MESSAGING_ENABLED` | Kill switch for durable proactive SMS and WhatsApp notices; valid REST credentials and channel senders are also required | `false` unless exactly `true` |
 | `TWILIO_ACCOUNT_SID`, `TWILIO_API_KEY`, `TWILIO_API_SECRET` | Primary-account credentials for TAC, Conversation Memory, and outbound Messaging REST calls | Required by the production workflow |
@@ -272,7 +271,7 @@ The application runs locally without Twilio or OpenAI credentials. Configure the
 | `BUNDLED_MAPS_PATH`, `BUNDLED_ARENA_PATH`, `BUNDLED_FIGHTER_MAPS_PATH` | Seed configuration paths | Files under `assets/` |
 | `FIGHTER_PREVIEW_DIR` | Writable Fighter preview directory | `data/fighter-previews` |
 
-When signature validation is enabled without `TWILIO_AUTH_TOKEN`, primary-account Twilio webhooks fail closed. Public station deployments also need independent `VOICE_RELAY_TOKEN`, `ARCADE_SIGNING_SECRET`, and `ARCADE_DISPLAY_TOKEN` values. The authenticated operator action installs the display capability in browser session storage; do not place display tokens in URLs. Set `EDITOR_TOKEN` and Google OAuth credentials wherever their protected features are exposed.
+When signature validation is enabled without `TWILIO_AUTH_TOKEN`, primary-account Twilio webhooks fail closed. Public station deployments also need independent `VOICE_RELAY_TOKEN`, `ARCADE_SIGNING_SECRET`, and `ARCADE_DISPLAY_TOKEN` values. The operator action installs the display capability in browser session storage; do not place display tokens in URLs. The operator console is intentionally unauthenticated for the current deployment, while `/analytics` retains Google OAuth. Set `EDITOR_TOKEN` and Google OAuth credentials wherever their protected features are exposed.
 
 ## Activation Analytics
 
@@ -290,9 +289,9 @@ npm run typecheck
 npm run build
 ```
 
-The Vitest suite contains 1,476 passing tests across 124 files. It covers game worlds and protocols, caller-scoped multiplayer setup, two-number Racer routing, cross-talk and stale-transcript protection, split-screen behavior, room reconnects, Conversation Relay, deterministic voice and tolerant Messaging commands, TwiML, webhook signatures, HTTP APIs, durable state and outbox behavior, analytics, scoped Google OAuth authorization, player and operator experiences, signed sessions and challenge links, wallets, queue and station reducers, game capacities, TAC and Memory gating, asset governance, render helpers, audio management, and WebSocket integration.
+The Vitest suite contains more than 1,500 tests. It covers game worlds and protocols, caller-scoped multiplayer setup, Portuguese name capture, portrait and theme contracts, room reconnects, Conversation Relay, deterministic voice and tolerant Messaging commands, TwiML, webhook signatures, HTTP APIs, durable state and outbox behavior, analytics, scoped Google OAuth authorization, player and operator experiences, signed sessions and challenge links, wallets, queue and station reducers, game capacities, TAC and Memory gating, asset governance, render helpers, audio management, and WebSocket integration.
 
-For a credential-free local Twilio Games station walkthrough, run `npm run dev:arcade:server` and `npm run dev:arcade:client` in separate terminals, then open <http://localhost:5173/player> or <http://localhost:5173/operator>. These scripts use isolated `data/arcade-dev-*` state, an explicit loopback-only development operator, and disabled TAC; production and non-loopback deployments remain authenticated and fail-closed.
+For a credential-free local Twilio Games station walkthrough, run `npm run dev:arcade:server` and `npm run dev:arcade:client` in separate terminals, then open <http://localhost:5173/player> or <http://localhost:5173/operator>. These scripts use isolated `data/arcade-dev-*` state and disabled TAC. Operator access is intentionally unauthenticated in the current deployment.
 
 Additional Chromium-based render checks are available when a compatible browser is installed:
 
@@ -309,7 +308,7 @@ Production uses one Azure Container Apps replica. The image contains the built V
 
 The CI workflow runs on pushes and pull requests and checks Git LFS, `npm ci`, typechecking, all tests, the client build, and a non-blocking high-severity dependency audit. Separately, pushes to `main` and manual deploy runs execute the deploy workflow's own `typecheck`, test, and build checks, then validate production credentials. The deploy does not consume the reusable CI job.
 
-The deploy workflow provisions Azure resources, builds commit-SHA and `latest` image tags in ACR, stops the previous writer, snapshots Azure Files, applies a uniquely named revision, and verifies the exact SHA tag. Neither ACR tag is registry-enforced immutable. Before public cutover the workflow requires that revision to be `Provisioned`, `Healthy`, latest-ready, active with one replica, the only running revision, mounted to `appdata`, and configured with the expected startup, readiness, and liveness probes on `/livez`. It then requires HTTP 200 from `/livez`, dependency-aware `/healthz`, `/`, `/join`, `/player`, and `/operator` on the candidate revision FQDN before assigning traffic and restoring single-revision mode. It does not run live Twilio, Conversation Memory, writable Azure Files, or WebSocket gameplay acceptance tests.
+The deploy workflow provisions Azure resources, builds commit-SHA and `latest` image tags in ACR, stops the previous writer, snapshots Azure Files, applies a uniquely named revision, and verifies the exact SHA tag. Neither ACR tag is registry-enforced immutable. Before public cutover the workflow requires that revision to be `Provisioned`, `Healthy`, latest-ready, active with one replica, the only running revision, mounted to `appdata`, and configured with the expected startup, readiness, and liveness probes on `/livez`. It then requires HTTP 200 from `/livez`, dependency-aware `/healthz`, `/`, `/instructions`, `/join`, `/player`, and `/operator` on the candidate revision FQDN before assigning traffic and restoring single-revision mode. It does not run live Twilio, Conversation Memory, writable Azure Files, or WebSocket gameplay acceptance tests.
 
 The single-replica limit is a correctness requirement because rooms, active matches, call sessions, and WebSocket coordination are in memory. `DATA_MOUNT=/app/appdata` links `/app/data` to the Azure Files share. The persistent set is:
 

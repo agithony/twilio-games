@@ -159,8 +159,6 @@ properties:
             secretRef: google-oauth-client-secret
           - name: ANALYTICS_ALLOWED_EMAIL
             value: "${ANALYTICS_ALLOWED_EMAIL}"
-          - name: ARCADE_ADMIN_EMAILS
-            value: "${ARCADE_ADMIN_EMAILS}"
           # One root key derives separate player-session and challenge-token keys. Mode-off ignores it.
           - name: ARCADE_SIGNING_SECRET
             secretRef: arcade-signing-secret

@@ -6,13 +6,8 @@
   <meta name="robots" content="noindex,nofollow" />
   <title>Twilio Games</title>
   <link rel="icon" href="/brand/Twilio_Logo_Bug_White.svg" />
-  <script>
-    (function () {
-      var theme = 'dark';
-      try { theme = localStorage.getItem('twilio-theme') || theme; } catch (_) {}
-      document.documentElement.setAttribute('data-theme', theme);
-    })();
-  </script>
+  <script src="/theme-init.js"></script>
+  <link rel="stylesheet" href="/theme.css" />
   <link rel="stylesheet" href="/arcade/arcade.css" />
 </head>
 <body>
@@ -126,22 +121,6 @@
     </main>
 
     <main id="operations" class="operations" hidden>
-      <div class="operations-heading">
-        <div class="operator-identity">
-          <span id="admin-user" hidden></span>
-          <button id="admin-logout" class="button secondary" type="button" hidden>Switch account</button>
-        </div>
-      </div>
-
-      <div id="admin-locked" class="panel compact auth-gate">
-        <div class="auth-gate-copy">
-          <p class="eyebrow">Staff access</p>
-          <h2>Manage the live event</h2>
-          <p>Use an approved Google account to control games, settings, players, and the booth display.</p>
-        </div>
-        <a id="admin-login" class="google-signin" href="/auth/google?returnTo=/operator"><span class="google-mark" aria-hidden="true">G</span><span id="admin-login-label">Sign in with Google</span></a>
-      </div>
-
       <div id="admin-console" class="admin-grid" hidden>
         <nav id="operator-nav" class="operator-nav" role="tablist" aria-label="Operator sections">
           <button id="operator-tab-overview" type="button" role="tab" aria-selected="true" aria-controls="operator-overview" data-operator-tab="operator-overview">Overview</button>
@@ -175,7 +154,7 @@
               <div>
                 <p class="eyebrow">One-time booth setup</p>
                 <h3>Pair a dedicated big screen</h3>
-                <p id="display-connect-description">Open a second tab or booth device, sign in with Google, pair it once, and leave it open as the shared display. Pairing keeps your Google session active.</p>
+                <p id="display-connect-description">Open a second tab or booth device, pair it once, and leave it open as the shared display.</p>
               </div>
               <button id="connect-booth-display" class="button primary" type="button">Pair this tab as the big screen</button>
             </div>
@@ -398,7 +377,7 @@
                   </section>
 
                   <section class="settings-section settings-games">
-                    <div class="settings-section-heading"><span>03</span><div><h4>Games</h4><p>Choose the lineup and how the next game is picked.</p></div></div>
+                    <div class="settings-section-heading"><span>03</span><div><h4>Games shown on the home screen</h4><p>Choose the visible lineup and how the next game is picked.</p></div></div>
                     <fieldset class="choice-grid game-choice-grid">
                       <legend class="sr-only">Game lineup</legend>
                       <label class="choice-card"><input id="admin-game-racer" type="checkbox" /><span><b>Voice Racer</b><small>Up to 2 players</small></span></label>

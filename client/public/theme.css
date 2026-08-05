@@ -1,0 +1,14 @@
+:root,html[data-theme="dark"]{
+  color-scheme:dark;
+  --theme-bg:#000D25;--theme-panel:#232B45;--theme-panel-solid:#191F36;--theme-raised:#38425E;
+  --theme-border:#38425E;--theme-border-strong:#4D5777;--theme-text:#FFFFFF;
+  --theme-text-dim:#DDE0E6;--theme-text-muted:#9AA0B4;--theme-scrim:rgba(0,8,28,.66);
+  --theme-shadow:rgba(0,0,0,.34);--theme-nav:rgba(12,18,40,.82);
+}
+html[data-theme="light"]{
+  color-scheme:light;
+  --theme-bg:#FFFFFF;--theme-panel:#FFFFFF;--theme-panel-solid:#F3F4F7;--theme-raised:#F3F4F7;
+  --theme-border:#DDE0E6;--theme-border-strong:#BABECC;--theme-text:#000D25;
+  --theme-text-dim:#38425E;--theme-text-muted:#656E87;--theme-scrim:rgba(255,255,255,.86);
+  --theme-shadow:rgba(0,13,37,.12);--theme-nav:rgba(255,255,255,.9);
+}

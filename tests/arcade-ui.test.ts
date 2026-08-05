@@ -22,6 +22,7 @@ const musicToggle = readFileSync(new URL('../client/music-toggle.ts', import.met
 const iconControls = readFileSync(new URL('../client/icon-controls.ts', import.meta.url), 'utf8');
 const coinInsertion = readFileSync(new URL('../client/coin-insertion.ts', import.meta.url), 'utf8');
 const coinInsertionCss = readFileSync(new URL('../client/coin-insertion.css', import.meta.url), 'utf8');
+const serverIndex = readFileSync(new URL('../server/index.ts', import.meta.url), 'utf8');
 const stationGameSelect = /<select id="station-game">[\s\S]*?<\/select>/.exec(html)?.[0] ?? '';
 
 describe('Arcade browser UI', () => {
@@ -172,12 +173,11 @@ describe('Arcade browser UI', () => {
     expect(css).toContain("font-family:'Twilio Sans Display'");
     expect(css).toContain('--th-bg:#000D25');
     expect(css).toContain('--red:#EF223A');
-    expect(html).toContain("localStorage.getItem('twilio-theme')");
-    expect(script).toContain("storageSet('twilio-theme'");
+    expect(html).toContain('src="/theme-init.js"');
+    expect(script).toContain('wireThemeToggle');
     expect(css).not.toMatch(/purple|amber|emerald|green|orange|yellow/i);
     expect(script).not.toContain('selectedOperatorEntries');
     expect(script).not.toContain('/api/admin/arcade/queue');
-    expect(script).toContain("['localhost','127.0.0.1']");
   });
 
   it('uses compact icon-only header controls and exposes the operator from home', () => {
@@ -187,12 +187,10 @@ describe('Arcade browser UI', () => {
     expect(join).toMatch(/id="themeToggle"[^>]*>[\s\S]*?<svg/);
     expect(html).toContain('class="button quiet icon-button"');
     expect(html).toMatch(/id="refresh"[^>]*icon-button[^>]*aria-label="Refresh page data"[^>]*>\s*<svg/);
-    expect(html).toContain('id="admin-login-label"');
-    expect(html).toContain('class="google-signin"');
-    expect(html.indexOf('id="admin-locked"')).toBeLessThan(html.indexOf('id="admin-login"'));
-    expect(script).toContain("el('admin-login-label').textContent");
-    expect(css).toContain('.auth-gate{display:grid');
-    expect(css).toContain('.google-signin{min-height:52px');
+    expect(html).not.toMatch(/admin-login|google-signin|admin-locked/i);
+    expect(script).not.toMatch(/switchAccount|returnTo=\/operator|Sign in with Google/);
+    expect(serverIndex).toContain("authorizeAdmin: () => ({ email: 'operator-console@local.invalid' })");
+    expect(serverIndex).not.toContain('ARCADE_ADMIN_EMAILS');
     expect(css).toContain('white-space:normal');
     expect(script).toContain("refresh.setAttribute('aria-label','Atualizar dados')");
     expect(script).not.toContain("el('refresh').textContent='Atualizar'");
@@ -311,7 +309,7 @@ describe('Arcade browser UI', () => {
     expect(concepts).not.toMatch(/<(?:input|button|a|option)\b|\btabindex=|\bdata-game-choice=/);
     expect(stationGameSelect).not.toMatch(/Trivia|Karaoke/i);
     expect(script).not.toMatch(/['"](?:trivia|karaoke)['"]/i);
-    expect(html).toContain('<h2>Manage the live event</h2>');
+    expect(html).toContain('id="admin-console"');
   });
 
   it('manages configured challenges through the staff-only versioned config editor', () => {
@@ -488,7 +486,7 @@ describe('Arcade browser UI', () => {
     expect(homeCss).toContain('.display-setup-panel');
   });
 
-  it('installs and confirms booth access without ending the Google session', () => {
+  it('installs and confirms booth access without a Google session', () => {
     expect(html).toContain('id="display-connect-panel"');
     expect(html).toContain('id="connect-booth-display"');
     expect(html).toContain('id="overview-display"');
@@ -498,8 +496,8 @@ describe('Arcade browser UI', () => {
     expect(html).toContain('id="overview-display-card"');
     expect(html).toContain('Pair this tab as the big screen');
     expect(html).toContain('Pair a dedicated big screen');
-    expect(html).toContain('sign in with Google');
-    expect(html).toContain('Pairing keeps your Google session active');
+    expect(html).not.toContain('sign in with Google');
+    expect(html).not.toContain('Google session');
     const flow = /async function connectBoothDisplay\(\):Promise<void>\{[\s\S]*?\n}/.exec(script)?.[0] ?? '';
     expect(flow).toContain("'/api/admin/arcade/display/connect'");
     expect(flow).toContain("'Content-Type':'application/json'");
@@ -582,7 +580,7 @@ describe('Arcade browser UI', () => {
     }
     expect(html).toContain("Tell us who's playing");
     expect(html).toContain('Join the next game');
-    for (const heading of ['Event', 'Ways to join and play', 'Games', 'Timing']) {
+    for (const heading of ['Event', 'Ways to join and play', 'Games shown on the home screen', 'Timing']) {
       expect(html).toContain(`>${heading}<`);
     }
     expect(css).toContain('.settings-layout{display:grid;grid-template-columns:repeat(2');

@@ -483,8 +483,8 @@ describe('Arcade messaging commands', () => {
 
     const numeric = await message(h.service, 'SM-PROMPT-020', 'JOIN', '+14155550220');
     expect((await message(h.service, 'SM-PROMPT-021', '1', '+14155550220')).reply)
-      .toContain('last name');
-    expect(h.store.snapshot().messagingDrafts[numeric.playerId!]?.firstName).toBe('1');
+      .toBe(numeric.reply);
+    expect(h.store.snapshot().messagingDrafts[numeric.playerId!]?.firstName).toBeNull();
   });
 
   it('infers locale from JOIN verbs while explicit LANG takes precedence', async () => {

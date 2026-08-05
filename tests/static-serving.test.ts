@@ -19,6 +19,7 @@ beforeEach(async () => {
   await mkdir(join(clientDir, 'analytics'), { recursive: true });
   await mkdir(join(clientDir, 'arcade'), { recursive: true });
   await mkdir(join(clientDir, 'join'), { recursive: true });
+  await mkdir(join(clientDir, 'instructions'), { recursive: true });
   await writeFile(join(clientDir, 'index.html'), '<!doctype html><title>home</title>');
   await writeFile(join(clientDir, 'play.html'), '<!doctype html><title>play</title>');
   await writeFile(join(clientDir, 'editor', 'index.html'), '<!doctype html><title>editor</title>');
@@ -26,6 +27,7 @@ beforeEach(async () => {
   await writeFile(join(clientDir, 'analytics', 'index.html'), '<!doctype html><title>analytics</title>');
   await writeFile(join(clientDir, 'arcade', 'index.html'), '<!doctype html><title>arcade</title>');
   await writeFile(join(clientDir, 'join', 'index.html'), '<!doctype html><title>join</title>');
+  await writeFile(join(clientDir, 'instructions', 'index.html'), '<!doctype html><title>instructions</title>');
   await writeFile(join(clientDir, 'assets', 'play-ABC123.js'), 'console.log("bundle")');
   await writeFile(join(clientDir, 'brand', 'logo.svg'), '<svg/>');
 });
@@ -81,6 +83,8 @@ describe('static client serving', () => {
     expect((await get(port, '/player')).body).toContain('arcade');
     expect((await get(port, '/operator')).body).toContain('arcade');
     expect((await get(port, '/join?station=ARCADE-01')).body).toContain('join');
+    expect((await get(port, '/instructions')).body).toContain('instructions');
+    expect((await get(port, '/instructions/')).body).toContain('instructions');
   });
 
   it('serves the built JS bundle under /assets/ (with a JS content-type)', async () => {

@@ -43,52 +43,15 @@ describe('Google analytics authorization', () => {
     expect(callback.headers.get('location')).toBe('/analytics?auth=email_not_allowed');
   });
 
-  it('returns Twilio Games operators to the operator console after sign-in', async () => {
-    const auth = googleAuth({ email: 'operator@twilio.com', email_verified: true });
-    server = new HttpServer({ port: 0, publicBaseUrl: 'http://localhost', validateSignatures: false, analyticsAuth: auth });
-    const port = await server.start(), base = `http://127.0.0.1:${port}`;
-    const begin = await fetch(`${base}/auth/google?returnTo=/operator`, { redirect: 'manual' });
-    const stateCookie = begin.headers.get('set-cookie')!.split(';')[0]!;
-    const state = new URL(begin.headers.get('location')!).searchParams.get('state');
-    const callback = await fetch(`${base}/auth/google/callback?code=valid&state=${state}`, {
-      headers: { cookie: stateCookie }, redirect: 'manual',
-    });
-    expect(callback.headers.get('location')).toBe('/operator');
-  });
-
-  it('does not grant Analytics access to an external station-only operator', async () => {
-    const auth = googleAuth(
-      { email: 'arcade.operator@example.com', email_verified: true },
-      ['arcade.operator@example.com'],
-    );
-    server = new HttpServer({ port: 0, publicBaseUrl: 'http://localhost', validateSignatures: false, analyticsAuth: auth });
-    const port = await server.start(), base = `http://127.0.0.1:${port}`;
-    const begin = await fetch(`${base}/auth/google?returnTo=/operator`, { redirect: 'manual' });
-    const stateCookie = begin.headers.get('set-cookie')!.split(';')[0]!;
-    const state = new URL(begin.headers.get('location')!).searchParams.get('state');
-    const callback = await fetch(`${base}/auth/google/callback?code=valid&state=${state}`, {
-      headers: { cookie: stateCookie }, redirect: 'manual',
-    });
-    const sessionCookie = callback.headers.getSetCookie()
-      .find(value => value.startsWith('twilio_analytics_session='))!.split(';')[0]!;
-    const session = await (await fetch(`${base}/api/analytics/session`, {
-      headers: { cookie: sessionCookie },
-    })).json();
-    expect(session).toMatchObject({
-      authenticated: true, analyticsAuthorized: false, email: 'arcade.operator@example.com',
-    });
-    expect((await fetch(`${base}/api/analytics`, { headers: { cookie: sessionCookie } })).status).toBe(401);
-  });
 });
 
 function googleAuth(
   user: { email: string; email_verified: boolean },
-  allowedEmails: readonly string[] = [],
 ): GoogleAnalyticsAuth {
   const fetcher: typeof fetch = async (input) => String(input).includes('/token')
     ? new Response(JSON.stringify({ access_token: 'google-access-token' }), { status: 200, headers: { 'Content-Type': 'application/json' } })
     : new Response(JSON.stringify(user), { status: 200, headers: { 'Content-Type': 'application/json' } });
   return new GoogleAnalyticsAuth({ clientId: 'google-id', clientSecret: 'google-secret',
     redirectUri: 'http://localhost/auth/google/callback', allowedEmail: 'guest@example.com',
-    allowedEmails, fetcher });
+    fetcher });
 }

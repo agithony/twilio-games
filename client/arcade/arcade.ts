@@ -1,5 +1,5 @@
 import QRCode from 'qrcode';
-import { updateThemeToggleIcon } from '../icon-controls';
+import { wireThemeToggle } from '../theme';
 import { locale as resolvedLocale } from '../i18n';
 import { effectivePublicVisitorBaseUrl, fetchPublicStation, rejectDisplayToken, resolveStationQrImage, stationQrAsset, storeDisplayToken } from '../station-client';
 import { getSoundEffectsManager } from '../sound-effects';
@@ -42,14 +42,13 @@ const state: {
   wallet: WalletStatus | null;
   station: StationView | null;
   adminConfig: AdminConfig | null;
-  adminEmail: string | null;
   operatorStation: OperatorStationView | null;
   operatorStationEtag: string | null;
   adminStatus: AdminStatus | null;
   operatorPlayers: OperatorPlayerRecoveryPage | null;
   leaderboardSummary: LeaderboardAdminSummary | null;
   leaderboardEtag: string | null;
-} = { config:null,deployment:null,player:null,wallet:null,station:null,adminConfig:null,adminEmail:null,operatorStation:null,operatorStationEtag:null,adminStatus:null,operatorPlayers:null,leaderboardSummary:null,leaderboardEtag:null };
+} = { config:null,deployment:null,player:null,wallet:null,station:null,adminConfig:null,operatorStation:null,operatorStationEtag:null,adminStatus:null,operatorPlayers:null,leaderboardSummary:null,leaderboardEtag:null };
 
 const notice = el('notice'), modeBadge = el('mode-badge'), heroBalance = el('hero-balance');
 const operatorView = location.pathname === '/operator' || location.pathname === '/operator/';
@@ -73,7 +72,6 @@ let gameChoiceSaving=false;
 let displayPresenceExpiresAt=0;
 let playerRecoveryRequest:Promise<void>|null=null;
 el('refresh').addEventListener('click', () => void refreshAll(true));
-el('theme-toggle').addEventListener('click', toggleTheme);
 el<HTMLFormElement>('registration-form').addEventListener('submit', event => void register(event));
 el<HTMLFormElement>('join-form').addEventListener('submit', event => void joinQueue(event));
 el('queue-leave').addEventListener('click', () => void leaveCurrentAdmission());
@@ -94,7 +92,6 @@ el<HTMLSelectElement>('leaderboard-reset-game').addEventListener('change',render
 el<HTMLSelectElement>('leaderboard-reset-map').addEventListener('change',renderLeaderboardReset);
 el<HTMLInputElement>('leaderboard-reset-reason').addEventListener('input',renderLeaderboardReset);
 el('leaderboard-reset-button').addEventListener('click',()=>void resetLeaderboard());
-el('admin-logout').addEventListener('click', () => void switchAccount());
 el('connect-booth-display').addEventListener('click', () => void connectBoothDisplay());
 el('overview-action-button').addEventListener('click',openCurrentStationAction);
 el('refresh-players').addEventListener('click',()=>void refreshOperatorPlayers(false,true));
@@ -177,7 +174,7 @@ function configureView():void{
   const link=el<HTMLAnchorElement>('view-link');
   document.body.classList.add(operatorView?'operator-page':'player-page');
   if(operatorView){document.documentElement.lang='en-US';link.href='/player';link.textContent='Open player page';document.querySelector<HTMLElement>('.hero .eyebrow')!.textContent='Event operations';el('hero-title').textContent='Operator console';el('hero-lede').textContent='Monitor the live event, help players, and manage setup.';show('balance-hero',false);show('off-panel',false);}
-  else{link.href='/operator';link.textContent='Staff sign in';}
+  else{link.href='/operator';link.textContent='Operator console';}
 }
 
 function initializeOperatorTabs():void{
@@ -558,13 +555,10 @@ function stopPlayerUpdates():void{
 
 async function checkAdmin(forceConfigRender=false):Promise<void>{
   const previousVersion=state.adminConfig?.version??null;
-  const session=await maybe<{authenticated:boolean;email?:string}>('/api/analytics/session'); state.adminEmail=session?.authenticated?session.email??null:null;
   let adminConfig:AdminConfig|null=null;
-  try{adminConfig=await api<AdminConfig>('/api/admin/arcade/config');if(state.adminConfig&&adminConfig.version<state.adminConfig.version)adminConfig=state.adminConfig;if(modeFormDirty&&state.adminConfig&&adminConfig){if(adminConfig.version>state.adminConfig.version)setNotice('New event settings are available. Save or discard your draft to load them.','error');adminConfig=state.adminConfig;}if(!state.adminEmail&&adminConfig)state.adminEmail='Local development operator';}catch{/* Not station-authorized. */}
+  try{adminConfig=await api<AdminConfig>('/api/admin/arcade/config');if(state.adminConfig&&adminConfig.version<state.adminConfig.version)adminConfig=state.adminConfig;if(modeFormDirty&&state.adminConfig&&adminConfig){if(adminConfig.version>state.adminConfig.version)setNotice('New event settings are available. Save or discard your draft to load them.','error');adminConfig=state.adminConfig;}}catch{/* Operator configuration unavailable. */}
   state.adminConfig=adminConfig;
-  const authorized=Boolean(state.adminConfig); show('admin-console',authorized);show('admin-locked',!authorized);show('admin-login',!authorized);show('admin-user',Boolean(state.adminEmail));show('admin-logout',Boolean(state.adminEmail&&state.adminEmail!=='Local development operator'));
-  el('admin-login-label').textContent=state.adminEmail?'Use another Google account':'Sign in with Google';
-  el('admin-user').textContent=authorized?`Signed in as ${state.adminEmail}`:`${state.adminEmail??''} is not a Twilio Games operator`;
+  show('admin-console',Boolean(state.adminConfig));
   if(!state.adminConfig){stopOperatorUpdates();return;}
   if(previousVersion===state.adminConfig.version&&!forceConfigRender){renderOperatorOverview();return;}
   el<HTMLSelectElement>('admin-mode').value=state.adminConfig.arcade.mode;
@@ -590,8 +584,6 @@ async function checkAdmin(forceConfigRender=false):Promise<void>{
   closeChallengeEditor();renderAdminChallenges();renderChargePolicy();renderPrioritySettings();renderRuntimeSummary();setModeFormDirty(false);
 }
 
-async function switchAccount():Promise<void>{await fetch('/auth/logout',{method:'POST',credentials:'include'});location.href='/auth/google?returnTo=/operator';}
-
 async function connectBoothDisplay():Promise<void>{
   const button=el<HTMLButtonElement>('connect-booth-display');
   let installedToken:string|null=null;
@@ -611,9 +603,7 @@ async function connectBoothDisplay():Promise<void>{
     installedToken=null;
   }catch(error){
     if(installedToken)rejectDisplayToken(installedToken);
-    const message=error instanceof ApiError&&error.status===401
-      ? 'Your operator session expired. Sign in again, then reconnect this tab.'
-      : error instanceof ApiError&&error.status===503
+    const message=error instanceof ApiError&&error.status===503
         ? 'Booth display security is not configured. Ask a deployment administrator to configure it, then retry.'
         : error instanceof ApiError
           ? 'The display connection request failed. Refresh the operator console and try again.'
@@ -964,7 +954,7 @@ function renderOperatorOverview():void{
   displayCard.dataset.state=displayConnected?'active':displayKnown&&!display?.checking?'attention':'neutral';
   const connectButton=el<HTMLButtonElement>('connect-booth-display');connectButton.hidden=displayKnown&&!display?.configured;
   el('display-connect-description').textContent=display?.configured
-    ? 'Open a second tab or booth device, sign in with Google, pair it once, and leave it open as the shared display. Pairing keeps your Google session active.'
+    ? 'Open a second tab or booth device, pair it once, and leave it open as the shared display.'
     : 'Big-screen security is not configured in this deployment. Ask a deployment administrator to configure ARCADE_DISPLAY_TOKEN before opening the event.';
   const pairingRequired=Boolean(config&&config.arcade.mode!=='off'&&display?.configured&&!displayConnected&&!display.checking);
   show('display-connect-panel',pairingRequired);
@@ -1537,7 +1527,7 @@ function messageKindName(kind:string):string{
 }
 
 async function post<T=unknown>(path:string,body:unknown):Promise<T>{return api<T>(path,{method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':crypto.randomUUID()},body:JSON.stringify(body)});}
-async function request<T=unknown>(path:string,init:RequestInit={}):Promise<{payload:T;response:Response}>{const headers=new Headers(init.headers);if(['localhost','127.0.0.1'].includes(location.hostname))headers.set('X-Arcade-Dev-Admin','true');const response=await fetch(path,{credentials:'include',...init,headers});const payload=await response.json().catch(()=>({}));if(!response.ok){const error=(payload as {error?:{code?:string;message?:string}}).error;throw new ApiError(response.status,error?.code??'REQUEST_FAILED',error?.message??`Request failed (${response.status})`);}return{payload:payload as T,response};}
+async function request<T=unknown>(path:string,init:RequestInit={}):Promise<{payload:T;response:Response}>{const headers=new Headers(init.headers);const response=await fetch(path,{credentials:'include',...init,headers});const payload=await response.json().catch(()=>({}));if(!response.ok){const error=(payload as {error?:{code?:string;message?:string}}).error;throw new ApiError(response.status,error?.code??'REQUEST_FAILED',error?.message??`Request failed (${response.status})`);}return{payload:payload as T,response};}
 async function api<T=unknown>(path:string,init:RequestInit={}):Promise<T>{return(await request<T>(path,init)).payload;}
 async function maybe<T>(path:string):Promise<T|null>{try{return await api<T>(path);}catch(error){if(error instanceof ApiError&&[401,409].includes(error.status))return null;throw error;}}
 function setNotice(message:string,kind:'success'|'error'|''=''):void{notice.className=`notice ${kind}`.trim();notice.setAttribute('role',kind==='error'?'alert':'status');notice.setAttribute('aria-live',kind==='error'?'assertive':'polite');notice.setAttribute('aria-atomic','true');notice.textContent=message;}
@@ -1553,6 +1543,4 @@ function formatTimestamp(value:string):string{const date=new Date(value);return 
 function escapeHtml(value:string):string{const node=document.createElement('span');node.textContent=value;return node.innerHTML;}
 function el<T extends HTMLElement=HTMLElement>(id:string):T{return document.getElementById(id) as T;}
 function storageGet(key:string):string|null{try{return localStorage.getItem(key);}catch{return null;}}
-function storageSet(key:string,value:string):void{try{localStorage.setItem(key,value);}catch{/* Storage can be denied in private/embedded contexts. */}}
-function toggleTheme():void{const current=document.documentElement.dataset.theme??'dark';document.documentElement.dataset.theme=current==='dark'?'light':'dark';storageSet('twilio-theme',document.documentElement.dataset.theme);applyTheme();}
-function applyTheme():void{const theme=document.documentElement.dataset.theme??'dark';updateThemeToggleIcon(el('theme-toggle'),theme,playerText('Light theme','Tema claro'),playerText('Dark theme','Tema escuro'));}
+function applyTheme():void{wireThemeToggle(el('theme-toggle'),{light:playerText('Light theme','Tema claro'),dark:playerText('Dark theme','Tema escuro')});}

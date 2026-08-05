@@ -222,6 +222,22 @@ html[data-theme="light"] .brand-lockup img, html[data-theme="light"] .countdown-
   .persistent-join div { display:none; }
   .persistent-join img { width:76px;height:76px; }
 }
+@media (orientation:portrait) and (min-width:601px) {
+  .recruiting-view { display:block; }
+  .game-mosaic { display:none; }
+  .standalone-view { overflow-y:auto; }
+  .standalone-catalog { display:block; }
+  .standalone-games { grid-template-columns:1fr;grid-auto-rows:auto;align-content:start; }
+  .standalone-game { aspect-ratio:16/9; }
+  .standalone-future { margin-top:12px; }
+  .selection-view { overflow-y:auto;grid-template-rows:auto auto;align-content:start; }
+  .selection-heading { padding-right:0; }
+  .selection-heading time { position:static;display:block;margin-top:10px; }
+  .game-cards { grid-template-columns:1fr;align-content:start; }
+  .game-card { grid-template-columns:minmax(180px,38%) 1fr;grid-template-rows:auto; }
+  .game-card-media { aspect-ratio:16/9;align-self:center; }
+  .game-card-body { align-self:center; }
+}
 @media (max-width:600px) and (min-height:601px) {
   .standalone-view { overflow-y:auto; }
   .standalone-catalog { display:block; }

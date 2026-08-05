@@ -29,4 +29,11 @@ describe('fighter client shortcuts', () => {
     expect(source).toContain('failedMapKey === loadKey');
     expect(source).toContain('hasRenderableTriangle(gltf.scene)');
   });
+
+  it('keeps portrait arena previews wide enough to recognize', () => {
+    const css=readFileSync(new URL('../client/fighter/fighter.css',import.meta.url),'utf8');
+    expect(css).toContain('@media (orientation:portrait) and (min-width:721px)');
+    expect(css).toMatch(/\.select-grid\.map-grid \{[^}]*grid-template-columns:repeat\(2/);
+    expect(css).toMatch(/\.map-grid \.card-preview \{[^}]*aspect-ratio:3\/2/);
+  });
 });

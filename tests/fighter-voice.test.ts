@@ -313,7 +313,7 @@ describe('fighter voice session', () => {
     expect(ana.spoken).toEqual([
       'Boas-vindas à Luta por Voz!',
       'Este jogo usa o Twilio Conversation Relay, então sua voz controla a luta em tempo real por esta ligação.',
-      'Primeiro, qual é o seu nome?',
+      'Diga apenas seu primeiro nome. Por exemplo: Ana.',
     ]);
 
     ana.prompt('quem são os lutadores');

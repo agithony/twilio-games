@@ -17,6 +17,7 @@ import { DEFAULT_LOCALE, resolveLocale, type SupportedLocale } from '../shared/i
 import { MONSTERS_MESSAGES, type MonstersMessageKey } from '../shared/i18n/monsters';
 import { createTranslator, formatList, normalizeForMatching, type MessageValues } from '../shared/i18n/translate';
 import { monsterTypeLabel, type MonsterType } from '../shared/monster-types';
+import { isExplicitSpokenName, parseFirstName } from '../shared/spoken-name';
 
 /** A snapshot of the caller's live battle state, flattened for voice routing + the LLM host context. */
 export interface BattleVoiceSnapshot {
@@ -711,38 +712,10 @@ function sideForActionEvent(ev: BattleEvent): 'a' | 'b' | null {
  *  command, or empty). Handles "I'm Ada" / "my name is Rex" / "this is Bo" / bare "Ada". Kept simple +
  *  deterministic so name capture never depends on the LLM. */
 export function parseSpokenName(spoken: string, locale: SupportedLocale = DEFAULT_LOCALE): string | null {
-  let q = spoken.trim().replace(/[.!?,]+$/, '');
-  if (!q) return null;
-  const low = normalizeForMatching(q, locale);
-  // Not a name: obvious questions or game commands (so "start"/"which one?" don't become the name).
-  if (/[?]/.test(spoken)) return null;
-  const command = locale === 'pt-BR'
-    ? /^(comecar|iniciar|ir|proximo|lutar|luta|lute|batalhar|combater|atacar|ataque|ataca|defender|bloquear|proteger|item|pocao|curar|provocar|zombar|sim|nao|pronto|pronta|ajuda|qual|quem|como|por que|quando|onde)\b/
-    : /^(start|go|next|fight|fights|flight|five|attack|guard|item|potion|taunt|yes|no|ready|help|what|which|who|how|why|when|where)\b/;
-  if (command.test(low)) return null;
-  // Strip a lead-in ("my name is", "i'm", "i am", "this is", "it's", "call me").
-  const leadIn = locale === 'pt-BR'
-    ? /^(?:meu nome [ée]|eu sou|sou|me chamo|pode me chamar de|aqui [ée])\s+/iu
-    : /^(?:my name is|i am|i'm|im|this is|it's|its|call me|the name's|name's)\s+/i;
-  const beforeLeadIn = q;
-  q = q.replace(leadIn, '');
-  if (command.test(normalizeForMatching(q, locale))) return null;
-  if (q === beforeLeadIn && q.split(/\s+/).length > 2) return null;
-  if (locale === 'pt-BR' ? /^(?:o|a|um|uma)\s/i.test(q) : /^(?:the|a|an)\s/i.test(q)) return null;
-  // Take the first 1-2 words, letters/hyphen/apostrophe only; reject if nothing name-like remains.
-  const words = q.split(/\s+/).filter(w => /^\p{L}[\p{L}'’-]*$/u.test(w)).slice(0, 2);
-  if (!words.length) return null;
-  const name = words.join(' ');
-  if (name.length < 2 || name.length > 20) return null;
-  // Title-case for display.
-  return name.replace(/(^|[\s'-])(\p{L})/gu, (_match, prefix: string, letter: string) =>
-    prefix + letter.toLocaleUpperCase(locale));
+  return parseFirstName(spoken, locale);
 }
 
 function parseExplicitSpokenName(spoken: string, locale: SupportedLocale): string | null {
-  const explicit = locale === 'pt-BR'
-    ? /^(?:meu nome [ée]|eu sou|sou|me chamo|pode me chamar de|aqui [ée])\s+/iu
-    : /^(?:my name is|i am|i'm|im|this is|it's|its|call me|the name's|name's)\s+/i;
-  if (!explicit.test(spoken.trim())) return null;
+  if (!isExplicitSpokenName(spoken, locale)) return null;
   return parseSpokenName(spoken, locale);
 }

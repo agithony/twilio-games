@@ -18,10 +18,9 @@ The redirect URI must exactly match `PUBLIC_BASE_URL` plus `/auth/google/callbac
 | `GOOGLE_OAUTH_CLIENT_ID` | OAuth web client ID |
 | `GOOGLE_OAUTH_CLIENT_SECRET` | OAuth web client secret |
 | `ANALYTICS_ALLOWED_EMAIL` | Optional exact external email that may read analytics |
-| `ARCADE_ADMIN_EMAILS` | Comma-separated operator allowlist; these accounts may sign in, but this setting does not grant analytics access |
 | `ANALYTICS_PATH` | Rollup file path; defaults to `data/analytics.json` |
 
-The deployment workflow reads the client ID and secret from GitHub Actions secrets. It reads `ANALYTICS_ALLOWED_EMAIL` and `ARCADE_ADMIN_EMAILS` from repository variables.
+The deployment workflow reads the client ID and secret from GitHub Actions secrets. It reads `ANALYTICS_ALLOWED_EMAIL` from a repository variable.
 
 If an allowed account is outside Twilio Google Workspace, the OAuth application's audience must permit it. A Workspace-internal OAuth application can block the account before the application evaluates either allowlist.
 
@@ -29,11 +28,11 @@ If an allowed account is outside Twilio Google Workspace, the OAuth application'
 
 1. `GET /auth/google` creates a random OAuth state, retains it in memory for ten minutes, and sends the value in an HTTP-only, SameSite=Lax cookie.
 2. Google redirects to `/auth/google/callback`; the server validates the state and cookie, exchanges the code, reads userinfo, and requires `email_verified: true`.
-3. A verified `@twilio.com` address, the exact `ANALYTICS_ALLOWED_EMAIL`, or an address in `ARCADE_ADMIN_EMAILS` may receive an application session.
+3. A verified `@twilio.com` address or the exact `ANALYTICS_ALLOWED_EMAIL` may receive an application session.
 4. The server stores an opaque random session in memory for eight hours and sends only its ID in an HTTP-only, SameSite=Lax cookie.
 5. Analytics authorization is narrower: only a verified `@twilio.com` address or the exact `ANALYTICS_ALLOWED_EMAIL` may request reports.
 
-An external account listed only in `ARCADE_ADMIN_EMAILS` can authenticate and use authorized station operations, but its session has `analyticsAuthorized: false`. Both analytics report endpoints return `401` for that account. Conversely, `ANALYTICS_ALLOWED_EMAIL` grants analytics access but does not by itself add the account to the operator allowlist.
+Operator access is separate and currently does not use Google authentication. Google sessions authorize only the private analytics dashboard.
 
 OAuth state and session cookies include `Secure` only when the configured redirect URI uses HTTPS. Local HTTP cookies remain HTTP-only and SameSite=Lax without `Secure`. Google access tokens and client secrets never reach dashboard JavaScript. A process restart clears OAuth state and active sessions.
 
@@ -48,7 +47,7 @@ OAuth state and session cookies include `Secure` only when the configured redire
 | `configured` | Both Google OAuth client ID and client secret are present |
 | `email` | Normalized session email; omitted when no session is authenticated |
 
-Authentication and analytics authorization are intentionally separate. Clients must check both `authenticated` and `analyticsAuthorized` before displaying the dashboard.
+Clients check both `authenticated` and `analyticsAuthorized` before displaying the dashboard.
 
 ## Metrics
 
@@ -83,7 +82,7 @@ Loading the file does not prune it immediately. Older keys already on disk remai
 | `GET /api/analytics.pdf?...` | A PDF generated from the same report model and filters | Analytics-authorized session |
 | `POST /auth/logout` | Deletes the in-memory session and expires its cookie | Current cookie, if present |
 
-The report endpoints return `Cache-Control: no-store`. They return `401` whenever the session lacks analytics authorization, including an authenticated external operator-only session.
+The report endpoints return `Cache-Control: no-store`. They return `401` whenever the session lacks analytics authorization.
 
 Dates use strict `YYYY-MM-DD` UTC labels and include both endpoints. Omitting `from` defaults it to 29 UTC days before the current date; omitting `to` defaults it to the current UTC date, producing a 30-bucket default report. A supplied malformed date returns `400` instead of falling back.
 

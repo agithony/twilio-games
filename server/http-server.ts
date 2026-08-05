@@ -2489,6 +2489,7 @@ export class HttpServer {
     else if (rel === '/player' || rel === '/player/') file = 'arcade/index.html';
     else if (rel === '/operator' || rel === '/operator/') file = 'arcade/index.html';
     else if (rel === '/join' || rel === '/join/') file = 'join/index.html';
+    else if (rel === '/instructions' || rel === '/instructions/') file = 'instructions/index.html';
     else if (rel === '/challenge' || rel === '/challenge/') file = 'challenge/index.html';
     else file = rel.replace(/^\/+/, '');
     const full = path.join(this.clientDir, file);

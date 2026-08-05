@@ -56,6 +56,8 @@ describe('twimlConnectRelay', () => {
     const hints = /hints="([^"]*)"/.exec(xml)?.[1] ?? '';
     for (const word of ['left', 'right', 'boost', 'go', 'brake', 'slow', 'stop', 'nitro', 'power'])
       expect(hints).toContain(word);
+    expect(xml).toContain('speechTimeout="600"');
+    expect(xml).toContain('eotThreshold="0.6"');
   });
   it('sets the required transcription provider', () => {
     expect(xml).toContain('transcriptionProvider="Deepgram"');

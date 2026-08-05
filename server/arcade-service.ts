@@ -33,6 +33,7 @@ import {
   type QueueStatus,
 } from '../shared/arcade-queue';
 import { isPlayableArcadeGame, type PlayableArcadeGame } from '../shared/arcade-games';
+import { parseTypedFirstName } from '../shared/spoken-name';
 import {
   advanceStationResults as reduceAdvanceStationResults,
   closeStationRecruiting as reduceCloseStationRecruiting,
@@ -1052,8 +1053,11 @@ function advanceMessagingDraft(
 ): { draft: ArcadeMessagingDraftRecord; completed: boolean; reply: string } {
   const value = body.trim();
   let next = draft;
-  if (draft.step === 'FIRST_NAME' && validMessagingText(value, 50)) {
-    next = { ...draft, firstName: value, step: 'LAST_NAME', updatedAt: at };
+  const firstName = draft.step === 'FIRST_NAME'
+    ? parseTypedFirstName(value, locale.toLowerCase().startsWith('pt') ? 'pt-BR' : 'en-US')
+    : null;
+  if (draft.step === 'FIRST_NAME' && firstName) {
+    next = { ...draft, firstName, step: 'LAST_NAME', updatedAt: at };
   } else if (draft.step === 'LAST_NAME' && validMessagingText(value, 50)) {
     next = { ...draft, lastName: value, step: 'WORK_EMAIL', updatedAt: at };
   } else if (draft.step === 'WORK_EMAIL' && value.length <= 254 && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value)) {
@@ -2646,10 +2650,10 @@ export class ArcadeService {
         const gameChoice = parseMessagingGameChoice(normalizedCommand);
         const possibleGameChoice=parseTolerantMessagingGameChoice(normalizedCommand);
         if (config.arcade.mode === 'coin_only' && draft?.step === 'FIRST_NAME') {
-          const firstName = body.trim();
+          const firstName = parseTypedFirstName(body, locale);
           if (command === 'LEAVE') {
             // Legacy unnamed players must still be able to release an existing reservation.
-          } else if (command !== 'TEXT' || possibleGameChoice !== null || !validMessagingText(firstName, 50)) {
+          } else if (command !== 'TEXT' || possibleGameChoice !== null || !firstName) {
             return finish(command, messagingPrompt(locale, draft, false, config.registration.termsAcknowledgementRequired));
           } else {
             draft = {
@@ -3832,7 +3836,7 @@ export class ArcadeService {
     const expectedRevision = requirePositiveInteger(input.expectedRevision, 'expectedRevision');
     const principal = this.authorizeOperator(input.authorization, 'STATION_ACTION_UNAUTHORIZED');
     if (principal.kind !== 'operator') {
-      throw new ArcadeServiceError('STATION_ACTION_UNAUTHORIZED', 'authenticated operator authorization is required');
+      throw new ArcadeServiceError('STATION_ACTION_UNAUTHORIZED', 'operator authorization is required');
     }
     const reason = requireIdentifier(input.reason, 'operator reason', MAX_OPERATOR_REASON_LENGTH).trim();
     return this.publishStation(this.execute('RESET_STATION', input.idempotencyKey, null, {
