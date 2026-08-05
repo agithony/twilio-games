@@ -18,6 +18,9 @@ describe('Portuguese instructions page', () => {
     expect(html).toContain('inteligência artificial');
     expect(html).toContain('seu primeiro nome');
     expect(html).toContain('Escolha lutadores e movimentos usando sua voz.');
+    expect(html).toContain('Aguarde sua vez para jogar na tela.');
+    expect(html).not.toContain('Voltar aos jogos');
+    expect(html).not.toMatch(/<footer>[\s\S]*?href="\/"/);
     expect(html).not.toMatch(/Escolha carros|monstros, lutadores/);
     expect(html).not.toMatch(/Escolha um jogo|jogos disponíveis/);
     expect(html.match(/<li>/g)).toHaveLength(6);
