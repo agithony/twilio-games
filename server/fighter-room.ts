@@ -7,6 +7,7 @@ interface Player { playerId: string; name: string; nameConfirmed: boolean; fight
 export const FIGHTER_LOADING_TIMEOUT_SECONDS = 150;
 export const FIGHTER_VICTORY_SECONDS = 10.5;
 const MAX_VOICE_COMMAND_QUEUE = 12;
+const SOLO_AI_FIGHTERS = ['cinder-capone', 'gran-slam', 'iron-oni', 'shroom-boom', 'sir-knockout', 'velvet-thunder', 'nyx'];
 
 export class FighterRoom {
   phase: FighterPhase = 'lobby';
@@ -215,8 +216,8 @@ export class FighterRoom {
     if(!this.selectedMap)return false;
     const bounds=this.maps.find(map=>map.id===this.selectedMap)?.bounds??[-9,9];
     if(this.players.length===1){
-      const choices=FIGHTER_ROSTER.filter(fighter=>fighter.id!==this.players[0]!.fighterId);
-      this.aiFighterId=choices[Math.floor(this.random()*choices.length)]?.id??'wraith';
+      const choices=FIGHTER_ROSTER.filter(fighter=>SOLO_AI_FIGHTERS.includes(fighter.id)&&fighter.id!==this.players[0]!.fighterId);
+      this.aiFighterId=choices[Math.floor(this.random()*choices.length)]?.id??'cinder-capone';
     }else this.aiFighterId=null;
     this.phase='loading';this.world=createFighterWorld(bounds);this.voiceCommands.clear();this.countdown=0;this.aiNext=0.8;
     this.loadingElapsed=0;this.loadingGeneration++;return true;
