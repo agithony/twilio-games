@@ -6,7 +6,7 @@ import { FIGHTERS, FIGHTER_ASSET_VERSION, loadAnimationSources } from './fighter
 import { FighterAtmosphere, fighterAtmosphereSpec, type FighterAtmosphereSpec } from './fighter-atmosphere';
 import { FighterConnection } from './fighter-net';
 import { isInteractiveShortcutTarget, resolveNumericSelection } from './fighter-client-utils';
-import { canReloadArenaForViewport, frameStaticPortraitArena, portraitOrientationChanged, proceduralFallbackCamera, responsiveVerticalFov, shouldUseLivePortraitArena } from './fighter-camera';
+import { frameStaticPortraitArena, proceduralFallbackCamera, responsiveVerticalFov, shouldUseLivePortraitArena } from './fighter-camera';
 import { getSoundEffectsManager } from '../sound-effects';
 import { getMusicManager } from '../music-manager';
 import { injectMusicToggle } from '../music-toggle';
@@ -122,13 +122,11 @@ let mapAtmosphere: FighterAtmosphere | null = null;
 let mapLoadAttempt = 0;
 let customMapStatic = false;
 let usingProceduralFallback = false;
-let viewportMapReloadTimer: ReturnType<typeof setTimeout> | null = null;
 let mapPlane = { origin: [0, 0, 0] as [number, number, number], rotationY: 0 };
 let mapBoundsCenter = 0;
 const displayX: Record<FighterId, number> = { p1: -2.5, p2: 2.5 };
 const displayHeight: Record<FighterId, number> = { p1: 0, p2: 0 };
 let cameraBase = { pos: [0, 2.15, 10.5] as [number, number, number], lookAt: [0, 1.25, 0] as [number, number, number], fov: 36 };
-let cameraFramingAspect = camera.aspect;
 const cameraAxis = new THREE.Vector3(), cameraTarget = new THREE.Vector3(), cameraView = new THREE.Vector3(), cameraDesired = new THREE.Vector3();
 let flowMessage = '';
 let animationSources: Awaited<ReturnType<typeof loadAnimationSources>> | null = null;
@@ -183,7 +181,6 @@ connection.onState(next => {
     if (next.phase === 'loading' || next.phase === 'intro') countdownSoundPlayed = false;
     if (next.phase !== 'results' && resultTimer) { clearTimeout(resultTimer); resultTimer = null; resultRevealAt = 0; }
     if (['lobby', 'fighter_select', 'map_select', 'loading'].includes(next.phase)) getMusicManager().switchContext('lobby');
-    if (next.phase !== 'loading' && viewportMapReloadTimer) { clearTimeout(viewportMapReloadTimer); viewportMapReloadTimer = null; }
   }
   state = next;
   if (next.phase === 'countdown') {
@@ -772,7 +769,6 @@ function disposeObjectResources(root: THREE.Object3D): void {
 
 function maybeSignalReady(): void {
   if (!isHost || state?.phase !== 'loading' || !state.selectedMap || mapReadyId !== state.selectedMap) return;
-  if (viewportMapReloadTimer) return;
   const p1Id = state.players.find(player => player.side === 'p1')?.fighterId;
   const p2Id = state.players.find(player => player.side === 'p2')?.fighterId;
   if (!p1Id || !p2Id || !loadedActors.has(p1Id) || !loadedActors.has(p2Id)) return;
@@ -834,7 +830,6 @@ function applyCameraFraming(config: FighterMapEntry): void {
     ? { pos: config.camera.pos, lookAt: config.camera.lookAt, fov: config.camera.fov ?? 36 }
     : { pos: [0, 2.15, 10.5] as [number,number,number], lookAt: [0, 1.25, 0] as [number,number,number], fov: 36 };
   cameraBase = frameStaticPortraitArena(authoredCamera, config.bounds, mapPlane.origin, mapPlane.rotationY, camera.aspect);
-  cameraFramingAspect = camera.aspect;
   camera.position.set(...cameraBase.pos); updateCameraProjection(); camera.lookAt(...cameraBase.lookAt);
 }
 function applyProceduralFallbackFraming(config: FighterMapEntry | undefined): void {
@@ -844,22 +839,7 @@ function applyProceduralFallbackFraming(config: FighterMapEntry | undefined): vo
     proceduralFallbackCamera(bounds),
     bounds, mapPlane.origin, mapPlane.rotationY, camera.aspect,
   );
-  cameraFramingAspect = camera.aspect;
   camera.position.set(...cameraBase.pos); updateCameraProjection(); camera.lookAt(...cameraBase.lookAt);
-}
-function scheduleViewportMapReload(mapId: string): void {
-  const readinessKey = `${state?.loadingGeneration ?? 0}:${mapId}`;
-  if (state?.selectedMap !== mapId || !canReloadArenaForViewport(state.phase, readinessKey, readySentFor)) return;
-  if (viewportMapReloadTimer) clearTimeout(viewportMapReloadTimer);
-  if (readyTimer) { clearTimeout(readyTimer); readyTimer = null; }
-  viewportMapReloadTimer = setTimeout(() => {
-    viewportMapReloadTimer = null;
-    const currentReadinessKey = `${state?.loadingGeneration ?? 0}:${mapId}`;
-    if (loadedMapId !== mapId || state?.selectedMap !== mapId
-      || !canReloadArenaForViewport(state.phase, currentReadinessKey, readySentFor)) return;
-    loadedMapId = '';
-    applyMapTheme(mapId);
-  }, 150);
 }
 function commandLabel(command: FighterCommand): string { return t(COMMAND_MESSAGE_KEYS[command]); }
 function localizedFighterTitle(fighter: FighterRosterEntry): string { const key = FIGHTER_TITLE_KEYS[fighter.id]; return key ? t(key) : fighter.title; }
@@ -978,12 +958,6 @@ addEventListener('resize', () => {
   camera.aspect = size.width / size.height; renderer.setSize(size.width, size.height);
   const config = maps.find(map => map.id === loadedMapId);
   if (usingProceduralFallback) { applyProceduralFallbackFraming(config); return; }
-  const framingChanged = Math.abs(cameraFramingAspect - camera.aspect) > .001;
-  if (config && framingChanged && (customMapStatic || portraitOrientationChanged(cameraFramingAspect, camera.aspect))) {
-    updateCameraProjection();
-    scheduleViewportMapReload(config.id);
-    return;
-  }
   if (config && !customMapStatic) applyCameraFraming(config);
   else updateCameraProjection();
 });

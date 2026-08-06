@@ -12,15 +12,6 @@ export function shouldUseLivePortraitArena(mapId: string, aspect: number): boole
   return mapId === 'inakaya' && Number.isFinite(aspect) && aspect > 0 && aspect < 1;
 }
 
-export function portraitOrientationChanged(previousAspect: number, nextAspect: number): boolean {
-  if (!Number.isFinite(previousAspect) || previousAspect <= 0 || !Number.isFinite(nextAspect) || nextAspect <= 0) return false;
-  return (previousAspect < 1) !== (nextAspect < 1);
-}
-
-export function canReloadArenaForViewport(phase: string | undefined, readinessKey: string, readySentFor: string): boolean {
-  return phase === 'loading' && readinessKey !== readySentFor;
-}
-
 export function responsiveVerticalFov(authoredDegrees: number, aspect: number): number {
   if (!Number.isFinite(authoredDegrees) || authoredDegrees <= 0 || authoredDegrees >= 180) return 36;
   if (!Number.isFinite(aspect) || aspect <= 0 || aspect >= LANDSCAPE_REFERENCE_ASPECT) return authoredDegrees;
