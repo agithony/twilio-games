@@ -132,7 +132,6 @@ Open **Settings > Secrets and variables > Actions > Variables** and configure as
 | `DEFAULT_LOCALE` | No | Fallback when the dialed number and selected display do not identify a locale; defaults to `en-US` |
 | `OPENAI_MODEL` | No | OpenAI model name; empty defaults to `gpt-4o-mini` |
 | `ANALYTICS_ALLOWED_EMAIL` | No | One exact verified Google email allowed to view analytics in addition to `@twilio.com` accounts |
-| `ARCADE_ADMIN_EMAILS` | Required to edit Twilio Games station settings | Comma-separated Google-authenticated emails allowed to use operator APIs; empty disables updates |
 | `TWILIO_CONVERSATION_CONFIGURATION_ID` | Yes | Active Conversation Orchestrator configuration ID matching `conv_configuration_<26 lowercase letters or digits>` and linked to the Memory store |
 | `DUB_SHORT_DOMAIN` | No | Custom Dub hostname such as `go.example.com`; must be configured together with `DUB_API_KEY` |
 
@@ -179,7 +178,7 @@ Each deployment run performs these operations:
 5. Reads the ACR admin username/password and stores the password as the Container App secret `acr-password`. The workflow enables the admin account only when it creates ACR; an existing registry must already have `adminUserEnabled=true` or the credential step fails.
 6. Accepts an existing app in `Single` or `Multiple` mode only when exactly one revision is active, switches to `Multiple` when needed, pins traffic to that revision, deactivates it, and waits for zero replicas. It also accepts a stopped, zero-running-replica first-deployment retry. Any other revision topology fails closed. On first create, it creates an Azure-resource-tagged zero-replica shell, then stops its temporary revision.
 7. Applies `.github/containerapp.yaml` as a uniquely named full-spec revision, including the Azure Files mount, one-replica limit, 2 vCPU, 4 GiB memory, health probes, secrets, and complete runtime environment.
-8. Requires the exact SHA image revision to be `Provisioned`, `Healthy`, and latest-ready with the expected mount and `/livez` probes; asserts it is the only running revision; then checks `/livez`, dependency-aware `/healthz`, `/`, `/join`, `/player`, and `/operator` through the candidate revision FQDN before public cutover.
+8. Requires the exact SHA image revision to be `Provisioned`, `Healthy`, and latest-ready with the expected mount and `/livez` probes; asserts it is the only running revision; then checks `/livez`, dependency-aware `/healthz`, `/`, `/instructions`, `/join`, `/player`, and `/operator` through the candidate revision FQDN before public cutover.
 9. Assigns public traffic, then requires exact `Single` revision mode around the verified revision. Automatic snapshot restore is allowed only before the candidate can produce external or public durable side effects. If outbound delivery is enabled, restore becomes unsafe before the candidate update because its worker can call Twilio as soon as the revision starts. Once restore is unsafe, a failure leaves current data and revision state intact for manual recovery rather than erasing accepted interactions.
 
 The workflow is create-if-missing for supporting infrastructure, not a full declarative reconciliation system. For example, it does not change an existing storage SKU, share quota, region, resource tags, ACR admin setting, or Log Analytics configuration to match the checked-in defaults.
@@ -275,7 +274,7 @@ Expected response shape:
 {"status":"ok","rooms":0}
 ```
 
-`/healthz` is dependency-aware and returns 503 for repairable station/TAC/configuration degradation. ACA startup, readiness, and liveness probes call `/livez` instead, so a Twilio outage does not restart the process or hide the operator console. The deployment workflow also verifies the home, join, player, and operator pages, but it does not perform live Twilio, Memory, Azure Files write, or WebSocket gameplay tests.
+`/healthz` is dependency-aware and returns 503 for repairable station/TAC/configuration degradation. ACA startup, readiness, and liveness probes call `/livez` instead, so a Twilio outage does not restart the process or hide the operator console. The deployment workflow also verifies the home, instructions, join, player, and operator pages, but it does not perform live Twilio, Memory, Azure Files write, or WebSocket gameplay tests.
 
 There is no safe existing persistent-store write probe. Every public write endpoint changes real editor, Arcade, or messaging state, so the workflow intentionally does not call one. Do not substitute an unauthenticated or production-data mutation. A future persistent write smoke should use an authenticated, idempotent endpoint designed to create and remove a disposable probe record.
 
@@ -297,7 +296,7 @@ Keep runtime mode `off` during provisioning. After item 1 passes, open the event
 10. Complete Racer, Monsters, and Fighter once and confirm the operator sees authoritative results.
 11. Reset an inactive test player from `/operator`. The reset must delete the linked Conversation Memory profile before local identity, wallet, messaging, and roster retirement commits; it fails closed if Memory deletion is unavailable or fails. Confirm the next `JOIN` creates a fresh profile and wallet. Never reset a connected caller or a player with an active game, coin hold, or pending outbound notice.
 12. If proactive messaging is enabled, confirm SMS delivery callbacks, all three WhatsApp call-now states where practical, and one approved out-of-session template.
-13. With the event paused, open `/operator` in the intended booth tab, sign in, and select **Pair this tab as the big screen**. Confirm the same tab returns to `/`, its operator session remains active, display access is held only in `sessionStorage`, and no credential appears in the URL. During a launch, verify an absent or rejected display session explains why only an operator may pair the booth and links to `/operator` instead of showing a secret field or a stuck countdown. Then restart the Container App and confirm persisted event recovery, wallet balances, and Memory-linked messaging still work.
+13. With the event paused, open `/operator` in the intended booth tab and select **Pair this tab as the big screen**. Confirm the same tab returns to `/`, display access is held only in `sessionStorage`, and no credential appears in the URL. The operator console is intentionally unauthenticated for this deployment. During a launch, verify an absent or rejected display session links to `/operator` instead of showing a secret field or a stuck countdown. Then restart the Container App and confirm persisted event recovery, wallet balances, and Memory-linked messaging still work.
 
 ## Persistent storage operations
 
@@ -309,7 +308,7 @@ Do not place image-owned assets or `assets/manifest.json` on the share without c
 
 ## Configuration gaps and security notes
 
-`FIGHTER_DISPLAY_TOKEN` remains available as a server-side standalone override for custom integrations, but browser URLs no longer accept display credentials. The deployed server passes `ARCADE_DISPLAY_TOKEN` to Fighter, Racer, and Monsters, so station engine rooms share the kiosk capability installed through the authenticated `/operator` action.
+`FIGHTER_DISPLAY_TOKEN` remains available as a server-side standalone override for custom integrations, but browser URLs no longer accept display credentials. The deployed server passes `ARCADE_DISPLAY_TOKEN` to Fighter, Racer, and Monsters, so station engine rooms share the kiosk capability installed through `/operator`.
 
 `VOICE_RELAY_TOKEN` is wired as its own Container App secret and is mandatory in the deployment workflow. Rotate it independently from `TWILIO_AUTH_TOKEN`; the server places the current value in newly generated Conversation Relay setup parameters.
 

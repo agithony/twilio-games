@@ -1,4 +1,4 @@
-export const ARCADE_CONFIG_SCHEMA_VERSION = 4 as const;
+export const ARCADE_CONFIG_SCHEMA_VERSION = 5 as const;
 
 export type ArcadeMode = 'off' | 'coin_only' | 'lead_capture';
 export type ArcadeGame = 'racer' | 'monsters' | 'fighter' | 'trivia';
@@ -47,6 +47,7 @@ export type ArcadeSettings = {
 };
 
 export type StationGame = 'racer' | 'monsters' | 'fighter';
+export type HomeConcept = 'trivia' | 'karaoke';
 export type AutomaticSelectionPolicy = 'best_fit_rotation' | 'round_robin' | 'fixed_priority';
 export type StationQrRail = 'auto' | 'always' | 'hidden';
 
@@ -65,6 +66,7 @@ export type StationGameSettings = {
 };
 
 export type StationGamesSettings = Readonly<Record<StationGame, StationGameSettings>>;
+export type HomeConceptSettings = Readonly<Record<HomeConcept, StationGameSettings>>;
 
 export type StationAutomaticSelectionSettings = {
   readonly policy: AutomaticSelectionPolicy;
@@ -74,6 +76,7 @@ export type StationAutomaticSelectionSettings = {
 export type StationSettings = {
   readonly timings: StationTimingSettings;
   readonly games: StationGamesSettings;
+  readonly comingSoon: HomeConceptSettings;
   readonly automaticSelection: StationAutomaticSelectionSettings;
   readonly qrRail: StationQrRail;
 };
@@ -219,6 +222,7 @@ const SETTINGS_KEYS = [
   'arcade', 'station', 'registration', 'coins', 'earning', 'queue', 'channels', 'postGame', 'intelligence',
 ] as const;
 const STATION_GAMES: readonly StationGame[] = ['racer', 'monsters', 'fighter'];
+const HOME_CONCEPTS: readonly HomeConcept[] = ['trivia', 'karaoke'];
 const REGISTRATION_FIELD_KEYS: readonly RegistrationFieldKey[] = [
   'firstName', 'lastName', 'workEmail', 'companyName', 'phoneNumber', 'countryCode',
 ];
@@ -460,7 +464,7 @@ function parseArcade(value: unknown): ArcadeSettings {
 }
 
 function parseStation(value: unknown, mode: ArcadeMode): StationSettings {
-  const object = exactObject(value, ['timings', 'games', 'automaticSelection', 'qrRail'], '$.station');
+  const object = exactObject(value, ['timings', 'games', 'comingSoon', 'automaticSelection', 'qrRail'], '$.station');
   const timingInput = exactObject(object.timings, [
     'recruitingSeconds', 'hardDeadlineSeconds', 'selectionSeconds', 'lockedSeconds',
     'launchTimeoutSeconds', 'resultsSeconds', 'postGameRecruitingSeconds',
@@ -498,6 +502,11 @@ function parseStation(value: unknown, mode: ArcadeMode): StationSettings {
   if (mode !== 'off' && !STATION_GAMES.some(game => games[game].enabled)) {
     invalid('$.station.games', 'at least one game must be enabled when arcade mode is not off');
   }
+  const conceptInput = exactObject(object.comingSoon, HOME_CONCEPTS, '$.station.comingSoon');
+  const comingSoon: HomeConceptSettings = {
+    trivia: parseStationGame(conceptInput.trivia, '$.station.comingSoon.trivia'),
+    karaoke: parseStationGame(conceptInput.karaoke, '$.station.comingSoon.karaoke'),
+  };
 
   const selectionInput = exactObject(
     object.automaticSelection,
@@ -520,6 +529,7 @@ function parseStation(value: unknown, mode: ArcadeMode): StationSettings {
   return {
     timings,
     games,
+    comingSoon,
     automaticSelection: {
       policy: enumAt(
         selectionInput.policy,
@@ -1015,6 +1025,10 @@ const DEFAULT_CONFIG_INPUT = {
       racer: { enabled: true },
       monsters: { enabled: true },
       fighter: { enabled: true },
+    },
+    comingSoon: {
+      trivia: { enabled: true },
+      karaoke: { enabled: true },
     },
     automaticSelection: {
       policy: 'best_fit_rotation',

@@ -5,7 +5,8 @@ import { getMusicManager } from './music-manager';
 import { injectMusicToggle } from './music-toggle';
 import { applyDocumentLocale, injectLanguagePicker, locale } from './i18n';
 import { injectMagicHat } from './magic-hat';
-import { OPERATOR_ICON, updateThemeToggleIcon } from './icon-controls';
+import { OPERATOR_ICON } from './icon-controls';
+import { wireThemeToggle } from './theme';
 import { createCoinInsertionPresenter } from './coin-insertion';
 import { getSoundEffectsManager } from './sound-effects';
 import {
@@ -40,6 +41,7 @@ const copy = locale === 'pt-BR' ? {
   standaloneEyebrow: 'Jogos de festa controlados por voz · com tecnologia Twilio',
   standaloneTitle: 'Jogue com sua <span>voz.</span>',
   standaloneDescription: 'Com tecnologia Twilio ConversationRelay. Sua voz é o controle.',
+  quickStartOne: 'Toque no jogo', quickStartTwo: 'Escaneie o código QR', quickStartThree: 'Ligue e jogue por voz',
   standaloneUnavailable: 'Os jogos por voz não estão disponíveis agora. Peça ajuda à equipe.',
   comingSoon: 'Em breve',
   triviaTitle: 'Quiz por Voz', karaokeTitle: 'Karaokê por Voz',
@@ -49,8 +51,8 @@ const copy = locale === 'pt-BR' ? {
   playersNext: 'jogadores já estão prontos para a próxima partida',
   displaySetup: 'Conexão segura necessária', missingDisplayToken: 'Tela não conectada',
   invalidDisplayToken: 'Acesso da tela rejeitado', connectDisplay: 'Conecte pelo console do operador',
-  missingDisplayExplanation: 'Somente a tela do estande pode iniciar jogos compartilhados. Um operador autenticado deve conectar este navegador para impedir que visitantes controlem os jogos.',
-  invalidDisplayExplanation: 'O acesso desta tela foi rejeitado. Para proteger os jogos contra o controle de visitantes, um operador autenticado deve reconectar este navegador.',
+  missingDisplayExplanation: 'Somente a tela do estande pode iniciar jogos compartilhados. Abra o console do operador para conectar este navegador.',
+  invalidDisplayExplanation: 'O acesso desta tela foi rejeitado. Abra o console do operador para reconectar este navegador.',
   openOperator: 'Abrir console do operador',
   lightTheme: 'Tema claro', darkTheme: 'Tema escuro', operator: 'Console do operador', playerMax: 'máx. {count} jogadores',
   playNow: 'Jogando nesta rodada: {count}', keepPriority: 'Aguardando o próximo jogo: {count}',
@@ -76,6 +78,7 @@ const copy = locale === 'pt-BR' ? {
   standaloneEyebrow: 'Voice-controlled party games · powered by Twilio',
   standaloneTitle: 'Play with your <span>voice.</span>',
   standaloneDescription: 'Powered by Twilio Conversation Relay. Your voice is the controller.',
+  quickStartOne: 'Tap the game', quickStartTwo: 'Scan the QR code', quickStartThree: 'Call and play by voice',
   standaloneUnavailable: 'Voice games are unavailable right now. Please ask booth staff for help.',
   comingSoon: 'Coming soon',
   triviaTitle: 'Voice Trivia', karaokeTitle: 'Voice Karaoke',
@@ -85,8 +88,8 @@ const copy = locale === 'pt-BR' ? {
   playersNext: 'players are already ready for the next game',
   displaySetup: 'Secure connection required', missingDisplayToken: 'Display not connected',
   invalidDisplayToken: 'Display access rejected', connectDisplay: 'Connect through the operator console',
-  missingDisplayExplanation: 'Only the booth display may launch shared games. A signed-in operator must connect this browser to prevent visitors from controlling the games.',
-  invalidDisplayExplanation: 'This display access was rejected. To protect games from visitor control, a signed-in operator must reconnect this browser.',
+  missingDisplayExplanation: 'Only the booth display may launch shared games. Open the operator console to connect this browser.',
+  invalidDisplayExplanation: 'This display access was rejected. Open the operator console to reconnect this browser.',
   openOperator: 'Open operator console',
   lightTheme: 'Light theme', darkTheme: 'Dark theme', operator: 'Operator console', playerMax: '{count} player max',
   playNow: 'Playing this round: {count}', keepPriority: 'Waiting for next game: {count}',
@@ -148,7 +151,8 @@ let configuring = false;
 let configurationPending = false;
 let freePlay = false;
 let leadCaptureMode = false;
-let enabledGames = new Set(['racer','monsters','fighter']);
+let enabledGames = new Set<string>();
+let comingSoon = { trivia: false, karaoke: false };
 let smsAvailable = false;
 let whatsappAvailable = false;
 let selectionLineup = '';
@@ -198,8 +202,9 @@ function buildGameCard(impact: PublicStation['games'][number]): HTMLElement {
 }
 
 function renderStandaloneLauncher(): void {
-  const key=[...enabledGames].sort().join(',');if(key===standaloneGamesKey)return;standaloneGamesKey=key;standaloneGames.replaceChildren();
+  const key=`${[...enabledGames].sort().join(',')}|${comingSoon.trivia?1:0}${comingSoon.karaoke?1:0}`;if(key===standaloneGamesKey)return;standaloneGamesKey=key;standaloneGames.replaceChildren();
   const games=PLAYABLE_ARCADE_GAMES.filter(game=>enabledGames.has(game.id));
+  renderComingSoon();
   if(!games.length){const message=document.createElement('p');message.className='standalone-unavailable';message.textContent=copy.standaloneUnavailable;standaloneGames.append(message);return;}
   standaloneGames.append(...games.map(game => {
     const link = document.createElement('a');
@@ -209,6 +214,12 @@ function renderStandaloneLauncher(): void {
     link.innerHTML=`<video data-src="${selectionVideos[game.id]}" preload="none" loop muted playsinline aria-hidden="true"></video><span>${gameTitle(locale,game.id)}</span><p>${game.id==='racer'?copy.racerBlurb:game.id==='monsters'?copy.monstersBlurb:copy.fighterBlurb}</p>`;
     return link;
   }));
+}
+
+function renderComingSoon(): void {
+  document.getElementById('futureTrivia')!.hidden=!comingSoon.trivia;
+  document.getElementById('futureKaraoke')!.hidden=!comingSoon.karaoke;
+  document.getElementById('standaloneFuture')!.hidden=!comingSoon.trivia&&!comingSoon.karaoke;
 }
 
 function previewPlaybackAllowed(): boolean {
@@ -357,15 +368,8 @@ async function refresh(): Promise<void> {
 }
 
 function wireTheme(): void {
-  const storageKey = 'twilio-home-theme';
   const button = document.getElementById('themeToggle')!;
-  const apply = (theme: string) => {
-    document.documentElement.dataset.theme = theme;
-    localStorage.setItem(storageKey, theme);
-    updateThemeToggleIcon(button,theme,copy.lightTheme,copy.darkTheme);
-  };
-  apply(document.documentElement.dataset.theme ?? 'light');
-  button.addEventListener('click', () => apply(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'));
+  wireThemeToggle(button,{light:copy.lightTheme,dark:copy.darkTheme});
 }
 
 function localizeStaticPage(): void {
@@ -391,6 +395,9 @@ function localizeStaticPage(): void {
   document.getElementById('standaloneEyebrow')!.textContent=copy.standaloneEyebrow;
   document.getElementById('standaloneTitle')!.innerHTML=copy.standaloneTitle;
   document.getElementById('standaloneDescription')!.textContent=copy.standaloneDescription;
+  document.getElementById('standaloneQuickStartOne')!.textContent=copy.quickStartOne;
+  document.getElementById('standaloneQuickStartTwo')!.textContent=copy.quickStartTwo;
+  document.getElementById('standaloneQuickStartThree')!.textContent=copy.quickStartThree;
   document.getElementById('futureGamesLabel')!.textContent=copy.comingSoon;
   document.getElementById('voiceTriviaTitle')!.textContent=copy.triviaTitle;
   document.getElementById('voiceKaraokeTitle')!.textContent=copy.karaokeTitle;
@@ -399,6 +406,7 @@ function localizeStaticPage(): void {
   document.getElementById('persistentJoinLabel')!.textContent=locale==='pt-BR'?'Proxima rodada':'Next round';
   document.getElementById('persistentJoinTitle')!.textContent=locale==='pt-BR'?'Escaneie para entrar':'Scan to join';
   const operator=document.getElementById('operatorLink')!;operator.innerHTML=OPERATOR_ICON;operator.title=copy.operator;operator.setAttribute('aria-label',copy.operator);
+  const instructions=document.getElementById('instructionsLink')!;instructions.title=locale==='pt-BR'?'Como jogar':'How to play';instructions.setAttribute('aria-label',instructions.title);
 }
 
 function renderEntryPolicyCopy(): void {
@@ -478,9 +486,13 @@ async function refreshConfiguration(): Promise<void> {
     freePlay = config.coins.chargePolicy === 'free';
     smsAvailable = locale !== 'pt-BR' && config.channels.sms && Boolean(bootstrap.smsNumber);
     whatsappAvailable = config.channels.whatsapp && Boolean(bootstrap.whatsappNumber);
-    enabledGames = config.channels.voice&&Boolean(bootstrap.voiceNumbers?.[locale])?new Set(Object.entries(config.station.games)
+    const configuredGames = new Set(Object.entries(config.station.games)
       .filter(([, settings]) => settings.enabled)
-      .map(([game]) => game)):new Set();
+      .map(([game]) => game));
+    comingSoon={trivia:config.station.comingSoon.trivia.enabled,karaoke:config.station.comingSoon.karaoke.enabled};
+    enabledGames = config.channels.voice && Boolean(bootstrap.voiceNumbers?.[locale])
+      ? configuredGames
+      : new Set();
     stationId = config.arcade.cabinetId;
     qrRailMode=config.station.qrRail;
     renderEntryPolicyCopy();
@@ -492,6 +504,11 @@ async function refreshConfiguration(): Promise<void> {
       if(qr){(document.getElementById('joinQr') as HTMLImageElement).src=qr;(document.getElementById('persistentJoinQr') as HTMLImageElement).src=qr;}
     }
   } catch {
+    enabledGames = new Set();
+    comingSoon={trivia:false,karaoke:false};
+    selectionLineup = '';
+    if (standaloneMode) renderStandaloneLauncher();
+    if (current) renderGameCards(current);
     connection.textContent = copy.reconnecting;
   } finally {
     configuring = false;

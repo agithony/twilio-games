@@ -12,7 +12,7 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p client/tsconfig.json",
     "dev:server": "tsx watch server/index.ts",
     "dev:client": "vite client",
-    "dev:arcade:server": "PORT=8081 PUBLIC_BASE_URL=http://localhost:5173 ARCADE_DEV_ADMIN=true ARCADE_TAC_ENABLED=false ARCADE_CONFIG_DIRECTORY=data/arcade-dev-config ARCADE_STATE_PATH=data/arcade-dev-state.json ARCADE_SIGNING_SECRET=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef ARCADE_DISPLAY_TOKEN=dev-arcade-display-token GAME_PHONE_NUMBER=${GAME_PHONE_NUMBER:-+18555993809} TWILIO_SMS_NUMBER=${TWILIO_SMS_NUMBER:-+18555993809} tsx watch server/index.ts",
+    "dev:arcade:server": "PORT=8081 PUBLIC_BASE_URL=http://localhost:5173 ARCADE_TAC_ENABLED=false ARCADE_CONFIG_DIRECTORY=data/arcade-dev-config ARCADE_STATE_PATH=data/arcade-dev-state.json ARCADE_SIGNING_SECRET=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef ARCADE_DISPLAY_TOKEN=dev-arcade-display-token GAME_PHONE_NUMBER=${GAME_PHONE_NUMBER:-+18555993809} TWILIO_SMS_NUMBER=${TWILIO_SMS_NUMBER:-+18555993809} tsx watch server/index.ts",
     "dev:arcade:client": "GAME_SERVER_URL=http://localhost:8081 vite client",
     "make-fixtures": "tsx tools/make-fixtures.ts",
     "inspect-assets": "tsx tools/inspect-assets.ts",

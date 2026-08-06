@@ -6,7 +6,6 @@ import { ArcadeEventHub } from './arcade-events';
 import { ArcadeTacGateway } from './arcade-tac-gateway';
 import { ArcadePlayerRuntime } from './arcade-player-runtime';
 import { GoogleAnalyticsAuth } from './google-analytics-auth';
-import { isLoopbackAddress, isLoopbackUrl } from './arcade-dev-auth';
 import { TwilioMessagingTransport } from './twilio-messaging';
 import type { ArcadeMessagingChannel, ArcadeStationNotificationKind } from './arcade-state-store';
 
@@ -41,25 +40,12 @@ if (validateSignatures && !authToken) {
 // When EDITOR_TOKEN is set, /api writes (manifest + maps) require it — gate the editor on a public
 // deploy. Unset (local dev) leaves writes open so the editor works with zero setup.
 const editorToken = process.env.EDITOR_TOKEN;
-const arcadeAdminEmails = new Set((process.env.ARCADE_ADMIN_EMAILS ?? '')
-  .split(',')
-  .map(email => email.trim().toLowerCase())
-  .filter(Boolean));
 const analyticsAuth = new GoogleAnalyticsAuth({
   clientId: process.env.GOOGLE_OAUTH_CLIENT_ID,
   clientSecret: process.env.GOOGLE_OAUTH_CLIENT_SECRET,
   redirectUri: `${publicBaseUrl.replace(/\/$/, '')}/auth/google/callback`,
   allowedEmail: process.env.ANALYTICS_ALLOWED_EMAIL,
-  allowedEmails: [...arcadeAdminEmails],
 });
-const arcadeDevAdmin = process.env.ARCADE_DEV_ADMIN === 'true'
-  && process.env.NODE_ENV !== 'production'
-  && isLoopbackUrl(publicBaseUrl);
-if (arcadeDevAdmin) {
-  console.warn('[security] ARCADE_DEV_ADMIN is enabled for local development.');
-} else if (arcadeAdminEmails.size === 0) {
-  console.warn('[security] ARCADE_ADMIN_EMAILS is unset; Twilio Games operator APIs are disabled.');
-}
 const arcadeEvents = new ArcadeEventHub(error => {
   console.error('[arcade-events] subscriber failed:', error instanceof Error ? error.message : String(error));
 });
@@ -118,14 +104,9 @@ const arcadeApi = new ArcadeApi({
     domain: process.env.DUB_SHORT_DOMAIN,
     folderId: process.env.DUB_FOLDER_ID === 'disabled' ? undefined : process.env.DUB_FOLDER_ID,
   }),
-  authorizeAdmin: request => {
-    if (arcadeDevAdmin && isLoopbackAddress(request.socket.remoteAddress)
-      && request.headers['x-arcade-dev-admin'] === 'true') {
-      return { email: 'local-arcade-admin@twilio.com' };
-    }
-    const principal = analyticsAuth.currentUser(request);
-    return principal && arcadeAdminEmails.has(principal.email) ? principal : null;
-  },
+  // Operator access is intentionally open for the current event deployment. Mutation routes retain
+  // their same-origin, ETag, idempotency, and display-capability checks.
+  authorizeAdmin: () => ({ email: 'operator-console@local.invalid' }),
 });
 arcadeTacGateway?.setMessageHandler(async input => {
   const author = input.channel === 'whatsapp' && !input.author.toLowerCase().startsWith('whatsapp:')

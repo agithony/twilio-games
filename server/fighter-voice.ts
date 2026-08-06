@@ -1,11 +1,12 @@
 import { parseCrMessage } from './conversation-relay';
-import { parseSpokenName as parseEnglishSpokenName, isAdvanceWord as isEnglishAdvanceWord } from './battle-voice';
+import { isAdvanceWord as isEnglishAdvanceWord } from './battle-voice';
 import { matchFighterCommands } from '../shared/fighter-intent';
 import type { FighterCommand, FighterEvent } from '../shared/fighter-world';
 import { FIGHTER_INTRO_SECONDS, fighterIntroStage, type FighterIntroStage, type FighterPhase } from '../shared/fighter-protocol';
 import { DEFAULT_LOCALE, resolveLocale, type SupportedLocale } from '../shared/i18n/locales';
 import { FIGHTER_MESSAGES, type FighterMessageKey } from '../shared/i18n/fighter';
 import { createTranslator, formatNumber, normalizeForMatching } from '../shared/i18n/translate';
+import { isExplicitSpokenName, parseFirstName } from '../shared/spoken-name';
 
 const FINAL_REPEAT_GUARD_MS = 5_000;
 const SAME_CONTEXT_REPEAT_GUARD_MS = 600;
@@ -454,23 +455,11 @@ function isFighterStarAlias(spoken:string,locale:SupportedLocale):boolean{
 }
 
 function parseFighterSpokenName(spoken: string, locale: SupportedLocale): string | null {
-  if (locale === 'en-US') return parseEnglishSpokenName(spoken);
-  let text = spoken.trim().replace(/[.!?,]+$/u, '');
-  if (!text || /[?]/.test(spoken) || isFighterAdvanceWord(text, locale) || isHelpRequest(text, locale)) return null;
-  const normalized = normalizeForMatching(text, locale);
-  if (!isExplicitName(text, locale)
-    && /\b(?:quem|qual|quais|como|onde|quando|por que|porque|o que|que|dizer|lutador|lutadores|personagem|personagens|arena|jogo)\b/.test(normalized)) return null;
-  text = text.replace(/^(?:meu nome (?:é|e)|eu sou|sou|me chamo|chame-me de|pode me chamar de)\s+/iu, '');
-  const words = text.match(/\p{L}[\p{L}'’-]*/gu)?.slice(0, 2) ?? [];
-  if (!words.length) return null;
-  const name = words.map(word => word[0]!.toLocaleUpperCase(locale) + word.slice(1).toLocaleLowerCase(locale)).join(' ');
-  return name.length >= 2 && name.length <= 20 ? name : null;
+  return parseFirstName(spoken, locale);
 }
 
 function isExplicitName(spoken: string, locale: SupportedLocale): boolean {
-  return locale === 'pt-BR'
-    ? /^(?:meu nome (?:é|e)|eu sou|sou|me chamo|chame-me de|pode me chamar de)(?:\s|$)/iu.test(spoken.trim())
-    : /^(?:my name is|i am|i'm|call me)\b/i.test(spoken.trim());
+  return isExplicitSpokenName(spoken, locale);
 }
 
 function isHelpRequest(spoken: string, locale: SupportedLocale): boolean {

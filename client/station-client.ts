@@ -40,6 +40,7 @@ export interface PublicArcadeConfig {
   station: {
     timings: { recruitingSeconds:number;hardDeadlineSeconds:number;selectionSeconds:number;lockedSeconds:number;launchTimeoutSeconds:number;resultsSeconds:number;postGameRecruitingSeconds:number };
     games: Record<'racer'|'monsters'|'fighter',{enabled:boolean}>;
+    comingSoon: Record<'trivia'|'karaoke',{enabled:boolean}>;
     automaticSelection: { policy:'best_fit_rotation'|'round_robin'|'fixed_priority';order:readonly ('racer'|'monsters'|'fighter')[] };
     qrRail: 'auto'|'always'|'hidden';
   };

@@ -27,7 +27,7 @@ function expectInvalid(candidate: unknown): void {
 }
 
 describe('Twilio Games runtime configuration', () => {
-  it('ships revision 1 of schema 3 in mode off with the complete approved defaults', () => {
+  it('ships revision 1 of the current schema in mode off with the complete approved defaults', () => {
     expect(DEFAULT_ARCADE_CONFIG.schemaVersion).toBe(ARCADE_CONFIG_SCHEMA_VERSION);
     expect(DEFAULT_ARCADE_CONFIG.version).toBe(1);
     expect(DEFAULT_ARCADE_CONFIG.arcade.mode).toBe('off');
@@ -45,6 +45,10 @@ describe('Twilio Games runtime configuration', () => {
         racer: { enabled: true },
         monsters: { enabled: true },
         fighter: { enabled: true },
+      },
+      comingSoon: {
+        trivia: { enabled: true },
+        karaoke: { enabled: true },
       },
       automaticSelection: {
         policy: 'best_fit_rotation',
@@ -705,6 +709,7 @@ describe('Twilio Games runtime configuration', () => {
     expect(projected.earning.challenges[0]?.message).toBe('Read the docs for another coin.');
     expect(Object.isFrozen(projected.earning.challenges[0])).toBe(true);
     expect(Object.isFrozen(projected.station.games)).toBe(true);
+    expect(Object.isFrozen(projected.station.comingSoon)).toBe(true);
     candidate.earning.challenges[0].title = 'Changed';
     candidate.station.games.racer.enabled = false;
     expect(projected.earning.challenges[0]!.title).toBe('Docs');

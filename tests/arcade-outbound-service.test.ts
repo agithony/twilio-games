@@ -98,11 +98,12 @@ async function inbound(
 }
 
 async function createThreeReadyPlayers(h: Awaited<ReturnType<typeof harness>>): Promise<void> {
+  const names = ['Alice', 'Bruna', 'Carla'];
   for (const [index, locale] of ['en-US', 'pt-BR', 'pt-BR'].entries()) {
     const from = `+1415555010${index + 1}`;
     const channel = 'whatsapp';
     await inbound(h.service, `SM-JOIN-${index}`, `JOIN ARCADE-01 LANG ${locale}`, from,channel);
-    await inbound(h.service, `SM-NAME-${index}`, `Player${index + 1}`, from,channel);
+    await inbound(h.service, `SM-NAME-${index}`, names[index]!, from,channel);
     await inbound(h.service, `SM-TERMS-${index}`, locale === 'pt-BR' ? 'SIM' : 'YES', from,channel);
     const ready = await inbound(
       h.service, `SM-COIN-${index}`, locale === 'pt-BR' ? 'MOEDA' : 'COIN', from,channel,

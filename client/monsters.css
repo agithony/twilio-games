@@ -1,7 +1,7 @@
 /* Voice Monsters — the battle page. The BATTLE canvas is pure Game Boy, but the menu overlays (lobby
    / monster-select / results) use the SAME Twilio look as Voice Racer: dark navy, signature red,
    Twilio Sans, glass cards — so the two games read as one branded product. */
-:root {
+:root, html[data-theme="dark"] {
   --red: #EF223A;            /* Twilio signature accent */
   --red-2: #ff5a4d;          /* warm gradient partner */
   --bg: #000D25;             /* Twilio dark navy */
@@ -17,6 +17,12 @@
   --disp: 'Twilio Sans Display', ui-sans-serif, system-ui, sans-serif;
   --text: 'Twilio Sans Text', ui-sans-serif, system-ui, sans-serif;
   --mono: 'Twilio Sans Mono', ui-monospace, monospace;
+  --panel-solid:rgba(9,15,34,.93);
+}
+html[data-theme="light"] {
+  --bg:#FFFFFF;--bg-2:#F3F4F7;--ink:#000D25;--ink-dim:#38425E;--ink-mute:#656E87;
+  --glass:rgba(255,255,255,.88);--glass-2:rgba(243,244,247,.95);
+  --glass-brd:rgba(0,13,37,.12);--glass-brd-2:rgba(0,13,37,.2);--panel-solid:rgba(255,255,255,.97);
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--ink); font-family: var(--text); }
@@ -90,6 +96,8 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); c
   position: absolute; inset: 0; display: none; flex-direction: column; align-items: center; justify-content: center;
   background: rgba(0,8,28,.62); backdrop-filter: blur(6px); padding: 24px;
 }
+html[data-theme="light"] #overlay { background:rgba(255,255,255,.82); }
+html[data-theme="light"] :is(.vm-eyebrow,#vm-hud) img { filter:brightness(0) saturate(100%) invert(20%) sepia(90%) saturate(5000%) hue-rotate(338deg) brightness(95%); }
 
 /* ── Twilio brand header (matches Voice Racer's eyebrow → red wordmark → state) ── */
 .vm-head { min-height: 88px; text-align: center; margin-bottom: 18px; }
@@ -105,7 +113,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); c
 
 /* Card + chips + buttons — Twilio glass, red accents. NEARLY-OPAQUE navy fill so text stays crisp over
    the sprite-collage backdrop (a translucent card let the collage bleed through and washed text out). */
-.vm-card { background: rgba(9, 15, 34, 0.93); border: 1px solid var(--glass-brd); border-top: 3px solid var(--red);
+.vm-card { background:var(--panel-solid); border: 1px solid var(--glass-brd); border-top: 3px solid var(--red);
   border-radius: 18px; padding: 30px 34px; text-align: center; max-width: 92vw;
   box-shadow: 0 20px 60px rgba(0,0,0,.5); backdrop-filter: blur(6px); }
 /* Monster-select card: fills the width but is capped to the viewport height so the whole thing (header
@@ -196,7 +204,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); c
 /* In the lobby's two-column row the legend is a self-contained bordered glass PANEL (like VR's), not a
    full-width stacked section. */
 .controls-legend { box-sizing: border-box; width: 384px; min-width: 0; height: 348px; overflow: hidden;
-  text-align: left; background: rgba(18,26,52,.5); border: 1px solid var(--glass-brd);
+  text-align: left; background:var(--glass); border: 1px solid var(--glass-brd);
   border-top: 3px solid var(--red); border-radius: 16px; padding: 20px 24px; }
 .controls-legend .cl-title { font-family: var(--disp); font-weight: 800; font-size: 20px; letter-spacing: .01em;
   background: linear-gradient(90deg, var(--red), var(--red-2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
@@ -205,11 +213,13 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); c
 .cl-row:first-of-type { border-top: none; }
 .cl-say { font-family: var(--disp); font-size: 14px; font-weight: 700; color: var(--ink);
   background: rgba(239,34,58,.14); border: 1px solid rgba(239,34,58,.4); border-radius: 9px; padding: 5px 10px; text-align: center; }
-.cl-action { font-family: var(--text); font-size: 14px; color: var(--ink); font-weight: 600; }
+.cl-action { font-family: var(--text); font-size: 14px; color: var(--ink); font-weight: 700; }
 .cl-action .cl-hint { display: block; font-size: 11px; font-weight: 400; color: var(--ink-mute); margin-top: 2px; }
 .cl-row.cl-power { background: rgba(216,97,201,.09); border-radius: 11px; padding: 9px 12px; margin: 6px -12px 0; border-top: none; }
 .cl-row.cl-power .cl-say { background: rgba(216,97,201,.16); border-color: var(--t-psychic, #d861c9); color: #f0a6e6; }
 .cl-row.cl-power .cl-action { color: #f0a6e6; }
+html[data-theme="light"] .cl-row.cl-power { background:#FFF1F3; }
+html[data-theme="light"] .cl-row.cl-power :is(.cl-say,.cl-action) { color:#880B19;border-color:#B10F23;background:#FFF1F3; }
 @media (max-width: 900px) {
   .vm-lobby-grid { grid-template-columns: 1fr; }
   .controls-legend { width: min(100%, 384px); justify-self: center; }

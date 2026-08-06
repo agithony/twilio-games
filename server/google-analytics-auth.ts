@@ -7,8 +7,7 @@ const SESSION_MS = 8 * 60 * 60 * 1000;
 const STATE_MS = 10 * 60 * 1000;
 
 interface Session { email: string; analyticsAuthorized: boolean; expiresAt: number; }
-type AuthReturnPath = '/analytics' | '/operator';
-interface OAuthState { expiresAt: number; returnTo: AuthReturnPath; }
+interface OAuthState { expiresAt: number; }
 interface GoogleUser { email?: unknown; email_verified?: unknown; }
 
 export interface GoogleAnalyticsAuthOptions {
@@ -16,7 +15,6 @@ export interface GoogleAnalyticsAuthOptions {
   clientSecret?: string;
   redirectUri: string;
   allowedEmail?: string;
-  allowedEmails?: readonly string[];
   fetcher?: typeof fetch;
   now?: () => number;
 }
@@ -25,7 +23,6 @@ export class GoogleAnalyticsAuth {
   private readonly clientId: string;
   private readonly clientSecret: string;
   private readonly analyticsAllowedEmails: readonly string[];
-  private readonly loginAllowedEmails: readonly string[];
   private readonly fetcher: typeof fetch;
   private readonly now: () => number;
   private readonly secure: boolean;
@@ -36,9 +33,6 @@ export class GoogleAnalyticsAuth {
     this.clientId = options.clientId?.trim() ?? '';
     this.clientSecret = options.clientSecret?.trim() ?? '';
     this.analyticsAllowedEmails = [options.allowedEmail ?? '']
-      .map(email => email.trim().toLowerCase())
-      .filter(Boolean);
-    this.loginAllowedEmails = [...this.analyticsAllowedEmails, ...(options.allowedEmails ?? [])]
       .map(email => email.trim().toLowerCase())
       .filter(Boolean);
     this.fetcher = options.fetcher ?? fetch;
@@ -52,9 +46,7 @@ export class GoogleAnalyticsAuth {
     if (!this.configured) { res.writeHead(503, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' }).end('Google OAuth is not configured'); return; }
     this.sweep();
     const state = randomBytes(24).toString('base64url');
-    const requestedReturn = new URL(req.url ?? '', 'http://localhost').searchParams.get('returnTo');
-    const returnTo = requestedReturn === '/operator' ? requestedReturn : '/analytics';
-    this.states.set(state, { expiresAt: this.now() + STATE_MS, returnTo });
+    this.states.set(state, { expiresAt: this.now() + STATE_MS });
     const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
     url.search = new URLSearchParams({ client_id: this.clientId, redirect_uri: this.options.redirectUri,
       response_type: 'code', scope: 'openid email profile', state, prompt: 'select_account' }).toString();
@@ -70,7 +62,7 @@ export class GoogleAnalyticsAuth {
     const clearState = cookie(STATE_COOKIE, '', 0, this.secure);
     if (!state || cookies[STATE_COOKIE] !== state || !pending || pending.expiresAt < this.now()
       || !code || url.searchParams.has('error')) {
-      this.redirectDenied(res, clearState, 'invalid_oauth_state', pending?.returnTo); return;
+      this.redirectDenied(res, clearState, 'invalid_oauth_state'); return;
     }
     try {
       const tokenResponse = await this.fetcher('https://oauth2.googleapis.com/token', {
@@ -87,14 +79,14 @@ export class GoogleAnalyticsAuth {
       if (!userResponse.ok) throw new Error(`userinfo returned ${userResponse.status}`);
       const user = await userResponse.json() as GoogleUser;
       const email = typeof user.email === 'string' ? user.email.trim().toLowerCase() : '';
-      if (user.email_verified !== true || !isAnalyticsEmailAllowed(email, this.loginAllowedEmails)) {
-        this.redirectDenied(res, clearState, 'email_not_allowed', pending.returnTo); return;
+      if (user.email_verified !== true || !isAnalyticsEmailAllowed(email, this.analyticsAllowedEmails)) {
+        this.redirectDenied(res, clearState, 'email_not_allowed'); return;
       }
       const sessionCookie = this.issueSession(email);
-      res.writeHead(302, { Location: pending.returnTo, 'Set-Cookie': [clearState, sessionCookie], 'Cache-Control': 'no-store' }).end();
+      res.writeHead(302, { Location: '/analytics', 'Set-Cookie': [clearState, sessionCookie], 'Cache-Control': 'no-store' }).end();
     } catch (error) {
       console.error('[analytics-auth] Google OAuth failed:', (error as Error).message);
-      this.redirectDenied(res, clearState, 'oauth_failed', pending.returnTo);
+      this.redirectDenied(res, clearState, 'oauth_failed');
     }
   }
 
@@ -118,7 +110,7 @@ export class GoogleAnalyticsAuth {
   /** Issues an authorized session cookie. Used by the OAuth callback and HTTP integration tests. */
   issueSession(email: string): string {
     const normalized = email.trim().toLowerCase();
-    if (!isAnalyticsEmailAllowed(normalized, this.loginAllowedEmails)) throw new Error('email is not authorized');
+    if (!isAnalyticsEmailAllowed(normalized, this.analyticsAllowedEmails)) throw new Error('email is not authorized');
     const id = randomBytes(32).toString('base64url');
     this.sessions.set(id, {
       email: normalized,
@@ -132,10 +124,8 @@ export class GoogleAnalyticsAuth {
     res: http.ServerResponse,
     clearState: string,
     reason: string,
-    returnTo: AuthReturnPath = '/analytics',
   ): void {
-    const separator = returnTo.includes('?') ? '&' : '?';
-    res.writeHead(302, { Location: `${returnTo}${separator}auth=${encodeURIComponent(reason)}`, 'Set-Cookie': clearState, 'Cache-Control': 'no-store' }).end();
+    res.writeHead(302, { Location: `/analytics?auth=${encodeURIComponent(reason)}`, 'Set-Cookie': clearState, 'Cache-Control': 'no-store' }).end();
   }
 
   private sweep(): void {

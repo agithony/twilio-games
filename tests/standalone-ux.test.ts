@@ -17,17 +17,33 @@ describe('standalone and station display UX', () => {
   it('does not require station pairing for the standalone launcher', () => {
     const home = readClient('home.ts');
     const fighter = readClient('fighter/fighter.ts');
+    const fighterCss = readClient('fighter/fighter.css');
     const refresh = /async function refresh\(\)[\s\S]*?\n}/.exec(home)?.[0] ?? '';
     expect(refresh.indexOf('if (standaloneMode)')).toBeLessThan(refresh.indexOf('fetchPublicStation(displayToken)'));
     expect(refresh).toMatch(/if \(standaloneMode\) \{[\s\S]*?return;/);
     expect(home).not.toContain('validateStandaloneDisplay()');
-    expect(home).toContain('config.channels.voice&&Boolean(bootstrap.voiceNumbers?.[locale])');
+    expect(home).toContain('enabledGames = config.channels.voice');
+    expect(home).toContain("config.channels.voice && Boolean(bootstrap.voiceNumbers?.[locale])");
     expect(fighter).toContain('connection.setDisplayAuth(roomCode, isDisplay ? stationDisplay.displayToken : null)');
+    expect(fighter.indexOf("const isDisplay = params.get('display') === '1'")).toBeLessThan(fighter.indexOf('localizeStaticUi();'));
     expect(fighter).not.toContain("params.get('hostToken')");
     expect(fighter).toContain("pageUrl.searchParams.delete('hostToken')");
     expect(fighter).not.toContain("t('lobby.room', { room: roomCode })");
     expect(fighter).toContain('connection.spectate(roomCode');
-    expect(fighter).toContain('`<button id="local-join">${t(\'lobby.playingHere\')}</button>`');
+    expect(fighterCss).toMatch(/@media \(orientation:portrait\) and \(min-width:721px\) \{[\s\S]*?\.lobby-layout \{ flex:none;grid-template-columns:1fr/);
+    expect(fighterCss).toMatch(/@media \(orientation:portrait\) and \(min-width:721px\) \{[\s\S]*?\.select-grid\.fighter-grid \{ grid-template-columns:repeat\(4,minmax\(0,1fr\)\);grid-template-rows:repeat\(3,minmax\(0,1fr\)\)/);
+    expect(fighterCss).toContain('.fighter-grid .card-preview { background-size:cover;background-position:center; }');
+    expect(fighterCss).toContain('.select-grid.map-grid { grid-template-columns:1fr;grid-template-rows:repeat(5,minmax(0,1fr));overflow:hidden; }');
+    expect(fighterCss).toContain('.map-grid .select-card { display:grid;grid-template-columns:minmax(0,68%) minmax(0,32%);');
+    expect(fighterCss).toContain('.lobby-panel { position:relative;top:-96px;');
+    expect(fighterCss).toContain('margin-bottom:clamp(80px,5vh,104px)');
+    expect(fighterCss).toContain('.lobby-layout { flex:none;grid-template-columns:1fr;gap:0;padding:28px;border:1px solid var(--theme-border);border-top:3px solid #ef223a;border-radius:18px;background:var(--vf-panel); }');
+    expect(fighterCss).toContain('.qr-card { min-height:280px;padding:0 0 28px;border:0;border-bottom:1px solid var(--theme-border);border-radius:0;background:transparent; }');
+    expect(fighter).toContain('const localAction=isDisplay');
+    expect(fighter).toContain("isHost||isDisplay ? ''");
+    expect(fighter).toContain('`<p class="phone-play-notice">${t(\'lobby.phonePlay\')}</p>`');
+    expect(fighter).toContain('function toggleLocalPlayer(): void { if (stationDisplay.active) return;');
+    expect(fighter).toContain("key === 'p'");
     expect(fighter).not.toContain("t(playerId ? 'lobby.playingHere' : 'lobby.pressP')");
   });
 

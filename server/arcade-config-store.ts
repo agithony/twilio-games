@@ -12,6 +12,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import {
+  ARCADE_CONFIG_SCHEMA_VERSION,
   createDefaultArcadeConfig,
   parseArcadeConfig,
   parseArcadeConfigSettings,
@@ -34,6 +35,7 @@ const GENESIS_HASH = '0'.repeat(64);
 const LEGACY_CONFIG_SCHEMA_VERSION = 1;
 const STATION_CONFIG_SCHEMA_VERSION = 2;
 const CHALLENGE_MESSAGE_CONFIG_SCHEMA_VERSION = 3;
+const HOME_CONCEPT_CONFIG_SCHEMA_VERSION = 4;
 const LEGACY_CONFIG_KEYS = [
   'schemaVersion', 'version', 'updatedAt', 'updatedBy',
   'arcade', 'registration', 'coins', 'earning', 'queue', 'channels', 'postGame', 'intelligence',
@@ -343,7 +345,7 @@ export class ArcadeConfigStore {
   }
 
   private async loadFromDisk(clearDegraded = false): Promise<void> {
-    const [cacheFile, auditFile, degradedFile] = await Promise.all([
+    let [cacheFile, auditFile, degradedFile] = await Promise.all([
       this.readTextFile(this.cachePath),
       this.readTextFile(this.auditPath),
       this.readTextFile(this.degradedPath),
@@ -376,6 +378,24 @@ export class ArcadeConfigStore {
           quarantinePath: null,
         };
       }
+    }
+
+    // A prior version may have quarantined an audit suffix that a newer schema migration can now
+    // parse safely. Restore it only when the active audit is empty and every record/hash verifies.
+    if (persistedDegradation?.quarantinePath && !auditFile.contents.trim()) {
+      try {
+        const quarantine = await this.readTextFile(persistedDegradation.quarantinePath);
+        if (quarantine.exists) {
+          const recovered = parseAudit(quarantine.contents);
+          if (!recovered.corruption && recovered.records.length > 0) {
+            await this.writeAudit(quarantine.contents);
+            auditFile = { exists: true, contents: quarantine.contents };
+            await this.removeDegradedMarker();
+            degradedFile = { exists: false, contents: '' };
+            persistedDegradation = null;
+          }
+        }
+      } catch { /* Keep the fail-closed marker when the quarantine still cannot be verified. */ }
     }
 
     if (auditFile.exists) {
@@ -538,6 +558,21 @@ export class ArcadeConfigStore {
       await this.fileSystem.rename(temporary, this.cachePath);
       await this.fileSystem.chmod(this.cachePath, FILE_MODE);
       await this.fileSystem.syncDirectory(path.dirname(this.cachePath));
+    } catch (error) {
+      try { await this.fileSystem.unlink(temporary); } catch { /* best-effort cleanup */ }
+      throw error;
+    }
+  }
+
+  private async writeAudit(contents: string): Promise<void> {
+    await this.ensureDirectory(this.auditPath);
+    const temporary = `${this.auditPath}.tmp-${process.pid}-${uniqueSafeId()}`;
+    try {
+      await this.fileSystem.writeFile(temporary, contents, FILE_MODE);
+      await this.fileSystem.chmod(temporary, FILE_MODE);
+      await this.fileSystem.syncFile(temporary);
+      await this.fileSystem.rename(temporary, this.auditPath);
+      await this.makeAuditDurable();
     } catch (error) {
       try { await this.fileSystem.unlink(temporary); } catch { /* best-effort cleanup */ }
       throw error;
@@ -750,11 +785,21 @@ function parseStoredConfig(input: unknown): ParsedStoredConfig {
     throw new Error('stored config must be an object');
   }
   const object = decoded as Record<string, unknown>;
+  if (object.schemaVersion === HOME_CONCEPT_CONFIG_SCHEMA_VERSION) {
+    const snapshot = parseArcadeConfig({
+      ...object,
+      schemaVersion: ARCADE_CONFIG_SCHEMA_VERSION,
+      station: addHomeConceptSettings(object.station),
+    });
+    return { snapshot, hashConfig: decoded };
+  }
   if (object.schemaVersion === CHALLENGE_MESSAGE_CONFIG_SCHEMA_VERSION) {
     const snapshot = parseArcadeConfig({
       ...object,
-      schemaVersion: 4,
+      schemaVersion: ARCADE_CONFIG_SCHEMA_VERSION,
+      station: addHomeConceptSettings(object.station),
       earning: addChallengeMessages(object.earning),
+      postGame: normalizeLegacyPostGame(object.postGame, object.channels),
     });
     return { snapshot, hashConfig: decoded };
   }
@@ -762,8 +807,10 @@ function parseStoredConfig(input: unknown): ParsedStoredConfig {
     const legacyChannels = object.channels as Record<string, unknown>;
     const snapshot = parseArcadeConfig({
       ...object,
-      schemaVersion: 4,
+      schemaVersion: ARCADE_CONFIG_SCHEMA_VERSION,
+      station: addHomeConceptSettings(object.station),
       earning: addChallengeMessages(object.earning),
+      postGame: normalizeLegacyPostGame(object.postGame, object.channels),
       channels: {
         ...legacyChannels,
         voiceNumbers: { 'en-US': null, 'pt-BR': null },
@@ -825,7 +872,7 @@ function parseStoredConfig(input: unknown): ParsedStoredConfig {
     ? { ...legacyPostGame, enabled: false }
     : object.postGame;
   const snapshot = parseArcadeConfig({
-    schemaVersion: 4,
+    schemaVersion: ARCADE_CONFIG_SCHEMA_VERSION,
     version: object.version,
     updatedAt: object.updatedAt,
     updatedBy: object.updatedBy,
@@ -846,6 +893,39 @@ function parseStoredConfig(input: unknown): ParsedStoredConfig {
     snapshot,
     // Hash historical records using their untouched v1 shape, not the safe runtime migration.
     hashConfig: decoded,
+  };
+}
+
+function normalizeLegacyPostGame(value: unknown, channelsValue: unknown): unknown {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return value;
+  const postGame = value as Record<string, unknown>;
+  const channels = channelsValue !== null && typeof channelsValue === 'object' && !Array.isArray(channelsValue)
+    ? channelsValue as Record<string, unknown>
+    : {};
+  const selected = Array.isArray(postGame.channels) ? postGame.channels : [];
+  const deliveryValid = selected.length > 0 && selected.every(channel => (
+    channel === 'sms' ? channels.sms === true : channel === 'whatsapp' ? channels.whatsapp === true : false
+  ));
+  return {
+    ...postGame,
+    enabled: postGame.enabled === true && deliveryValid,
+    includeScore: false,
+    includeLeaderboard: false,
+    includeRematchLink: false,
+    includeAchievement: false,
+    includeIntelligenceTip: false,
+  };
+}
+
+function addHomeConceptSettings(value: unknown): unknown {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return value;
+  const station = value as Record<string, unknown>;
+  return {
+    ...station,
+    comingSoon: station.comingSoon ?? {
+      trivia: { enabled: true },
+      karaoke: { enabled: true },
+    },
   };
 }
 

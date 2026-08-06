@@ -26,7 +26,7 @@ const cleanIndexRoutes = () => ({
       if (url === '/arcade' || url === '/arcade/' || url === '/arcade/index.html') {
         res.writeHead(404, { 'Content-Type': 'text/plain' });res.end();return;
       }
-      if (url === '/editor' || url === '/garage' || url === '/analytics' || url === '/join') {
+      if (url === '/editor' || url === '/garage' || url === '/analytics' || url === '/join' || url === '/instructions') {
         res.writeHead(301, { Location: `${url}/${requestUrl.slice(url.length)}` }); res.end(); return;
       }
       next();
@@ -41,7 +41,21 @@ export default defineConfig(({ mode }) => {
     plugins: [cleanIndexRoutes()],
     server: {
       proxy: {
-        '/api': { target: gameServer, changeOrigin: true },
+        '/api': {
+          target: gameServer,
+          changeOrigin: true,
+          configure(proxy) {
+            const backendOrigin = new URL(gameServer).origin;
+            proxy.on('proxyReq', (proxyRequest, request) => {
+              const origin = request.headers.origin;
+              try {
+                if (origin && new URL(origin).host === request.headers.host) {
+                  proxyRequest.setHeader('origin', backendOrigin);
+                }
+              } catch {/* Leave malformed and cross-origin values for the API to reject. */}
+            });
+          },
+        },
         '/auth': { target: gameServer, changeOrigin: true },
         '/game': { target: gameServer, ws: true, bypass: bypassNonWebSocket },
         '/battle': { target: gameServer, ws: true, bypass: bypassNonWebSocket },
@@ -70,6 +84,7 @@ export default defineConfig(({ mode }) => {
           analytics: resolve(__dirname, 'analytics/index.html'),    // private activation analytics (/analytics)
           arcade: resolve(__dirname, 'arcade/index.html'),          // Twilio Games player and operator pages
           join: resolve(__dirname, 'join/index.html'),              // localized SMS / WhatsApp chooser
+          instructions: resolve(__dirname, 'instructions/index.html'), // Portuguese event instructions
           challenge: resolve(__dirname, 'challenge/index.html'),    // scanner-safe messaging reward claim
         },
       },

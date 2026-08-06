@@ -1,6 +1,6 @@
 import { fetchPublicArcadeConfig } from '../station-client';
 import { locale } from '../i18n';
-import { updateThemeToggleIcon } from '../icon-controls';
+import { wireThemeToggle } from '../theme';
 import { buildJoinGuidance } from './guidance';
 
 interface BootstrapConfig {
@@ -128,15 +128,7 @@ async function initialize(): Promise<void> {
 
 function wireTheme(): void {
   const button = document.getElementById('themeToggle')!;
-  const render = () => {
-    const theme=document.documentElement.dataset.theme??'dark';
-    updateThemeToggleIcon(button,theme,portuguese?'Tema claro':'Light theme',portuguese?'Tema escuro':'Dark theme');
-  };
-  button.addEventListener('click', () => {
-    const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
-    document.documentElement.dataset.theme = next; localStorage.setItem('twilio-theme', next); render();
-  });
-  render();
+  wireThemeToggle(button,{light:portuguese?'Tema claro':'Light theme',dark:portuguese?'Tema escuro':'Dark theme'});
 }
 
 void initialize();

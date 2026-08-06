@@ -9,7 +9,7 @@
 @font-face { font-family: 'Twilio Sans Text'; src: url('/fonts/TwilioSansText-Bold.otf') format('opentype'); font-weight: 700; font-display: swap; }
 @font-face { font-family: 'Twilio Sans Mono'; src: url('/fonts/TwilioSansMono-Regular.otf') format('opentype'); font-weight: 400; font-display: swap; }
 
-:root {
+:root, html[data-theme="dark"] {
   --red: #EF223A;            /* Twilio signature accent */
   --red-2: #ff5a4d;          /* warm gradient partner */
   --bg: #000D25;             /* Twilio dark navy */
@@ -29,6 +29,11 @@
   --disp: 'Twilio Sans Display', ui-sans-serif, system-ui, sans-serif;
   --text: 'Twilio Sans Text', ui-sans-serif, system-ui, sans-serif;
   --mono: 'Twilio Sans Mono', ui-monospace, monospace;
+}
+html[data-theme="light"] {
+  --bg:#FFFFFF;--bg-2:#F3F4F7;--ink:#000D25;--ink-dim:#38425E;--ink-mute:#656E87;
+  --glass:rgba(255,255,255,.82);--glass-2:rgba(243,244,247,.94);
+  --glass-brd:rgba(0,13,37,.12);--glass-brd-2:rgba(0,13,37,.2);
 }
 
 * { box-sizing: border-box; }
@@ -81,6 +86,11 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); c
   animation: scr-fade .35s ease both;
 }
 #screens.is-race { backdrop-filter: none; -webkit-backdrop-filter: none; background: none; }
+html[data-theme="light"] #screens:not(.is-race) {
+  background:radial-gradient(130% 80% at 50% -10%,rgba(239,34,58,.08),transparent 55%),linear-gradient(180deg,rgba(255,255,255,.88),rgba(243,244,247,.78));
+}
+html[data-theme="light"] #veil { background:radial-gradient(120% 90% at 50% 35%,#FFFFFF 0%,#F3F4F7 65%,#DDE0E6 100%); }
+html[data-theme="light"] :is(#veil,.scr-eyebrow,#hud) img { filter:brightness(0) saturate(100%) invert(20%) sepia(90%) saturate(5000%) hue-rotate(338deg) brightness(95%); }
 @keyframes scr-fade { from { opacity: 0; } to { opacity: 1; } }
 
 /* Header */
@@ -143,7 +153,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); c
   background: rgba(239,34,58,.14); border: 1px solid rgba(239,34,58,.4); border-radius: 9px;
   padding: 6px 11px; text-align: center;
 }
-.cl-action { font-family: var(--text); font-size: 15px; color: var(--ink); font-weight: 600; }
+.cl-action { font-family: var(--text); font-size: 15px; color: var(--ink); font-weight: 700; }
 .cl-action .cl-hint { display: block; font-size: 12px; font-weight: 400; color: var(--ink-mute); margin-top: 2px; }
 /* The rendered boost-orb model, inline before "NITRO burst", so players recognize it on the track. */
 .cl-orb { width: 26px; height: 26px; vertical-align: middle; margin-right: 8px; object-fit: contain;
@@ -152,6 +162,8 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); c
 .cl-row.cl-power { background: rgba(255,210,63,.07); border-radius: 11px; padding: 10px 12px; margin: 6px -12px 0; border-top: none; }
 .cl-row.cl-power .cl-say { background: rgba(255,210,63,.14); border-color: var(--gold); color: var(--gold); }
 .cl-row.cl-power .cl-action { color: var(--gold); }
+html[data-theme="light"] .cl-row.cl-power { background:#E4F7FF; }
+html[data-theme="light"] .cl-row.cl-power :is(.cl-say,.cl-action) { color:#0E3E92;border-color:#1953B9;background:#E4F7FF; }
 
 /* ───────── Lobby JOIN FLOW: scan QR → call number → enter room code (DTMF) ───────── */
 /* QR on top, the numbered steps stacked UNDERNEATH it (vertical column). */

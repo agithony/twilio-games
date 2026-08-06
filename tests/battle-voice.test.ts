@@ -372,7 +372,7 @@ describe('BattleVoiceSession', () => {
 
   it.each([
     { label: 'English named lobby', locale: undefined, snap: battleSnap({ phase: 'lobby', myName: 'Ada' }), utterance: 'what now?', expected: /opens automatically/i },
-    { label: 'Portuguese unnamed lobby', locale: 'pt-BR', snap: battleSnap({ phase: 'lobby', myName: null }), utterance: 'o que devo fazer agora?', expected: /qual.*nome/i },
+    { label: 'Portuguese unnamed lobby', locale: 'pt-BR', snap: battleSnap({ phase: 'lobby', myName: null }), utterance: 'o que devo fazer agora?', expected: /primeiro nome.*Ana/i },
     { label: 'English monster select', locale: undefined, snap: battleSnap({ myName: 'Ada' }), utterance: 'the fiery-looking one', expected: /own monster.*name or number/i },
     { label: 'Portuguese monster select', locale: 'pt-BR', snap: battleSnap({ myName: 'Ada' }), utterance: 'quero o monstro de fogo', expected: /próprio monstro.*nome ou número/i },
     { label: 'English battle root', locale: undefined, snap: activeBattle(), utterance: 'something else', expected: /fight.*guard.*item.*taunt/i },

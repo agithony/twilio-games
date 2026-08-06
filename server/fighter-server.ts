@@ -118,6 +118,10 @@ export class FighterServer {
       const result = this.room(code).addPlayer(msg.name);
       if ('error' in result) { this.send(conn, { type: 'error', code: result.error, message: result.error }); return; }
       conn.roomCode = code; conn.playerId = result.playerId; conn.sessionId = msg.sessionId;
+      const currentHost = this.hosts.get(code);
+      if (conn.display && conn.hostAuthorized && this.allowBrowserPlayer(code) && (!currentHost || !currentHost.playerId)) {
+        this.hosts.set(code, conn);
+      }
       if (msg.sessionId) this.sessions.set(sessionKey(code, msg.sessionId), {
         roomCode: code, playerId: result.playerId, conn, timer: null,
         display: conn.display === true, wasHost: this.hosts.get(code) === conn,
