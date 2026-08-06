@@ -104,7 +104,7 @@ let roster: FighterRosterEntry[] = [];
 let maps: FighterMapEntry[] = [];
 let phoneNumber = t('phone.fallback');
 const FIGHTER_ACTOR_TIMEOUT_MS = 105_000;
-const FIGHTER_MAP_TIMEOUT_MS = 30_000;
+const FIGHTER_MAP_TIMEOUT_MS = 15_000;
 let phoneQr = '/brand/join-qr.png?v=2';
 let movement: Partial<Record<FighterId, { from: number; to: number; elapsed: number; jump: boolean; duration: number }>> = {};
 const actionDurations: Record<FighterId, number> = { p1: FIGHTER_RUN_FORWARD_DURATION, p2: FIGHTER_RUN_FORWARD_DURATION };
@@ -195,6 +195,7 @@ connection.onState(next => {
     syncAuthoritativePositions(next.world);
   }
   updateNames(next);
+  if (next.phase === 'map_select') for (const player of next.players) if (!player.isAi && player.fighterId) preloadFighterActor(player.fighterId);
   if (next.selectedMap && ['loading', 'intro', 'countdown', 'fight', 'victory', 'results'].includes(next.phase)) applyMapTheme(next.selectedMap);
   if ((next.phase === 'loading' || next.phase === 'intro' || next.phase === 'countdown') && (phaseChanged || selectionChanged || !actors)) prepareFight(next);
   if (phaseChanged && next.phase === 'intro') beginIntro(next);
@@ -477,6 +478,14 @@ async function ensureFightActors(p1Id: string, p2Id: string, expectedKey: string
   }
 }
 
+function preloadFighterActor(id: string): void {
+  if (!animationSources || loadedActors.has(id) || actorLoads.has(id)) return;
+  const spec = FIGHTERS.find(fighter => fighter.id === id); if (!spec) return;
+  const pending = loadFighterActor(spec); actorLoads.set(id, pending);
+  void pending.then(actor => { loadedActors.set(id, actor); trimActorCache(new Set([id])); })
+    .finally(() => actorLoads.delete(id)).catch(() => {});
+}
+
 function loadFighterActor(spec: (typeof FIGHTERS)[number]): Promise<FighterActor> {
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -678,13 +687,9 @@ function applyMapTheme(mapId: string): void {
   });
 }
 
-function handleMapLoadFailure(mapId: string, loadKey: string, error: unknown): void {
-  if (!stationDisplay.active) { console.warn(`Arena ${mapId} failed to load; using the procedural stage.`, error); useProceduralFallback(mapId); return; }
-  failedMapKey = loadKey;
-  mapLoadAttempt += 1;
-  showAssetError(t('error.mapLoad'), error, [
-    { label: t('action.retry'), action: reloadForAssetRetry },
-  ]);
+function handleMapLoadFailure(mapId: string, _loadKey: string, error: unknown): void {
+  console.warn(`Arena ${mapId} failed to load; using the procedural stage.`, error);
+  useProceduralFallback(mapId);
 }
 
 function useProceduralFallback(mapId: string): void {
