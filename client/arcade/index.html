@@ -384,10 +384,11 @@
                       <label class="choice-card"><input id="admin-game-monsters" type="checkbox" /><span><b>Voice Monsters</b><small>Up to 2 players</small></span></label>
                       <label class="choice-card"><input id="admin-game-fighter" type="checkbox" /><span><b>Voice Fighter</b><small>Up to 2 players</small></span></label>
                     </fieldset>
-                    <div class="coming-soon-concepts" aria-label="Games coming soon">
-                      <article class="coming-soon-card"><span>Coming soon</span><b>Voice Trivia</b><small>Fast-paced voice quiz rounds</small></article>
-                      <article class="coming-soon-card"><span>Coming soon</span><b>Voice Karaoke</b><small>Sing-along booth challenges</small></article>
-                    </div>
+                    <fieldset class="choice-grid coming-soon-concepts" aria-label="Games coming soon">
+                      <legend class="sr-only">Coming soon cards shown on the home screen</legend>
+                      <label class="choice-card coming-soon-card"><input id="admin-coming-soon-trivia" type="checkbox" /><span><b>Voice Trivia</b><small>Show the coming-soon quiz card</small></span></label>
+                      <label class="choice-card coming-soon-card"><input id="admin-coming-soon-karaoke" type="checkbox" /><span><b>Voice Karaoke</b><small>Show the coming-soon karaoke card</small></span></label>
+                    </fieldset>
                     <div class="settings-fields three-up">
                       <label>Choose next game<select id="admin-selection-policy"><option value="best_fit_rotation">Best match for the group</option><option value="round_robin">Rotate evenly</option><option value="fixed_priority">Use priority order</option></select></label>
                       <div id="priority-order-field" class="priority-order-field" hidden><span class="field-label">Priority order</span><div class="priority-order"><label><span>1</span><select id="admin-game-priority-1" data-game-priority><option value="racer">Voice Racer</option><option value="monsters">Voice Monsters</option><option value="fighter">Voice Fighter</option></select></label><label><span>2</span><select id="admin-game-priority-2" data-game-priority><option value="racer">Voice Racer</option><option value="monsters">Voice Monsters</option><option value="fighter">Voice Fighter</option></select></label><label><span>3</span><select id="admin-game-priority-3" data-game-priority><option value="racer">Voice Racer</option><option value="monsters">Voice Monsters</option><option value="fighter">Voice Fighter</option></select></label></div><input id="admin-game-order" type="hidden" /></div>

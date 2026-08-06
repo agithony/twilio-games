@@ -41,7 +41,21 @@ export default defineConfig(({ mode }) => {
     plugins: [cleanIndexRoutes()],
     server: {
       proxy: {
-        '/api': { target: gameServer, changeOrigin: true },
+        '/api': {
+          target: gameServer,
+          changeOrigin: true,
+          configure(proxy) {
+            const backendOrigin = new URL(gameServer).origin;
+            proxy.on('proxyReq', (proxyRequest, request) => {
+              const origin = request.headers.origin;
+              try {
+                if (origin && new URL(origin).host === request.headers.host) {
+                  proxyRequest.setHeader('origin', backendOrigin);
+                }
+              } catch {/* Leave malformed and cross-origin values for the API to reject. */}
+            });
+          },
+        },
         '/auth': { target: gameServer, changeOrigin: true },
         '/game': { target: gameServer, ws: true, bypass: bypassNonWebSocket },
         '/battle': { target: gameServer, ws: true, bypass: bypassNonWebSocket },

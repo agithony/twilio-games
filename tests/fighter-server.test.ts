@@ -87,6 +87,19 @@ describe('FighterServer WebSocket authority and lifecycle', () => {
     send(display, { type: 'advance' });
     await waitFor(display, message => message.type === 'fighter_state' && message.phase === 'fighter_select');
   });
+  it('hands standalone host authority to a display that opts into keyboard play', async () => {
+    const port = await start(); const idleDisplay = await connect(port); const keyboardDisplay = await connect(port);
+    send(idleDisplay, { type: 'spectate', roomCode: 'KEYBOARD' });
+    await waitFor(idleDisplay, message => message.type === 'host_identity' && message.isHost === true);
+    send(keyboardDisplay, { type: 'spectate', roomCode: 'KEYBOARD' });
+    await waitFor(keyboardDisplay, message => message.type === 'host_identity' && message.isHost === false);
+
+    send(keyboardDisplay, { type: 'join', roomCode: 'KEYBOARD', name: 'Keyboard Fighter' });
+    await waitFor(keyboardDisplay, message => message.type === 'joined');
+    await waitFor(keyboardDisplay, message => message.type === 'host_identity' && message.isHost === true);
+    send(keyboardDisplay, { type: 'advance' });
+    await waitFor(keyboardDisplay, message => message.type === 'fighter_state' && message.phase === 'fighter_select');
+  });
   it('canonicalizes room codes and prevents a joined connection taking over another room', async () => {
     const port = await start(); const host = await connect(port); const player = await connect(port);
     send(host, { type: 'spectate', roomCode: ' abcd ' });

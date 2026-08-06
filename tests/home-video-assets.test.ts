@@ -40,7 +40,7 @@ describe('home preview media and standalone catalog', () => {
   });
 
   it('keeps future concepts outside the playable catalog and entirely noninteractive', () => {
-    const future = /<section class="standalone-future"[\s\S]*?<\/section>/.exec(html)?.[0] ?? '';
+    const future = /<section id="standaloneFuture" class="standalone-future"[\s\S]*?<\/section>/.exec(html)?.[0] ?? '';
     expect(future.match(/<article\b/g)).toHaveLength(2);
     expect(future.match(/<h2 id="voice(?:Trivia|Karaoke)Title">Voice (?:Trivia|Karaoke)<\/h2>/g)).toEqual([
       '<h2 id="voiceTriviaTitle">Voice Trivia</h2>',
@@ -50,11 +50,16 @@ describe('home preview media and standalone catalog', () => {
     expect(future).not.toMatch(/future-game-number|>0[12]</);
     expect(future).not.toMatch(/<(?:a|button|input|select|textarea)\b|\bhref=|\btabindex=|\bdata-game=/i);
     expect(html.indexOf('id="standaloneGames"')).toBeLessThan(html.indexOf('class="standalone-future"'));
+    expect(future).toContain('id="futureTrivia"');
+    expect(future).toContain('id="futureKaraoke"');
+    expect(home).toContain("document.getElementById('standaloneFuture')!.hidden=!comingSoon.trivia&&!comingSoon.karaoke");
+    expect(css).toContain('[hidden] { display:none !important; }');
   });
 
   it('rebuilds standalone videos only when enabled games change and never requests autoplay', () => {
     const launcher = /function renderStandaloneLauncher\(\): void \{[\s\S]*?\n\}/.exec(home)?.[0] ?? '';
-    expect(launcher).toContain("const key=[...enabledGames].sort().join(',')");
+    expect(launcher).toContain("[...enabledGames].sort().join(',')");
+    expect(launcher).toContain('comingSoon.trivia?1:0');
     expect(launcher).toContain('if(key===standaloneGamesKey)return;');
     expect(launcher).toContain('standaloneGames.replaceChildren();');
     expect(launcher).toContain('standaloneGames.append(');
@@ -65,8 +70,20 @@ describe('home preview media and standalone catalog', () => {
     expect(home).toContain('let enabledGames = new Set<string>()');
     expect(home).toMatch(/catch \{[\s\S]*?enabledGames = new Set\(\)/);
     expect(css).toMatch(/@media \(orientation:portrait\) and \(min-width:601px\)/);
+    expect(css).toContain('.standalone-view::-webkit-scrollbar { display:none; }');
     expect(css).toMatch(/\.standalone-game \{ aspect-ratio:16\/9/);
     expect(css).toMatch(/\.game-card-media \{ aspect-ratio:16\/9/);
+    expect(css).toMatch(/\.standalone-heading \{ padding-top:clamp\(80px,8vh,150px\);text-align:center/);
+    expect(css).toContain('.standalone-heading h1 { margin:22px 0 24px;font-size:clamp(64px,8vw,92px); }');
+    expect(css).toContain('.standalone-heading p { max-width:920px;margin-inline:auto;font-size:clamp(20px,2.2vw,28px); }');
+    expect(css).toContain('.standalone-view:has(.standalone-games>.standalone-game:only-child)');
+    expect(css).toMatch(/standalone-game:only-child\) \{ gap:0;padding-top:clamp\(100px,10vh,200px\)/);
+    expect(html).toContain('class="standalone-footer-bug"');
+    expect(css).toContain('width:clamp(240px,28vw,320px)');
+    expect(html).toContain('class="standalone-quick-start"');
+    expect(css).toContain('.standalone-quick-start { display:grid;grid-template-columns:repeat(3,1fr)');
+    expect(home).toContain('enabledGames = config.channels.voice');
+    expect(home).toContain('Boolean(bootstrap.voiceNumbers?.[locale])');
   });
 
   it('plays only active-view previews and honors constrained clients', () => {

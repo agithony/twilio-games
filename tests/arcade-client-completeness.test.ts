@@ -121,7 +121,7 @@ describe('Arcade client completeness', () => {
   });
 
   it('never offers disabled games and preserves global game numbers', () => {
-    expect(arcade).toContain('station:{games:Record<PlayableGame,{enabled:boolean}>}');
+    expect(arcade).toContain("games:Record<PlayableGame,{enabled:boolean}>;comingSoon:Record<'trivia'|'karaoke',{enabled:boolean}>");
     expect(arcade).toContain('const enabled=state.config?.station.games[game]?.enabled===true');
     expect(arcade).toContain('button.hidden=!enabled');
     expect(arcade).toContain('button.disabled=gameChoiceSaving||!enabled');

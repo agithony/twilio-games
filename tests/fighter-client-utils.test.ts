@@ -28,12 +28,20 @@ describe('fighter client shortcuts', () => {
     expect(source).toContain("status === 'reconnecting'");
     expect(source).toContain('failedMapKey === loadKey');
     expect(source).toContain('hasRenderableTriangle(gltf.scene)');
+    expect(source).toContain('if (mapModel) mapModel.visible = false;');
+    expect(source).toContain('if (mapModel && mapVisible !== undefined) mapModel.visible = mapVisible;');
+    expect(source).toContain('customMapStatic || portraitOrientationChanged(cameraFramingAspect, camera.aspect)');
+    expect(source).toContain('scheduleViewportMapReload(config.id)');
+    expect(source).toContain('applyProceduralFallbackFraming(config)');
+    expect(source.indexOf('if (usingProceduralFallback) { applyProceduralFallbackFraming(config); return; }')).toBeLessThan(source.indexOf('const framingChanged'));
   });
 
-  it('keeps portrait arena previews wide enough to recognize', () => {
+  it('uses equal horizontal arena rows and event-readable fight controls in portrait', () => {
     const css=readFileSync(new URL('../client/fighter/fighter.css',import.meta.url),'utf8');
     expect(css).toContain('@media (orientation:portrait) and (min-width:721px)');
-    expect(css).toMatch(/\.select-grid\.map-grid \{[^}]*grid-template-columns:repeat\(2/);
-    expect(css).toMatch(/\.map-grid \.card-preview \{[^}]*aspect-ratio:3\/2/);
+    expect(css).toMatch(/\.select-grid\.map-grid \{[^}]*grid-template-columns:1fr[^}]*grid-template-rows:repeat\(5/);
+    expect(css).toContain('grid-template-columns:minmax(0,68%) minmax(0,32%)');
+    expect(css).toContain('body[data-phase="fight"] .commands { grid-template-columns:repeat(3,minmax(0,1fr));gap:9px; }');
+    expect(css).toContain('font-size:clamp(32px,3.7vw,40px)');
   });
 });

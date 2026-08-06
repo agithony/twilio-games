@@ -6,6 +6,7 @@ import { FIGHTERS, FIGHTER_ASSET_VERSION, loadAnimationSources } from './fighter
 import { FighterAtmosphere, fighterAtmosphereSpec, type FighterAtmosphereSpec } from './fighter-atmosphere';
 import { FighterConnection } from './fighter-net';
 import { isInteractiveShortcutTarget, resolveNumericSelection } from './fighter-client-utils';
+import { frameStaticPortraitArena, portraitOrientationChanged, proceduralFallbackCamera, responsiveVerticalFov, shouldUseLivePortraitArena } from './fighter-camera';
 import { getSoundEffectsManager } from '../sound-effects';
 import { getMusicManager } from '../music-manager';
 import { injectMusicToggle } from '../music-toggle';
@@ -61,7 +62,6 @@ const p1FighterName = $('p1-fighter-name'), p2FighterName = $('p2-fighter-name')
 const p1PlayerName = $('p1-player-name'), p2PlayerName = $('p2-player-name');
 const commandButtons = [...document.querySelectorAll<HTMLButtonElement>('[data-command]')];
 injectMusicToggle('music-toggle-container');
-localizeStaticUi();
 const stationDisplay = createStationDisplay();
 
 const pageUrl = new URL(location.href);
@@ -71,6 +71,8 @@ if (pageUrl.searchParams.has('hostToken')) {
 }
 const params = pageUrl.searchParams;
 const isDisplay = params.get('display') === '1';
+document.body.classList.toggle('event-display', isDisplay);
+localizeStaticUi();
 const roomCode = params.get('room') || DEFAULT_ROOM;
 const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
 const connection = new FighterConnection(`${wsProtocol}//${location.host}/fighter${isDisplay?'?display=1':''}`, locale);
@@ -114,10 +116,14 @@ let mapBackdrop: THREE.WebGLRenderTarget | null = null;
 let mapAtmosphere: FighterAtmosphere | null = null;
 let mapLoadAttempt = 0;
 let customMapStatic = false;
+let usingProceduralFallback = false;
+let viewportMapReloadTimer: ReturnType<typeof setTimeout> | null = null;
 let mapPlane = { origin: [0, 0, 0] as [number, number, number], rotationY: 0 };
+let mapBoundsCenter = 0;
 const displayX: Record<FighterId, number> = { p1: -2.5, p2: 2.5 };
 const displayHeight: Record<FighterId, number> = { p1: 0, p2: 0 };
 let cameraBase = { pos: [0, 2.15, 10.5] as [number, number, number], lookAt: [0, 1.25, 0] as [number, number, number], fov: 36 };
+let cameraFramingAspect = camera.aspect;
 const cameraAxis = new THREE.Vector3(), cameraTarget = new THREE.Vector3(), cameraView = new THREE.Vector3(), cameraDesired = new THREE.Vector3();
 let flowMessage = '';
 let animationSources: Awaited<ReturnType<typeof loadAnimationSources>> | null = null;
@@ -271,7 +277,10 @@ function renderFlow(): void {
     const steps=stationDisplay.active
       ? ['lobby.stationStep1','lobby.stationStep2','lobby.stationStep3'] as const
       : ['lobby.step1','lobby.step2','lobby.step3'] as const;
-    overlay.innerHTML = `<section class="flow-panel lobby-panel"><div class="lobby-head"><h1>${t('app.title')}</h1><p>${t(stationDisplay.active?'lobby.stationTagline':'lobby.tagline')}</p></div><div class="lobby-layout">${joinCard}<div class="lobby-center"><h2>${t('lobby.getStarted')}</h2><ol class="join-steps">${steps.map((step,index)=>`<li><b>${index+1}</b><span>${t(step)}</span></li>`).join('')}</ol><div class="player-list"><h2>${t(state.players.length ? 'lobby.challengers' : 'lobby.title')}</h2>${state.players.length ? state.players.map(playerChip).join('') : `<p>${t('lobby.waitingFirst')}</p>`}</div></div><aside class="how-to"><h2>${t('lobby.howToFight')}</h2><p>${t('lobby.rules')}</p><div class="instruction-grid"><span><b>${t('command.forward')}</b> ${t('instruction.forward')}</span><span><b>${t('command.back')}</b> ${t('instruction.back')}</span><span><b>${t('command.jump')}</b> ${t('instruction.jump')}</span><span><b>${t('command.punch')}</b> ${t('instruction.punch')}</span><span><b>${t('command.kick')}</b> ${t('instruction.kick')}</span><span><b>${t('command.block')}</b> ${t('instruction.block')}</span></div><p class="voice-tip">${t('lobby.voiceTip')}</p></aside></div><div class="flow-actions lobby-actions">${stationDisplay.active ? '' : `<button id="local-join">${t('lobby.playingHere')}</button>`}<button id="flow-next" ${state.players.length && isHost ? '' : 'disabled'}>${t('lobby.chooseFighters')}</button></div>${isHost ? '' : `<p class="flow-hint">${t('lobby.viewOnly')}</p>`}</section>`;
+    const localAction=isDisplay
+      ? stationDisplay.active?'':`<p class="phone-play-notice">${t('lobby.phonePlay')}</p>`
+      : `<button id="local-join">${t('lobby.playingHere')}</button>`;
+    overlay.innerHTML = `<section class="flow-panel lobby-panel"><div class="lobby-head"><h1>${t('app.title')}</h1><p>${t(stationDisplay.active?'lobby.stationTagline':'lobby.tagline')}</p></div><div class="lobby-layout">${joinCard}<div class="lobby-center"><h2>${t('lobby.getStarted')}</h2><ol class="join-steps">${steps.map((step,index)=>`<li><b>${index+1}</b><span>${t(step)}</span></li>`).join('')}</ol><div class="player-list"><h2>${t(state.players.length ? 'lobby.challengers' : 'lobby.title')}</h2>${state.players.length ? state.players.map(playerChip).join('') : `<p>${t('lobby.waitingFirst')}</p>`}</div></div><aside class="how-to"><h2>${t('lobby.howToFight')}</h2><p>${t('lobby.rules')}</p><div class="instruction-grid"><span><b>${t('command.forward')}</b> ${t('instruction.forward')}</span><span><b>${t('command.back')}</b> ${t('instruction.back')}</span><span><b>${t('command.jump')}</b> ${t('instruction.jump')}</span><span><b>${t('command.punch')}</b> ${t('instruction.punch')}</span><span><b>${t('command.kick')}</b> ${t('instruction.kick')}</span><span><b>${t('command.block')}</b> ${t('instruction.block')}</span></div><p class="voice-tip">${t('lobby.voiceTip')}</p></aside></div><div class="flow-actions lobby-actions">${localAction}<button id="flow-next" ${state.players.length && isHost ? '' : 'disabled'}>${t('lobby.chooseFighters')}</button></div>${isHost||isDisplay ? '' : `<p class="flow-hint">${t('lobby.viewOnly')}</p>`}</section>`;
   } else if (state.phase === 'fighter_select') {
     const allPicked = state.hasExpectedPlayers && state.players.length > 0 && state.players.every(player => player.fighterId);
     overlay.innerHTML = selectScreen(t('select.fighterTitle'), t('select.fighterDescription'), roster.map((fighter, index) => {
@@ -603,9 +612,11 @@ function applyMapTheme(mapId: string): void {
   }
   const config = maps.find(map => map.id === mapId); if (!config) return;
   const attempt = ++mapLoadAttempt;
+  if (readyTimer) { clearTimeout(readyTimer); readyTimer = null; }
   loadedMapId = mapId;
   mapReadyId = '';
   failedMapKey = '';
+  usingProceduralFallback = false;
   if (!initializationFailed) hideAssetError();
   disposeCurrentMap();
   theme.ring.material.color.set(config.color); theme.red.color.set(config.color);
@@ -614,17 +625,12 @@ function applyMapTheme(mapId: string): void {
   scene.background = new THREE.Color(mapId === 'void' ? 0x02040d : 0x0d080b);
   scene.fog = new THREE.FogExp2(mapId === 'void' ? 0x040817 : 0x16090c, .035);
   mapPlane = config.fightPlane ?? { origin: [0, config.floorY ?? 0, 0], rotationY: 0 };
+  mapBoundsCenter = (config.bounds[0] + config.bounds[1]) / 2;
+  const livePortraitMap = shouldUseLivePortraitArena(mapId, camera.aspect);
   const atmosphereSpec = fighterAtmosphereSpec(mapId);
   applyAtmosphereLighting(atmosphereSpec);
   applyActorTransforms();
-  if (config.camera) {
-    cameraBase = { pos: config.camera.pos, lookAt: config.camera.lookAt, fov: config.camera.fov ?? 36 };
-    camera.position.set(...cameraBase.pos); updateCameraProjection();
-  } else {
-    cameraBase = { pos: [0, 2.15, 10.5], lookAt: [0, 1.25, 0], fov: 36 };
-    camera.position.set(...cameraBase.pos); updateCameraProjection();
-  }
-  camera.lookAt(...cameraBase.lookAt);
+  applyCameraFraming(config);
   if (atmosphereSpec) mapAtmosphere = new FighterAtmosphere(atmosphereSpec, scene, new THREE.Vector3(...cameraBase.lookAt), new THREE.Vector3(...mapPlane.origin), THREE.MathUtils.degToRad(mapPlane.rotationY));
   customMapStatic = false;
   renderer.shadowMap.enabled = true;
@@ -655,7 +661,8 @@ function applyMapTheme(mapId: string): void {
     // shadows, but must not render into the shadow map itself every frame.
     mapModel.traverse(object => { if ((object as THREE.Mesh).isMesh) { (object as THREE.Mesh).receiveShadow = true; (object as THREE.Mesh).castShadow = false; } });
     scene.add(mapModel);
-    try { captureMapBackdrop(); }
+    if (livePortraitMap) { customMapStatic = false; renderer.shadowMap.enabled = true; }
+    else try { captureMapBackdrop(); }
     catch (error) { console.warn('Unable to cache arena backdrop; using live rendering.', error); customMapStatic = false; renderer.shadowMap.enabled = true; }
     mapReadyId = mapId;
     failedMapKey = '';
@@ -680,11 +687,13 @@ function handleMapLoadFailure(mapId: string, loadKey: string, error: unknown): v
 function useProceduralFallback(mapId: string): void {
   mapLoadAttempt++; disposeCurrentMap(); hideAssetError();
   failedMapKey = '';
+  usingProceduralFallback = true;
   theme.procedural.visible = true; renderer.shadowMap.enabled = true; customMapStatic = false;
   mapPlane = { origin: [0, 0, 0], rotationY: 0 };
   applyAtmosphereLighting(null);
-  cameraBase = { pos: [0, 2.15, 10.5], lookAt: [0, 1.25, 0], fov: 36 };
-  applyActorTransforms(); camera.position.set(...cameraBase.pos); updateCameraProjection(); camera.lookAt(...cameraBase.lookAt);
+  const config = maps.find(map => map.id === mapId);
+  applyProceduralFallbackFraming(config);
+  applyActorTransforms();
   scene.background = new THREE.Color(0x05060a); scene.fog = new THREE.FogExp2(0x08090e, .06);
   mapReadyId = mapId; maybeSignalReady();
 }
@@ -770,9 +779,9 @@ function maybeSignalReady(): void {
   readyTimer = setTimeout(() => {
     readyTimer = null;
     if (state?.phase !== 'loading' || state.selectedMap !== mapId
-      || `${state.loadingGeneration}:${state.selectedMap}` !== readinessKey) return;
+      || mapReadyId !== mapId || `${state.loadingGeneration}:${state.selectedMap}` !== readinessKey) return;
     requestAnimationFrame(() => requestAnimationFrame(() => {
-      if (state?.phase !== 'loading' || state.selectedMap !== mapId || !actors
+      if (state?.phase !== 'loading' || state.selectedMap !== mapId || mapReadyId !== mapId || !actors
         || `${state.loadingGeneration}:${state.selectedMap}` !== readinessKey) return;
       readySentFor = readinessKey;
       stationDisplay.markEngineReady();
@@ -810,12 +819,37 @@ function captureMapBackdrop(): void {
   renderer.shadowMap.enabled = false;
 }
 function updateCameraProjection(): void {
-  const referenceAspect = 16 / 9;
-  const authored = THREE.MathUtils.degToRad(cameraBase.fov);
-  camera.fov = camera.aspect < referenceAspect
-    ? THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(authored / 2) * referenceAspect / camera.aspect))
-    : cameraBase.fov;
+  camera.fov = responsiveVerticalFov(cameraBase.fov, camera.aspect);
   camera.updateProjectionMatrix();
+}
+function applyCameraFraming(config: FighterMapEntry): void {
+  const authoredCamera = config.camera
+    ? { pos: config.camera.pos, lookAt: config.camera.lookAt, fov: config.camera.fov ?? 36 }
+    : { pos: [0, 2.15, 10.5] as [number,number,number], lookAt: [0, 1.25, 0] as [number,number,number], fov: 36 };
+  cameraBase = frameStaticPortraitArena(authoredCamera, config.bounds, mapPlane.origin, mapPlane.rotationY, camera.aspect);
+  cameraFramingAspect = camera.aspect;
+  camera.position.set(...cameraBase.pos); updateCameraProjection(); camera.lookAt(...cameraBase.lookAt);
+}
+function applyProceduralFallbackFraming(config: FighterMapEntry | undefined): void {
+  const bounds: [number, number] = config?.bounds ?? [-9, 9];
+  mapBoundsCenter = (bounds[0] + bounds[1]) / 2;
+  cameraBase = frameStaticPortraitArena(
+    proceduralFallbackCamera(bounds),
+    bounds, mapPlane.origin, mapPlane.rotationY, camera.aspect,
+  );
+  cameraFramingAspect = camera.aspect;
+  camera.position.set(...cameraBase.pos); updateCameraProjection(); camera.lookAt(...cameraBase.lookAt);
+}
+function scheduleViewportMapReload(mapId: string): void {
+  if (viewportMapReloadTimer) clearTimeout(viewportMapReloadTimer);
+  if (readyTimer) { clearTimeout(readyTimer); readyTimer = null; }
+  mapReadyId = '';
+  viewportMapReloadTimer = setTimeout(() => {
+    viewportMapReloadTimer = null;
+    if (loadedMapId !== mapId) return;
+    loadedMapId = '';
+    applyMapTheme(mapId);
+  }, 150);
 }
 function commandLabel(command: FighterCommand): string { return t(COMMAND_MESSAGE_KEYS[command]); }
 function localizedFighterTitle(fighter: FighterRosterEntry): string { const key = FIGHTER_TITLE_KEYS[fighter.id]; return key ? t(key) : fighter.title; }
@@ -842,7 +876,7 @@ function localizeStaticUi(): void {
   const deck = document.querySelector<HTMLElement>('.command-deck'); deck?.setAttribute('aria-label', t('commands.aria'));
   const deckTitle = deck?.querySelector('.deck-title');
   const deckLabel = deckTitle?.querySelector('span'), deckHint = deckTitle?.querySelector('small');
-  if (deckLabel) deckLabel.textContent = t('commands.say'); if (deckHint) deckHint.textContent = t('commands.keyboardHint');
+  if (deckLabel) deckLabel.textContent = t('commands.say'); if (deckHint) deckHint.textContent = t(isDisplay?'commands.phoneHint':'commands.keyboardHint');
   for (const button of commandButtons) {
     const label = button.querySelector('b'), command = button.dataset.command as FighterCommand;
     if (label) label.textContent = commandLabel(command);
@@ -931,8 +965,17 @@ function handleNumericSelection(key: string): void {
 }
 addEventListener('resize', () => {
   const size = arenaSize();
-  camera.aspect = size.width / size.height; updateCameraProjection(); renderer.setSize(size.width, size.height);
-  if (mapModel && customMapStatic) captureMapBackdrop();
+  camera.aspect = size.width / size.height; renderer.setSize(size.width, size.height);
+  const config = maps.find(map => map.id === loadedMapId);
+  if (usingProceduralFallback) { applyProceduralFallbackFraming(config); return; }
+  const framingChanged = Math.abs(cameraFramingAspect - camera.aspect) > .001;
+  if (config && framingChanged && (customMapStatic || portraitOrientationChanged(cameraFramingAspect, camera.aspect))) {
+    updateCameraProjection();
+    scheduleViewportMapReload(config.id);
+    return;
+  }
+  if (config && !customMapStatic) applyCameraFraming(config);
+  else updateCameraProjection();
 });
 rematch.addEventListener('click', () => { if (!stationDisplay.active) connection.advance(); });
 for (const link of document.querySelectorAll<HTMLAnchorElement>('.game-home, #result a[href="/"]')) {
@@ -946,11 +989,18 @@ function render(now: number): void {
   requestAnimationFrame(render); const delta = Math.min((now - lastTime) / 1000, .05); lastTime = now;
   mapAtmosphere?.update(delta); updateMovement(delta); if (actors) {
     actors.p1.update(delta); actors.p2.update(delta);
-    if (state?.phase === 'intro') { updateIntroPresentation(state); renderer.render(scene, camera); return; }
+    if (state?.phase === 'intro') {
+      updateIntroPresentation(state);
+      const mapVisible = mapModel?.visible;
+      if (mapModel) mapModel.visible = false;
+      try { renderer.render(scene, camera); }
+      finally { if (mapModel && mapVisible !== undefined) mapModel.visible = mapVisible; }
+      return;
+    }
     if (customMapStatic) { renderer.render(scene, camera); return; }
     const midpoint = (displayX.p1 + displayX.p2) / 2, separation = Math.abs(displayX.p1 - displayX.p2);
     const angle = THREE.MathUtils.degToRad(mapPlane.rotationY); cameraAxis.set(Math.cos(angle), 0, -Math.sin(angle));
-    cameraTarget.set(...cameraBase.lookAt).addScaledVector(cameraAxis, midpoint);
+    cameraTarget.set(...cameraBase.lookAt).addScaledVector(cameraAxis, midpoint - mapBoundsCenter);
     cameraView.set(cameraBase.pos[0] - cameraBase.lookAt[0], cameraBase.pos[1] - cameraBase.lookAt[1], cameraBase.pos[2] - cameraBase.lookAt[2]);
     const baseDistance = cameraView.length(), targetDistance = Math.max(baseDistance, Math.min(baseDistance + 9, baseDistance - 2 + separation * .72));
     cameraDesired.copy(cameraTarget).add(cameraView.normalize().multiplyScalar(targetDistance));

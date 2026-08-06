@@ -18,7 +18,7 @@ interface StationView { phase:string;revision:number;deadline:string|null;ready:
 interface Challenge { id:string;title:string;message:string|null;rewardCoins:number;displayOrder:number;claimCount:number;maxClaimsPerPlayer:number;available:boolean;startsAt:string|null;endsAt:string|null; }
 interface AdminChallenge { id:string;title:string;message:string|null;url:string;rewardCoins:number;enabled:boolean;maxClaimsPerPlayer:number;displayOrder:number;startsAt:string|null;endsAt:string|null; }
 interface GameChoiceResponse { gameChoice:PlayableGame; }
-interface AdminConfig extends Record<string,unknown> { version:number;updatedAt:string;updatedBy:string;schemaVersion:number;arcade:{mode:ArcadeMode;cabinetId:string};station:{timings:{recruitingSeconds:number;hardDeadlineSeconds:number;selectionSeconds:number;lockedSeconds:number;launchTimeoutSeconds:number;resultsSeconds:number;postGameRecruitingSeconds:number};games:Record<PlayableGame,{enabled:boolean}>;automaticSelection:{policy:'best_fit_rotation'|'round_robin'|'fixed_priority';order:PlayableGame[]};qrRail:'auto'|'always'|'hidden'};coins:{startingBalance:number;chargePolicy:ChargePolicy};channels:{voice:boolean;sms:boolean;whatsapp:boolean;voiceNumbers:Record<'en-US'|'pt-BR',string|null>};earning:{enabled:boolean;challenges:AdminChallenge[]};postGame:{enabled:boolean;channels:Array<'sms'|'whatsapp'>;includeCoinBalance:boolean;includeChallenges:boolean}; }
+interface AdminConfig extends Record<string,unknown> { version:number;updatedAt:string;updatedBy:string;schemaVersion:number;arcade:{mode:ArcadeMode;cabinetId:string};station:{timings:{recruitingSeconds:number;hardDeadlineSeconds:number;selectionSeconds:number;lockedSeconds:number;launchTimeoutSeconds:number;resultsSeconds:number;postGameRecruitingSeconds:number};games:Record<PlayableGame,{enabled:boolean}>;comingSoon:Record<'trivia'|'karaoke',{enabled:boolean}>;automaticSelection:{policy:'best_fit_rotation'|'round_robin'|'fixed_priority';order:PlayableGame[]};qrRail:'auto'|'always'|'hidden'};coins:{startingBalance:number;chargePolicy:ChargePolicy};channels:{voice:boolean;sms:boolean;whatsapp:boolean;voiceNumbers:Record<'en-US'|'pt-BR',string|null>};earning:{enabled:boolean;challenges:AdminChallenge[]};postGame:{enabled:boolean;channels:Array<'sms'|'whatsapp'>;includeCoinBalance:boolean;includeChallenges:boolean}; }
 interface OperatorStationView {
   station:{phase:StationPhase;revision:number;updatedAt:string;activeRoundId:string|null;nextRoundId:string|null;activeGame:PlayableGame|null;activeMatchId:string|null};
   round:{phase:string;firstCoinAt:string;recruitingEndsAt:string|null;hardEndsAt:string|null;selectionEndsAt:string|null;lockedEndsAt:string|null;resultsAt:string|null;selectedGame:PlayableGame|null}|null;
@@ -115,6 +115,7 @@ el('admin-voice').addEventListener('change',renderRuntimeSummary);
 el('admin-voice-en-us').addEventListener('input',renderRuntimeSummary);
 el('admin-voice-pt-br').addEventListener('input',renderRuntimeSummary);
 for(const game of ['racer','monsters','fighter'])el(`admin-game-${game}`).addEventListener('change',renderRuntimeSummary);
+for(const concept of ['trivia','karaoke'])el(`admin-coming-soon-${concept}`).addEventListener('change',renderRuntimeSummary);
 window.setInterval(()=>{renderStationDeadline();renderOperatorOverview();},1000);
 window.addEventListener('beforeunload',event=>{if(modeFormDirty){event.preventDefault();event.returnValue='';}});
 applyTheme();
@@ -570,6 +571,7 @@ async function checkAdmin(forceConfigRender=false):Promise<void>{
   el<HTMLInputElement>('admin-voice-en-us').value=state.adminConfig.channels.voiceNumbers['en-US']??'';
   el<HTMLInputElement>('admin-voice-pt-br').value=state.adminConfig.channels.voiceNumbers['pt-BR']??'';
   for(const game of ['racer','monsters','fighter'] as const)el<HTMLInputElement>(`admin-game-${game}`).checked=state.adminConfig.station.games[game].enabled;
+  for(const concept of ['trivia','karaoke'] as const)el<HTMLInputElement>(`admin-coming-soon-${concept}`).checked=state.adminConfig.station.comingSoon[concept].enabled;
   el<HTMLSelectElement>('admin-selection-policy').value=state.adminConfig.station.automaticSelection.policy;
   applyPriorityOrder(state.adminConfig.station.automaticSelection.order);
   el<HTMLSelectElement>('admin-qr-rail').value=state.adminConfig.station.qrRail;
@@ -644,6 +646,7 @@ async function saveMode(event:Event):Promise<void>{
   if(selectedMode!=='off'&&!voiceReady){setNotice('Add valid English and Portuguese voice numbers before opening the event.','error');return;}
   const station=settings.station as AdminConfig['station'];
   for(const game of ['racer','monsters','fighter'] as const)station.games[game].enabled=el<HTMLInputElement>(`admin-game-${game}`).checked;
+  for(const concept of ['trivia','karaoke'] as const)station.comingSoon[concept].enabled=el<HTMLInputElement>(`admin-coming-soon-${concept}`).checked;
   if(selectedMode!=='off'&&!Object.values(station.games).some(game=>game.enabled)){setNotice('Choose at least one game before opening the event.','error');return;}
   const selectionPolicy=el<HTMLSelectElement>('admin-selection-policy').value as AdminConfig['station']['automaticSelection']['policy'];
   const selectedOrder=el<HTMLInputElement>('admin-game-order').value.split(',').map(value=>value.trim()) as PlayableGame[];

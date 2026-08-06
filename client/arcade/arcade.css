@@ -162,9 +162,7 @@ input,select{width:100%;color:var(--th-text);background:var(--th-input);border:1
 .choice-card small{color:var(--th-text-dim);font-weight:400;font-size:.72rem;line-height:1.3}
 .voice-number-fields{margin-top:16px}
 .coming-soon-concepts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:10px}
-.coming-soon-card{display:grid;gap:5px;min-width:0;padding:13px 14px;border:1px dashed var(--th-input-border);border-radius:12px;background:color-mix(in srgb,var(--th-card) 56%,transparent)}
-.coming-soon-card span{width:max-content;padding:3px 7px;color:var(--accent-text);background:var(--th-raised);border-radius:999px;font:.62rem 'Twilio Sans Mono',monospace;text-transform:uppercase;letter-spacing:.05em}
-.coming-soon-card b{font-size:.86rem}.coming-soon-card small{color:var(--th-text-dim);font-size:.72rem}
+.coming-soon-card{border-style:dashed;background:color-mix(in srgb,var(--th-card) 56%,transparent)}
 .advanced-settings{grid-column:1/-1;border:1px solid var(--th-card-border);border-radius:14px;background:var(--th-sidebar)}
 .advanced-settings summary,.operator-details summary{padding:16px 18px;cursor:pointer;color:var(--th-text-label);font-weight:700;list-style:none}
 .advanced-settings summary::after,.operator-details summary::after{content:'+';float:right;color:var(--accent-text);font:800 1.2rem 'Twilio Sans Display'}

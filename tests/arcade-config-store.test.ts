@@ -88,6 +88,7 @@ function schema2Config(version = 2): any {
   config.updatedAt = '2026-07-19T13:00:00.000Z';
   config.updatedBy = 'schema2@example.com';
   delete config.channels.voiceNumbers;
+  delete config.station.comingSoon;
   return config;
 }
 
@@ -97,12 +98,23 @@ function schema3Config(version = 2): any {
   config.version = version;
   config.updatedAt = '2026-07-19T14:00:00.000Z';
   config.updatedBy = 'schema3@example.com';
+  delete config.station.comingSoon;
   config.postGame.includeChallenges = false;
   config.earning.challenges = [{
     id: 'voice-docs', title: 'Voice docs', url: 'https://www.twilio.com/docs/voice',
     rewardCoins: 1, enabled: true, maxClaimsPerPlayer: 1, displayOrder: 0,
     startsAt: null, endsAt: null,
   }];
+  return config;
+}
+
+function schema4Config(version = 2): any {
+  const config = JSON.parse(JSON.stringify(createDefaultArcadeConfig()));
+  config.schemaVersion = 4;
+  config.version = version;
+  config.updatedAt = '2026-07-19T15:00:00.000Z';
+  config.updatedBy = 'schema4@example.com';
+  delete config.station.comingSoon;
   return config;
 }
 
@@ -332,6 +344,56 @@ describe('ArcadeConfigStore loading and persistence', () => {
     expect(await readFile(store.cachePath, 'utf8')).toBe(cacheBytes);
     expect(await readFile(store.auditPath, 'utf8')).toBe(auditBytes);
     expect(store.getStatus().degraded).toBe(false);
+  });
+
+  it('loads schema 4 records with both Coming Soon concepts enabled', async () => {
+    const directory = await temporaryDirectory();
+    const store = new ArcadeConfigStore(directory);
+    const oldConfig = schema4Config();
+    const oldRecord = legacyAuditRecord(oldConfig);
+    const cacheBytes = `${JSON.stringify(oldConfig, null, 2)}\n`;
+    const auditBytes = `${JSON.stringify(oldRecord)}\n`;
+    await writeFile(store.cachePath, cacheBytes, 'utf8');
+    await writeFile(store.auditPath, auditBytes, 'utf8');
+
+    const migrated = await store.load();
+    expect(migrated).toMatchObject({
+      schemaVersion: ARCADE_CONFIG_SCHEMA_VERSION,
+      station: { comingSoon: { trivia: { enabled: true }, karaoke: { enabled: true } } },
+    });
+    expect(await readFile(store.cachePath, 'utf8')).toBe(cacheBytes);
+    expect(await readFile(store.auditPath, 'utf8')).toBe(auditBytes);
+    expect(store.getStatus().degraded).toBe(false);
+  });
+
+  it('restores a previously quarantined legacy post-game audit after migration support is added', async () => {
+    const directory = await temporaryDirectory();
+    const store = new ArcadeConfigStore(directory);
+    const oldConfig = schema3Config();
+    oldConfig.postGame.enabled = true;
+    oldConfig.postGame.channels = ['sms'];
+    oldConfig.postGame.includeScore = true;
+    oldConfig.channels.sms = true;
+    const oldRecord = legacyAuditRecord(oldConfig);
+    const auditBytes = `${JSON.stringify(oldRecord)}\n`;
+    const quarantinePath = `${store.auditPath}.corrupt-legacy-post-game.jsonl`;
+    await writeFile(store.cachePath, `${JSON.stringify(oldConfig, null, 2)}\n`, 'utf8');
+    await writeFile(store.auditPath, '', 'utf8');
+    await writeFile(quarantinePath, auditBytes, 'utf8');
+    await writeFile(store.degradedPath, `${JSON.stringify({
+      reason: 'line 1: $.postGame.includeScore: is not supported for enabled post-game delivery',
+      quarantinePath,
+    })}\n`, 'utf8');
+
+    const recovered = await store.load();
+
+    expect(recovered).toMatchObject({
+      version: oldConfig.version,
+      postGame: { enabled: true, includeScore: false, includeLeaderboard: false },
+    });
+    expect(store.getStatus().degraded).toBe(false);
+    expect(await readFile(store.auditPath, 'utf8')).toBe(auditBytes);
+    await expect(readFile(store.degradedPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it('rejects a tampered v1 audit record using its original schema 1 hash shape', async () => {

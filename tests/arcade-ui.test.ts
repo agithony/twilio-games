@@ -162,6 +162,8 @@ describe('Arcade browser UI', () => {
 
   it('keeps local browser traffic same-origin through Vite', () => {
     expect(vite).toContain("'/api':");
+    expect(vite).toContain("new URL(origin).host === request.headers.host");
+    expect(vite).toContain("proxyRequest.setHeader('origin', backendOrigin)");
     expect(vite).toContain("'/auth':");
     expect(vite).toContain("arcade: resolve(__dirname, 'arcade/index.html')");
     expect(vite).toContain("url === '/arcade'");
@@ -301,14 +303,17 @@ describe('Arcade browser UI', () => {
     expect(css).toContain('.operator-page .challenge-form{grid-template-columns:repeat(2');
   });
 
-  it('presents future voice games as static setup concepts only', () => {
-    const concepts = /<div class="coming-soon-concepts"[\s\S]*?<\/div>/.exec(html)?.[0] ?? '';
+  it('lets operators control future voice game visibility without making them playable', () => {
+    const concepts = /<fieldset class="choice-grid coming-soon-concepts"[\s\S]*?<\/fieldset>/.exec(html)?.[0] ?? '';
     expect(concepts).toContain('<b>Voice Trivia</b>');
     expect(concepts).toContain('<b>Voice Karaoke</b>');
-    expect(concepts.match(/Coming soon/g)).toHaveLength(2);
-    expect(concepts).not.toMatch(/<(?:input|button|a|option)\b|\btabindex=|\bdata-game-choice=/);
+    expect(concepts).toContain('Coming soon cards shown on the home screen');
+    expect(concepts).toContain('id="admin-coming-soon-trivia"');
+    expect(concepts).toContain('id="admin-coming-soon-karaoke"');
+    expect(concepts).not.toMatch(/<(?:button|a|option)\b|\btabindex=|\bdata-game-choice=/);
     expect(stationGameSelect).not.toMatch(/Trivia|Karaoke/i);
-    expect(script).not.toMatch(/['"](?:trivia|karaoke)['"]/i);
+    expect(script).toContain("for(const concept of ['trivia','karaoke'] as const)el<HTMLInputElement>(`admin-coming-soon-${concept}`).checked=state.adminConfig.station.comingSoon[concept].enabled");
+    expect(script).toContain("for(const concept of ['trivia','karaoke'] as const)station.comingSoon[concept].enabled=el<HTMLInputElement>(`admin-coming-soon-${concept}`).checked");
     expect(html).toContain('id="admin-console"');
   });
 

@@ -41,6 +41,7 @@ const copy = locale === 'pt-BR' ? {
   standaloneEyebrow: 'Jogos de festa controlados por voz · com tecnologia Twilio',
   standaloneTitle: 'Jogue com sua <span>voz.</span>',
   standaloneDescription: 'Com tecnologia Twilio ConversationRelay. Sua voz é o controle.',
+  quickStartOne: 'Toque no jogo', quickStartTwo: 'Escaneie o código QR', quickStartThree: 'Ligue e jogue por voz',
   standaloneUnavailable: 'Os jogos por voz não estão disponíveis agora. Peça ajuda à equipe.',
   comingSoon: 'Em breve',
   triviaTitle: 'Quiz por Voz', karaokeTitle: 'Karaokê por Voz',
@@ -77,6 +78,7 @@ const copy = locale === 'pt-BR' ? {
   standaloneEyebrow: 'Voice-controlled party games · powered by Twilio',
   standaloneTitle: 'Play with your <span>voice.</span>',
   standaloneDescription: 'Powered by Twilio Conversation Relay. Your voice is the controller.',
+  quickStartOne: 'Tap the game', quickStartTwo: 'Scan the QR code', quickStartThree: 'Call and play by voice',
   standaloneUnavailable: 'Voice games are unavailable right now. Please ask booth staff for help.',
   comingSoon: 'Coming soon',
   triviaTitle: 'Voice Trivia', karaokeTitle: 'Voice Karaoke',
@@ -150,6 +152,7 @@ let configurationPending = false;
 let freePlay = false;
 let leadCaptureMode = false;
 let enabledGames = new Set<string>();
+let comingSoon = { trivia: false, karaoke: false };
 let smsAvailable = false;
 let whatsappAvailable = false;
 let selectionLineup = '';
@@ -199,8 +202,9 @@ function buildGameCard(impact: PublicStation['games'][number]): HTMLElement {
 }
 
 function renderStandaloneLauncher(): void {
-  const key=[...enabledGames].sort().join(',');if(key===standaloneGamesKey)return;standaloneGamesKey=key;standaloneGames.replaceChildren();
+  const key=`${[...enabledGames].sort().join(',')}|${comingSoon.trivia?1:0}${comingSoon.karaoke?1:0}`;if(key===standaloneGamesKey)return;standaloneGamesKey=key;standaloneGames.replaceChildren();
   const games=PLAYABLE_ARCADE_GAMES.filter(game=>enabledGames.has(game.id));
+  renderComingSoon();
   if(!games.length){const message=document.createElement('p');message.className='standalone-unavailable';message.textContent=copy.standaloneUnavailable;standaloneGames.append(message);return;}
   standaloneGames.append(...games.map(game => {
     const link = document.createElement('a');
@@ -210,6 +214,12 @@ function renderStandaloneLauncher(): void {
     link.innerHTML=`<video data-src="${selectionVideos[game.id]}" preload="none" loop muted playsinline aria-hidden="true"></video><span>${gameTitle(locale,game.id)}</span><p>${game.id==='racer'?copy.racerBlurb:game.id==='monsters'?copy.monstersBlurb:copy.fighterBlurb}</p>`;
     return link;
   }));
+}
+
+function renderComingSoon(): void {
+  document.getElementById('futureTrivia')!.hidden=!comingSoon.trivia;
+  document.getElementById('futureKaraoke')!.hidden=!comingSoon.karaoke;
+  document.getElementById('standaloneFuture')!.hidden=!comingSoon.trivia&&!comingSoon.karaoke;
 }
 
 function previewPlaybackAllowed(): boolean {
@@ -385,6 +395,9 @@ function localizeStaticPage(): void {
   document.getElementById('standaloneEyebrow')!.textContent=copy.standaloneEyebrow;
   document.getElementById('standaloneTitle')!.innerHTML=copy.standaloneTitle;
   document.getElementById('standaloneDescription')!.textContent=copy.standaloneDescription;
+  document.getElementById('standaloneQuickStartOne')!.textContent=copy.quickStartOne;
+  document.getElementById('standaloneQuickStartTwo')!.textContent=copy.quickStartTwo;
+  document.getElementById('standaloneQuickStartThree')!.textContent=copy.quickStartThree;
   document.getElementById('futureGamesLabel')!.textContent=copy.comingSoon;
   document.getElementById('voiceTriviaTitle')!.textContent=copy.triviaTitle;
   document.getElementById('voiceKaraokeTitle')!.textContent=copy.karaokeTitle;
@@ -473,9 +486,13 @@ async function refreshConfiguration(): Promise<void> {
     freePlay = config.coins.chargePolicy === 'free';
     smsAvailable = locale !== 'pt-BR' && config.channels.sms && Boolean(bootstrap.smsNumber);
     whatsappAvailable = config.channels.whatsapp && Boolean(bootstrap.whatsappNumber);
-    enabledGames = config.channels.voice&&Boolean(bootstrap.voiceNumbers?.[locale])?new Set(Object.entries(config.station.games)
+    const configuredGames = new Set(Object.entries(config.station.games)
       .filter(([, settings]) => settings.enabled)
-      .map(([game]) => game)):new Set();
+      .map(([game]) => game));
+    comingSoon={trivia:config.station.comingSoon.trivia.enabled,karaoke:config.station.comingSoon.karaoke.enabled};
+    enabledGames = config.channels.voice && Boolean(bootstrap.voiceNumbers?.[locale])
+      ? configuredGames
+      : new Set();
     stationId = config.arcade.cabinetId;
     qrRailMode=config.station.qrRail;
     renderEntryPolicyCopy();
@@ -488,6 +505,7 @@ async function refreshConfiguration(): Promise<void> {
     }
   } catch {
     enabledGames = new Set();
+    comingSoon={trivia:false,karaoke:false};
     selectionLineup = '';
     if (standaloneMode) renderStandaloneLauncher();
     if (current) renderGameCards(current);

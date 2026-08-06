@@ -36,18 +36,24 @@
       </div>
       <div class="standalone-catalog">
         <div id="standaloneGames" class="standalone-games"></div>
-        <section class="standalone-future" aria-labelledby="futureGamesLabel">
+        <div class="standalone-quick-start" aria-label="How to play">
+          <div><b>01</b><span id="standaloneQuickStartOne">Tap the game</span></div>
+          <div><b>02</b><span id="standaloneQuickStartTwo">Scan the QR code</span></div>
+          <div><b>03</b><span id="standaloneQuickStartThree">Call and play by voice</span></div>
+        </div>
+        <section id="standaloneFuture" class="standalone-future" aria-labelledby="futureGamesLabel" hidden>
           <span class="eyebrow" id="futureGamesLabel">Coming soon</span>
           <div class="standalone-future-cards">
-            <article class="standalone-future-game">
+            <article id="futureTrivia" class="standalone-future-game" hidden>
               <div><h2 id="voiceTriviaTitle">Voice Trivia</h2><p id="voiceTriviaDescription">Quick questions, spoken answers, and rounds built for everyone.</p></div>
             </article>
-            <article class="standalone-future-game">
+            <article id="futureKaraoke" class="standalone-future-game" hidden>
               <div><h2 id="voiceKaraokeTitle">Voice Karaoke</h2><p id="voiceKaraokeDescription">Pick a song, take the mic, and sing through your phone.</p></div>
             </article>
           </div>
         </section>
       </div>
+      <img class="standalone-footer-bug" src="/brand/Twilio_Logo_Bug_White.svg" alt="">
     </section>
 
     <section id="recruitingView" class="station-view recruiting-view">
