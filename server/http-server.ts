@@ -401,7 +401,7 @@ export class HttpServer {
           won: state?.result ? player.side === state.result.winner : null,
           score: null,
           durationSeconds: null,
-        })));
+        })), ['loading']);
       const set = this.fighterVoice.get(roomCode); if (!set) return;
       for (const session of set) session.onStateChanged();
     });
@@ -454,6 +454,7 @@ export class HttpServer {
     startedPhases: readonly string[],
     completedPhases: readonly string[],
     results: readonly import('../shared/arcade-station').StationEngineParticipantResult[] = [],
+    recoveryPhases: readonly string[] = [],
   ): void {
     const key = `${game}:${roomCode}`;
     const started = this.activeStationEngines.has(key);
@@ -464,6 +465,7 @@ export class HttpServer {
       return;
     }
     if (!started) return;
+    if (phase && recoveryPhases.includes(phase)) return;
     this.activeStationEngines.delete(key);
     if (phase && completedPhases.includes(phase)) {
       this.arcadeApi?.stationEngineCompleted(game, roomCode, results);

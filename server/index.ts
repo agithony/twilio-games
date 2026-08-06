@@ -57,12 +57,13 @@ const arcadeConfigStore = new ArcadeConfigStore({
 const arcadeTacGateway = process.env.ARCADE_TAC_ENABLED === 'false'
   ? undefined
   : new ArcadeTacGateway({ configStore: arcadeConfigStore, events: arcadeEvents });
+const localArcadeSigningSecret = process.env.NODE_ENV === 'production' ? undefined : '0'.repeat(64);
 const arcadePlayerRuntime = new ArcadePlayerRuntime({
   configStore: arcadeConfigStore,
   events: arcadeEvents,
   stateFile: process.env.ARCADE_STATE_PATH ?? 'data/arcade-state.json',
   publicBaseUrl,
-  signingSecret: () => process.env.ARCADE_SIGNING_SECRET,
+  signingSecret: () => process.env.ARCADE_SIGNING_SECRET ?? localArcadeSigningSecret,
   outboundMessaging: {
     enabled: (channel?: ArcadeMessagingChannel) => process.env.ARCADE_OUTBOUND_MESSAGING_ENABLED === 'true'
       && (channel === undefined || (outboundRestCredentialsConfigured

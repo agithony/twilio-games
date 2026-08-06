@@ -82,7 +82,8 @@ describe('home preview media and standalone catalog', () => {
     expect(css).toContain('width:clamp(240px,28vw,320px)');
     expect(html).toContain('class="standalone-quick-start"');
     expect(css).toContain('.standalone-quick-start { display:grid;grid-template-columns:repeat(3,1fr)');
-    expect(home).toContain('enabledGames = config.channels.voice');
+    expect(home).toContain("const localStandalonePreview = standaloneMode && ['localhost', '127.0.0.1', '::1'].includes(location.hostname)");
+    expect(home).toContain('enabledGames = localStandalonePreview || (config.channels.voice');
     expect(home).toContain('Boolean(bootstrap.voiceNumbers?.[locale])');
   });
 

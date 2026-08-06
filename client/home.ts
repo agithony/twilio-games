@@ -490,7 +490,8 @@ async function refreshConfiguration(): Promise<void> {
       .filter(([, settings]) => settings.enabled)
       .map(([game]) => game));
     comingSoon={trivia:config.station.comingSoon.trivia.enabled,karaoke:config.station.comingSoon.karaoke.enabled};
-    enabledGames = config.channels.voice && Boolean(bootstrap.voiceNumbers?.[locale])
+    const localStandalonePreview = standaloneMode && ['localhost', '127.0.0.1', '::1'].includes(location.hostname);
+    enabledGames = localStandalonePreview || (config.channels.voice && Boolean(bootstrap.voiceNumbers?.[locale]))
       ? configuredGames
       : new Set();
     stationId = config.arcade.cabinetId;

@@ -7,12 +7,13 @@ import { parseFighterClientMessage, type FighterServerMessage } from '../shared/
 import type { FighterCommand, FighterEvent, FighterId } from '../shared/fighter-world';
 import { DEFAULT_LOCALE, type SupportedLocale } from '../shared/i18n/locales';
 
-interface Conn { ws: WebSocket; roomCode?: string; playerId?: string; sessionId?: string; display?: boolean; hostAuthorized?: boolean; displayAuthenticated?: boolean; locale?: SupportedLocale; }
+interface Conn { ws: WebSocket; roomCode?: string; playerId?: string; sessionId?: string; display?: boolean; hostAuthorized?: boolean; displayAuthenticated?: boolean; locale?: SupportedLocale; isAlive: boolean; }
 interface Session {
   roomCode: string; playerId: string; conn: Conn | null; timer: ReturnType<typeof setTimeout> | null;
   display: boolean; wasHost: boolean;
 }
 const RECONNECT_MS = 30_000;
+const HEARTBEAT_MS = 30_000;
 
 export class FighterServer {
   private wss: WebSocketServer;
@@ -21,6 +22,8 @@ export class FighterServer {
   private sessions = new Map<string, Session>();
   private hosts = new Map<string, Conn>();
   private loop: ReturnType<typeof setInterval>;
+  private heartbeat: ReturnType<typeof setInterval> | null = null;
+  private readonly heartbeatMs: number;
   private lastTick = Date.now();
   private seed = 0x65ab12ef;
   private maps = FIGHTER_MAPS;
@@ -31,8 +34,9 @@ export class FighterServer {
   private readonly displayToken: string;
   private onDisplayAuthenticated: ((ws: WebSocket) => void) | null = null;
 
-  constructor(opts: { server: HttpServer; displayToken?: string }) {
+  constructor(opts: { server: HttpServer; displayToken?: string; heartbeatMs?: number }) {
     this.displayToken = opts.displayToken?.trim() ?? '';
+    this.heartbeatMs = opts.heartbeatMs ?? HEARTBEAT_MS;
     this.wss = new WebSocketServer({ noServer: true });
     this.loop = setInterval(() => this.tick(), 50);
     (this.loop as { unref?: () => void }).unref?.();
@@ -85,21 +89,34 @@ export class FighterServer {
     return room;
   }
   private onConnection(ws: WebSocket): void {
-    const conn: Conn = { ws };
+    const conn: Conn = { ws, isAlive: true };
     this.conns.add(conn);
+    this.ensureHeartbeat();
+    ws.on('pong', () => { conn.isAlive = true; });
     this.send(conn, { type: 'fighter_capabilities', displayAuth: Boolean(this.displayToken) });
     this.send(conn, { type: 'fighter_roster', fighters: FIGHTER_ROSTER, maps: this.maps });
-    ws.on('message', data => this.onMessage(conn, data.toString()));
+    ws.on('message', data => { conn.isAlive = true; this.onMessage(conn, data.toString()); });
     ws.on('error', () => {});
     ws.on('close', () => {
       const code = conn.roomCode;
       if (conn.playerId && code && !this.holdSession(conn)) this.rooms.get(code)?.removePlayer(conn.playerId);
       this.conns.delete(conn);
       if (code) {
-        if (this.hosts.get(code) === conn) { this.hosts.delete(code); this.designateHost(code); }
+        if (this.hosts.get(code) === conn) { this.hosts.delete(code); this.invalidateDisplayReady(code, 'host connection closed'); this.designateHost(code); }
         this.pushState(code); this.reap(code);
       }
     });
+  }
+  private ensureHeartbeat(): void {
+    if (this.heartbeat) return;
+    this.heartbeat = setInterval(() => {
+      for (const conn of this.conns) {
+        if (!conn.isAlive) { conn.ws.terminate(); continue; }
+        conn.isAlive = false;
+        try { conn.ws.ping(); } catch { /* close handler performs cleanup */ }
+      }
+    }, this.heartbeatMs);
+    (this.heartbeat as { unref?: () => void }).unref?.();
   }
   private onMessage(conn: Conn, raw: string): void {
     const msg = parseFighterClientMessage(raw);
@@ -256,7 +273,7 @@ export class FighterServer {
   private detachDisplay(conn: Conn): void {
     const code = conn.roomCode; if (!code) return;
     conn.roomCode = undefined; conn.display = false;
-    if (this.hosts.get(code) === conn) { this.hosts.delete(code); this.designateHost(code); }
+    if (this.hosts.get(code) === conn) { this.hosts.delete(code); this.invalidateDisplayReady(code, 'host changed rooms'); this.designateHost(code); }
     this.pushState(code); this.reap(code);
   }
   private designateHost(code: string): void {
@@ -264,6 +281,11 @@ export class FighterServer {
       && (!this.displayToken || candidate.hostAuthorized) && candidate.ws.readyState === WebSocket.OPEN);
     if (next) this.hosts.set(code, next);
     this.pushHostIdentity(code);
+  }
+  private invalidateDisplayReady(code: string, reason: string): void {
+    const room = this.rooms.get(code);
+    if (!room?.invalidateDisplayReady()) return;
+    console.warn(`[fighter] ${reason}; returning room ${code} to loading generation ${room.state().loadingGeneration}`);
   }
   private pushHostIdentity(code: string): void {
     const loadingGeneration = this.rooms.get(code)?.state().loadingGeneration ?? 0;
@@ -316,7 +338,8 @@ export class FighterServer {
   }
 
   stopLoopOnly(): void {
-    clearInterval(this.loop); for (const session of this.sessions.values()) if (session.timer) clearTimeout(session.timer);
+    clearInterval(this.loop); if (this.heartbeat) { clearInterval(this.heartbeat); this.heartbeat = null; }
+    for (const session of this.sessions.values()) if (session.timer) clearTimeout(session.timer);
     this.sessions.clear(); this.hosts.clear(); for (const conn of this.conns) conn.ws.close(); this.conns.clear();
   }
 }

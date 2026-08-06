@@ -6,7 +6,7 @@ import { FIGHTERS, FIGHTER_ASSET_VERSION, loadAnimationSources } from './fighter
 import { FighterAtmosphere, fighterAtmosphereSpec, type FighterAtmosphereSpec } from './fighter-atmosphere';
 import { FighterConnection } from './fighter-net';
 import { isInteractiveShortcutTarget, resolveNumericSelection } from './fighter-client-utils';
-import { frameStaticPortraitArena, portraitOrientationChanged, proceduralFallbackCamera, responsiveVerticalFov, shouldUseLivePortraitArena } from './fighter-camera';
+import { canReloadArenaForViewport, frameStaticPortraitArena, portraitOrientationChanged, proceduralFallbackCamera, responsiveVerticalFov, shouldUseLivePortraitArena } from './fighter-camera';
 import { getSoundEffectsManager } from '../sound-effects';
 import { getMusicManager } from '../music-manager';
 import { injectMusicToggle } from '../music-toggle';
@@ -85,6 +85,11 @@ renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); renderer.setSize(initialA
 renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace; renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.12;
 arena.appendChild(renderer.domElement);
+renderer.domElement.addEventListener('webglcontextlost', event => {
+  event.preventDefault();
+  console.error('Fighter WebGL context was lost; reloading the display.');
+  setTimeout(() => location.reload(), 0);
+}, { once: true });
 const scene = new THREE.Scene(); scene.background = new THREE.Color(0x05060a); scene.fog = new THREE.FogExp2(0x08090e, 0.06);
 const camera = new THREE.PerspectiveCamera(36, initialArenaSize.width / initialArenaSize.height, 0.05, 5000);
 camera.position.set(0, 2.15, 10.5); camera.lookAt(0, 1.05, 0);
@@ -178,6 +183,7 @@ connection.onState(next => {
     if (next.phase === 'loading' || next.phase === 'intro') countdownSoundPlayed = false;
     if (next.phase !== 'results' && resultTimer) { clearTimeout(resultTimer); resultTimer = null; resultRevealAt = 0; }
     if (['lobby', 'fighter_select', 'map_select', 'loading'].includes(next.phase)) getMusicManager().switchContext('lobby');
+    if (next.phase !== 'loading' && viewportMapReloadTimer) { clearTimeout(viewportMapReloadTimer); viewportMapReloadTimer = null; }
   }
   state = next;
   if (next.phase === 'countdown') {
@@ -766,6 +772,7 @@ function disposeObjectResources(root: THREE.Object3D): void {
 
 function maybeSignalReady(): void {
   if (!isHost || state?.phase !== 'loading' || !state.selectedMap || mapReadyId !== state.selectedMap) return;
+  if (viewportMapReloadTimer) return;
   const p1Id = state.players.find(player => player.side === 'p1')?.fighterId;
   const p2Id = state.players.find(player => player.side === 'p2')?.fighterId;
   if (!p1Id || !p2Id || !loadedActors.has(p1Id) || !loadedActors.has(p2Id)) return;
@@ -841,12 +848,15 @@ function applyProceduralFallbackFraming(config: FighterMapEntry | undefined): vo
   camera.position.set(...cameraBase.pos); updateCameraProjection(); camera.lookAt(...cameraBase.lookAt);
 }
 function scheduleViewportMapReload(mapId: string): void {
+  const readinessKey = `${state?.loadingGeneration ?? 0}:${mapId}`;
+  if (state?.selectedMap !== mapId || !canReloadArenaForViewport(state.phase, readinessKey, readySentFor)) return;
   if (viewportMapReloadTimer) clearTimeout(viewportMapReloadTimer);
   if (readyTimer) { clearTimeout(readyTimer); readyTimer = null; }
-  mapReadyId = '';
   viewportMapReloadTimer = setTimeout(() => {
     viewportMapReloadTimer = null;
-    if (loadedMapId !== mapId) return;
+    const currentReadinessKey = `${state?.loadingGeneration ?? 0}:${mapId}`;
+    if (loadedMapId !== mapId || state?.selectedMap !== mapId
+      || !canReloadArenaForViewport(state.phase, currentReadinessKey, readySentFor)) return;
     loadedMapId = '';
     applyMapTheme(mapId);
   }, 150);

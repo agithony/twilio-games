@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 const workflow = readFileSync(new URL('../.github/workflows/deploy.yml', import.meta.url), 'utf8');
 const ci = readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
 const containerApp = readFileSync(new URL('../.github/containerapp.yaml', import.meta.url), 'utf8');
+const serverIndex = readFileSync(new URL('../server/index.ts', import.meta.url), 'utf8');
 
 describe('deployment rollback safety', () => {
   it('keeps CI independent of Git LFS and verifies the private asset mirror before ACR build', () => {
@@ -107,5 +108,10 @@ describe('deployment rollback safety', () => {
 
   it('keeps production standalone game calls enabled', () => {
     expect(containerApp).toMatch(/name: ARCADE_STANDALONE_VOICE_ENABLED\s+value: "true"/);
+  });
+
+  it('keeps the deterministic Arcade signing fallback out of production', () => {
+    expect(serverIndex).toContain("process.env.NODE_ENV === 'production' ? undefined : '0'.repeat(64)");
+    expect(serverIndex).toContain('process.env.ARCADE_SIGNING_SECRET ?? localArcadeSigningSecret');
   });
 });

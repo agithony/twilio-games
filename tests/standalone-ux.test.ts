@@ -22,7 +22,7 @@ describe('standalone and station display UX', () => {
     expect(refresh.indexOf('if (standaloneMode)')).toBeLessThan(refresh.indexOf('fetchPublicStation(displayToken)'));
     expect(refresh).toMatch(/if \(standaloneMode\) \{[\s\S]*?return;/);
     expect(home).not.toContain('validateStandaloneDisplay()');
-    expect(home).toContain('enabledGames = config.channels.voice');
+    expect(home).toContain('enabledGames = localStandalonePreview || (config.channels.voice');
     expect(home).toContain("config.channels.voice && Boolean(bootstrap.voiceNumbers?.[locale])");
     expect(fighter).toContain('connection.setDisplayAuth(roomCode, isDisplay ? stationDisplay.displayToken : null)');
     expect(fighter.indexOf("const isDisplay = params.get('display') === '1'")).toBeLessThan(fighter.indexOf('localizeStaticUi();'));

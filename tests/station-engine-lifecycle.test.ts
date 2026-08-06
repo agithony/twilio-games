@@ -105,7 +105,15 @@ describe('station engine room lifecycle', () => {
     expect(completed).not.toHaveBeenCalled();
     expect(abandoned).not.toHaveBeenCalled();
 
-    room.tick(6);
+    expect(room.invalidateDisplayReady()).toBe(true);
+    fighter.voiceCommand(roomCode, playerId, 'forward');
+    expect(room.phase).toBe('loading');
+    expect(abandoned).not.toHaveBeenCalled();
+    expect(room.ready(room.state().loadingGeneration)).toBe(true);
+    fighter.voiceCommand(roomCode, playerId, 'forward');
+    expect(started).toHaveBeenCalledTimes(1);
+
+    room.tick(FIGHTER_INTRO_SECONDS); room.tick(6);
     expect(room.phase).toBe('fight');
     fighter.voiceCommand(roomCode, playerId, 'forward');
     fighter.voiceCommand(roomCode, playerId, 'back');

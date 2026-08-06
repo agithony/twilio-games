@@ -49,7 +49,12 @@ export default defineConfig(({ mode }) => {
             proxy.on('proxyReq', (proxyRequest, request) => {
               const origin = request.headers.origin;
               try {
-                if (origin && new URL(origin).host === request.headers.host) {
+                const originUrl = origin ? new URL(origin) : null;
+                const loopback = new Set(['localhost', '127.0.0.1', '::1']);
+                const sameOriginBrowserRequest = request.headers['sec-fetch-site'] === 'same-origin';
+                const sameLoopbackHost = originUrl && loopback.has(originUrl.hostname)
+                  && loopback.has(new URL(backendOrigin).hostname);
+                if (originUrl && (sameOriginBrowserRequest || originUrl.host === request.headers.host || sameLoopbackHost)) {
                   proxyRequest.setHeader('origin', backendOrigin);
                 }
               } catch {/* Leave malformed and cross-origin values for the API to reject. */}
