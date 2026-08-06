@@ -9,7 +9,7 @@ The workflow uses service-principal JSON credentials, Azure CLI provisioning, a 
 - An Azure subscription and permission to create a service principal and role assignment.
 - Permission to create resources in the target subscription or resource group.
 - GitHub repository administrator access for Actions secrets and variables.
-- Git LFS objects available to GitHub Actions. Both CI and deploy explicitly check them out.
+- Materialized Fighter LFS objects on the workstation used to seed the private Azure Blob build mirror. GitHub Actions itself checks out pointers only.
 - A primary Twilio account with an English Voice number and a separate SMS-capable number, plus a second account with the Portuguese Voice number. An approved WhatsApp sender is required for preferred Portuguese Messaging entry; lead-capture mode retains a browser fallback.
 - Asset redistribution rights appropriate for the deployment. See [Asset licensing](#asset-licensing).
 
@@ -29,6 +29,7 @@ The workflow currently declares:
 | Container App | `twilio-games` |
 | Storage account | `twiliogamesdata` |
 | Azure Files share | `twiliogamesdata` |
+| Private build-asset Blob container | `fighter-build-assets` |
 | Environment storage attachment | `appdata` |
 | Image repository | `twilio-games` |
 
@@ -167,19 +168,38 @@ The production workflow validates `TWILIO_CONVERSATION_CONFIGURATION_ID` before 
 
 ## First deployment
 
+The private build-asset mirror must exist before the first deployment can build an image. On a clean subscription, create the resource group and storage account before pushing `main`, materialize the committed LFS files locally, and seed the content-addressed bundle:
+
+```bash
+az group create \
+  --name rg-twilio-games \
+  --location centralus
+az storage account create \
+  --name twiliogamesdata \
+  --resource-group rg-twilio-games \
+  --location centralus \
+  --sku Standard_LRS \
+  --tags created_by=manual-bootstrap managed_by=twilio-games-ci
+git lfs pull
+npm run sync:fighter-assets
+```
+
+The sync command keeps the container private, resumes interrupted bundles by uploading only missing exact paths, refuses to overwrite existing objects, and re-downloads the exact expected paths for closure, size, and SHA-256 verification. A missing, partial, extra, or corrupt mirror fails before deployment reaches ACR.
+
 Push to `main`, or run **Actions > Deploy to Azure Container Apps > Run workflow**. `deploy.yml` performs its own checkout, Node setup, dependency install, typecheck, tests, and build in the deployment job. It does not call the reusable `ci.yml` workflow, although the separate CI workflow runs the same application checks on pushes and pull requests.
 
 Each deployment run performs these operations:
 
-1. Checks out repository and Git LFS content, installs Node and dependencies, and runs typecheck, tests, and the client build.
+1. Checks out repository and Git LFS pointers, installs Node and dependencies, and runs typecheck, tests, and the client build without downloading LFS binaries.
 2. Validates production Twilio, Arcade, Relay, Orchestrator, SMS, and Dub configuration before Azure login.
-3. Signs in to Azure with `AZURE_CREDENTIALS` and creates or verifies the resource group, ACR, storage account, file share, Log Analytics workspace, Container Apps environment, and `appdata` environment storage.
-4. Builds and pushes the commit-SHA image tag and the mutable `latest` tag in ACR.
-5. Reads the ACR admin username/password and stores the password as the Container App secret `acr-password`. The workflow enables the admin account only when it creates ACR; an existing registry must already have `adminUserEnabled=true` or the credential step fails.
-6. Accepts an existing app in `Single` or `Multiple` mode only when exactly one revision is active, switches to `Multiple` when needed, pins traffic to that revision, deactivates it, and waits for zero replicas. It also accepts a stopped, zero-running-replica first-deployment retry. Any other revision topology fails closed. On first create, it creates an Azure-resource-tagged zero-replica shell, then stops its temporary revision.
-7. Applies `.github/containerapp.yaml` as a uniquely named full-spec revision, including the Azure Files mount, one-replica limit, 2 vCPU, 4 GiB memory, health probes, secrets, and complete runtime environment.
-8. Requires the exact SHA image revision to be `Provisioned`, `Healthy`, and latest-ready with the expected mount and `/livez` probes; asserts it is the only running revision; then checks `/livez`, dependency-aware `/healthz`, `/`, `/instructions`, `/join`, `/player`, and `/operator` through the candidate revision FQDN before public cutover.
-9. Assigns public traffic, then requires exact `Single` revision mode around the verified revision. Automatic snapshot restore is allowed only before the candidate can produce external or public durable side effects. If outbound delivery is enabled, restore becomes unsafe before the candidate update because its worker can call Twilio as soon as the revision starts. Once restore is unsafe, a failure leaves current data and revision state intact for manual recovery rather than erasing accepted interactions.
+3. Signs in to Azure with `AZURE_CREDENTIALS` and creates or verifies the resource group, ACR, storage account, private Fighter build-asset container, file share, Log Analytics workspace, Container Apps environment, and `appdata` environment storage.
+4. Derives the committed Fighter asset bundle ID, downloads that exact private Blob prefix, and verifies all sizes and SHA-256 values before the build context can reach ACR.
+5. Builds and pushes the commit-SHA image tag and the mutable `latest` tag in ACR.
+6. Reads the ACR admin username/password and stores the password as the Container App secret `acr-password`. The workflow enables the admin account only when it creates ACR; an existing registry must already have `adminUserEnabled=true` or the credential step fails.
+7. Accepts an existing app in `Single` or `Multiple` mode only when exactly one revision is active, switches to `Multiple` when needed, pins traffic to that revision, deactivates it, and waits for zero replicas. It also accepts a stopped, zero-running-replica first-deployment retry. Any other revision topology fails closed. On first create, it creates an Azure-resource-tagged zero-replica shell, then stops its temporary revision.
+8. Applies `.github/containerapp.yaml` as a uniquely named full-spec revision, including the Azure Files mount, one-replica limit, 2 vCPU, 4 GiB memory, health probes, secrets, and complete runtime environment.
+9. Requires the exact SHA image revision to be `Provisioned`, `Healthy`, and latest-ready with the expected mount and `/livez` probes; asserts it is the only running revision; then checks `/livez`, dependency-aware `/healthz`, `/`, `/instructions`, `/join`, `/player`, and `/operator` through the candidate revision FQDN before public cutover.
+10. Assigns public traffic, then requires exact `Single` revision mode around the verified revision. Automatic snapshot restore is allowed only before the candidate can produce external or public durable side effects. If outbound delivery is enabled, restore becomes unsafe before the candidate update because its worker can call Twilio as soon as the revision starts. Once restore is unsafe, a failure leaves current data and revision state intact for manual recovery rather than erasing accepted interactions.
 
 The workflow is create-if-missing for supporting infrastructure, not a full declarative reconciliation system. For example, it does not change an existing storage SKU, share quota, region, resource tags, ACR admin setting, or Log Analytics configuration to match the checked-in defaults.
 
@@ -320,7 +340,7 @@ Manual `az containerapp update --set-env-vars` changes are not authoritative. A 
 
 ## Asset licensing
 
-Git LFS checkout includes Fighter map GLBs and Fighter source FBX files in the build context and production image. `assets/CREDITS.md` states that Fighter asset source URLs, authors, and licenses are still unknown and must be verified before public redistribution. Do not treat successful LFS checkout as proof of redistribution rights.
+The private Blob mirror supplies Fighter map GLBs and Fighter source FBX files to the build context and production image. `assets/CREDITS.md` states that Fighter asset source URLs, authors, and licenses are still unknown and must be verified before public redistribution. Do not treat successful hash verification as proof of redistribution rights.
 
 The asset credits also identify `assets/maps/drift_race_track_free.glb` as CC-BY-ND 4.0. Distribute only an unmodified work and preserve required attribution. Review [assets/CREDITS.md](../assets/CREDITS.md) before every public or commercial deployment.
 

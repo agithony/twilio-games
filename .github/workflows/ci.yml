@@ -18,14 +18,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-        with:
-          lfs: true
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           node-version: 22.13.0
           cache: npm
+
+      - name: Verify Fighter asset pointers
+        run: npm run verify:fighter-asset-pointers
 
       - name: Install dependencies
         run: npm ci

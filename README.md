@@ -300,15 +300,15 @@ npm run smoke
 npm run smoke:editor
 ```
 
-GitHub Actions runs Node.js 22.13, restores Git LFS assets, installs with `npm ci`, typechecks, runs the test suite, builds the Vite client, and reports high-severity dependency audit results without making that audit step blocking.
+GitHub Actions runs Node.js 22.13, validates Git LFS pointer metadata without downloading binaries, installs with `npm ci`, typechecks, runs the test suite, builds the Vite client, and reports high-severity dependency audit results without making that audit step blocking.
 
 ## Deployment
 
 Production uses one Azure Container Apps replica. The image contains the built Vite multi-page client and runs one Node.js process that serves pages, APIs, static assets, Twilio webhooks, and the `/game`, `/battle`, `/fighter`, and `/voice` WebSockets.
 
-The CI workflow runs on pushes and pull requests and checks Git LFS, `npm ci`, typechecking, all tests, the client build, and a non-blocking high-severity dependency audit. Separately, pushes to `main` and manual deploy runs execute the deploy workflow's own `typecheck`, test, and build checks, then validate production credentials. The deploy does not consume the reusable CI job.
+The CI workflow runs on pushes and pull requests and checks LFS pointers, `npm ci`, typechecking, all tests, the client build, and a non-blocking high-severity dependency audit without spending GitHub LFS bandwidth. Separately, pushes to `main` and manual deploy runs execute the deploy workflow's own `typecheck`, test, and build checks, then validate production credentials. The deploy does not consume the reusable CI job.
 
-The deploy workflow provisions Azure resources, builds commit-SHA and `latest` image tags in ACR, stops the previous writer, snapshots Azure Files, applies a uniquely named revision, and verifies the exact SHA tag. Neither ACR tag is registry-enforced immutable. Before public cutover the workflow requires that revision to be `Provisioned`, `Healthy`, latest-ready, active with one replica, the only running revision, mounted to `appdata`, and configured with the expected startup, readiness, and liveness probes on `/livez`. It then requires HTTP 200 from `/livez`, dependency-aware `/healthz`, `/`, `/instructions`, `/join`, `/player`, and `/operator` on the candidate revision FQDN before assigning traffic and restoring single-revision mode. It does not run live Twilio, Conversation Memory, writable Azure Files, or WebSocket gameplay acceptance tests.
+The deploy workflow hydrates an immutable private Azure Blob bundle and verifies every Fighter binary against its committed LFS SHA-256 before building commit-SHA and `latest` image tags in ACR. It then stops the previous writer, snapshots Azure Files, applies a uniquely named revision, and verifies the exact SHA tag. Neither ACR tag is registry-enforced immutable. Before public cutover the workflow requires that revision to be `Provisioned`, `Healthy`, latest-ready, active with one replica, the only running revision, mounted to `appdata`, and configured with the expected startup, readiness, and liveness probes on `/livez`. It then requires HTTP 200 from `/livez`, dependency-aware `/healthz`, `/`, `/instructions`, `/join`, `/player`, and `/operator` on the candidate revision FQDN before assigning traffic and restoring single-revision mode. It does not run live Twilio, Conversation Memory, writable Azure Files, or WebSocket gameplay acceptance tests.
 
 The single-replica limit is a correctness requirement because rooms, active matches, call sessions, and WebSocket coordination are in memory. `DATA_MOUNT=/app/appdata` links `/app/data` to the Azure Files share. The persistent set is:
 

@@ -20,6 +20,7 @@ env:
   LAW_NAME: law-twilio-games
   STORAGE_ACCOUNT: twiliogamesdata
   FILE_SHARE: twiliogamesdata
+  FIGHTER_ASSET_CONTAINER: fighter-build-assets
   IMAGE_TAG: twilio-games:${{ github.sha }}
   # The tenant root management group enforces a `tag-enforcement-policy` that DENIES creating any
   # resource (except resource groups) without a non-empty `created_by` tag. Every create below must
@@ -32,8 +33,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
-        with:
-          lfs: true
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -46,6 +45,7 @@ jobs:
 
       - name: Validate application
         run: |
+          npm run verify:fighter-asset-pointers
           npm run typecheck
           npm test
           npm run build
@@ -163,6 +163,52 @@ jobs:
             --sku Standard_LRS \
             --tags $RESOURCE_TAGS \
             --output none
+
+      - name: Ensure private Fighter asset mirror exists
+        run: |
+          STORAGE_KEY=$(az storage account keys list \
+            --resource-group "$RESOURCE_GROUP" \
+            --account-name "$STORAGE_ACCOUNT" \
+            --query '[0].value' -o tsv)
+          az storage container create \
+            --name "$FIGHTER_ASSET_CONTAINER" \
+            --account-name "$STORAGE_ACCOUNT" \
+            --account-key "$STORAGE_KEY" \
+            --public-access off \
+            --output none
+          az storage container set-permission \
+            --name "$FIGHTER_ASSET_CONTAINER" \
+            --account-name "$STORAGE_ACCOUNT" \
+            --account-key "$STORAGE_KEY" \
+            --public-access off \
+            --output none
+
+      - name: Hydrate and verify Fighter assets
+        run: |
+          STORAGE_KEY=$(az storage account keys list \
+            --resource-group "$RESOURCE_GROUP" \
+            --account-name "$STORAGE_ACCOUNT" \
+            --query '[0].value' -o tsv)
+          ASSET_BUNDLE=$(node tools/verify-lfs-assets.mjs --print-bundle-id)
+          ASSET_DOWNLOAD_ROOT=$(mktemp -d)
+          while IFS= read -r file; do
+            destination="$ASSET_DOWNLOAD_ROOT/$ASSET_BUNDLE/$file"
+            mkdir -p "$(dirname "$destination")"
+            az storage blob download \
+              --container-name "$FIGHTER_ASSET_CONTAINER" \
+              --name "$ASSET_BUNDLE/$file" \
+              --file "$destination" \
+              --account-name "$STORAGE_ACCOUNT" \
+              --account-key "$STORAGE_KEY" \
+              --overwrite true \
+              --no-progress \
+              --output none
+          done < <(node tools/verify-lfs-assets.mjs --print-files)
+          node tools/verify-lfs-assets.mjs \
+            --asset-root "$ASSET_DOWNLOAD_ROOT/$ASSET_BUNDLE" \
+            --exact
+          cp -R "$ASSET_DOWNLOAD_ROOT/$ASSET_BUNDLE/assets/fighters/." assets/fighters/
+          npm run verify:fighter-assets
 
       - name: Ensure File Share exists (persistent leaderboard)
         run: |

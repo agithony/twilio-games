@@ -5,6 +5,7 @@ import { join, relative } from 'node:path';
 const MIB = 1024 * 1024;
 const WARNING_BYTES = 32 * MIB;
 const HARD_LIMIT_BYTES = 128 * MIB;
+const LFS_POINTER_HEADER = 'version https://git-lfs.github.com/spec/v1';
 
 function source(path: string): string {
   return readFileSync(path, 'utf8');
@@ -20,6 +21,20 @@ function runtimeFiles(dir: string): string[] {
     const path = join(dir, entry.name);
     return entry.isDirectory() ? runtimeFiles(path) : [path];
   });
+}
+
+function lfsPointerSize(file: string): number | null {
+  const contents = readFileSync(file).subarray(0, 256).toString('utf8');
+  if (!contents.startsWith(LFS_POINTER_HEADER)) return null;
+  const oid = /^oid sha256:[0-9a-f]{64}$/m.test(contents);
+  const size = Number(/^size ([1-9][0-9]*)$/m.exec(contents)?.[1]);
+  expect(oid, `invalid Git LFS object ID: ${file}`).toBe(true);
+  expect(Number.isSafeInteger(size), `invalid Git LFS size: ${file}`).toBe(true);
+  return size;
+}
+
+function runtimeAssetSize(file: string): number {
+  return lfsPointerSize(file) ?? statSync(file).size;
 }
 
 function creditsRow(credits: string, id: string): string | undefined {
@@ -74,22 +89,19 @@ describe('fighter asset governance', () => {
 
   it('keeps individual runtime assets below warning and hard ceilings', () => {
     const files = runtimeFiles('assets/fighters');
-    const oversized = files.filter(file => statSync(file).size > HARD_LIMIT_BYTES);
+    const oversized = files.filter(file => runtimeAssetSize(file) > HARD_LIMIT_BYTES);
     expect(oversized.map(file => relative('.', file)), `hard asset limit is ${HARD_LIMIT_BYTES / MIB} MiB`).toEqual([]);
 
     const warnings = files
-      .filter(file => statSync(file).size > WARNING_BYTES)
-      .map(file => `${relative('.', file)} (${(statSync(file).size / MIB).toFixed(1)} MiB)`);
+      .filter(file => runtimeAssetSize(file) > WARNING_BYTES)
+      .map(file => `${relative('.', file)} (${(runtimeAssetSize(file) / MIB).toFixed(1)} MiB)`);
     if (warnings.length) console.warn(`Fighter assets above the ${WARNING_BYTES / MIB} MiB warning budget:\n${warnings.join('\n')}`);
   });
 
-  it('materializes Git LFS models instead of shipping pointer text', () => {
+  it('keeps every model materialized or represented by a valid Git LFS pointer', () => {
     const models = runtimeFiles('assets/fighters').filter(file => /\.(?:fbx|glb)$/i.test(file));
     expect(models.length).toBeGreaterThan(0);
-    for (const file of models) {
-      const prefix = readFileSync(file).subarray(0, 64).toString('utf8');
-      expect(prefix, `Git LFS asset was not downloaded: ${file}`).not.toContain('version https://git-lfs.github.com/spec/v1');
-    }
+    for (const file of models) expect(runtimeAssetSize(file)).toBeGreaterThan(0);
   });
 
   it('excludes raw Fighter map originals from the Docker context', () => {
