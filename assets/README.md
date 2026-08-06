@@ -98,7 +98,9 @@ The Monsters arena loads `assets/arena/arena.glb` using `arena.json`. If that GL
 
 ## Governance
 
-Git LFS tracks `assets/fighters/source/*.fbx` and `assets/fighters/maps/*.glb`. Other GLBs are regular Git files. The asset governance tests require Fighter references and previews to exist, require provenance rows for every current fighter, animation group, and map, reject unresolved LFS pointer text, warn above 32 MiB per Fighter asset, and fail above 128 MiB.
+Git LFS tracks `assets/fighters/source/*.fbx` and `assets/fighters/maps/*.glb`. Other GLBs are regular Git files. The asset governance tests require Fighter references and previews to exist, require provenance rows for every current fighter, animation group, and map, validate either materialized files or LFS pointer metadata, warn above 32 MiB per Fighter asset, and fail above 128 MiB. Deployment separately requires materialized bytes from the private Azure Blob mirror and verifies their exact size and SHA-256 before ACR build.
+
+CI runs `npm run verify:fighter-asset-pointers`, which enumerates every tracked FBX and Fighter map GLB independently of Git LFS and rejects malformed pointers. `npm run sync:fighter-assets` snapshots exactly those files into a no-overwrite, content-addressed private Blob prefix and rejects extra files when it verifies the downloaded mirror.
 
 Raw originals and excluded models are local-only. `.gitignore` and `.dockerignore` exclude `assets/_raw/`, `assets/_quarantine_noncommercial/`, `assets/maps/_raw/`, both Racer role-local `_raw/` directories, and `assets/fighters/maps/_raw/`. `tools/.smoke/` is also ignored and excluded from the container because it contains generated render evidence, not runtime assets.
 
@@ -107,6 +109,8 @@ Run the relevant checks after changing the catalog or binaries:
 ```bash
 npm test -- tests/asset-manifest.test.ts tests/asset-fit.test.ts tests/inspect-assets.test.ts
 npm test -- tests/fighter-assets.test.ts tests/fighter-asset-governance.test.ts
+npm run verify:fighter-assets
+npm run sync:fighter-assets
 npm run typecheck
 npm run build
 ```

@@ -8,10 +8,11 @@ For project setup and local development, see the [README](../README.md). For the
 
 ```mermaid
 flowchart LR
-  Push[Push to main or manual dispatch] --> LFS[Checkout with Git LFS]
-  LFS --> Validate[Deploy job: npm ci, typecheck, tests, build]
+  Push[Push to main or manual dispatch] --> Checkout[Checkout LFS pointers only]
+  Checkout --> Validate[Deploy job: npm ci, typecheck, tests, build]
   Validate -->|success| Infra[Validate credentials and ensure Azure resources]
-  Infra --> Build[ACR builds SHA and latest images]
+  Infra --> Assets[Download exact private Blob bundle and verify SHA-256]
+  Assets --> Build[ACR builds SHA and latest images]
   Build --> Stop[Stop old revisions and assert zero replicas]
   Stop --> Deploy[Apply uniquely named full-spec revision]
   Deploy --> Verify[Verify SHA image, Provisioned, Healthy, latestReady, mount, and probes]
@@ -23,16 +24,17 @@ flowchart LR
 `.github/workflows/deploy.yml` runs on pushes to `main` and manual `workflow_dispatch` events. Deployments are serialized and are not canceled in progress. There is no GitHub environment approval gate. A push triggers CI and deployment independently; deployment reaches Azure only after its own validation steps succeed.
 
 1. `deploy.yml` validates independently. It does not call `.github/workflows/ci.yml`, even though the separate CI workflow runs equivalent checks for pushes and pull requests.
-2. The deploy job checks out Git LFS objects with `actions/checkout@v6`, installs Node 22.13 with `actions/setup-node@v6`, runs `npm ci`, `npm run typecheck`, `npm test`, and `npm run build`, validates production credentials, then signs in with `azure/login@v3` using `AZURE_CREDENTIALS`.
+2. The deploy job checks out Git LFS pointers without downloading their binaries, installs Node 22.13 with `actions/setup-node@v6`, runs `npm ci`, `npm run typecheck`, `npm test`, and `npm run build`, validates production credentials, then signs in with `azure/login@v3` using `AZURE_CREDENTIALS`.
 3. Unlike `ci.yml`, `deploy.yml` does not run `npm audit`. The CI workflow runs the high-severity audit as informational with `|| true`.
-4. Azure CLI commands create missing resource group, Basic ACR, Standard LRS storage account, 5 GiB Azure Files share, Log Analytics workspace, Container Apps environment, and environment storage attachment. Existing resource properties and tags are not generally reconciled.
-5. `az acr build` builds remotely and pushes `twilio-games:<commit-sha>` plus the mutable `twilio-games:latest`. These are image tags, not Azure resource tags, and ACR does not enforce their immutability.
-6. A new ACR is created with its admin account enabled. An existing ACR must already expose admin credentials. The workflow reads the admin username/password, masks the password, and stores it as the application-scoped `acr-password` secret.
-7. The workflow renders `.github/containerapp.yaml` with a unique `sha-<short-sha>-r<run-id>-a<attempt>` revision suffix. An existing app may be in `Single` or `Multiple` mode, but it must have exactly one active revision. The workflow switches to `Multiple` when needed, pins traffic to the old revision, deactivates it, and waits for zero replicas before updating. It also accepts a stopped, zero-running-replica first-deployment retry; every other topology fails closed.
-8. A first deployment creates the minimal Azure-resource-tagged app required by tenant policy with external ingress and `minReplicas=0`, records its temporary revision, immediately switches to Multiple mode, deactivates it, and waits for zero replicas before setting secrets or applying the full specification. Because external ingress exists before deactivation, do not treat the temporary shell as a traffic-isolation boundary.
-9. Before committing the rollout, the workflow requires the exact uniquely named revision to use `twilio-games:<commit-sha>`, be active with one replica, be `Provisioned` and `Healthy`, equal `latestReadyRevisionName`, include the `appdata` Azure Files mount, and include all three health probes. It also asserts that no other revision has a running replica.
-10. Before public cutover, the candidate revision FQDN must return HTTP 200 for `/livez`, `/healthz`, `/`, `/instructions`, `/join`, `/player`, and `/operator`. The route set is retried for up to five minutes. The workflow then assigns 100% public traffic and requires exact `Single` mode around the verified revision.
-11. Before the candidate can produce external or public durable side effects, a failed rollout may stop it, restore the byte-verified pre-rollout Azure Files snapshot, reactivate the prior revision, pin 100% traffic to it, and deliberately leave recovery in `Multiple` mode. If outbound delivery is enabled, restore becomes unsafe before the candidate update because its worker may call Twilio immediately. Once restore is unsafe, automatic rollback is disabled and the workflow leaves data and revision state intact for manual recovery rather than erasing accepted registrations/webhooks or duplicating messages. A failed first deployment has no prior revision to restore and remains stopped.
+4. Azure CLI commands create missing resource group, Basic ACR, Standard LRS storage account, private Fighter asset Blob container, 5 GiB Azure Files share, Log Analytics workspace, Container Apps environment, and environment storage attachment. Existing resource properties and tags are not generally reconciled.
+5. Before ACR build, the workflow derives an immutable bundle ID from every committed LFS path, size, and SHA-256, downloads only that prefix from the private `fighter-build-assets` container, and verifies every hydrated byte against the committed pointers. Missing, stale, corrupt, or unresolved assets stop deployment before an image is built.
+6. `az acr build` builds remotely and pushes `twilio-games:<commit-sha>` plus the mutable `twilio-games:latest`. These are image tags, not Azure resource tags, and ACR does not enforce their immutability.
+7. A new ACR is created with its admin account enabled. An existing ACR must already expose admin credentials. The workflow reads the admin username/password, masks the password, and stores it as the application-scoped `acr-password` secret.
+8. The workflow renders `.github/containerapp.yaml` with a unique `sha-<short-sha>-r<run-id>-a<attempt>` revision suffix. An existing app may be in `Single` or `Multiple` mode, but it must have exactly one active revision. The workflow switches to `Multiple` when needed, pins traffic to the old revision, deactivates it, and waits for zero replicas before updating. It also accepts a stopped, zero-running-replica first-deployment retry; every other topology fails closed.
+9. A first deployment creates the minimal Azure-resource-tagged app required by tenant policy with external ingress and `minReplicas=0`, records its temporary revision, immediately switches to Multiple mode, deactivates it, and waits for zero replicas before setting secrets or applying the full specification. Because external ingress exists before deactivation, do not treat the temporary shell as a traffic-isolation boundary.
+10. Before committing the rollout, the workflow requires the exact uniquely named revision to use `twilio-games:<commit-sha>`, be active with one replica, be `Provisioned` and `Healthy`, equal `latestReadyRevisionName`, include the `appdata` Azure Files mount, and include all three health probes. It also asserts that no other revision has a running replica.
+11. Before public cutover, the candidate revision FQDN must return HTTP 200 for `/livez`, `/healthz`, `/`, `/instructions`, `/join`, `/player`, and `/operator`. The route set is retried for up to five minutes. The workflow then assigns 100% public traffic and requires exact `Single` mode around the verified revision.
+12. Before the candidate can produce external or public durable side effects, a failed rollout may stop it, restore the byte-verified pre-rollout Azure Files snapshot, reactivate the prior revision, pin 100% traffic to it, and deliberately leave recovery in `Multiple` mode. If outbound delivery is enabled, restore becomes unsafe before the candidate update because its worker may call Twilio immediately. Once restore is unsafe, automatic rollback is disabled and the workflow leaves data and revision state intact for manual recovery rather than erasing accepted registrations/webhooks or duplicating messages. A failed first deployment has no prior revision to restore and remains stopped.
 
 The Container App specification uses process-only `/livez` for Azure startup, readiness, and liveness probes. The workflow separately calls dependency-aware `/healthz` on the candidate revision before public cutover.
 
@@ -54,9 +56,18 @@ The process listens on `PORT`, which is `8080` in the image and Container App. I
 
 The app must remain at exactly one replica. Racer, battle, Fighter, host, and SMS session state is in memory, and the WebSockets are process-local. `.github/containerapp.yaml` sets both `minReplicas` and `maxReplicas` to `1`. Scaling out requires shared room/session state and cross-replica messaging.
 
-## Git LFS and runtime assets
+## Runtime asset mirror
 
-Fighter map GLBs under `assets/fighters/maps/*.glb` and Fighter source FBX files under `assets/fighters/source/*.fbx` are Git LFS objects. Both workflows use `actions/checkout@v6` with `lfs: true`, so ACR receives file contents rather than LFS pointer files.
+Fighter map GLBs under `assets/fighters/maps/*.glb` and Fighter source FBX files under `assets/fighters/source/*.fbx` remain Git LFS objects for source provenance. GitHub Actions deliberately checks out only their small pointer files, so CI and deployment do not consume GitHub LFS bandwidth.
+
+Production binaries live in the private `fighter-build-assets` Blob container in `twiliogamesdata`. `npm run sync:fighter-assets` verifies the local files against committed LFS pointers, derives a content-addressed bundle ID, copies only tracked objects into an exact staging tree, and uploads a new prefix without overwrite. It then downloads the prefix to a temporary directory, rejects missing or extra files, and verifies every hash again. Run it after committing any Fighter FBX or map GLB change and before pushing the deployment commit:
+
+```bash
+npm run verify:fighter-assets
+npm run sync:fighter-assets
+```
+
+The sync command requires an authenticated Azure CLI identity that can list the storage account keys. Interrupted uploads are resumable because sync uploads only missing exact paths and never overwrites an existing object. If verification identifies a corrupt existing object, delete that bundle prefix explicitly and rerun sync. Old bundle prefixes are inert and may be removed after no branch or pending deployment references their pointer set.
 
 Before a local Docker build from a fresh clone, install Git LFS and materialize the objects:
 

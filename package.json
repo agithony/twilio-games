@@ -17,6 +17,9 @@
     "make-fixtures": "tsx tools/make-fixtures.ts",
     "inspect-assets": "tsx tools/inspect-assets.ts",
     "optimize-assets": "tsx tools/optimize-assets.ts",
+    "verify:fighter-asset-pointers": "node tools/verify-lfs-assets.mjs --pointers-only",
+    "verify:fighter-assets": "node tools/verify-lfs-assets.mjs",
+    "sync:fighter-assets": "scripts/sync-fighter-assets.sh",
     "smoke": "node tools/smoke-render.mjs",
     "smoke:editor": "node tools/smoke-editor.mjs",
     "build": "tsc --noEmit && tsc --noEmit -p client/tsconfig.json && vite build client"

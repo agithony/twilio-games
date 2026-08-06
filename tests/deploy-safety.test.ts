@@ -2,9 +2,26 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const workflow = readFileSync(new URL('../.github/workflows/deploy.yml', import.meta.url), 'utf8');
+const ci = readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
 const containerApp = readFileSync(new URL('../.github/containerapp.yaml', import.meta.url), 'utf8');
 
 describe('deployment rollback safety', () => {
+  it('keeps CI independent of Git LFS and verifies the private asset mirror before ACR build', () => {
+    expect(ci).not.toMatch(/\blfs:\s*true\b/);
+    expect(workflow).not.toMatch(/\blfs:\s*true\b/);
+    expect(ci).toContain('npm run verify:fighter-asset-pointers');
+    expect(workflow).toContain('FIGHTER_ASSET_CONTAINER: fighter-build-assets');
+    expect(workflow).toContain('az storage container set-permission');
+    expect(workflow).toContain('az storage blob download');
+    expect(workflow).toContain('node tools/verify-lfs-assets.mjs --print-bundle-id');
+    expect(workflow).toContain('--name "$ASSET_BUNDLE/$file"');
+    expect(workflow).toContain('--asset-root "$ASSET_DOWNLOAD_ROOT/$ASSET_BUNDLE"');
+    expect(workflow).toContain('--exact');
+    expect(workflow).toContain('npm run verify:fighter-assets');
+    expect(workflow.indexOf('npm run verify:fighter-assets'))
+      .toBeLessThan(workflow.indexOf('az acr build'));
+  });
+
   it('masks generated registry credentials before exporting them', () => {
     const credentials = workflow.slice(
       workflow.indexOf('- name: Get ACR credentials'),
