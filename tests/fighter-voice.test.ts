@@ -405,6 +405,23 @@ describe('fighter voice session', () => {
     expect(game.commands.slice(before).map(entry=>entry.command)).toContain('punch');
   });
 
+  it('invalidates queued intro and countdown speech when display readiness is lost', () => {
+    const game = voiceGame(), ada = game.connect('CA-GUARDED-CUES');
+    ada.prompt('Ada'); ada.prompt('Nyx'); ada.prompt('second');
+    game.room.ready(game.room.state().loadingGeneration); game.stateChanged();
+    const introCue = ada.guardedSpeech.find(entry => /player one/i.test(entry.text));
+    expect(introCue?.isCurrent?.()).toBe(true);
+    game.room.invalidateDisplayReady(); game.stateChanged();
+    expect(introCue?.isCurrent?.()).toBe(false);
+
+    game.room.ready(game.room.state().loadingGeneration); game.stateChanged(); advanceIntro(game);
+    game.tick(3.1);
+    const countdownCue = [...ada.guardedSpeech].reverse().find(entry => entry.text === '3');
+    expect(countdownCue?.isCurrent?.()).toBe(true);
+    game.room.invalidateDisplayReady(); game.stateChanged();
+    expect(countdownCue?.isCurrent?.()).toBe(false);
+  });
+
   it.each([['0',9],['*',10],['#',11]] as const)('maps Fighter DTMF %s to roster option %s', (digit,index) => {
     const game=voiceGame(),ada=game.connect(`CA-DTMF-${digit}`);ada.prompt('Ada');ada.prompt('start');
     ada.session.handleMessage(JSON.stringify({type:'dtmf',digit}));
@@ -477,9 +494,10 @@ function voiceGame() {
   const connect = (callSid: string, roomCode = 'VOICE', commandLocale?: string, authoritativeName?: string,
     stationAssignment?:{index:number;count:number}) => {
     const spoken: string[] = [];
+    const guardedSpeech: { text: string; isCurrent?: () => boolean }[] = [];
     let playerId = '';
     const session = new FighterVoiceSession({
-      say: text => spoken.push(text),
+      say: (text, isCurrent) => { spoken.push(text); guardedSpeech.push({ text, ...(isCurrent ? { isCurrent } : {}) }); },
       join: (_code,name,_callSid,side,expectedPlayers,nameConfirmed) => {
         if(expectedPlayers!==undefined)room.expectHumanPlayers(expectedPlayers,side!==undefined);
         else if(room.playerCount>=1)room.expectHumanPlayers(2,false);
@@ -506,6 +524,7 @@ function voiceGame() {
     return {
       session,
       spoken,
+      guardedSpeech,
       get playerId() { return playerId; },
       prompt(text: string, last = true) { session.handleMessage(JSON.stringify({ type: 'prompt', voicePrompt: text, last })); },
       interrupt() { session.handleMessage(JSON.stringify({ type: 'interrupt', utteranceUntilInterrupt: '', durationUntilInterruptMs: 100 })); },

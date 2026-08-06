@@ -257,7 +257,7 @@ export class FighterVoiceSession {
     }
     if (snapshot.phase === 'countdown') {
       const count = Math.ceil(snapshot.countdown ?? 0);
-      if (count > 0 && count <= 3 && count !== this.lastCountdown) { this.lastCountdown = count; this.deps.say(String(count)); }
+      if (count > 0 && count <= 3 && count !== this.lastCountdown) { this.lastCountdown = count; this.deps.say(String(count), this.phaseGuard('countdown')); }
     }
     if (snapshot.phase === 'intro') {
       const stage = fighterIntroStage(snapshot.intro ?? FIGHTER_INTRO_SECONDS);
@@ -353,14 +353,15 @@ export class FighterVoiceSession {
   }
 
   private speakIntroCue(snapshot: FighterVoiceSnapshot, stage: FighterIntroStage): void {
-    if (stage === 'p1') this.deps.say(this.t('voice.introPlayerOne', {
+    const say = (text: string) => this.deps.say(text, this.phaseGuard('intro'));
+    if (stage === 'p1') say(this.t('voice.introPlayerOne', {
       name: snapshot.playerOneName ?? this.t('voice.playerOneFallback'), fighter: snapshot.playerOneFighterName ?? this.t('voice.theirFighter'),
     }));
-    else if (stage === 'versus') this.deps.say(this.t('voice.versus'));
-    else if (stage === 'p2') this.deps.say(this.t('voice.introPlayerTwo', {
+    else if (stage === 'versus') say(this.t('voice.versus'));
+    else if (stage === 'p2') say(this.t('voice.introPlayerTwo', {
       name: snapshot.playerTwoName ?? this.t('voice.rivalFallback'), fighter: snapshot.playerTwoFighterName ?? this.t('voice.theirFighter'),
     }));
-    else this.deps.say(this.t('voice.fightersReady'));
+    else say(this.t('voice.fightersReady'));
   }
 
   private localizedMapName(map: { id: string; name: string }): string {

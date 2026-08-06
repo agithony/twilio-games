@@ -18,8 +18,8 @@ afterEach(async () => {
   http = undefined;
 });
 
-async function start(displayToken?: string): Promise<number> {
-  http = createServer(); fighter = new FighterServer({ server: http, displayToken });
+async function start(displayToken?: string, heartbeatMs?: number): Promise<number> {
+  http = createServer(); fighter = new FighterServer({ server: http, displayToken, heartbeatMs });
   http.on('upgrade', (request, socket, head) => fighter!.handleUpgrade(request, socket, head));
   await new Promise<void>(resolve => http!.listen(0, '127.0.0.1', resolve));
   const address = http.address(); if (!address || typeof address === 'string') throw new Error('missing port');
@@ -86,6 +86,14 @@ describe('FighterServer WebSocket authority and lifecycle', () => {
     fighter!.voiceJoin('FREEPLAY', 'Ada');
     send(display, { type: 'advance' });
     await waitFor(display, message => message.type === 'fighter_state' && message.phase === 'fighter_select');
+  });
+  it('keeps an idle Fighter display alive with WebSocket heartbeats', async () => {
+    const port = await start(undefined, 50); const display = await connect(port);
+    send(display, { type: 'spectate', roomCode: 'HEARTBEAT' });
+    await waitFor(display, message => message.type === 'host_identity' && message.isHost === true);
+    await new Promise(resolve => setTimeout(resolve, 275));
+    expect(display.ws.readyState).toBe(WebSocket.OPEN);
+    expect(fighter!.findRoom('HEARTBEAT')).toBeDefined();
   });
   it('hands standalone host authority to a display that opts into keyboard play', async () => {
     const port = await start(); const idleDisplay = await connect(port); const keyboardDisplay = await connect(port);
@@ -181,6 +189,22 @@ describe('FighterServer WebSocket authority and lifecycle', () => {
     await waitFor(spectator, message => message.type === 'error' && message.code === 'forbidden');
     send(host, { type: 'ready', loadingGeneration: generation });
     await waitFor(host, message => message.type === 'fighter_state' && message.phase === 'intro');
+  });
+
+  it('returns intro to loading when the ready host display disconnects', async () => {
+    const port = await start(); const host = await connect(port);
+    send(host, { type: 'spectate', roomCode: 'HOST-LOSS' });
+    await waitFor(host, message => message.type === 'host_identity' && message.isHost === true);
+    const playerId = fighter!.voiceJoin('HOST-LOSS', 'Ada', undefined, 1)!;
+    expect(fighter!.voiceSelectFighter('HOST-LOSS', playerId, 'nyx')).toBe(true);
+    expect(fighter!.voiceSelectMap('HOST-LOSS', playerId, 'void')).toBe(true);
+    const generation = fighter!.findRoom('HOST-LOSS')!.state().loadingGeneration;
+    send(host, { type: 'ready', loadingGeneration: generation });
+    await waitFor(host, message => message.type === 'fighter_state' && message.phase === 'intro');
+    const closed = new Promise<void>(resolve => host.ws.once('close', () => resolve()));
+    host.ws.close(); await closed;
+    await new Promise(resolve => setTimeout(resolve, 30));
+    expect(fighter!.findRoom('HOST-LOSS')!.state()).toMatchObject({ phase: 'loading', loadingGeneration: generation + 1 });
   });
 
   it('restores display identity when a host player reconnects', async () => {

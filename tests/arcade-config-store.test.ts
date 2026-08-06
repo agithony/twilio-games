@@ -396,6 +396,40 @@ describe('ArcadeConfigStore loading and persistence', () => {
     await expect(readFile(store.degradedPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
+  it('rejoins a retained audit prefix with a newly parseable quarantined suffix', async () => {
+    const directory = await temporaryDirectory();
+    const store = new ArcadeConfigStore(directory);
+    const prefixConfig = legacyConfig(2);
+    prefixConfig.postGame.enabled = false;
+    const prefixRecord = legacyAuditRecord(prefixConfig);
+    const suffixConfig = schema3Config(3);
+    suffixConfig.postGame.enabled = true;
+    suffixConfig.postGame.channels = ['sms'];
+    suffixConfig.postGame.includeScore = true;
+    suffixConfig.channels.sms = true;
+    const suffixRecord = legacyAuditRecord(suffixConfig, prefixRecord.recordHash);
+    const prefixBytes = `${JSON.stringify(prefixRecord)}\n`;
+    const suffixBytes = `${JSON.stringify(suffixRecord)}\n`;
+    const quarantinePath = `${store.auditPath}.corrupt-legacy-suffix.jsonl`;
+    await writeFile(store.cachePath, `${JSON.stringify(prefixConfig, null, 2)}\n`, 'utf8');
+    await writeFile(store.auditPath, prefixBytes, 'utf8');
+    await writeFile(quarantinePath, suffixBytes, 'utf8');
+    await writeFile(store.degradedPath, `${JSON.stringify({
+      reason: 'line 2: $.postGame.includeScore: is not supported for enabled post-game delivery',
+      quarantinePath,
+    })}\n`, 'utf8');
+
+    const recovered = await store.load();
+
+    expect(recovered).toMatchObject({
+      version: suffixConfig.version,
+      postGame: { enabled: true, includeScore: false, includeLeaderboard: false },
+    });
+    expect(store.getStatus()).toMatchObject({ degraded: false, reason: null, quarantinePath: null });
+    expect(await readFile(store.auditPath, 'utf8')).toBe(`${prefixBytes}${suffixBytes}`);
+    await expect(readFile(store.degradedPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
   it('rejects a tampered v1 audit record using its original schema 1 hash shape', async () => {
     const directory = await temporaryDirectory();
     const store = new ArcadeConfigStore(directory);

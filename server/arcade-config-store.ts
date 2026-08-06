@@ -380,16 +380,19 @@ export class ArcadeConfigStore {
       }
     }
 
-    // A prior version may have quarantined an audit suffix that a newer schema migration can now
-    // parse safely. Restore it only when the active audit is empty and every record/hash verifies.
-    if (persistedDegradation?.quarantinePath && !auditFile.contents.trim()) {
+    // A prior version may have quarantined a suffix that a newer migration can now parse. Rejoin it
+    // to the retained valid prefix only when the complete candidate chain and every hash verify.
+    if (persistedDegradation?.quarantinePath) {
       try {
         const quarantine = await this.readTextFile(persistedDegradation.quarantinePath);
         if (quarantine.exists) {
-          const recovered = parseAudit(quarantine.contents);
-          if (!recovered.corruption && recovered.records.length > 0) {
-            await this.writeAudit(quarantine.contents);
-            auditFile = { exists: true, contents: quarantine.contents };
+          const active = parseAudit(auditFile.contents);
+          const separator = auditFile.contents && !auditFile.contents.endsWith('\n') ? '\n' : '';
+          const candidate = `${auditFile.contents}${separator}${quarantine.contents}`;
+          const recovered = parseAudit(candidate);
+          if (!active.corruption && !recovered.corruption && recovered.records.length > active.records.length) {
+            await this.writeAudit(candidate);
+            auditFile = { exists: true, contents: candidate };
             await this.removeDegradedMarker();
             degradedFile = { exists: false, contents: '' };
             persistedDegradation = null;

@@ -4,7 +4,7 @@ import { FIGHTER_INTRO_SECONDS, type FighterLobbyPlayer, type FighterPhase, type
 
 interface Player { playerId: string; name: string; nameConfirmed: boolean; fighterId: string | null; side: FighterId; }
 
-export const FIGHTER_LOADING_TIMEOUT_SECONDS = 115;
+export const FIGHTER_LOADING_TIMEOUT_SECONDS = 150;
 export const FIGHTER_VICTORY_SECONDS = 10.5;
 const MAX_VOICE_COMMAND_QUEUE = 12;
 
@@ -104,6 +104,11 @@ export class FighterRoom {
   ready(generation: number): boolean {
     if (this.phase !== 'loading' || generation !== this.loadingGeneration) return false;
     this.phase = 'intro'; this.intro = FIGHTER_INTRO_SECONDS; return true;
+  }
+  invalidateDisplayReady(): boolean {
+    if (this.phase !== 'intro' && this.phase !== 'countdown') return false;
+    this.phase = 'loading'; this.intro = 0; this.countdown = 0; this.loadingElapsed = 0; this.loadingGeneration += 1;
+    return true;
   }
   retryLoading(generation: number): boolean {
     if (this.phase !== 'loading' || generation !== this.loadingGeneration) return false;

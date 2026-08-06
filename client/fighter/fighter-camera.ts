@@ -17,6 +17,10 @@ export function portraitOrientationChanged(previousAspect: number, nextAspect: n
   return (previousAspect < 1) !== (nextAspect < 1);
 }
 
+export function canReloadArenaForViewport(phase: string | undefined, readinessKey: string, readySentFor: string): boolean {
+  return phase === 'loading' && readinessKey !== readySentFor;
+}
+
 export function responsiveVerticalFov(authoredDegrees: number, aspect: number): number {
   if (!Number.isFinite(authoredDegrees) || authoredDegrees <= 0 || authoredDegrees >= 180) return 36;
   if (!Number.isFinite(aspect) || aspect <= 0 || aspect >= LANDSCAPE_REFERENCE_ASPECT) return authoredDegrees;

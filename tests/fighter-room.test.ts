@@ -44,6 +44,22 @@ describe('fighter room', () => {
     expect(room.phase).toBe('loading');
     expect(room.retryLoading(generation)).toBe(false);
   });
+  it('returns pre-fight phases to loading when display readiness is lost', () => {
+    const room = new FighterRoom('DISPLAY-LOSS', 1);
+    const joined = room.addPlayer('Ada'); if ('error' in joined) throw new Error(joined.error);
+    room.advance(); room.selectFighter(joined.playerId, 'nyx'); room.advance(); room.selectMap(joined.playerId, 'void'); room.advance();
+    const firstGeneration = room.state().loadingGeneration;
+    room.ready(firstGeneration);
+    expect(room.invalidateDisplayReady()).toBe(true);
+    expect(room.state()).toMatchObject({ phase: 'loading', loadingGeneration: firstGeneration + 1, intro: null, countdown: null });
+    expect(room.ready(firstGeneration)).toBe(false);
+    expect(room.ready(firstGeneration + 1)).toBe(true);
+    room.tick(FIGHTER_INTRO_SECONDS + .1);
+    expect(room.phase).toBe('countdown');
+    expect(room.invalidateDisplayReady()).toBe(true);
+    expect(room.phase).toBe('loading');
+    expect(room.invalidateDisplayReady()).toBe(false);
+  });
   it('binds each human to only their own side', () => {
     const room = new FighterRoom('4821', 1);
     const a = room.addPlayer('A'), b = room.addPlayer('B');

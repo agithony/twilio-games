@@ -162,7 +162,9 @@ describe('Arcade browser UI', () => {
 
   it('keeps local browser traffic same-origin through Vite', () => {
     expect(vite).toContain("'/api':");
-    expect(vite).toContain("new URL(origin).host === request.headers.host");
+    expect(vite).toContain("originUrl.host === request.headers.host");
+    expect(vite).toContain("request.headers['sec-fetch-site'] === 'same-origin'");
+    expect(vite).toContain("loopback.has(originUrl.hostname)");
     expect(vite).toContain("proxyRequest.setHeader('origin', backendOrigin)");
     expect(vite).toContain("'/auth':");
     expect(vite).toContain("arcade: resolve(__dirname, 'arcade/index.html')");
