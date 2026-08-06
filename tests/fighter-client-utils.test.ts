@@ -30,13 +30,10 @@ describe('fighter client shortcuts', () => {
     expect(source).toContain('hasRenderableTriangle(gltf.scene)');
     expect(source).toContain('if (mapModel) mapModel.visible = false;');
     expect(source).toContain('if (mapModel && mapVisible !== undefined) mapModel.visible = mapVisible;');
-    expect(source).toContain('customMapStatic || portraitOrientationChanged(cameraFramingAspect, camera.aspect)');
-    expect(source).toContain('scheduleViewportMapReload(config.id)');
+    expect(source).not.toContain('scheduleViewportMapReload');
+    expect(source).not.toContain("loadedMapId = '';\n    applyMapTheme(mapId)");
     expect(source).toContain('applyProceduralFallbackFraming(config)');
-    expect(source.indexOf('if (usingProceduralFallback) { applyProceduralFallbackFraming(config); return; }')).toBeLessThan(source.indexOf('const framingChanged'));
     expect(source).toContain("renderer.domElement.addEventListener('webglcontextlost'");
-    expect(source).toContain('if (viewportMapReloadTimer) return;');
-    expect(source).toContain("canReloadArenaForViewport(state.phase, readinessKey, readySentFor)");
   });
 
   it('uses equal horizontal arena rows and event-readable fight controls in portrait', () => {

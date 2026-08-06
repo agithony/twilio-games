@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canReloadArenaForViewport, frameStaticPortraitArena, portraitOrientationChanged, proceduralFallbackCamera, responsiveVerticalFov, shouldUseLivePortraitArena } from '../client/fighter/fighter-camera';
+import { frameStaticPortraitArena, proceduralFallbackCamera, responsiveVerticalFov, shouldUseLivePortraitArena } from '../client/fighter/fighter-camera';
 
 describe('Voice Fighter responsive camera projection', () => {
   it('preserves authored landscape shots', () => {
@@ -57,19 +57,4 @@ describe('Voice Fighter responsive camera projection', () => {
     expect(shouldUseLivePortraitArena('inakaya', 16 / 9)).toBe(false);
   });
 
-  it('detects orientation boundary changes without reacting to ordinary resizes', () => {
-    expect(portraitOrientationChanged(16 / 9, 9 / 16)).toBe(true);
-    expect(portraitOrientationChanged(9 / 16, 16 / 9)).toBe(true);
-    expect(portraitOrientationChanged(9 / 16, 3 / 4)).toBe(false);
-    expect(portraitOrientationChanged(16 / 9, 4 / 3)).toBe(false);
-    expect(portraitOrientationChanged(0, 9 / 16)).toBe(false);
-  });
-
-  it('allows viewport arena reloads only before the active loading generation is ready', () => {
-    expect(canReloadArenaForViewport('loading', '4:rain', '')).toBe(true);
-    expect(canReloadArenaForViewport('loading', '4:rain', '4:rain')).toBe(false);
-    expect(canReloadArenaForViewport('intro', '4:rain', '')).toBe(false);
-    expect(canReloadArenaForViewport('countdown', '4:rain', '')).toBe(false);
-    expect(canReloadArenaForViewport('fight', '4:rain', '')).toBe(false);
-  });
 });
