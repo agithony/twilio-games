@@ -450,8 +450,8 @@ export class BattleServer {
   voiceAdvance(code: string, playerId?: string): boolean {
     const room = this.rooms.get(code); if (!room) return false;
     if (!this.allowBrowserPlayer(code) && room.phase === 'results') return false;
-    room.advance(); this.flushEvents(room); this.pushState(code);
-    return true;
+    const advanced=room.advance(playerId);this.flushEvents(room);this.pushState(code);
+    return advanced;
   }
 
   private reapIfEmpty(roomCode: string): void {

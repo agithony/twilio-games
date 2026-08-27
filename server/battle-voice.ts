@@ -27,6 +27,7 @@ export interface BattleVoiceSnapshot {
   myName: string | null;
   myMonsterId: string | null; myMonsterName: string | null;
   myMonsterType: string | null;
+  canAdvanceLobby: boolean;
   canStartBattle: boolean;
   canRematch: boolean;
   foeName: string | null;
@@ -86,6 +87,9 @@ export class BattleVoiceSession {
   private stationAssignment: { side: 'a' | 'b'; expectedPlayers: number } | null = null;
   private lastFinalCommand: { text: string; beforeContext: string; afterContext: string; at: number } | null = null;
   private awaitingName = false;
+  private applyingSetupChange=false;
+  private lastCanAdvanceLobby=false;
+  private lastCanStartBattle=false;
   private text: (key: MonstersMessageKey, values?: MessageValues) => string = createTranslator(DEFAULT_LOCALE, MONSTERS_MESSAGES);
 
   constructor(private deps: BattleVoiceDeps) {}
@@ -125,8 +129,10 @@ export class BattleVoiceSession {
         this.awaitingName = !this.authoritativeName && !snap?.myName;
         if (joined.resumed) this.speakResumeCue();
         else {
-          this.lastPhase = snap?.phase ?? null;
-          this.lastCanRematch = snap?.canRematch ?? false;
+           this.lastPhase = snap?.phase ?? null;
+           this.lastCanRematch = snap?.canRematch ?? false;
+           this.lastCanAdvanceLobby=snap?.canAdvanceLobby??false;
+           this.lastCanStartBattle=snap?.canStartBattle??false;
           if (snap?.phase === 'battle' && !snap.myMonsterId) {
             this.deps.say(this.text('voice.lateBattle'));
             if(snap.myName){this.deps.say(this.text('voice.welcomeNamed',{name:snap.myName}));this.deps.say(this.text('voice.greetingActions'));}
@@ -243,13 +249,15 @@ export class BattleVoiceSession {
     // advances the screen — so a spoken action drives the display. Deterministic (no LLM dependency).
     if (isAdvanceWord(text, this.commandLocale)) {
       if (snap.phase === 'lobby') {
-        this.speakReprompt();
+        if (!snap.canAdvanceLobby) { this.deps.say(this.text('voice.helpLobbyNamed'));return; }
+        if (!this.deps.advance(this.code!,this.playerId!)) { this.deps.say(this.text('voice.sharedMenuControl'));return; }
+        this.deps.say(this.text('voice.toSelect'));
         return;
       }
       if (snap.phase === 'monster_select') {
         if (!snap.myMonsterId) { this.deps.say(this.text('voice.pickFirst')); return; }
         if (!snap.canStartBattle) { this.deps.say(this.text('voice.pickWaiting')); return; }
-        this.speakReprompt();
+        if (!this.deps.advance(this.code!,this.playerId!)) this.deps.say(this.text('voice.sharedMenuControl'));
         return;   // battle starts → the paced battle-intro handles the talking
       }
       if (snap.phase === 'results') {
@@ -269,8 +277,12 @@ export class BattleVoiceSession {
       const idx = matchNameOrNumber(text, snap.monsterNames, this.commandLocale);
       if (idx >= 0) {
         const name = snap.monsterNames[idx]!;
-        this.deps.say(this.text('voice.lockedMonster',{name}));
+        this.applyingSetupChange=true;
         this.deps.selectMonster(this.code!, this.playerId!, ROSTER[idx]!.id);
+        this.applyingSetupChange=false;
+        const next=this.deps.snapshot(this.code!,this.playerId!,this.commandLocale);
+        this.deps.say(this.text('voice.lockedMonster',{name}));
+        this.deps.say(this.text(next?.canStartBattle?'voice.pickReady':'voice.pickWaiting'));
         return;
       }
       if (!snap.myName && this.captureName(text, snap.phase)) return;
@@ -325,7 +337,7 @@ export class BattleVoiceSession {
 
   private finalCommandContext(snap: BattleVoiceSnapshot | null): string {
     return snap
-      ? `${snap.phase}:${snap.turn ?? ''}:${snap.activeSide ?? ''}:${snap.activeMenu}:${snap.whoseTurn ?? ''}:${this.draining ? 1 : 0}:${this.evQ.length}`
+      ? `${snap.phase}:${snap.myMonsterId??''}:${snap.canAdvanceLobby?1:0}:${snap.canStartBattle?1:0}:${snap.turn ?? ''}:${snap.activeSide ?? ''}:${snap.activeMenu}:${snap.whoseTurn ?? ''}:${this.draining ? 1 : 0}:${this.evQ.length}`
       : 'unavailable';
   }
 
@@ -351,7 +363,9 @@ export class BattleVoiceSession {
       ? parseExplicitSpokenName(text, this.commandLocale)
       : parseSpokenName(text, this.commandLocale);
     if (!name) return false;
+    this.applyingSetupChange=true;
     this.deps.setName(this.code!, this.playerId!, name);
+    this.applyingSetupChange=false;
     const next = this.deps.snapshot(this.code!, this.playerId!, this.commandLocale);
     const currentPhase = next?.phase ?? phase;
     this.deps.say(this.text(
@@ -390,6 +404,7 @@ export class BattleVoiceSession {
     if (!snap) return null;
     return JSON.stringify([
       snap.phase, snap.myName, snap.myMonsterId, snap.canStartBattle, snap.canRematch,
+      snap.canAdvanceLobby,
       snap.turn, snap.activeSide, snap.activeMenu, snap.whoseTurn, snap.myPotions, snap.participating,
     ]);
   }
@@ -401,7 +416,7 @@ export class BattleVoiceSession {
     if (snap.phase === 'lobby') {
       this.deps.say(this.text(snap.myName || this.authoritativeName ? 'voice.helpLobbyNamed' : 'voice.helpLobby'));
     } else if (snap.phase === 'monster_select') {
-      this.deps.say(this.text('voice.helpSelect'));
+      this.deps.say(this.text(!snap.myMonsterId?'voice.helpSelect':snap.canStartBattle?'voice.pickReady':'voice.pickWaiting'));
     } else if (snap.phase === 'results') {
       this.deps.say(this.text(this.stationManaged ? 'voice.waitOperator' : 'voice.helpResults'));
     } else if (!snap.participating) {
@@ -431,9 +446,19 @@ export class BattleVoiceSession {
     if (!this.code || !this.playerId) return;
     const snap = this.deps.snapshot(this.code, this.playerId, this.commandLocale);
     if (snap?.phase === 'battle' && !snap.participating) return;
+    if(this.applyingSetupChange){
+      this.lastPhase=snap?.phase??null;this.lastCanAdvanceLobby=snap?.canAdvanceLobby??false;
+      this.lastCanStartBattle=snap?.canStartBattle??false;return;
+    }
+    const lobbyBecameReady=snap?.phase==='lobby'&&snap.canAdvanceLobby&&!this.lastCanAdvanceLobby;
+    const selectionBecameReady=snap?.phase==='monster_select'&&snap.canStartBattle&&!this.lastCanStartBattle;
     if (snap && this.lastPhase !== null && snap.phase !== this.lastPhase) this.turnEpoch++;
     if (this.draining || this.evQ.length > 0) { this.pendingStateCue = true; return; }
     this.speakStateCue();
+    if(lobbyBecameReady)this.deps.say(this.text('voice.helpLobbyNamed'));
+    if(selectionBecameReady)this.deps.say(this.text('voice.pickReady'));
+    this.lastCanAdvanceLobby=snap?.canAdvanceLobby??false;
+    this.lastCanStartBattle=snap?.canStartBattle??false;
   }
 
   /** Receive a battle event. The server hands us a whole turn's events at once, but the SCREEN plays
@@ -556,6 +581,8 @@ export class BattleVoiceSession {
     if (!snap) return;
     this.lastPhase = snap.phase;
     this.lastCanRematch = snap.canRematch;
+    this.lastCanAdvanceLobby=snap.canAdvanceLobby;
+    this.lastCanStartBattle=snap.canStartBattle;
     if (snap.phase === 'battle') {
       this.introDone = true;
       this.menuLevel = snap.activeMenu;

@@ -10,12 +10,15 @@ function room() { return new BattleRoom('4821', 42); }
 const M0 = ROSTER[0]!.id, M1 = ROSTER[1]!.id;
 
 describe('BattleRoom', () => {
-  it('keeps standalone Monsters in lobby until every caller confirms a name', () => {
+  it('keeps standalone Monsters in lobby until a named caller explicitly advances', () => {
     const room = new BattleRoom('NAMES', 1);
     room.expectHumanPlayers(1);
     const caller = room.addPlayer('Challenger', undefined, false); if ('error' in caller) throw new Error(caller.error);
     expect(room.phase).toBe('lobby');
     room.setPlayerInfo(caller.playerId, { name: 'Ada' });
+    expect(room.phase).toBe('lobby');
+    expect(room.advance()).toBe(false);
+    expect(room.advance(caller.playerId)).toBe(true);
     expect(room.phase).toBe('monster_select');
   });
   it('starts in lobby and accepts up to 2 human players', () => {
@@ -84,11 +87,13 @@ describe('BattleRoom', () => {
     expect(r.canStart()).toBe(false);
     expect(r.phase).toBe('lobby');
     const a=r.addPlayer('Ada','a') as {playerId:string};
+    expect(r.phase).toBe('lobby');expect(r.advance()).toBe(false);expect(r.advance(a.playerId)).toBe(true);
     expect(r.phase).toBe('monster_select');
     r.back();expect(r.phase).toBe('monster_select');
     r.selectMonster(b.playerId,M1);
     expect(r.canStart()).toBe(false);
     r.selectMonster(a.playerId,M0);
+    expect(r.phase).toBe('monster_select');expect(r.advance()).toBe(false);expect(r.advance(b.playerId)).toBe(true);
     expect(r.phase).toBe('battle');
     expect(r.canStart()).toBe(false);
     expect(r.snapshot()).toMatchObject({
@@ -105,10 +110,12 @@ describe('BattleRoom', () => {
     const r=room();r.expectHumanPlayers(2);
     const b=r.addPlayer('Bo','b') as {playerId:string};
     r.expectHumanPlayers(1);
+    expect(r.phase).toBe('lobby');r.advance(b.playerId);
     expect(r.phase).toBe('monster_select');
     r.selectMonster(b.playerId,M1);
 
     expect(r.playerSide(b.playerId)).toBe('a');
+    expect(r.phase).toBe('monster_select');r.advance(b.playerId);
     expect(r.phase).toBe('battle');
     expect(r.snapshot()).toMatchObject({a:{id:b.playerId,name:'Bo',monsterId:M1},b:{id:'cpu',name:'Rival'}});
   });
@@ -117,9 +124,11 @@ describe('BattleRoom', () => {
     const r=room();r.expectHumanPlayers(2,false);
     const a=r.addPlayer('Ada') as {playerId:string};const b=r.addPlayer('Bo') as {playerId:string};
     r.removePlayer(b.playerId);
+    expect(r.phase).toBe('lobby');r.advance(a.playerId);
     expect(r.phase).toBe('monster_select');
     expect(r.lobbyPlayers()[0]?.monsterId).toBeNull();
     r.selectMonster(a.playerId,M0);
+    expect(r.phase).toBe('monster_select');r.advance(a.playerId);
     expect(r.phase).toBe('battle');
     expect(r.snapshot()?.b.id).toBe('cpu');
   });
@@ -127,23 +136,28 @@ describe('BattleRoom', () => {
   it('shows monster selection before restarting an interrupted standalone battle against AI', () => {
     const r=room();r.expectHumanPlayers(2,false);
     const a=r.addPlayer('Ada') as {playerId:string};const b=r.addPlayer('Bo') as {playerId:string};
+    r.advance(a.playerId);
     r.selectMonster(a.playerId,M0);r.selectMonster(b.playerId,M1);
+    r.advance(a.playerId);
     expect(r.phase).toBe('battle');
     r.removePlayer(b.playerId);
     expect(r.phase).toBe('monster_select');
     expect(r.lobbyPlayers()[0]?.monsterId).toBeNull();
     r.selectMonster(a.playerId,M0);
+    expect(r.phase).toBe('monster_select');r.advance(a.playerId);
     expect(r.phase).toBe('battle');
     expect(r.snapshot()?.b.id).toBe('cpu');
   });
 
-  it.each(['count-first','remove-first'] as const)('reconciles monster selection when a no-show is dropped %s',order=>{
+  it.each(['count-first','remove-first'] as const)('keeps monster selection gated when a no-show is dropped %s',order=>{
     const r=room();r.expectHumanPlayers(2);
     const a=r.addPlayer('Ada','a') as {playerId:string};const b=r.addPlayer('Bo','b') as {playerId:string};
+    r.advance(a.playerId);
     r.selectMonster(a.playerId,M0);
     if(order==='count-first')r.expectHumanPlayers(1);
     r.removePlayer(b.playerId);
     if(order==='remove-first')r.expectHumanPlayers(1);
+    expect(r.phase).toBe('monster_select');expect(r.advance(a.playerId)).toBe(true);
     expect(r.phase).toBe('battle');expect(r.snapshot()?.a.id).toBe(a.playerId);
   });
 

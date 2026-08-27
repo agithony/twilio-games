@@ -53,6 +53,10 @@ export class BattleRoom {
   get generation(): number { return this.battleGeneration; }
   get canRematch(): boolean { return this._phase === 'results' && Date.now() >= this.resultsReadyAt; }
   get rematchReadyInMs(): number { return this._phase === 'results' ? Math.max(0, this.resultsReadyAt - Date.now()) : 0; }
+  get canAdvanceLobby(): boolean {
+    return this._phase === 'lobby' && this.slots.length >= this.expectedHumanPlayers
+      && this.slots.every(slot => slot.nameConfirmed);
+  }
 
   /** Roster for the shared-display lobby + monster-select screens. */
   lobbyPlayers(): BattlePlayer[] {
@@ -91,7 +95,6 @@ export class BattleRoom {
     this.slots.push({ id, name: name || `Player ${this.slots.length + 1}`, nameConfirmed, monsterId: null, isAi: false, side });
     this.slots.sort((left, right) => left.side.localeCompare(right.side));
     if (!nameConfirmed && this._phase === 'monster_select') this._phase = 'lobby';
-    this.reconcileSetup();
     return { playerId: id };
   }
 
@@ -102,7 +105,6 @@ export class BattleRoom {
     if (this.expectedHumanPlayers === 1 && this.slots.length === 1 && this._phase !== 'battle') {
       this.slots[0]!.side = 'a';
     }
-    this.reconcileSetup();
   }
   playerSide(playerId: string): Side | null { return this.slots.find(slot => slot.id === playerId)?.side ?? null; }
   canControlSetup(playerId: string): boolean {
@@ -122,12 +124,11 @@ export class BattleRoom {
         if (this.automaticSetup && !this.fixedExpectedHumanPlayers) for (const slot of this.slots) slot.monsterId = null;
       }
     }
-    if(!wasInBattle)this.reconcileSetup();
   }
 
   setPlayerInfo(playerId: string, info: { name?: string }): void {
     const s = this.slots.find(x => x.id === playerId);
-    if (s && info.name) { s.name = info.name.slice(0, 20); s.nameConfirmed = true; this.reconcileSetup(); }
+    if (s && info.name) { s.name = info.name.slice(0, 20); s.nameConfirmed = true; }
   }
   hasConfirmedName(playerId: string): boolean { return this.slots.find(slot => slot.id === playerId)?.nameConfirmed === true; }
 
@@ -145,34 +146,29 @@ export class BattleRoom {
     if (this._phase !== 'monster_select') return;
     if (!monsterById(monsterId)) return;
     const s = this.slots.find(x => x.id === playerId);
-    if (s){s.monsterId=monsterId;this.reconcileSetup();}
+    if (s) s.monsterId=monsterId;
   }
 
   /** Host advances the flow: lobby → monster_select → battle. From results, "advance" = rematch
    *  (keep the roster, back to monster_select). Starting the battle fills an AI opponent when solo. */
-  advance(): void {
+  advance(playerId?: string): boolean {
     if (this._phase === 'results') {
-      if (!this.canRematch) return;
+      if (!this.canRematch) return false;
       this.world = null; this.ai = null; this._result = null;
       this.resultsReadyAt = 0;
       this.presentationReadyAt = 0;
       this.lastPresentedActionSide = null;
       for (const s of this.slots) s.monsterId = null;
       this._phase = this.slots.every(slot => slot.nameConfirmed) ? 'monster_select' : 'lobby';
-      return;
+      return true;
     }
-    if(this.automaticSetup)return;
+    if(this.automaticSetup&&(!playerId||!this.canControlSetup(playerId)))return false;
     if (this._phase === 'lobby') {
-      if (this.slots.length > 0 && this.slots.every(slot => slot.nameConfirmed)) this._phase = 'monster_select';
-      return;
+      if (!this.canAdvanceLobby) return false;
+      this._phase = 'monster_select';return true;
     }
-    if (this._phase === 'monster_select' && this.canStart()) this.start();
-  }
-
-  private reconcileSetup():void {
-    if(!this.automaticSetup||this.slots.length<this.expectedHumanPlayers||!this.slots.every(slot=>slot.nameConfirmed))return;
-    if(this._phase==='lobby')this._phase='monster_select';
-    if(this._phase==='monster_select'&&this.canStart())this.start();
+    if (this._phase === 'monster_select' && this.canStart()) { this.start();return true; }
+    return false;
   }
 
   back(): void {

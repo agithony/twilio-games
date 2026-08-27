@@ -263,8 +263,19 @@ describe('BattleServer', () => {
 
   it('pushes a retained caller state update when expected station players decrease', async () => {
     server=new BattleServer({port:0});await server.start();let updates=0;server.setOnRoomState(()=>updates++);
-    const id=server.voiceJoin('EXPECT','Bo','b',2)!;server.voiceAdvance('EXPECT');server.voiceSelectMonster('EXPECT',id,ROSTER[0]!.id);
+    const id=server.voiceJoin('EXPECT','Bo','b',2)!;server.voiceSelectMonster('EXPECT',id,ROSTER[0]!.id);
     const before=updates;server.voiceExpectHumanPlayers('EXPECT',1);
     expect(server.findRoom('EXPECT')?.playerSide(id)).toBe('a');expect(updates).toBeGreaterThan(before);
+  });
+
+  it('requires bound voice callers to advance both setup gates', async () => {
+    server=new BattleServer({port:0});await server.start();
+    const ada=server.voiceJoin('VOICE','Ada')!,bo=server.voiceJoin('VOICE','Bo')!;
+    const room=server.findRoom('VOICE')!;
+    expect(room.phase).toBe('lobby');expect(server.voiceAdvance('VOICE')).toBe(false);
+    expect(server.voiceAdvance('VOICE',ada)).toBe(true);expect(room.phase).toBe('monster_select');
+    server.voiceSelectMonster('VOICE',ada,ROSTER[0]!.id);server.voiceSelectMonster('VOICE',bo,ROSTER[1]!.id);
+    expect(room.phase).toBe('monster_select');expect(server.voiceAdvance('VOICE')).toBe(false);
+    expect(server.voiceAdvance('VOICE',bo)).toBe(true);expect(room.phase).toBe('battle');
   });
 });

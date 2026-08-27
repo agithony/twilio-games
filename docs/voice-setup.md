@@ -129,7 +129,7 @@ Speech barge-in stops Relay TTS. Voice Racer and Voice Monsters also invalidate 
 
 Station games admit up to two callers. The persisted match roster supplies an expected caller count of one or two and a stable slot for each caller. The server reuses each registered first name instead of asking for it again; only a station identity without a stored completed name falls back to voice name capture.
 
-Each caller controls only their personal setup choices. Racer and Fighter keep explicit shared phase gates: after all expected callers connect, either caller advances into vehicle or fighter selection; after every caller makes that choice, either says `next`; after every caller casts a track or arena vote, either says `start`. Monsters advances from monster choices automatically. A one-caller Monsters or Fighter match creates an AI opponent after that caller finishes setup; solo Racer and Fighter follow the same explicit gates with one caller.
+Each caller controls only their personal setup choices. All three games keep explicit shared phase gates: after all expected callers connect, either caller says the prompted keyword to open selection; after every caller makes their personal choices, either says the prompted keyword to continue. Racer and Fighter add a voting gate before gameplay. A one-caller Monsters or Fighter match creates an AI opponent after that caller finishes setup, and solo matches follow the same explicit gates with one caller.
 
 A station match starts only when the display has acknowledged the current launch generation, the selected engine has started, and every expected caller is connected and bound. The launch timeout is also the setup inactivity window. After all expected callers connect, each final speech prompt or DTMF input from either caller moves that deadline forward by the configured launch timeout; partial transcripts do not. Activity extends setup but does not mark gameplay started or redeem a coin.
 
@@ -179,9 +179,9 @@ Voice Monsters is a one-on-one room with up to two human callers. A solo player 
 The voice flow is:
 
 1. In standalone play, say your name. Station play greets you by your registered first name.
-2. Monster selection opens automatically when the expected callers are ready.
+2. After the expected callers are ready, either player says `next` to open monster selection.
 3. Each player says their own monster name, number, or ordinal such as `the second one`.
-4. The battle begins automatically after every player picks.
+4. After every player picks, either player says `battle` to begin.
 5. On your turn, say `fight` to hear the four moves, then say a move name or number. A move name can also be spoken directly from the root menu.
 6. In standalone play, say `rematch` after the final result is ready. Station play returns to the station results and requeue flow instead.
 
