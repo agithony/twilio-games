@@ -93,9 +93,9 @@ Open **Settings > Secrets and variables > Actions > Secrets** and configure:
 | `ARCADE_SIGNING_SECRET` | Yes | Exactly 64 hexadecimal characters; derives separate signed player-session and challenge-token keys |
 | `ARCADE_DISPLAY_TOKEN` | Yes | Random server-held kiosk capability of at least 16 characters; required for display-ready and station game controls |
 | `EDITOR_TOKEN` | Strongly recommended for public deployments | Stored as Container App secret `editor-token`; protects disk-writing editor and garage APIs |
-| `GOOGLE_OAUTH_CLIENT_ID` | Required for Google analytics login | Stored as Container App secret `google-oauth-client-id`; Google OAuth web client ID |
-| `GOOGLE_OAUTH_CLIENT_SECRET` | Required for Google analytics login | Stored as Container App secret `google-oauth-client-secret`; Google OAuth web client secret |
-| `ANALYTICS_ADMIN_PIN` | No | Optional 6-64 character alternative login for analytics; stored as Container App secret `analytics-admin-pin` |
+| `GOOGLE_OAUTH_CLIENT_ID` | Required for Google private-access login | Stored as Container App secret `google-oauth-client-id`; Google OAuth web client ID |
+| `GOOGLE_OAUTH_CLIENT_SECRET` | Required for Google private-access login | Stored as Container App secret `google-oauth-client-secret`; Google OAuth web client secret |
+| `ANALYTICS_ADMIN_PIN` | Required when Google is unset | 6-64 character alternative login for analytics and operator access; stored as Container App secret `analytics-admin-pin` |
 | `OPENAI_API_KEY` | No | Enables English free-form Racer and Monsters help; empty uses deterministic behavior, and Portuguese free-form OpenAI remains disabled |
 | `DUB_API_KEY` | No | Enables shortening of eligible challenge portal URLs when paired with `DUB_SHORT_DOMAIN`; empty preserves the original application URL |
 | `DUB_FOLDER_ID` | No | Optional Dub folder for created challenge links; it has no effect without an enabled Dub shortener |
@@ -115,7 +115,7 @@ Credential sources:
 
 The workflow validates webhook authentication, TAC credentials, the dedicated Relay token, both Arcade secrets, and the Dub key/domain pairing before touching Azure. Missing OpenAI and Dub secrets use the placeholder `disabled`, which the server treats as unset.
 
-An empty primary or Portuguese Auth Token makes the corresponding production webhooks fail closed. An empty `EDITOR_TOKEN` leaves editor and garage writes open. Missing Google OAuth credentials disable analytics sign-in.
+An empty primary or Portuguese Auth Token makes the corresponding production webhooks fail closed. An empty `EDITOR_TOKEN` leaves editor and garage writes open. Production deployment requires at least one complete Google OAuth configuration or `ANALYTICS_ADMIN_PIN`; either method protects analytics and operator access.
 
 ## Configure GitHub Actions variables
 
@@ -200,7 +200,7 @@ Each deployment run performs these operations:
 6. Reads the ACR admin username/password and stores the password as the Container App secret `acr-password`. The workflow enables the admin account only when it creates ACR; an existing registry must already have `adminUserEnabled=true` or the credential step fails.
 7. Accepts an existing app in `Single` or `Multiple` mode only when exactly one revision is active, switches to `Multiple` when needed, pins traffic to that revision, deactivates it, and waits for zero replicas. It also accepts a stopped, zero-running-replica first-deployment retry. Any other revision topology fails closed. On first create, it creates an Azure-resource-tagged zero-replica shell, then stops its temporary revision.
 8. Applies `.github/containerapp.yaml` as a uniquely named full-spec revision, including the Azure Files mount, one-replica limit, 2 vCPU, 4 GiB memory, health probes, secrets, and complete runtime environment.
-9. Requires the exact SHA image revision to be `Provisioned`, `Healthy`, and latest-ready with the expected mount and `/livez` probes; asserts it is the only running revision; then checks `/livez`, dependency-aware `/healthz`, `/`, `/instructions`, `/join`, `/player`, and `/operator` through the candidate revision FQDN before public cutover.
+9. Requires the exact SHA image revision to be `Provisioned`, `Healthy`, and latest-ready with the expected mount and `/livez` probes; asserts it is the only running revision; then checks `/livez`, dependency-aware `/healthz`, `/`, `/instructions`, `/join`, and `/player` plus the `/operator` authentication redirect through the candidate revision FQDN before public cutover.
 10. Assigns public traffic, then requires exact `Single` revision mode around the verified revision. Automatic snapshot restore is allowed only before the candidate can produce external or public durable side effects. If outbound delivery is enabled, restore becomes unsafe before the candidate update because its worker can call Twilio as soon as the revision starts. Once restore is unsafe, a failure leaves current data and revision state intact for manual recovery rather than erasing accepted interactions.
 
 The workflow is create-if-missing for supporting infrastructure, not a full declarative reconciliation system. For example, it does not change an existing storage SKU, share quota, region, resource tags, ACR admin setting, or Log Analytics configuration to match the checked-in defaults.
@@ -296,7 +296,7 @@ Expected response shape:
 {"status":"ok","rooms":0}
 ```
 
-`/healthz` is dependency-aware and returns 503 for repairable station/TAC/configuration degradation. ACA startup, readiness, and liveness probes call `/livez` instead, so a Twilio outage does not restart the process or hide the operator console. The deployment workflow also verifies the home, instructions, join, player, and operator pages, but it does not perform live Twilio, Memory, Azure Files write, or WebSocket gameplay tests.
+`/healthz` is dependency-aware and returns 503 for repairable station/TAC/configuration degradation. ACA startup, readiness, and liveness probes call `/livez` instead, so a Twilio outage does not restart the process. The deployment workflow verifies the public pages and the operator authentication redirect, but it does not perform live Twilio, Memory, Azure Files write, or WebSocket gameplay tests.
 
 There is no safe existing persistent-store write probe. Every public write endpoint changes real editor, Arcade, or messaging state, so the workflow intentionally does not call one. Do not substitute an unauthenticated or production-data mutation. A future persistent write smoke should use an authenticated, idempotent endpoint designed to create and remove a disposable probe record.
 
@@ -318,7 +318,7 @@ Keep runtime mode `off` during provisioning. After item 1 passes, open the event
 10. Complete Racer, Monsters, and Fighter once and confirm the operator sees authoritative results.
 11. Reset an inactive test player from `/operator`. The reset must delete the linked Conversation Memory profile before local identity, wallet, messaging, and roster retirement commits; it fails closed if Memory deletion is unavailable or fails. Confirm the next `JOIN` creates a fresh profile and wallet. Never reset a connected caller or a player with an active game, coin hold, or pending outbound notice.
 12. If proactive messaging is enabled, confirm SMS delivery callbacks, all three WhatsApp call-now states where practical, and one approved out-of-session template.
-13. With the event paused, open `/operator` in the intended booth tab and select **Pair this tab as the big screen**. Confirm the same tab returns to `/`, display access is held only in `sessionStorage`, and no credential appears in the URL. The operator console is intentionally unauthenticated for this deployment. During a launch, verify an absent or rejected display session links to `/operator` instead of showing a secret field or a stuck countdown. Then restart the Container App and confirm persisted event recovery, wallet balances, and Memory-linked messaging still work.
+13. With the event paused, authenticate at `/operator` in the intended booth tab and select **Pair this tab as the big screen**. Confirm the same tab returns to `/`, display access is held only in `sessionStorage`, and no credential appears in the URL. During a launch, verify an absent or rejected display session links to the authenticated operator flow instead of showing a secret field or a stuck countdown. Then restart the Container App, sign in again because sessions are process-local, and confirm persisted event recovery, wallet balances, and Memory-linked messaging still work.
 
 ## Persistent storage operations
 

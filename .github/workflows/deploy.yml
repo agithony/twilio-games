@@ -68,6 +68,8 @@ jobs:
           DUB_API_KEY: ${{ secrets.DUB_API_KEY }}
           DUB_FOLDER_ID: ${{ secrets.DUB_FOLDER_ID }}
           DUB_SHORT_DOMAIN: ${{ vars.DUB_SHORT_DOMAIN }}
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
           ANALYTICS_ADMIN_PIN: ${{ secrets.ANALYTICS_ADMIN_PIN }}
         run: |
           if [ -z "$TWILIO_AUTH_TOKEN" ]; then
@@ -81,6 +83,27 @@ jobs:
           fi
           if [ -n "$ANALYTICS_ADMIN_PIN" ] && { [ "${#ANALYTICS_ADMIN_PIN}" -lt 6 ] || [ "${#ANALYTICS_ADMIN_PIN}" -gt 64 ]; }; then
             echo "ANALYTICS_ADMIN_PIN must contain between 6 and 64 characters when configured." >&2
+            exit 1
+          fi
+          if [[ "$ANALYTICS_ADMIN_PIN" =~ ^[[:space:]]*disabled[[:space:]]*$ ]] \
+              || [[ -n "$ANALYTICS_ADMIN_PIN" && "$ANALYTICS_ADMIN_PIN" =~ ^[[:space:]]+$ ]]; then
+            echo "ANALYTICS_ADMIN_PIN cannot be 'disabled' or whitespace only." >&2
+            exit 1
+          fi
+          if { [ -n "$GOOGLE_OAUTH_CLIENT_ID" ] && [ -z "$GOOGLE_OAUTH_CLIENT_SECRET" ]; } \
+              || { [ -z "$GOOGLE_OAUTH_CLIENT_ID" ] && [ -n "$GOOGLE_OAUTH_CLIENT_SECRET" ]; }; then
+            echo "GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET must be configured together." >&2
+            exit 1
+          fi
+          if [[ "$GOOGLE_OAUTH_CLIENT_ID" =~ ^[[:space:]]*disabled[[:space:]]*$ ]] \
+              || [[ "$GOOGLE_OAUTH_CLIENT_SECRET" =~ ^[[:space:]]*disabled[[:space:]]*$ ]] \
+              || [[ -n "$GOOGLE_OAUTH_CLIENT_ID" && "$GOOGLE_OAUTH_CLIENT_ID" =~ ^[[:space:]]+$ ]] \
+              || [[ -n "$GOOGLE_OAUTH_CLIENT_SECRET" && "$GOOGLE_OAUTH_CLIENT_SECRET" =~ ^[[:space:]]+$ ]]; then
+            echo "Google OAuth credentials cannot be 'disabled' or whitespace only." >&2
+            exit 1
+          fi
+          if [ -z "$ANALYTICS_ADMIN_PIN" ] && [ -z "$GOOGLE_OAUTH_CLIENT_ID" ]; then
+            echo "Production operator access requires Google OAuth or ANALYTICS_ADMIN_PIN." >&2
             exit 1
           fi
           if [ -z "$TWILIO_PT_AUTH_TOKEN" ] || [ "$TWILIO_PT_AUTH_TOKEN" = "$TWILIO_AUTH_TOKEN" ]; then
@@ -890,10 +913,16 @@ jobs:
           SMOKE_OK=false
           for attempt in $(seq 1 30); do
             FAILED_ROUTES=()
-            for route in /livez /healthz / /instructions /join /player /operator; do
-              CODE=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+            for route in /livez /healthz / /instructions /join /player /analytics /operator; do
+              RESULT=$(curl --silent --show-error --output /dev/null --write-out '%{http_code} %{redirect_url}' \
                 --connect-timeout 5 --max-time 20 "https://${REVISION_FQDN}${route}" || true)
-              [ "$CODE" = "200" ] || FAILED_ROUTES+=("${route}:${CODE:-000}")
+              CODE=${RESULT%% *}
+              REDIRECT=${RESULT#* }
+              EXPECTED_CODE=$([ "$route" = "/operator" ] && printf '302' || printf '200')
+              if [ "$CODE" != "$EXPECTED_CODE" ] \
+                  || { [ "$route" = "/operator" ] && [ "$REDIRECT" != "https://${REVISION_FQDN}/analytics?returnTo=%2Foperator" ]; }; then
+                FAILED_ROUTES+=("${route}:${CODE:-000}")
+              fi
             done
             if [ "${#FAILED_ROUTES[@]}" -eq 0 ]; then
               echo "Candidate route smoke passed on attempt $attempt."

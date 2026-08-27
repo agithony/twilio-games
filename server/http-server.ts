@@ -138,6 +138,7 @@ export class HttpServer {
   private readonly analytics: AnalyticsStore;
   private readonly analyticsObserver: AnalyticsObserver;
   private readonly analyticsAuth: GoogleAnalyticsAuth;
+  private readonly operatorAuthRequired: boolean;
   private readonly arcadeApi?: ArcadeApi;
   private readonly arcadeTacGateway?: ArcadeTacGateway;
   /** The Vite-built client directory served in production (one-process container). */
@@ -225,6 +226,7 @@ export class HttpServer {
     googleOAuthClientSecret?: string;
     analyticsAllowedEmail?: string;
     analyticsAdminPin?: string;
+    operatorAuthRequired?: boolean;
     analyticsAuth?: GoogleAnalyticsAuth;
     arcadeApi?: ArcadeApi;
     arcadeTacGateway?: ArcadeTacGateway;
@@ -252,6 +254,8 @@ export class HttpServer {
       redirectUri: `${this.publicBaseUrl}/auth/google/callback`, allowedEmail: opts.analyticsAllowedEmail,
       adminPin: opts.analyticsAdminPin,
     });
+    this.operatorAuthRequired = opts.operatorAuthRequired
+      ?? (process.env.NODE_ENV === 'production' || this.analyticsAuth.configured || !isLoopbackUrl(this.publicBaseUrl));
     this.arcadeApi = opts.arcadeApi;
     this.arcadeTacGateway = opts.arcadeTacGateway;
     this.analytics = new AnalyticsStore(opts.analyticsPath ?? 'data/analytics.json', opts.googleOAuthClientSecret?.trim() || 'twilio-games-analytics');
@@ -1836,7 +1840,7 @@ export class HttpServer {
       if (typeof pin !== 'string' || pin.length > 128) {
         res.writeHead(400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }).end('{"error":"invalid_request"}'); return;
       }
-      this.analyticsAuth.completePin(res, pin); return;
+      this.analyticsAuth.completePin(req, res, pin); return;
     }
     if (req.method === 'POST' && path === '/auth/logout') { this.analyticsAuth.logout(req, res); return; }
     if (req.method === 'GET' && path === '/api/analytics/session') {
@@ -1845,6 +1849,17 @@ export class HttpServer {
       res.end(JSON.stringify({ authenticated: Boolean(user), analyticsAuthorized: user?.analyticsAuthorized ?? false,
         configured: this.analyticsAuth.configured, googleConfigured: this.analyticsAuth.googleConfigured,
         pinConfigured: this.analyticsAuth.pinConfigured, email: user?.email })); return;
+    }
+    if (this.operatorAuthRequired && path.startsWith('/api/admin/')
+      && !this.analyticsAuth.currentOperatorUser(req)) {
+      res.writeHead(401, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+        .end('{"error":{"code":"OPERATOR_AUTH_REQUIRED","message":"operator authentication required"}}');
+      return;
+    }
+    if (this.operatorAuthRequired && req.method === 'GET' && (path === '/operator' || path === '/operator/')
+      && !this.analyticsAuth.currentOperatorUser(req)) {
+      res.writeHead(302, { Location: '/analytics?returnTo=%2Foperator', 'Cache-Control': 'no-store' }).end();
+      return;
     }
     if (path === '/api/admin/arcade/leaderboards' && req.method === 'GET') {
       const principal=this.arcadeApi?.authorizeOperatorRequest(req);
@@ -2514,7 +2529,9 @@ export class HttpServer {
     // HTML must NOT cache (so a redeploy is seen immediately); hashed /assets/* JS is handled by
     // serveAsset's immutable cache. Other static files (brand/fonts) get a short cache.
     const isHtml = file.endsWith('.html');
-    const cache = isHtml ? 'no-cache' : 'public, max-age=3600';
+    const cache = rel === '/operator' || rel === '/operator/'
+      ? 'no-store, private'
+      : isHtml ? 'no-cache' : 'public, max-age=3600';
     await this.sendFile(full, res, req, file === 'challenge/index.html' ? {
       'Cache-Control': 'no-store',
       'Content-Security-Policy': "default-src 'self'; img-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; form-action 'self'",
@@ -2864,6 +2881,11 @@ function readBody(req: http.IncomingMessage): Promise<string> {
     req.on('end', () => resolve(data));
     req.on('error', reject);
   });
+}
+
+function isLoopbackUrl(value: string): boolean {
+  try { return ['localhost', '127.0.0.1', '::1'].includes(new URL(value).hostname); }
+  catch { return false; }
 }
 
 function readBinaryBody(req: http.IncomingMessage, max: number): Promise<Buffer> {

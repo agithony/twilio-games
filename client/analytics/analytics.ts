@@ -14,12 +14,18 @@ pinLogin.addEventListener('submit', event => { event.preventDefault(); void logi
 void checkSession();
 
 async function checkSession(): Promise<void> {
-  const reason = new URLSearchParams(location.search).get('auth');
-  if (reason) history.replaceState(null, '', '/analytics');
+  const params = new URLSearchParams(location.search), reason = params.get('auth');
+  const returnTo = params.get('returnTo') === '/operator' ? '/operator' : null;
+  googleLogin.href = returnTo ? `/auth/google?returnTo=${encodeURIComponent(returnTo)}` : '/auth/google';
+  if (reason) {
+    params.delete('auth');
+    history.replaceState(null, '', `/analytics${params.size ? `?${params}` : ''}`);
+  }
   try {
     const response = await fetch('/api/analytics/session');
     const session = await response.json() as { authenticated: boolean; analyticsAuthorized: boolean; configured: boolean; googleConfigured: boolean; pinConfigured: boolean; email?: string };
     if (session.authenticated && session.analyticsAuthorized) {
+      if (returnTo) { location.replace(returnTo); return; }
       auth.hidden = true; dashboard.hidden = false; download.disabled = false;
       el('user').textContent = session.email ?? ''; await refresh(); return;
     }
@@ -27,6 +33,7 @@ async function checkSession(): Promise<void> {
     authDivider.hidden = !session.googleConfigured || !session.pinConfigured;
     if (session.authenticated && !session.analyticsAuthorized) authMessage.textContent = 'This account does not have access to private activation analytics.';
     else if (!session.configured) authMessage.textContent = 'Analytics authentication is not configured for this deployment.';
+    else if (reason === 'session_expired') authMessage.textContent = 'Your session expired. Sign in again to continue.';
     else if (reason === 'email_not_allowed') authMessage.textContent = 'That verified Google account is not authorized. Use a @twilio.com account.';
     else if (reason) authMessage.textContent = 'Google sign-in could not be completed. Please try again.';
   } catch { authMessage.textContent = 'The authentication service is unavailable.'; }

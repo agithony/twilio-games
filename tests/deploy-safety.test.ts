@@ -111,6 +111,11 @@ describe('deployment rollback safety', () => {
     expect(containerApp).toContain('secretRef: analytics-admin-pin');
     expect(workflow).toContain('ANALYTICS_ADMIN_PIN: ${{ secrets.ANALYTICS_ADMIN_PIN }}');
     expect(workflow).toContain('"analytics-admin-pin=${ANALYTICS_ADMIN_PIN:-disabled}"');
+    expect(workflow).toContain('Production operator access requires Google OAuth or ANALYTICS_ADMIN_PIN.');
+    expect(workflow).toContain('EXPECTED_CODE=$([ "$route" = "/operator" ]');
+    expect(workflow).toContain('ANALYTICS_ADMIN_PIN cannot be \'disabled\' or whitespace only.');
+    expect(workflow).toContain('Google OAuth credentials cannot be \'disabled\' or whitespace only.');
+    expect(workflow).toContain('"https://${REVISION_FQDN}/analytics?returnTo=%2Foperator"');
   });
 
   it('keeps production standalone game calls enabled', () => {

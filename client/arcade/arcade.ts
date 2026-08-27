@@ -72,6 +72,7 @@ let gameChoiceSaving=false;
 let displayPresenceExpiresAt=0;
 let playerRecoveryRequest:Promise<void>|null=null;
 el('refresh').addEventListener('click', () => void refreshAll(true));
+el('operator-logout').addEventListener('click',()=>void logoutOperator());
 el<HTMLFormElement>('registration-form').addEventListener('submit', event => void register(event));
 el<HTMLFormElement>('join-form').addEventListener('submit', event => void joinQueue(event));
 el('queue-leave').addEventListener('click', () => void leaveCurrentAdmission());
@@ -174,7 +175,7 @@ async function refreshOperatorConfiguration(forceConfigRender=false):Promise<voi
 function configureView():void{
   const link=el<HTMLAnchorElement>('view-link');
   document.body.classList.add(operatorView?'operator-page':'player-page');
-  if(operatorView){document.documentElement.lang='en-US';link.href='/player';link.textContent='Open player page';document.querySelector<HTMLElement>('.hero .eyebrow')!.textContent='Event operations';el('hero-title').textContent='Operator console';el('hero-lede').textContent='Monitor the live event, help players, and manage setup.';show('balance-hero',false);show('off-panel',false);}
+  if(operatorView){document.documentElement.lang='en-US';link.href='/player';link.textContent='Open player page';void refreshOperatorLogin();document.querySelector<HTMLElement>('.hero .eyebrow')!.textContent='Event operations';el('hero-title').textContent='Operator console';el('hero-lede').textContent='Monitor the live event, help players, and manage setup.';show('balance-hero',false);show('off-panel',false);}
   else{link.href='/operator';link.textContent='Operator console';}
 }
 
@@ -1530,8 +1531,10 @@ function messageKindName(kind:string):string{
 }
 
 async function post<T=unknown>(path:string,body:unknown):Promise<T>{return api<T>(path,{method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':crypto.randomUUID()},body:JSON.stringify(body)});}
-async function request<T=unknown>(path:string,init:RequestInit={}):Promise<{payload:T;response:Response}>{const headers=new Headers(init.headers);const response=await fetch(path,{credentials:'include',...init,headers});const payload=await response.json().catch(()=>({}));if(!response.ok){const error=(payload as {error?:{code?:string;message?:string}}).error;throw new ApiError(response.status,error?.code??'REQUEST_FAILED',error?.message??`Request failed (${response.status})`);}return{payload:payload as T,response};}
+async function request<T=unknown>(path:string,init:RequestInit={}):Promise<{payload:T;response:Response}>{const headers=new Headers(init.headers);const response=await fetch(path,{credentials:'include',...init,headers});const payload=await response.json().catch(()=>({}));if(!response.ok){if(response.status===401&&operatorView&&path.startsWith('/api/admin/')){stopOperatorUpdates();location.replace('/analytics?auth=session_expired&returnTo=%2Foperator');}const error=(payload as {error?:{code?:string;message?:string}}).error;throw new ApiError(response.status,error?.code??'REQUEST_FAILED',error?.message??`Request failed (${response.status})`);}return{payload:payload as T,response};}
 async function api<T=unknown>(path:string,init:RequestInit={}):Promise<T>{return(await request<T>(path,init)).payload;}
+async function logoutOperator():Promise<void>{await fetch('/auth/logout',{method:'POST',credentials:'include'});location.replace('/analytics?returnTo=%2Foperator');}
+async function refreshOperatorLogin():Promise<void>{try{const response=await fetch('/api/analytics/session',{credentials:'include'});const session=await response.json() as {authenticated?:boolean};show('operator-logout',session.authenticated===true);}catch{show('operator-logout',false);}}
 async function maybe<T>(path:string):Promise<T|null>{try{return await api<T>(path);}catch(error){if(error instanceof ApiError&&[401,409].includes(error.status))return null;throw error;}}
 function setNotice(message:string,kind:'success'|'error'|''=''):void{notice.className=`notice ${kind}`.trim();notice.setAttribute('role',kind==='error'?'alert':'status');notice.setAttribute('aria-live',kind==='error'?'assertive':'polite');notice.setAttribute('aria-atomic','true');notice.textContent=message;}
 function showError(error:unknown):void{const playerErrors:Record<string,[string,string]>={INSUFFICIENT_COINS:['Earn another coin before joining.','Ganhe outra moeda antes de entrar.'],READY_POOL_FULL:['The line is full right now. Try again soon.','A fila está cheia agora. Tente novamente em breve.']};const safe=error instanceof ApiError?playerErrors[error.code]:undefined;const message=!operatorView

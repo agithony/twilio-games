@@ -4,6 +4,7 @@
 // production single-process behavior.
 import { describe, it, expect, afterEach, beforeEach } from 'vitest';
 import { HttpServer, contentType } from '../server/http-server';
+import { GoogleAnalyticsAuth } from '../server/google-analytics-auth';
 import { mkdir, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -85,6 +86,27 @@ describe('static client serving', () => {
     expect((await get(port, '/join?station=ARCADE-01')).body).toContain('join');
     expect((await get(port, '/instructions')).body).toContain('instructions');
     expect((await get(port, '/instructions/')).body).toContain('instructions');
+  });
+
+  it('protects the operator page and admin APIs with the shared PIN session', async () => {
+    const auth = new GoogleAnalyticsAuth({ redirectUri: 'http://localhost/auth/google/callback',
+      adminPin: 'Game!Night#2026' });
+    srv = new HttpServer({ port: 0, publicBaseUrl: 'http://localhost', validateSignatures: false,
+      clientDir, analyticsAuth: auth, operatorAuthRequired: true });
+    const port = await srv.start(), base = `http://127.0.0.1:${port}`;
+    const locked = await fetch(`${base}/operator`, { redirect: 'manual' });
+    expect(locked.status).toBe(302);
+    expect(locked.headers.get('location')).toBe('/analytics?returnTo=%2Foperator');
+    expect(locked.headers.get('cache-control')).toBe('no-store');
+    expect((await fetch(`${base}/api/admin/arcade/status`)).status).toBe(401);
+
+    const login = await fetch(`${base}/auth/pin`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin: 'Game!Night#2026' }) });
+    const cookie = login.headers.get('set-cookie')!.split(';')[0]!;
+    const unlocked = await fetch(`${base}/operator`, { headers: { cookie } });
+    expect(unlocked.status).toBe(200); expect(await unlocked.text()).toContain('arcade');
+    expect(unlocked.headers.get('cache-control')).toBe('no-store, private');
+    expect((await fetch(`${base}/api/admin/unknown`, { headers: { cookie } })).status).toBe(404);
   });
 
   it('serves the built JS bundle under /assets/ (with a JS content-type)', async () => {
