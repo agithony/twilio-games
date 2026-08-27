@@ -59,7 +59,7 @@ describe('station engine room lifecycle', () => {
     const roomCode = 'MONSTER-LIFECYCLE';
     const playerId = battle.voiceJoin(roomCode, 'Ada')!;
 
-    battle.voiceAdvance(roomCode);
+    battle.voiceAdvance(roomCode,playerId);
     battle.voiceSelectMonster(roomCode, playerId, 'sparkmouse');
     battle.voiceSelectMonster(roomCode, playerId, 'sparkmouse');
     expect(battle.findRoom(roomCode)?.phase).toBe('monster_select');
@@ -67,7 +67,7 @@ describe('station engine room lifecycle', () => {
     expect(completed).not.toHaveBeenCalled();
     expect(abandoned).not.toHaveBeenCalled();
 
-    battle.voiceAdvance(roomCode);
+    battle.voiceAdvance(roomCode,playerId);
     battle.voiceOpenFight(roomCode, playerId);
     battle.voiceOpenFight(roomCode, playerId);
     expect(started).toHaveBeenCalledTimes(1);
@@ -162,10 +162,10 @@ describe('station engine room lifecycle', () => {
     const roomCode = 'MONSTER-COMPLETE';
     const ada = battle.voiceJoin(roomCode, 'Ada')!;
     const grace = battle.voiceJoin(roomCode, 'Grace')!;
-    battle.voiceAdvance(roomCode);
+    battle.voiceAdvance(roomCode,ada);
     battle.voiceSelectMonster(roomCode, ada, 'sparkmouse');
     battle.voiceSelectMonster(roomCode, grace, 'embertail');
-    battle.voiceAdvance(roomCode);
+    battle.voiceAdvance(roomCode,grace);
     const room = battle.findRoom(roomCode)!;
 
     for (let actions = 0; room.phase === 'battle' && actions < 40; actions++) {
