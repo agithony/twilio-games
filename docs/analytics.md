@@ -2,7 +2,11 @@
 
 The private `/analytics` dashboard reports engagement for Voice Racer, Voice Monsters, and Voice Fighter. It provides summary metrics, UTC daily trends, per-game performance, popular selections, generated takeaways, and downloadable PDF reports.
 
-## Google OAuth Setup
+## Authentication Setup
+
+The dashboard accepts either Google OAuth or an optional event admin PIN. Both methods create the same analytics-authorized session and expose the same reports.
+
+### Google OAuth
 
 Create an OAuth 2.0 Web application client in Google Cloud Console. Add each redirect URI that the deployment uses:
 
@@ -17,10 +21,11 @@ The redirect URI must exactly match `PUBLIC_BASE_URL` plus `/auth/google/callbac
 |---|---|
 | `GOOGLE_OAUTH_CLIENT_ID` | OAuth web client ID |
 | `GOOGLE_OAUTH_CLIENT_SECRET` | OAuth web client secret |
+| `ANALYTICS_ADMIN_PIN` | Optional 6-64 character admin PIN; letters, numbers, and special characters are accepted; keep it in a secret store |
 | `ANALYTICS_ALLOWED_EMAIL` | Optional exact external email that may read analytics |
 | `ANALYTICS_PATH` | Rollup file path; defaults to `data/analytics.json` |
 
-The deployment workflow reads the client ID and secret from GitHub Actions secrets. It reads `ANALYTICS_ALLOWED_EMAIL` from a repository variable.
+The deployment workflow reads the client ID, client secret, and optional admin PIN from GitHub Actions secrets. It reads `ANALYTICS_ALLOWED_EMAIL` from a repository variable.
 
 If an allowed account is outside Twilio Google Workspace, the OAuth application's audience must permit it. A Workspace-internal OAuth application can block the account before the application evaluates either allowlist.
 
@@ -29,12 +34,13 @@ If an allowed account is outside Twilio Google Workspace, the OAuth application'
 1. `GET /auth/google` creates a random OAuth state, retains it in memory for ten minutes, and sends the value in an HTTP-only, SameSite=Lax cookie.
 2. Google redirects to `/auth/google/callback`; the server validates the state and cookie, exchanges the code, reads userinfo, and requires `email_verified: true`.
 3. A verified `@twilio.com` address or the exact `ANALYTICS_ALLOWED_EMAIL` may receive an application session.
-4. The server stores an opaque random session in memory for eight hours and sends only its ID in an HTTP-only, SameSite=Lax cookie.
-5. Analytics authorization is narrower: only a verified `@twilio.com` address or the exact `ANALYTICS_ALLOWED_EMAIL` may request reports.
+4. Alternatively, `POST /auth/pin` compares the supplied PIN with `ANALYTICS_ADMIN_PIN` in constant time. Five failures lock PIN attempts for 15 minutes; Google remains available.
+5. Either successful method stores an opaque random session in memory for eight hours and sends only its ID in an HTTP-only, SameSite=Lax cookie.
+6. Analytics authorization is narrower: only an accepted Google identity or the configured admin PIN may request reports.
 
-Operator access is separate and currently does not use Google authentication. Google sessions authorize only the private analytics dashboard.
+Operator access is separate and currently does not use this authentication. Google and PIN sessions authorize only the private analytics dashboard.
 
-OAuth state and session cookies include `Secure` only when the configured redirect URI uses HTTPS. Local HTTP cookies remain HTTP-only and SameSite=Lax without `Secure`. Google access tokens and client secrets never reach dashboard JavaScript. A process restart clears OAuth state and active sessions.
+OAuth state and session cookies include `Secure` only when the configured redirect URI uses HTTPS. Local HTTP cookies remain HTTP-only and SameSite=Lax without `Secure`. Google credentials and the admin PIN never reach dashboard JavaScript. A process restart clears OAuth state, PIN rate-limit state, and active sessions.
 
 ## Session Status
 
@@ -44,8 +50,10 @@ OAuth state and session cookies include `Secure` only when the configured redire
 |---|---|
 | `authenticated` | The session cookie maps to a live eight-hour application session |
 | `analyticsAuthorized` | That authenticated identity may call the JSON and PDF analytics endpoints |
-| `configured` | Both Google OAuth client ID and client secret are present |
-| `email` | Normalized session email; omitted when no session is authenticated |
+| `configured` | At least one authentication method is configured |
+| `googleConfigured` | Both Google OAuth client ID and client secret are present |
+| `pinConfigured` | A valid `ANALYTICS_ADMIN_PIN` is present |
+| `email` | Normalized Google email or `Admin PIN`; omitted when no session is authenticated |
 
 Clients check both `authenticated` and `analyticsAuthorized` before displaying the dashboard.
 
@@ -78,6 +86,7 @@ Loading the file does not prune it immediately. Older keys already on disk remai
 | Endpoint | Purpose | Authorization |
 |---|---|---|
 | `GET /api/analytics/session` | Current authentication and authorization state | Public status response |
+| `POST /auth/pin` | Exchange the configured admin PIN for an analytics session | Public, rate limited |
 | `GET /api/analytics?from=YYYY-MM-DD&to=YYYY-MM-DD&game=all` | Filtered report JSON | Analytics-authorized session |
 | `GET /api/analytics.pdf?...` | A PDF generated from the same report model and filters | Analytics-authorized session |
 | `POST /auth/logout` | Deletes the in-memory session and expires its cookie | Current cookie, if present |

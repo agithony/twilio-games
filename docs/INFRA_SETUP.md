@@ -93,8 +93,9 @@ Open **Settings > Secrets and variables > Actions > Secrets** and configure:
 | `ARCADE_SIGNING_SECRET` | Yes | Exactly 64 hexadecimal characters; derives separate signed player-session and challenge-token keys |
 | `ARCADE_DISPLAY_TOKEN` | Yes | Random server-held kiosk capability of at least 16 characters; required for display-ready and station game controls |
 | `EDITOR_TOKEN` | Strongly recommended for public deployments | Stored as Container App secret `editor-token`; protects disk-writing editor and garage APIs |
-| `GOOGLE_OAUTH_CLIENT_ID` | Required for analytics | Stored as Container App secret `google-oauth-client-id`; Google OAuth web client ID |
-| `GOOGLE_OAUTH_CLIENT_SECRET` | Required for analytics | Stored as Container App secret `google-oauth-client-secret`; Google OAuth web client secret |
+| `GOOGLE_OAUTH_CLIENT_ID` | Required for Google analytics login | Stored as Container App secret `google-oauth-client-id`; Google OAuth web client ID |
+| `GOOGLE_OAUTH_CLIENT_SECRET` | Required for Google analytics login | Stored as Container App secret `google-oauth-client-secret`; Google OAuth web client secret |
+| `ANALYTICS_ADMIN_PIN` | No | Optional 6-64 character alternative login for analytics; stored as Container App secret `analytics-admin-pin` |
 | `OPENAI_API_KEY` | No | Enables English free-form Racer and Monsters help; empty uses deterministic behavior, and Portuguese free-form OpenAI remains disabled |
 | `DUB_API_KEY` | No | Enables shortening of eligible challenge portal URLs when paired with `DUB_SHORT_DOMAIN`; empty preserves the original application URL |
 | `DUB_FOLDER_ID` | No | Optional Dub folder for created challenge links; it has no effect without an enabled Dub shortener |
@@ -147,6 +148,7 @@ gh secret set TWILIO_ACCOUNT_SID
 gh secret set TWILIO_API_KEY
 gh secret set TWILIO_API_SECRET
 openssl rand -hex 32 | gh secret set VOICE_RELAY_TOKEN
+gh secret set ANALYTICS_ADMIN_PIN
 ```
 
 Set the non-secret IDs and senders after provisioning them:

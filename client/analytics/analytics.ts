@@ -3,11 +3,14 @@ import type { AnalyticsGame, AnalyticsReport } from '../../shared/analytics';
 const auth = el<HTMLElement>('auth'), dashboard = el<HTMLElement>('dashboard');
 const fromInput = el<HTMLInputElement>('from'), toInput = el<HTMLInputElement>('to'), gameInput = el<HTMLSelectElement>('game');
 const download = el<HTMLButtonElement>('download'), status = el<HTMLElement>('status'), authMessage = el<HTMLElement>('auth-message');
+const googleLogin = el<HTMLAnchorElement>('google-login'), pinLogin = el<HTMLFormElement>('pin-login');
+const adminPin = el<HTMLInputElement>('admin-pin'), pinError = el<HTMLElement>('pin-error'), authDivider = el<HTMLElement>('auth-divider');
 const today = new Date(), prior = new Date(today.getTime() - 29 * 86_400_000);
 toInput.value = iso(today); fromInput.value = iso(prior);
 el('apply').addEventListener('click', () => void refresh());
 el('logout').addEventListener('click', () => void logout());
 download.addEventListener('click', () => void downloadPdf());
+pinLogin.addEventListener('submit', event => { event.preventDefault(); void loginWithPin(); });
 void checkSession();
 
 async function checkSession(): Promise<void> {
@@ -15,17 +18,34 @@ async function checkSession(): Promise<void> {
   if (reason) history.replaceState(null, '', '/analytics');
   try {
     const response = await fetch('/api/analytics/session');
-    const session = await response.json() as { authenticated: boolean; analyticsAuthorized: boolean; configured: boolean; email?: string };
+    const session = await response.json() as { authenticated: boolean; analyticsAuthorized: boolean; configured: boolean; googleConfigured: boolean; pinConfigured: boolean; email?: string };
     if (session.authenticated && session.analyticsAuthorized) {
       auth.hidden = true; dashboard.hidden = false; download.disabled = false;
       el('user').textContent = session.email ?? ''; await refresh(); return;
     }
+    googleLogin.hidden = !session.googleConfigured; pinLogin.hidden = !session.pinConfigured;
+    authDivider.hidden = !session.googleConfigured || !session.pinConfigured;
     if (session.authenticated && !session.analyticsAuthorized) authMessage.textContent = 'This account does not have access to private activation analytics.';
-    else if (!session.configured) authMessage.textContent = 'Google OAuth is not configured for this deployment.';
+    else if (!session.configured) authMessage.textContent = 'Analytics authentication is not configured for this deployment.';
     else if (reason === 'email_not_allowed') authMessage.textContent = 'That verified Google account is not authorized. Use a @twilio.com account.';
     else if (reason) authMessage.textContent = 'Google sign-in could not be completed. Please try again.';
   } catch { authMessage.textContent = 'The authentication service is unavailable.'; }
   lock();
+}
+
+async function loginWithPin(): Promise<void> {
+  const submit = pinLogin.querySelector<HTMLButtonElement>('button')!;
+  submit.disabled = true; pinError.hidden = true;
+  try {
+    const response = await fetch('/auth/pin', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin: adminPin.value }) });
+    if (response.ok) { adminPin.value = ''; await checkSession(); return; }
+    pinError.textContent = response.status === 429
+      ? 'Too many attempts. Wait 15 minutes or use Google.'
+      : response.status === 401 ? 'Incorrect admin PIN.' : 'PIN login is unavailable.';
+    pinError.hidden = false; adminPin.select();
+  } catch { pinError.textContent = 'PIN login is unavailable.'; pinError.hidden = false; }
+  finally { submit.disabled = false; }
 }
 
 async function refresh(): Promise<void> {

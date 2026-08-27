@@ -16,8 +16,16 @@
     </header>
 
     <section id="auth" class="auth-card">
-      <div><p class="eyebrow">Private dashboard</p><h2>Sign in with Google</h2><p id="auth-message">Access is limited to verified @twilio.com accounts and the configured exception account.</p></div>
-      <a id="google-login" class="google-login" href="/auth/google"><span>G</span>Continue with Google</a>
+      <div><p class="eyebrow">Private dashboard</p><h2>Sign in</h2><p id="auth-message">Use an authorized Google account or the event admin PIN.</p></div>
+      <div class="auth-methods">
+        <a id="google-login" class="google-login" href="/auth/google"><span>G</span>Continue with Google</a>
+        <div id="auth-divider" class="auth-divider"><span>or</span></div>
+        <form id="pin-login" class="pin-login">
+          <label for="admin-pin">Admin PIN</label>
+          <div><input id="admin-pin" type="password" autocomplete="current-password" minlength="6" maxlength="64" required /><button class="primary" type="submit">Unlock</button></div>
+          <p id="pin-error" role="alert" hidden></p>
+        </form>
+      </div>
     </section>
 
     <main id="dashboard" hidden>

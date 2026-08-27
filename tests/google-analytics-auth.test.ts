@@ -43,7 +43,43 @@ describe('Google analytics authorization', () => {
     expect(callback.headers.get('location')).toBe('/analytics?auth=email_not_allowed');
   });
 
+  it('accepts the configured admin PIN and creates the same analytics session', async () => {
+    const auth = new GoogleAnalyticsAuth({ redirectUri: 'http://localhost/auth/google/callback', adminPin: 'Game!Night#2026' });
+    server = new HttpServer({ port: 0, publicBaseUrl: 'http://localhost', validateSignatures: false, analyticsAuth: auth });
+    const port = await server.start(), base = `http://127.0.0.1:${port}`;
+    const login = await fetch(`${base}/auth/pin`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin: 'Game!Night#2026' }) });
+    expect(login.status).toBe(200);
+    const cookie = login.headers.get('set-cookie')!.split(';')[0]!;
+    const session = await (await fetch(`${base}/api/analytics/session`, { headers: { cookie } })).json();
+    expect(session).toMatchObject({ authenticated: true, analyticsAuthorized: true, email: 'Admin PIN',
+      configured: true, googleConfigured: false, pinConfigured: true });
+  });
+
+  it('rejects incorrect PINs and rate limits repeated failures', async () => {
+    const auth = new GoogleAnalyticsAuth({ redirectUri: 'http://localhost/auth/google/callback', adminPin: 'Game!Night#2026' });
+    server = new HttpServer({ port: 0, publicBaseUrl: 'http://localhost', validateSignatures: false, analyticsAuth: auth });
+    const port = await server.start(), base = `http://127.0.0.1:${port}`;
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      const response = await pinLogin(base, '000000');
+      expect(response.status).toBe(401); expect(response.headers.get('set-cookie')).toBeNull();
+    }
+    const limited = await pinLogin(base, '000000');
+    expect(limited.status).toBe(429); expect(limited.headers.get('retry-after')).toBe('900');
+    expect((await pinLogin(base, 'Game!Night#2026')).status).toBe(429);
+  });
+
+  it('requires a PIN with at least six characters', () => {
+    expect(() => new GoogleAnalyticsAuth({ redirectUri: 'http://localhost/auth/google/callback',
+      adminPin: '1234' })).toThrow('ANALYTICS_ADMIN_PIN');
+  });
+
 });
+
+function pinLogin(base: string, pin: string): Promise<Response> {
+  return fetch(`${base}/auth/pin`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pin }) });
+}
 
 function googleAuth(
   user: { email: string; email_verified: boolean },

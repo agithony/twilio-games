@@ -224,6 +224,7 @@ export class HttpServer {
     googleOAuthClientId?: string;
     googleOAuthClientSecret?: string;
     analyticsAllowedEmail?: string;
+    analyticsAdminPin?: string;
     analyticsAuth?: GoogleAnalyticsAuth;
     arcadeApi?: ArcadeApi;
     arcadeTacGateway?: ArcadeTacGateway;
@@ -249,13 +250,14 @@ export class HttpServer {
     this.analyticsAuth = opts.analyticsAuth ?? new GoogleAnalyticsAuth({
       clientId: opts.googleOAuthClientId, clientSecret: opts.googleOAuthClientSecret,
       redirectUri: `${this.publicBaseUrl}/auth/google/callback`, allowedEmail: opts.analyticsAllowedEmail,
+      adminPin: opts.analyticsAdminPin,
     });
     this.arcadeApi = opts.arcadeApi;
     this.arcadeTacGateway = opts.arcadeTacGateway;
     this.analytics = new AnalyticsStore(opts.analyticsPath ?? 'data/analytics.json', opts.googleOAuthClientSecret?.trim() || 'twilio-games-analytics');
     this.analyticsObserver = new AnalyticsObserver(this.analytics);
     if (process.env.NODE_ENV === 'production' && !this.editorToken) console.warn('[security] EDITOR_TOKEN is unset; editor writes remain open');
-    if (process.env.NODE_ENV === 'production' && !this.analyticsAuth.configured) console.warn('[security] Google OAuth is unset; analytics access is disabled');
+    if (process.env.NODE_ENV === 'production' && !this.analyticsAuth.configured) console.warn('[security] Analytics authentication is unset; analytics access is disabled');
     this.clientDir = opts.clientDir ?? 'client/dist';
     this.gamePhoneNumber = (opts.gamePhoneNumber ?? '').trim();
     this.smsNumber = (opts.smsNumber ?? '').trim();
@@ -1826,12 +1828,23 @@ export class HttpServer {
     }
     if (req.method === 'GET' && path === '/auth/google') { this.analyticsAuth.begin(req, res); return; }
     if (req.method === 'GET' && path === '/auth/google/callback') { await this.analyticsAuth.complete(req, res); return; }
+    if (req.method === 'POST' && path === '/auth/pin') {
+      let input: unknown;
+      try { input = JSON.parse(await readBody(req)); }
+      catch { res.writeHead(400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }).end('{"error":"invalid_request"}'); return; }
+      const pin = (input as { pin?: unknown })?.pin;
+      if (typeof pin !== 'string' || pin.length > 128) {
+        res.writeHead(400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }).end('{"error":"invalid_request"}'); return;
+      }
+      this.analyticsAuth.completePin(res, pin); return;
+    }
     if (req.method === 'POST' && path === '/auth/logout') { this.analyticsAuth.logout(req, res); return; }
     if (req.method === 'GET' && path === '/api/analytics/session') {
       const user = this.analyticsAuth.currentUser(req);
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
       res.end(JSON.stringify({ authenticated: Boolean(user), analyticsAuthorized: user?.analyticsAuthorized ?? false,
-        configured: this.analyticsAuth.configured, email: user?.email })); return;
+        configured: this.analyticsAuth.configured, googleConfigured: this.analyticsAuth.googleConfigured,
+        pinConfigured: this.analyticsAuth.pinConfigured, email: user?.email })); return;
     }
     if (path === '/api/admin/arcade/leaderboards' && req.method === 'GET') {
       const principal=this.arcadeApi?.authorizeOperatorRequest(req);
