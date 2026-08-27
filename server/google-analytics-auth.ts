@@ -7,9 +7,12 @@ const SESSION_MS = 8 * 60 * 60 * 1000;
 const STATE_MS = 10 * 60 * 1000;
 const PIN_FAILURE_WINDOW_MS = 15 * 60 * 1000;
 const PIN_MAX_FAILURES = 5;
+const PIN_CLIENT_LIMIT = 1000;
 
-interface Session { email: string; analyticsAuthorized: boolean; expiresAt: number; }
-interface OAuthState { expiresAt: number; }
+type AuthMethod = 'google' | 'pin';
+type AuthReturnTo = '/analytics' | '/operator';
+interface Session { email: string; analyticsAuthorized: boolean; authMethod: AuthMethod; expiresAt: number; }
+interface OAuthState { expiresAt: number; returnTo: AuthReturnTo; }
 interface GoogleUser { email?: unknown; email_verified?: unknown; }
 
 export interface GoogleAnalyticsAuthOptions {
@@ -32,7 +35,7 @@ export class GoogleAnalyticsAuth {
   private readonly secure: boolean;
   private sessions = new Map<string, Session>();
   private states = new Map<string, OAuthState>();
-  private pinFailures: number[] = [];
+  private pinFailures = new Map<string, number[]>();
 
   constructor(private readonly options: GoogleAnalyticsAuthOptions) {
     this.clientId = options.clientId?.trim() ?? '';
@@ -58,7 +61,8 @@ export class GoogleAnalyticsAuth {
     if (!this.googleConfigured) { res.writeHead(503, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' }).end('Google OAuth is not configured'); return; }
     this.sweep();
     const state = randomBytes(24).toString('base64url');
-    this.states.set(state, { expiresAt: this.now() + STATE_MS });
+    const returnTo = authReturnTo(new URL(req.url ?? '', 'http://localhost').searchParams.get('returnTo'));
+    this.states.set(state, { expiresAt: this.now() + STATE_MS, returnTo });
     const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
     url.search = new URLSearchParams({ client_id: this.clientId, redirect_uri: this.options.redirectUri,
       response_type: 'code', scope: 'openid email profile', state, prompt: 'select_account' }).toString();
@@ -74,7 +78,7 @@ export class GoogleAnalyticsAuth {
     const clearState = cookie(STATE_COOKIE, '', 0, this.secure);
     if (!state || cookies[STATE_COOKIE] !== state || !pending || pending.expiresAt < this.now()
       || !code || url.searchParams.has('error')) {
-      this.redirectDenied(res, clearState, 'invalid_oauth_state'); return;
+      this.redirectDenied(res, clearState, 'invalid_oauth_state', pending?.returnTo); return;
     }
     try {
       const tokenResponse = await this.fetcher('https://oauth2.googleapis.com/token', {
@@ -92,21 +96,21 @@ export class GoogleAnalyticsAuth {
       const user = await userResponse.json() as GoogleUser;
       const email = typeof user.email === 'string' ? user.email.trim().toLowerCase() : '';
       if (user.email_verified !== true || !isAnalyticsEmailAllowed(email, this.analyticsAllowedEmails)) {
-        this.redirectDenied(res, clearState, 'email_not_allowed'); return;
+        this.redirectDenied(res, clearState, 'email_not_allowed', pending.returnTo); return;
       }
       const sessionCookie = this.issueSession(email);
-      res.writeHead(302, { Location: '/analytics', 'Set-Cookie': [clearState, sessionCookie], 'Cache-Control': 'no-store' }).end();
+      res.writeHead(302, { Location: pending.returnTo, 'Set-Cookie': [clearState, sessionCookie], 'Cache-Control': 'no-store' }).end();
     } catch (error) {
       console.error('[analytics-auth] Google OAuth failed:', (error as Error).message);
-      this.redirectDenied(res, clearState, 'oauth_failed');
+      this.redirectDenied(res, clearState, 'oauth_failed', pending.returnTo);
     }
   }
 
-  currentUser(req: http.IncomingMessage): { email: string; analyticsAuthorized: boolean } | null {
+  currentUser(req: http.IncomingMessage): { email: string; analyticsAuthorized: boolean; authMethod: AuthMethod } | null {
     this.sweep();
     const id = parseCookies(req.headers.cookie)[SESSION_COOKIE]; if (!id) return null;
     const session = this.sessions.get(id); if (!session || session.expiresAt <= this.now()) return null;
-    return { email: session.email, analyticsAuthorized: session.analyticsAuthorized };
+    return { email: session.email, analyticsAuthorized: session.analyticsAuthorized, authMethod: session.authMethod };
   }
 
   currentAnalyticsUser(req: http.IncomingMessage): { email: string } | null {
@@ -114,27 +118,37 @@ export class GoogleAnalyticsAuth {
     return user?.analyticsAuthorized ? { email: user.email } : null;
   }
 
-  completePin(res: http.ServerResponse, pin: string): void {
+  currentOperatorUser(req: http.IncomingMessage): { email: string } | null {
+    const user = this.currentUser(req);
+    if (!user?.analyticsAuthorized) return null;
+    return { email: user.authMethod === 'pin' ? 'admin-pin@local.invalid' : user.email };
+  }
+
+  completePin(req: http.IncomingMessage, res: http.ServerResponse, pin: string): void {
     const now = this.now();
-    this.pinFailures = this.pinFailures.filter(at => at > now - PIN_FAILURE_WINDOW_MS);
+    this.sweepPinFailures(now);
+    let client = requestAddress(req);
+    if (!this.pinFailures.has(client) && this.pinFailures.size >= PIN_CLIENT_LIMIT) client = 'overflow';
+    const failures = (this.pinFailures.get(client) ?? []).filter(at => at > now - PIN_FAILURE_WINDOW_MS);
+    if (failures.length) this.pinFailures.set(client, failures); else this.pinFailures.delete(client);
     if (!this.adminPinDigest) {
       this.pinResponse(res, 503, 'pin_not_configured'); return;
     }
-    if (this.pinFailures.length >= PIN_MAX_FAILURES) {
-      this.pinResponse(res, 429, 'too_many_attempts', this.pinRetryAfter(now)); return;
+    if (failures.length >= PIN_MAX_FAILURES) {
+      this.pinResponse(res, 429, 'too_many_attempts', pinRetryAfter(failures, now)); return;
     }
     const valid = timingSafeEqual(this.adminPinDigest, digest(pin.trim()));
     if (!valid) {
-      this.pinFailures.push(now);
-      const limited = this.pinFailures.length >= PIN_MAX_FAILURES;
+      failures.push(now); this.pinFailures.set(client, failures);
+      const limited = failures.length >= PIN_MAX_FAILURES;
       this.pinResponse(res, limited ? 429 : 401, limited ? 'too_many_attempts' : 'invalid_pin',
-        limited ? this.pinRetryAfter(now) : undefined);
+        limited ? pinRetryAfter(failures, now) : undefined);
       return;
     }
-    this.pinFailures = [];
+    this.pinFailures.delete(client);
     res.writeHead(200, {
       'Content-Type': 'application/json',
-      'Set-Cookie': this.issueAuthorizedSession('Admin PIN'),
+      'Set-Cookie': this.issueAuthorizedSession('Admin PIN', 'pin'),
       'Cache-Control': 'no-store',
     }).end('{"authenticated":true}');
   }
@@ -148,21 +162,18 @@ export class GoogleAnalyticsAuth {
   issueSession(email: string): string {
     const normalized = email.trim().toLowerCase();
     if (!isAnalyticsEmailAllowed(normalized, this.analyticsAllowedEmails)) throw new Error('email is not authorized');
-    return this.issueAuthorizedSession(normalized);
+    return this.issueAuthorizedSession(normalized, 'google');
   }
 
-  private issueAuthorizedSession(email: string): string {
+  private issueAuthorizedSession(email: string, authMethod: AuthMethod): string {
     const id = randomBytes(32).toString('base64url');
     this.sessions.set(id, {
       email,
       analyticsAuthorized: true,
+      authMethod,
       expiresAt: this.now() + SESSION_MS,
     });
     return cookie(SESSION_COOKIE, id, SESSION_MS, this.secure);
-  }
-
-  private pinRetryAfter(now: number): number {
-    return Math.max(1, Math.ceil(((this.pinFailures[0] ?? now) + PIN_FAILURE_WINDOW_MS - now) / 1000));
   }
 
   private pinResponse(res: http.ServerResponse, status: number, error: string, retryAfter?: number): void {
@@ -177,14 +188,24 @@ export class GoogleAnalyticsAuth {
     res: http.ServerResponse,
     clearState: string,
     reason: string,
+    returnTo: AuthReturnTo = '/analytics',
   ): void {
-    res.writeHead(302, { Location: `/analytics?auth=${encodeURIComponent(reason)}`, 'Set-Cookie': clearState, 'Cache-Control': 'no-store' }).end();
+    const query = new URLSearchParams({ auth: reason });
+    if (returnTo === '/operator') query.set('returnTo', returnTo);
+    res.writeHead(302, { Location: `/analytics?${query}`, 'Set-Cookie': clearState, 'Cache-Control': 'no-store' }).end();
   }
 
   private sweep(): void {
     const now = this.now();
     for (const [id, session] of this.sessions) if (session.expiresAt <= now) this.sessions.delete(id);
     for (const [state, pending] of this.states) if (pending.expiresAt <= now) this.states.delete(state);
+  }
+
+  private sweepPinFailures(now: number): void {
+    for (const [client, attempts] of this.pinFailures) {
+      const active = attempts.filter(at => at > now - PIN_FAILURE_WINDOW_MS);
+      if (active.length) this.pinFailures.set(client, active); else this.pinFailures.delete(client);
+    }
   }
 }
 
@@ -201,6 +222,30 @@ function cookie(name: string, value: string, durationMs: number, secure: boolean
 
 function digest(value: string): Buffer {
   return createHash('sha256').update(value).digest();
+}
+
+function authReturnTo(value: string | null | undefined): AuthReturnTo {
+  return value === '/operator' ? '/operator' : '/analytics';
+}
+
+function pinRetryAfter(failures: readonly number[], now: number): number {
+  return Math.max(1, Math.ceil(((failures[0] ?? now) + PIN_FAILURE_WINDOW_MS - now) / 1000));
+}
+
+function requestAddress(req: http.IncomingMessage): string {
+  const remote = req.socket.remoteAddress || 'unknown';
+  if (!isTrustedProxyAddress(remote)) return remote;
+  const forwarded = req.headers['x-forwarded-for'];
+  const value = (Array.isArray(forwarded) ? forwarded[0] : forwarded)?.split(',').at(-1)?.trim();
+  return value?.slice(0, 128) || remote;
+}
+
+function isTrustedProxyAddress(value: string): boolean {
+  const address = value.toLowerCase().replace(/^::ffff:/, '');
+  if (address === '::1' || address.startsWith('fc') || address.startsWith('fd') || address.startsWith('fe80:')) return true;
+  if (/^(?:127|10)\./.test(address) || /^192\.168\./.test(address) || /^169\.254\./.test(address)) return true;
+  const match = /^172\.(\d{1,3})\./.exec(address);
+  return Boolean(match && Number(match[1]) >= 16 && Number(match[1]) <= 31);
 }
 
 function parseCookies(header?: string): Record<string, string> {

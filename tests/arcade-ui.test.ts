@@ -186,16 +186,17 @@ describe('Arcade browser UI', () => {
     expect(script).not.toContain('/api/admin/arcade/queue');
   });
 
-  it('uses compact icon-only header controls and exposes the operator from home', () => {
+  it('uses compact header controls and exposes the authenticated operator from home', () => {
     expect(home).toContain('id="operatorLink"');
     expect(home).toContain('href="/operator"');
     expect(home).toMatch(/id="themeToggle"[^>]*>[\s\S]*?<svg/);
     expect(join).toMatch(/id="themeToggle"[^>]*>[\s\S]*?<svg/);
     expect(html).toContain('class="button quiet icon-button"');
     expect(html).toMatch(/id="refresh"[^>]*icon-button[^>]*aria-label="Refresh page data"[^>]*>\s*<svg/);
-    expect(html).not.toMatch(/admin-login|google-signin|admin-locked/i);
-    expect(script).not.toMatch(/switchAccount|returnTo=\/operator|Sign in with Google/);
-    expect(serverIndex).toContain("authorizeAdmin: () => ({ email: 'operator-console@local.invalid' })");
+    expect(html).toContain('id="operator-logout"');
+    expect(script).toContain("location.replace('/analytics?auth=session_expired&returnTo=%2Foperator')");
+    expect(serverIndex).toContain('analyticsAuth.currentOperatorUser(request)');
+    expect(serverIndex).toContain("operatorAuthRequired ? null : { email: 'operator-console@local.invalid' }");
     expect(serverIndex).not.toContain('ARCADE_ADMIN_EMAILS');
     expect(css).toContain('white-space:normal');
     expect(script).toContain("refresh.setAttribute('aria-label','Atualizar dados')");
@@ -495,7 +496,7 @@ describe('Arcade browser UI', () => {
     expect(homeCss).toContain('.display-setup-panel');
   });
 
-  it('installs and confirms booth access without a Google session', () => {
+  it('installs and confirms booth access independently from the operator session', () => {
     expect(html).toContain('id="display-connect-panel"');
     expect(html).toContain('id="connect-booth-display"');
     expect(html).toContain('id="overview-display"');

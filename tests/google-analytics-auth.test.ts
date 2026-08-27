@@ -20,7 +20,7 @@ describe('Google analytics authorization', () => {
     const auth = googleAuth({ email: 'analyst@twilio.com', email_verified: true });
     server = new HttpServer({ port: 0, publicBaseUrl: 'http://localhost', validateSignatures: false, analyticsAuth: auth });
     const port = await server.start(), base = `http://127.0.0.1:${port}`;
-    const begin = await fetch(`${base}/auth/google`, { redirect: 'manual' });
+    const begin = await fetch(`${base}/auth/google?returnTo=${encodeURIComponent('https://evil.example')}`, { redirect: 'manual' });
     const stateCookie = begin.headers.get('set-cookie')!.split(';')[0]!;
     const state = new URL(begin.headers.get('location')!).searchParams.get('state');
     const callback = await fetch(`${base}/auth/google/callback?code=valid&state=${state}`, { headers: { cookie: stateCookie }, redirect: 'manual' });
@@ -43,6 +43,23 @@ describe('Google analytics authorization', () => {
     expect(callback.headers.get('location')).toBe('/analytics?auth=email_not_allowed');
   });
 
+  it('returns Google authentication to the allowlisted operator page', async () => {
+    const auth = googleAuth({ email: 'operator@twilio.com', email_verified: true });
+    server = new HttpServer({ port: 0, publicBaseUrl: 'http://localhost', validateSignatures: false, analyticsAuth: auth });
+    const port = await server.start(), base = `http://127.0.0.1:${port}`;
+    const begin = await fetch(`${base}/auth/google?returnTo=${encodeURIComponent('/operator')}`, { redirect: 'manual' });
+    const stateCookie = begin.headers.get('set-cookie')!.split(';')[0]!;
+    const state = new URL(begin.headers.get('location')!).searchParams.get('state');
+    const callback = await fetch(`${base}/auth/google/callback?code=valid&state=${state}`, {
+      headers: { cookie: stateCookie }, redirect: 'manual',
+    });
+    expect(callback.headers.get('location')).toBe('/operator');
+    const sessionCookie = callback.headers.getSetCookie()
+      .find(value => value.startsWith('twilio_analytics_session='))!.split(';')[0]!;
+    const request = { headers: { cookie: sessionCookie } } as Parameters<GoogleAnalyticsAuth['currentOperatorUser']>[0];
+    expect(auth.currentOperatorUser(request)).toEqual({ email: 'operator@twilio.com' });
+  });
+
   it('accepts the configured admin PIN and creates the same analytics session', async () => {
     const auth = new GoogleAnalyticsAuth({ redirectUri: 'http://localhost/auth/google/callback', adminPin: 'Game!Night#2026' });
     server = new HttpServer({ port: 0, publicBaseUrl: 'http://localhost', validateSignatures: false, analyticsAuth: auth });
@@ -54,6 +71,8 @@ describe('Google analytics authorization', () => {
     const session = await (await fetch(`${base}/api/analytics/session`, { headers: { cookie } })).json();
     expect(session).toMatchObject({ authenticated: true, analyticsAuthorized: true, email: 'Admin PIN',
       configured: true, googleConfigured: false, pinConfigured: true });
+    const request = { headers: { cookie } } as Parameters<GoogleAnalyticsAuth['currentOperatorUser']>[0];
+    expect(auth.currentOperatorUser(request)).toEqual({ email: 'admin-pin@local.invalid' });
   });
 
   it('rejects incorrect PINs and rate limits repeated failures', async () => {
@@ -67,6 +86,7 @@ describe('Google analytics authorization', () => {
     const limited = await pinLogin(base, '000000');
     expect(limited.status).toBe(429); expect(limited.headers.get('retry-after')).toBe('900');
     expect((await pinLogin(base, 'Game!Night#2026')).status).toBe(429);
+    expect((await pinLogin(base, 'Game!Night#2026', '203.0.113.9')).status).toBe(200);
   });
 
   it('requires a PIN with at least six characters', () => {
@@ -76,8 +96,9 @@ describe('Google analytics authorization', () => {
 
 });
 
-function pinLogin(base: string, pin: string): Promise<Response> {
-  return fetch(`${base}/auth/pin`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+function pinLogin(base: string, pin: string, forwardedFor?: string): Promise<Response> {
+  return fetch(`${base}/auth/pin`, { method: 'POST', headers: { 'Content-Type': 'application/json',
+    ...(forwardedFor ? { 'X-Forwarded-For': forwardedFor } : {}) },
     body: JSON.stringify({ pin }) });
 }
 

@@ -4,7 +4,7 @@ The private `/analytics` dashboard reports engagement for Voice Racer, Voice Mon
 
 ## Authentication Setup
 
-The dashboard accepts either Google OAuth or an optional event admin PIN. Both methods create the same analytics-authorized session and expose the same reports.
+The dashboard accepts either Google OAuth or an event admin PIN. Both methods create the same session, which authorizes private analytics and the operator console.
 
 ### Google OAuth
 
@@ -21,7 +21,7 @@ The redirect URI must exactly match `PUBLIC_BASE_URL` plus `/auth/google/callbac
 |---|---|
 | `GOOGLE_OAUTH_CLIENT_ID` | OAuth web client ID |
 | `GOOGLE_OAUTH_CLIENT_SECRET` | OAuth web client secret |
-| `ANALYTICS_ADMIN_PIN` | Optional 6-64 character admin PIN; letters, numbers, and special characters are accepted; keep it in a secret store |
+| `ANALYTICS_ADMIN_PIN` | 6-64 character admin PIN for analytics and operator access; letters, numbers, and special characters are accepted; keep it in a secret store |
 | `ANALYTICS_ALLOWED_EMAIL` | Optional exact external email that may read analytics |
 | `ANALYTICS_PATH` | Rollup file path; defaults to `data/analytics.json` |
 
@@ -34,11 +34,11 @@ If an allowed account is outside Twilio Google Workspace, the OAuth application'
 1. `GET /auth/google` creates a random OAuth state, retains it in memory for ten minutes, and sends the value in an HTTP-only, SameSite=Lax cookie.
 2. Google redirects to `/auth/google/callback`; the server validates the state and cookie, exchanges the code, reads userinfo, and requires `email_verified: true`.
 3. A verified `@twilio.com` address or the exact `ANALYTICS_ALLOWED_EMAIL` may receive an application session.
-4. Alternatively, `POST /auth/pin` compares the supplied PIN with `ANALYTICS_ADMIN_PIN` in constant time. Five failures lock PIN attempts for 15 minutes; Google remains available.
+4. Alternatively, `POST /auth/pin` compares the supplied PIN with `ANALYTICS_ADMIN_PIN` in constant time. Five failures from one client lock that client out of PIN attempts for 15 minutes; Google remains available when configured.
 5. Either successful method stores an opaque random session in memory for eight hours and sends only its ID in an HTTP-only, SameSite=Lax cookie.
 6. Analytics authorization is narrower: only an accepted Google identity or the configured admin PIN may request reports.
 
-Operator access is separate and currently does not use this authentication. Google and PIN sessions authorize only the private analytics dashboard.
+`/operator` and every `/api/admin/` route require this same session in production. Unauthenticated operator page requests redirect to this login screen and return to `/operator` after either login method succeeds. Expired admin API sessions return `401`, causing the operator client to return to login. Credential-free access remains available only for non-production loopback development.
 
 OAuth state and session cookies include `Secure` only when the configured redirect URI uses HTTPS. Local HTTP cookies remain HTTP-only and SameSite=Lax without `Secure`. Google credentials and the admin PIN never reach dashboard JavaScript. A process restart clears OAuth state, PIN rate-limit state, and active sessions.
 
@@ -49,7 +49,7 @@ OAuth state and session cookies include `Secure` only when the configured redire
 | Field | Meaning |
 |---|---|
 | `authenticated` | The session cookie maps to a live eight-hour application session |
-| `analyticsAuthorized` | That authenticated identity may call the JSON and PDF analytics endpoints |
+| `analyticsAuthorized` | That authenticated identity may use analytics and operator endpoints |
 | `configured` | At least one authentication method is configured |
 | `googleConfigured` | Both Google OAuth client ID and client secret are present |
 | `pinConfigured` | A valid `ANALYTICS_ADMIN_PIN` is present |

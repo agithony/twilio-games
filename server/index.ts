@@ -47,6 +47,9 @@ const analyticsAuth = new GoogleAnalyticsAuth({
   allowedEmail: process.env.ANALYTICS_ALLOWED_EMAIL,
   adminPin: process.env.ANALYTICS_ADMIN_PIN,
 });
+const operatorAuthRequired = process.env.NODE_ENV === 'production'
+  || analyticsAuth.configured
+  || !isLoopbackUrl(publicBaseUrl);
 const arcadeEvents = new ArcadeEventHub(error => {
   console.error('[arcade-events] subscriber failed:', error instanceof Error ? error.message : String(error));
 });
@@ -106,9 +109,8 @@ const arcadeApi = new ArcadeApi({
     domain: process.env.DUB_SHORT_DOMAIN,
     folderId: process.env.DUB_FOLDER_ID === 'disabled' ? undefined : process.env.DUB_FOLDER_ID,
   }),
-  // Operator access is intentionally open for the current event deployment. Mutation routes retain
-  // their same-origin, ETag, idempotency, and display-capability checks.
-  authorizeAdmin: () => ({ email: 'operator-console@local.invalid' }),
+  authorizeAdmin: request => analyticsAuth.currentOperatorUser(request)
+    ?? (operatorAuthRequired ? null : { email: 'operator-console@local.invalid' }),
 });
 arcadeTacGateway?.setMessageHandler(async input => {
   const author = input.channel === 'whatsapp' && !input.author.toLowerCase().startsWith('whatsapp:')
@@ -135,7 +137,7 @@ arcadeTacGateway?.setMessageHandler(async input => {
 // SEED copied in on first boot when the persistent file doesn't exist yet.
 const srv = new HttpServer({
   port, publicBaseUrl, authToken, additionalAuthTokens, validateSignatures, editorToken,
-  analyticsAuth, arcadeApi, arcadeTacGateway, standaloneVoiceEnabled,
+  analyticsAuth, arcadeApi, arcadeTacGateway, standaloneVoiceEnabled, operatorAuthRequired,
   analyticsPath: process.env.ANALYTICS_PATH ?? 'data/analytics.json',
   googleOAuthClientSecret: process.env.GOOGLE_OAUTH_CLIENT_SECRET,
   mapsPath: process.env.MAPS_PATH ?? 'data/maps.json',
@@ -177,4 +179,9 @@ function configuredMessagingSender(value: string | undefined): string | null {
 function configuredCredential(value: string | undefined, pattern?: RegExp): boolean {
   const normalized = value?.trim() ?? '';
   return normalized !== '' && normalized !== 'disabled' && (!pattern || pattern.test(normalized));
+}
+
+function isLoopbackUrl(value: string): boolean {
+  try { return ['localhost', '127.0.0.1', '::1'].includes(new URL(value).hostname); }
+  catch { return false; }
 }
