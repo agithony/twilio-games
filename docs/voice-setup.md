@@ -129,7 +129,7 @@ Speech barge-in stops Relay TTS. Voice Racer and Voice Monsters also invalidate 
 
 Station games admit up to two callers. The persisted match roster supplies an expected caller count of one or two and a stable slot for each caller. The server reuses each registered first name instead of asking for it again; only a station identity without a stored completed name falls back to voice name capture.
 
-Each caller controls only their personal setup choices. Racer keeps explicit shared phase gates: after all expected callers connect, either caller says `start`; after every caller picks a car, either says `next`; after every caller casts one track vote, either says `start`. Monsters advances from monster choices automatically, and Fighter advances from fighter choices to individual arena votes automatically. A one-caller Monsters or Fighter match creates an AI opponent after that caller finishes setup; a one-caller Racer follows the same explicit gates with one caller.
+Each caller controls only their personal setup choices. Racer keeps explicit shared phase gates: after all expected callers connect, either caller says `start`; after every caller picks a car, either says `next`; after every caller casts one track vote, either says `start`. Fighter also keeps an explicit lobby gate: after onboarding and all expected callers connect, either caller says `next`; fighter choices then advance to individual arena votes automatically. Monsters advances from monster choices automatically. A one-caller Monsters or Fighter match creates an AI opponent after that caller finishes setup; a one-caller Racer follows the same explicit gates with one caller.
 
 A station match starts only when the display has acknowledged the current launch generation, the selected engine has started, and every expected caller is connected and bound. The launch timeout is also the setup inactivity window. After all expected callers connect, each final speech prompt or DTMF input from either caller moves that deadline forward by the configured launch timeout; partial transcripts do not. Activity extends setup but does not mark gameplay started or redeem a coin.
 
@@ -201,16 +201,17 @@ The common 30-second caller binding and up-to-two Relay recovery attempts apply 
 
 ## Voice Fighter
 
-Voice Fighter accepts up to two humans during the lobby or fighter-selection phase. A solo player receives an AI rival. New callers cannot join after setup has moved beyond fighter selection. Each caller owns their fighter choice and arena vote; setup advances automatically when all required choices are complete.
+Voice Fighter accepts up to two humans during the lobby or fighter-selection phase. A solo player receives an AI rival. New callers cannot join after setup has moved beyond fighter selection. Each caller owns their fighter choice and arena vote. The lobby requires an explicit voice command; later setup phases advance automatically when all required choices are complete.
 
 The voice flow is:
 
 1. In standalone play, say your name. Station play greets you by your registered first name.
-2. Fighter selection opens automatically when the expected callers are ready.
-3. Each player says their own fighter name or number.
-4. Arena voting opens automatically; each player says their own arena name or number.
-5. The selected arena loads automatically after every player votes, then starts the intro and countdown.
-6. In standalone play, say `rematch` after the fight and victory sequence. Station play returns to the station results and requeue flow instead.
+2. Listen to the controls and how-to-play instructions while the display remains in the lobby.
+3. After the expected callers are ready, either player says `next` to open fighter selection.
+4. Each player says their own fighter name or number.
+5. Arena voting opens automatically; each player says their own arena name or number.
+6. The selected arena loads automatically after every player votes, then starts the intro and countdown.
+7. In standalone play, say `rematch` after the fight and victory sequence. Station play returns to the station results and requeue flow instead.
 
 Combat commands are:
 

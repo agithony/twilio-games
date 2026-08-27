@@ -323,7 +323,7 @@ export class FighterServer {
   voiceAdvance(code: string, id: string): boolean {
     code = canonicalRoomCode(code); const room = this.rooms.get(code);
     if (!this.allowBrowserPlayer(code) && room?.phase === 'results') return false;
-    const ok=room?.advance()??false;
+    const ok=room?.advance(id)??false;
     if (room?.phase === 'loading') this.pushHostIdentity(code);
     this.pushState(code); return ok;
   }

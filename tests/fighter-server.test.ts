@@ -196,6 +196,7 @@ describe('FighterServer WebSocket authority and lifecycle', () => {
     send(host, { type: 'spectate', roomCode: 'HOST-LOSS' });
     await waitFor(host, message => message.type === 'host_identity' && message.isHost === true);
     const playerId = fighter!.voiceJoin('HOST-LOSS', 'Ada', undefined, 1)!;
+    expect(fighter!.voiceAdvance('HOST-LOSS', playerId)).toBe(true);
     expect(fighter!.voiceSelectFighter('HOST-LOSS', playerId, 'nyx')).toBe(true);
     expect(fighter!.voiceSelectMap('HOST-LOSS', playerId, 'void')).toBe(true);
     const generation = fighter!.findRoom('HOST-LOSS')!.state().loadingGeneration;
@@ -257,10 +258,12 @@ describe('FighterServer WebSocket authority and lifecycle', () => {
     expect(fighter!.findRoom('HOME')?.hasPlayer(joined.playerId as string)).toBe(false);
   });
 
-  it('keeps both voice players selections independent and advances automatically', async () => {
+  it('gates the voice lobby, then keeps selections independent and advances automatically', async () => {
     await start();
     const p1 = fighter!.voiceJoin(' voice ', 'Ada')!;
     const p2 = fighter!.voiceJoin('VOICE', 'Bob')!;
+    expect(fighter!.findRoom('VOICE')?.phase).toBe('lobby');
+    expect(fighter!.voiceAdvance('VOICE', p1)).toBe(true);
     expect(fighter!.findRoom('VOICE')?.phase).toBe('fighter_select');
     expect(fighter!.voiceSelectFighter('VOICE', p1, 'nyx')).toBe(true);
     expect(fighter!.voiceSelectFighter('VOICE', p2, 'wraith')).toBe(true);

@@ -75,7 +75,9 @@ export class FighterVoiceSession {
   private stationManaged=false;
   private stationAssignment: { side: 'p1' | 'p2'; expectedPlayers: number } | null = null;
   private applyingSelection=false;
+  private applyingName=false;
   private awaitingName=false;
+  private lastLobbyReady=false;
   private lastFinalText:{text:string;beforeContext:string;afterContext:string;at:number}|null=null;
   private t = createTranslator(this.commandLocale, FIGHTER_MESSAGES);
   constructor(private deps: FighterVoiceDeps) {}
@@ -104,6 +106,7 @@ export class FighterVoiceSession {
       this.code = code; this.playerId = joined.playerId; this.callSid = message.callSid;
       const snapshot = this.deps.snapshot(code, joined.playerId, this.commandLocale); this.lastPhase = snapshot?.phase ?? null;
       this.awaitingName=!this.authoritativeName&&!(snapshot?.nameConfirmed??!this.isPlaceholderName(snapshot?.myName??null));
+      this.lastLobbyReady=snapshot?this.isLobbyReady(snapshot):false;
       this.lastFoeFighterId = snapshot?.foeFighterId ?? null;
       this.lastFoeName = snapshot?.foeName ?? null;
       if (joined.resumed && snapshot) {
@@ -166,7 +169,7 @@ export class FighterVoiceSession {
     if(this.awaitingName){
       const name=parseFighterSpokenName(spoken,this.commandLocale);
       if(name&&!isFighterAdvanceWord(spoken,this.commandLocale)&&!isFighterStarAlias(spoken,this.commandLocale)){
-        this.awaitingName=false;this.deps.setName(this.code!,this.playerId!,name);
+        this.awaitingName=false;this.applyingName=true;this.deps.setName(this.code!,this.playerId!,name);this.applyingName=false;
         const next=this.deps.snapshot(this.code!,this.playerId!,this.commandLocale)??snapshot;
         this.deps.say(this.t('voice.welcomeName',{name}));
         this.deps.say(this.t('voice.controlsIntro'));this.deps.say(this.t('voice.fightHelp'));
@@ -188,10 +191,11 @@ export class FighterVoiceSession {
           this.deps.say(this.t('voice.welcomeName',{name}));
           this.deps.say(this.t('voice.controlsIntro'));
           this.deps.say(this.t('voice.fightHelp'));
-          this.deps.setName(this.code!,this.playerId!,name);
-          return;
+          this.applyingName=true;this.deps.setName(this.code!,this.playerId!,name);this.applyingName=false;
+          const next=this.deps.snapshot(this.code!,this.playerId!,this.commandLocale)??snapshot;
+          this.speakContext(next);return;
         }
-        this.deps.setName(this.code!, this.playerId!, name);
+        this.applyingName=true;this.deps.setName(this.code!, this.playerId!, name);this.applyingName=false;
         const next = this.deps.snapshot(this.code!, this.playerId!, this.commandLocale) ?? snapshot;
         this.deps.say(this.t('voice.welcomeName',{name}));this.speakContext(next);
         return;
@@ -252,8 +256,10 @@ export class FighterVoiceSession {
   onStateChanged(): void {
     if (!this.code || !this.playerId) return;
     const snapshot = this.deps.snapshot(this.code, this.playerId, this.commandLocale); if (!snapshot) return;
-    if(this.applyingSelection){
-      this.lastPhase=snapshot.phase;this.lastFoeFighterId=snapshot.foeFighterId;this.lastFoeName=snapshot.foeName;return;
+    const lobbyReady=this.isLobbyReady(snapshot);
+    if(this.applyingSelection||this.applyingName){
+      this.lastPhase=snapshot.phase;this.lastFoeFighterId=snapshot.foeFighterId;this.lastFoeName=snapshot.foeName;
+      this.lastLobbyReady=lobbyReady;return;
     }
     if (snapshot.phase === 'countdown') {
       const count = Math.ceil(snapshot.countdown ?? 0);
@@ -279,9 +285,11 @@ export class FighterVoiceSession {
       };
       this.deps.say(this.t('voice.opponentLocked',values));
     }
+    if(snapshot.phase==='lobby'&&lobbyReady&&!this.lastLobbyReady)this.deps.say(this.t('voice.sayStart'));
     this.lastFoeFighterId = snapshot.foeFighterId;
     this.lastFoeName = snapshot.foeName;
     this.lastPhase = snapshot.phase;
+    this.lastLobbyReady=lobbyReady;
   }
 
   onFighterEvent(event: FighterEvent): void {
@@ -308,8 +316,9 @@ export class FighterVoiceSession {
   }
 
   private advanceOrExplain(snapshot: FighterVoiceSnapshot): void {
-    if(snapshot.automaticSetup&&['lobby','fighter_select','map_select'].includes(snapshot.phase)){this.speakContext(snapshot);return;}
+    if(snapshot.automaticSetup&&['fighter_select','map_select'].includes(snapshot.phase)){this.speakContext(snapshot);return;}
     if (!this.authoritativeName&&this.isPlaceholderName(snapshot.myName) && snapshot.phase === 'lobby') { this.deps.say(this.t('voice.nameBeforeStart')); return; }
+    if(snapshot.phase==='lobby'&&!this.hasExpectedPlayers(snapshot)){this.sayWaitOnce(this.t('voice.waitingLobbyPlayers'));return;}
     if (snapshot.phase === 'fighter_select' && !this.hasExpectedPlayers(snapshot)) { this.sayWaitOnce(this.t('voice.waitingPlayerTwo')); return; }
     if (!this.deps.advance(this.code!, this.playerId!)) {
       this.deps.say(this.t(snapshot.phase === 'fighter_select' ? 'voice.waitingFighterChoices'
@@ -323,7 +332,7 @@ export class FighterVoiceSession {
     if(this.awaitingName||(!this.authoritativeName&&!(snapshot.nameConfirmed??!this.isPlaceholderName(snapshot.myName)))){say(this.t('voice.tellName'));return;}
     if (snapshot.phase === 'lobby') {
       if (!this.authoritativeName&&this.isPlaceholderName(snapshot.myName)) say(this.t('voice.tellName'));
-      else if(snapshot.automaticSetup)say(this.t('voice.waitingPlayerTwo'));
+      else if(snapshot.automaticSetup&&!this.hasExpectedPlayers(snapshot))say(this.t('voice.waitingLobbyPlayers'));
       else say(this.t('voice.sayStart'));
     } else if (snapshot.phase === 'fighter_select') {
       if (snapshot.myFighterName) say(!this.hasExpectedPlayers(snapshot) ? this.t('voice.waitingPlayerTwo')
@@ -377,6 +386,12 @@ export class FighterVoiceSession {
     return snapshot.hasExpectedPlayers ?? (this.stationAssignment
       ? snapshot.playerCount >= this.stationAssignment.expectedPlayers
       : true);
+  }
+
+  private isLobbyReady(snapshot:FighterVoiceSnapshot):boolean{
+    return snapshot.phase==='lobby'&&this.hasExpectedPlayers(snapshot)
+      &&(snapshot.nameConfirmed??!this.isPlaceholderName(snapshot.myName))
+      &&(snapshot.playerCount<2||!this.isPlaceholderName(snapshot.foeName));
   }
 
   private resetInterim(): void { this.interimCandidate = null; this.interimCount = 0; this.interimFiredCommand = null; }
