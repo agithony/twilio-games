@@ -10,8 +10,8 @@
 > `POST /sms` webhook owns deterministic SMS/WhatsApp commands and immediate replies; Conversation
 > Orchestrator and TAC enrich Conversation Memory only. The station uses one individual FIFO ready
 > line, admits up to two humans to Racer, Monsters, or Fighter, and keeps overflow in FIFO order.
-> Assigned callers are routed to stable personal slots. Racer advances setup only when either caller
-> speaks the next phase command after all required choices; Monsters and Fighter advance automatically.
+> Assigned callers are routed to stable personal slots. Racer and Fighter advance setup only when
+> either caller speaks the next phase command after all required choices; Monsters advances automatically.
 > WhatsApp call-now uses the approved localized
 > Phone CTA when configured. All three games report factual authoritative results, and staff can reset
 > the Racer leaderboard for one selected map.

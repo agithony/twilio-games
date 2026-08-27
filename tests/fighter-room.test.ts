@@ -80,7 +80,8 @@ describe('fighter room', () => {
     expect(room.phase).toBe('lobby');expect(room.advance()).toBe(false);expect(room.advance(a.playerId)).toBe(true);
     expect(room.back()).toBe(false);expect(room.phase).toBe('fighter_select');
     room.selectFighter(b.playerId,'wraith');
-    room.selectFighter(a.playerId,'nyx');expect(room.phase).toBe('map_select');expect(room.advance()).toBe(false);
+    room.selectFighter(a.playerId,'nyx');expect(room.phase).toBe('fighter_select');expect(room.advance()).toBe(false);
+    expect(room.advance(a.playerId)).toBe(true);expect(room.phase).toBe('map_select');
     expect(room.lobbyPlayers()).toEqual(expect.arrayContaining([
       expect.objectContaining({playerId:a.playerId,side:'p1',fighterId:'nyx'}),
       expect.objectContaining({playerId:b.playerId,side:'p2',fighterId:'wraith'}),
@@ -88,17 +89,19 @@ describe('fighter room', () => {
     expect(room.selectMap(b.playerId,'void')).toBe(true);
     expect(room.state()).toMatchObject({phase:'map_select',mapVotesByPlayerId:{[b.playerId]:'void'}});
     expect(room.selectMap(a.playerId,'foundry')).toBe(true);
-    expect(room.phase).toBe('loading');
+    expect(room.phase).toBe('map_select');expect(room.advance()).toBe(false);
+    expect(room.advance(b.playerId)).toBe(true);expect(room.phase).toBe('loading');
   });
 
-  it('lets a lone retained player continue automatically after a no-show drop', () => {
+  it('lets a lone retained player continue through explicit gates after a no-show drop', () => {
     const room=new FighterRoom('4821');room.expectHumanPlayers(2);
     const b=room.addPlayer('B','p2');if('error' in b)throw new Error(b.error);
     room.expectHumanPlayers(1);room.advance(b.playerId);room.selectFighter(b.playerId,'wraith');
 
     expect(room.canControlSetup(b.playerId)).toBe(true);
     expect(room.state()).toMatchObject({expectedPlayerCount:1,hasExpectedPlayers:true,players:[expect.objectContaining({playerId:b.playerId,side:'p1'})]});
-    expect(room.phase).toBe('map_select');expect(room.advance()).toBe(false);
+    expect(room.phase).toBe('fighter_select');expect(room.advance()).toBe(false);
+    expect(room.advance(b.playerId)).toBe(true);expect(room.phase).toBe('map_select');
   });
   it('lets a standalone survivor continue against AI after the other caller disconnects', () => {
     const room=new FighterRoom('STANDALONE-DROP');room.expectHumanPlayers(2,false);
@@ -106,8 +109,10 @@ describe('fighter room', () => {
     room.removePlayer(b.playerId);
     room.advance(a.playerId);
     room.selectFighter(a.playerId,'nyx');
+    expect(room.phase).toBe('fighter_select');room.advance(a.playerId);
     expect(room.phase).toBe('map_select');
     room.selectMap(a.playerId,'void');
+    expect(room.phase).toBe('map_select');room.advance(a.playerId);
     expect(room.phase).toBe('loading');
   });
   it('rebuilds standalone loading setup when one caller disconnects', () => {
@@ -115,12 +120,17 @@ describe('fighter room', () => {
     const a=room.addPlayer('Ada'),b=room.addPlayer('Bo');if('error' in a||'error' in b)throw new Error('join failed');
     room.advance(a.playerId);
     room.selectFighter(a.playerId,'nyx');room.selectFighter(b.playerId,'wraith');
+    room.advance(a.playerId);
     room.selectMap(a.playerId,'void');room.selectMap(b.playerId,'void');
+    room.advance(a.playerId);
     expect(room.phase).toBe('loading');
     room.removePlayer(b.playerId);
-    expect(room.phase).toBe('map_select');
+    expect(room.phase).toBe('fighter_select');
     expect(room.state().selectedMap).toBeNull();
+    room.advance(a.playerId);
+    expect(room.phase).toBe('map_select');
     room.selectMap(a.playerId,'void');
+    expect(room.phase).toBe('map_select');room.advance(a.playerId);
     expect(room.phase).toBe('loading');
     expect(room.lobbyPlayers().find(player=>player.isAi)?.fighterId).not.toBe('nyx');
   });
@@ -163,21 +173,23 @@ describe('fighter room', () => {
     const room=new FighterRoom('4821');room.expectHumanPlayers(2);
     const a=room.addPlayer('A','p1'),b=room.addPlayer('B','p2');if('error'in a||'error'in b)throw new Error('join failed');
     room.advance(a.playerId);
-    room.selectFighter(a.playerId,'nyx');room.selectFighter(b.playerId,'wraith');expect(room.phase).toBe('map_select');
+    room.selectFighter(a.playerId,'nyx');room.selectFighter(b.playerId,'wraith');room.advance(a.playerId);expect(room.phase).toBe('map_select');
     room.selectMap(a.playerId,'void');room.removePlayer(b.playerId);
     expect(room.state()).toMatchObject({phase:'fighter_select',selectedMap:null,mapVotesByPlayerId:{}});
     expect(room.addPlayer('C','p2')).toEqual(expect.objectContaining({playerId:expect.any(String)}));
   });
 
-  it.each(['count-first','remove-first'] as const)('reconciles arena voting when a no-show is dropped %s',order=>{
+  it.each(['count-first','remove-first'] as const)('keeps arena voting gated when a no-show is dropped %s',order=>{
     const room=new FighterRoom('4821');room.expectHumanPlayers(2);
     const a=room.addPlayer('A','p1'),b=room.addPlayer('B','p2');if('error'in a||'error'in b)throw new Error('join failed');
     room.advance(a.playerId);
-    room.selectFighter(a.playerId,'nyx');room.selectFighter(b.playerId,'wraith');room.selectMap(a.playerId,'void');
+    room.selectFighter(a.playerId,'nyx');room.selectFighter(b.playerId,'wraith');room.advance(a.playerId);room.selectMap(a.playerId,'void');
     if(order==='count-first')room.expectHumanPlayers(1);
     room.removePlayer(b.playerId);
     if(order==='remove-first')room.expectHumanPlayers(1);
-    expect(room.phase).toBe('loading');expect(room.state().selectedMap).toBe('void');
+    if(room.phase==='fighter_select')expect(room.advance(a.playerId)).toBe(true);
+    expect(room.phase).toBe('map_select');expect(room.state().selectedMap).toBe('void');
+    expect(room.advance(a.playerId)).toBe(true);expect(room.phase).toBe('loading');
   });
 
   it('rejects stale loading generations and falls back to map selection', () => {

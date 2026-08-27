@@ -78,6 +78,8 @@ export class FighterVoiceSession {
   private applyingName=false;
   private awaitingName=false;
   private lastLobbyReady=false;
+  private lastFighterChoicesReady=false;
+  private lastMapVotesReady=false;
   private lastFinalText:{text:string;beforeContext:string;afterContext:string;at:number}|null=null;
   private t = createTranslator(this.commandLocale, FIGHTER_MESSAGES);
   constructor(private deps: FighterVoiceDeps) {}
@@ -107,6 +109,8 @@ export class FighterVoiceSession {
       const snapshot = this.deps.snapshot(code, joined.playerId, this.commandLocale); this.lastPhase = snapshot?.phase ?? null;
       this.awaitingName=!this.authoritativeName&&!(snapshot?.nameConfirmed??!this.isPlaceholderName(snapshot?.myName??null));
       this.lastLobbyReady=snapshot?this.isLobbyReady(snapshot):false;
+      this.lastFighterChoicesReady=snapshot?this.areFighterChoicesReady(snapshot):false;
+      this.lastMapVotesReady=snapshot?this.areMapVotesReady(snapshot):false;
       this.lastFoeFighterId = snapshot?.foeFighterId ?? null;
       this.lastFoeName = snapshot?.foeName ?? null;
       if (joined.resumed && snapshot) {
@@ -212,10 +216,9 @@ export class FighterVoiceSession {
           const next = this.deps.snapshot(this.code!, this.playerId!, this.commandLocale) ?? snapshot;
           const namePrompt = unnamed ? this.t('voice.namePromptSuffix') : '';
           const values = { name: fighter.name, namePrompt };
-          if (!this.hasExpectedPlayers(next)) this.deps.say(this.t('voice.fighterLockedWaitingPlayerTwo', values));
-           else if(next.phase==='map_select')this.deps.say(this.t('voice.fighterLockedNext',values));
+           if (!this.hasExpectedPlayers(next)) this.deps.say(this.t('voice.fighterLockedWaitingPlayerTwo', values));
+           else if(this.areFighterChoicesReady(next))this.deps.say(this.t('voice.fighterLockedNext',values));
            else this.deps.say(this.t('voice.fighterLockedWaiting',values));
-          if(next.phase!==snapshot.phase)this.speakContext(next);
         }
         return;
       }
@@ -227,15 +230,15 @@ export class FighterVoiceSession {
       const map = matchChoice(spoken, snapshot.maps, this.commandLocale);
       if (map) {
         this.applyingSelection=true;const selected=this.deps.selectMap(this.code!,this.playerId!,map.id);this.applyingSelection=false;
-        this.deps.say(selected
-          ? this.t(snapshot.automaticSetup?'voice.mapVote':'voice.mapSelected',{name:this.localizedMapName(map)})
-          :this.t('voice.mapUnavailable',{name:this.localizedMapName(map)}));
         const next=this.deps.snapshot(this.code!,this.playerId!,this.commandLocale);
-        if(selected&&next&&next.phase!==snapshot.phase)this.speakContext(next);
+        const key=snapshot.automaticSetup&&(next?this.areMapVotesReady(next):false)?'voice.mapVote':'voice.mapVoteWait';
+        this.deps.say(selected
+          ? this.t(snapshot.automaticSetup?key:'voice.mapSelected',{name:this.localizedMapName(map)})
+          :this.t('voice.mapUnavailable',{name:this.localizedMapName(map)}));
         return;
       }
       if(isFighterAdvanceWord(spoken,this.commandLocale)||isFighterFightAlias(spoken,this.commandLocale)||isFighterStarAlias(spoken,this.commandLocale)){
-        if(snapshot.automaticSetup)this.speakContext(snapshot);else this.advanceOrExplain(snapshot);return;
+        this.advanceOrExplain(snapshot);return;
       }
       this.deps.say(this.t('voice.arenaUnknown', { prompt: this.t('voice.choiceArena') })); return;
     }
@@ -257,9 +260,11 @@ export class FighterVoiceSession {
     if (!this.code || !this.playerId) return;
     const snapshot = this.deps.snapshot(this.code, this.playerId, this.commandLocale); if (!snapshot) return;
     const lobbyReady=this.isLobbyReady(snapshot);
+    const fighterChoicesReady=this.areFighterChoicesReady(snapshot);
+    const mapVotesReady=this.areMapVotesReady(snapshot);
     if(this.applyingSelection||this.applyingName){
       this.lastPhase=snapshot.phase;this.lastFoeFighterId=snapshot.foeFighterId;this.lastFoeName=snapshot.foeName;
-      this.lastLobbyReady=lobbyReady;return;
+      this.lastLobbyReady=lobbyReady;this.lastFighterChoicesReady=fighterChoicesReady;this.lastMapVotesReady=mapVotesReady;return;
     }
     if (snapshot.phase === 'countdown') {
       const count = Math.ceil(snapshot.countdown ?? 0);
@@ -286,10 +291,16 @@ export class FighterVoiceSession {
       this.deps.say(this.t('voice.opponentLocked',values));
     }
     if(snapshot.phase==='lobby'&&lobbyReady&&!this.lastLobbyReady)this.deps.say(this.t('voice.sayStart'));
+    if(snapshot.phase===this.lastPhase&&snapshot.phase==='fighter_select'&&fighterChoicesReady&&!this.lastFighterChoicesReady)
+      this.deps.say(this.t('voice.fightersReadyNext'),this.phaseGuard('fighter_select'));
+    if(snapshot.phase===this.lastPhase&&snapshot.phase==='map_select'&&mapVotesReady&&!this.lastMapVotesReady)
+      this.deps.say(this.t('voice.mapVotesReadyStart'),this.phaseGuard('map_select'));
     this.lastFoeFighterId = snapshot.foeFighterId;
     this.lastFoeName = snapshot.foeName;
     this.lastPhase = snapshot.phase;
     this.lastLobbyReady=lobbyReady;
+    this.lastFighterChoicesReady=fighterChoicesReady;
+    this.lastMapVotesReady=mapVotesReady;
   }
 
   onFighterEvent(event: FighterEvent): void {
@@ -316,13 +327,12 @@ export class FighterVoiceSession {
   }
 
   private advanceOrExplain(snapshot: FighterVoiceSnapshot): void {
-    if(snapshot.automaticSetup&&['fighter_select','map_select'].includes(snapshot.phase)){this.speakContext(snapshot);return;}
     if (!this.authoritativeName&&this.isPlaceholderName(snapshot.myName) && snapshot.phase === 'lobby') { this.deps.say(this.t('voice.nameBeforeStart')); return; }
     if(snapshot.phase==='lobby'&&!this.hasExpectedPlayers(snapshot)){this.sayWaitOnce(this.t('voice.waitingLobbyPlayers'));return;}
     if (snapshot.phase === 'fighter_select' && !this.hasExpectedPlayers(snapshot)) { this.sayWaitOnce(this.t('voice.waitingPlayerTwo')); return; }
     if (!this.deps.advance(this.code!, this.playerId!)) {
-      this.deps.say(this.t(snapshot.phase === 'fighter_select' ? 'voice.waitingFighterChoices'
-        : snapshot.phase === 'map_select' ? 'voice.chooseArenaFirst'
+      this.deps.say(this.t(snapshot.phase === 'fighter_select' ? (snapshot.myFighterId?'voice.waitingFighterChoices':'voice.chooseFighterFirst')
+        : snapshot.phase === 'map_select' ? (snapshot.myMapVote?'voice.waitingMapVotes':'voice.chooseArenaFirst')
           : snapshot.phase === 'victory' ? 'voice.victoryPlaying' : 'voice.roomNotReady'));
     }
   }
@@ -336,12 +346,13 @@ export class FighterVoiceSession {
       else say(this.t('voice.sayStart'));
     } else if (snapshot.phase === 'fighter_select') {
       if (snapshot.myFighterName) say(!this.hasExpectedPlayers(snapshot) ? this.t('voice.waitingPlayerTwo')
-        :this.t(snapshot.automaticSetup?'voice.yourFighterWaiting':'voice.yourFighterNext',{name:snapshot.myFighterName}));
+        :this.t(this.areFighterChoicesReady(snapshot)?'voice.yourFighterNext':'voice.yourFighterWaiting',{name:snapshot.myFighterName}));
       else say(this.t('voice.choiceFighter'));
     } else if (snapshot.phase === 'map_select') {
       if(snapshot.automaticSetup&&snapshot.myMapVote){
         const choice=snapshot.maps.find(map=>map.id===snapshot.myMapVote);
-        say(this.t('voice.mapVote',{name:choice?this.localizedMapName(choice):snapshot.myMapVote}));
+        say(this.t(this.areMapVotesReady(snapshot)?'voice.mapVote':'voice.mapVoteWait',
+          {name:choice?this.localizedMapName(choice):snapshot.myMapVote}));
       }else if(!snapshot.automaticSetup&&snapshot.selectedMap){
         const choice=snapshot.maps.find(map=>map.id===snapshot.selectedMap);
         say(this.t('voice.mapIsSelected',{name:choice?this.localizedMapName(choice):snapshot.selectedMap}));
@@ -392,6 +403,14 @@ export class FighterVoiceSession {
     return snapshot.phase==='lobby'&&this.hasExpectedPlayers(snapshot)
       &&(snapshot.nameConfirmed??!this.isPlaceholderName(snapshot.myName))
       &&(snapshot.playerCount<2||!this.isPlaceholderName(snapshot.foeName));
+  }
+
+  private areFighterChoicesReady(snapshot:FighterVoiceSnapshot):boolean{
+    return snapshot.phase==='fighter_select'&&this.hasExpectedPlayers(snapshot)&&snapshot.allFightersSelected;
+  }
+
+  private areMapVotesReady(snapshot:FighterVoiceSnapshot):boolean{
+    return snapshot.phase==='map_select'&&this.hasExpectedPlayers(snapshot)&&snapshot.allMapVotes;
   }
 
   private resetInterim(): void { this.interimCandidate = null; this.interimCount = 0; this.interimFiredCommand = null; }
