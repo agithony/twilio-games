@@ -243,6 +243,7 @@ The application runs locally without Twilio or OpenAI credentials. Configure the
 | `EDITOR_TOKEN` | Requires authentication for editor and manifest writes | Writes open when unset |
 | `GOOGLE_OAUTH_CLIENT_ID` | Google OAuth web client for the private analytics dashboard | Analytics access disabled when unset |
 | `GOOGLE_OAUTH_CLIENT_SECRET` | Google OAuth web client secret | Analytics access disabled when unset |
+| `ANALYTICS_ADMIN_PIN` | Optional alternative PIN for the private analytics dashboard; accepts 6-64 letters, numbers, and special characters | PIN login hidden when unset |
 | `ANALYTICS_ALLOWED_EMAIL` | One exact verified Google email allowed in addition to `@twilio.com` accounts | No exception account |
 | `ANALYTICS_PATH` | Persistent daily analytics rollup file | `data/analytics.json` |
 | `ARCADE_CONFIG_DIRECTORY` | Persistent Arcade configuration and audit directory | `data/` |
@@ -277,7 +278,7 @@ When signature validation is enabled without `TWILIO_AUTH_TOKEN`, primary-accoun
 
 `/analytics` reports engaged participants, sessions, completion, active play time, accepted voice commands, daily trends, per-game performance, and popular maps, characters, and vehicles. Filters accept endpoints no more than 366 days apart, which permits 367 inclusive UTC date buckets, and an individual game. The PDF button downloads the same filtered report model shown on screen.
 
-Access uses Google OAuth. The server accepts verified Google emails ending exactly in `@twilio.com`, plus one exact exception configured through `ANALYTICS_ALLOWED_EMAIL`. Sessions are server-side and use an eight-hour HTTP-only, SameSite=Lax cookie; the server adds `Secure` when the configured redirect URI uses HTTPS. Configure the Google web client redirect URI as `<PUBLIC_BASE_URL>/auth/google/callback`. See [Analytics setup](docs/analytics.md).
+Access uses Google OAuth or the optional `ANALYTICS_ADMIN_PIN`. Google accepts verified emails ending exactly in `@twilio.com`, plus one exact exception configured through `ANALYTICS_ALLOWED_EMAIL`. Both methods create the same server-side eight-hour HTTP-only, SameSite=Lax session; the server adds `Secure` over HTTPS. Configure the Google web client redirect URI as `<PUBLIC_BASE_URL>/auth/google/callback`. See [Analytics setup](docs/analytics.md).
 
 Collection happens at authoritative server transitions, so browser refreshes and spectators do not inflate gameplay metrics. The store keeps pseudonymous participant keys and daily aggregates only: it does not retain phone numbers, display names, transcripts, or LLM text. Its 730-day age cutoff can retain 731 inclusive UTC date buckets in `data/analytics.json` on the Azure Files mount.
 

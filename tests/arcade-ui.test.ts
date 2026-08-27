@@ -116,6 +116,8 @@ describe('Arcade browser UI', () => {
     expect(script).toContain("show('selection-control',!paused&&phase==='GAME_SELECTION')");
     expect(script).toContain("show('playing-control',!paused&&phase==='PLAYING')");
     expect(script).toContain("show('results-control',!paused&&phase==='RESULTS')");
+    expect(html).toContain('End game + disconnect calls');
+    expect(script).toContain('End the live game and disconnect all player calls now?');
   });
 
   it('keeps emergency reset in one clear confirmation dialog', () => {

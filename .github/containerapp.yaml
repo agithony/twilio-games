@@ -32,6 +32,7 @@ properties:
       - name: editor-token
       - name: google-oauth-client-id
       - name: google-oauth-client-secret
+      - name: analytics-admin-pin
       - name: openai-api-key
       - name: dub-api-key
       - name: dub-folder-id
@@ -157,6 +158,8 @@ properties:
             secretRef: google-oauth-client-id
           - name: GOOGLE_OAUTH_CLIENT_SECRET
             secretRef: google-oauth-client-secret
+          - name: ANALYTICS_ADMIN_PIN
+            secretRef: analytics-admin-pin
           - name: ANALYTICS_ALLOWED_EMAIL
             value: "${ANALYTICS_ALLOWED_EMAIL}"
           # One root key derives separate player-session and challenge-token keys. Mode-off ignores it.

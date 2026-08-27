@@ -1,10 +1,12 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import type http from 'node:http';
 
 const SESSION_COOKIE = 'twilio_analytics_session';
 const STATE_COOKIE = 'twilio_analytics_oauth_state';
 const SESSION_MS = 8 * 60 * 60 * 1000;
 const STATE_MS = 10 * 60 * 1000;
+const PIN_FAILURE_WINDOW_MS = 15 * 60 * 1000;
+const PIN_MAX_FAILURES = 5;
 
 interface Session { email: string; analyticsAuthorized: boolean; expiresAt: number; }
 interface OAuthState { expiresAt: number; }
@@ -15,6 +17,7 @@ export interface GoogleAnalyticsAuthOptions {
   clientSecret?: string;
   redirectUri: string;
   allowedEmail?: string;
+  adminPin?: string;
   fetcher?: typeof fetch;
   now?: () => number;
 }
@@ -23,11 +26,13 @@ export class GoogleAnalyticsAuth {
   private readonly clientId: string;
   private readonly clientSecret: string;
   private readonly analyticsAllowedEmails: readonly string[];
+  private readonly adminPinDigest: Buffer | null;
   private readonly fetcher: typeof fetch;
   private readonly now: () => number;
   private readonly secure: boolean;
   private sessions = new Map<string, Session>();
   private states = new Map<string, OAuthState>();
+  private pinFailures: number[] = [];
 
   constructor(private readonly options: GoogleAnalyticsAuthOptions) {
     this.clientId = options.clientId?.trim() ?? '';
@@ -35,15 +40,22 @@ export class GoogleAnalyticsAuth {
     this.analyticsAllowedEmails = [options.allowedEmail ?? '']
       .map(email => email.trim().toLowerCase())
       .filter(Boolean);
+    const adminPin = options.adminPin?.trim() ?? '';
+    if (adminPin && adminPin !== 'disabled' && (adminPin.length < 6 || adminPin.length > 64)) {
+      throw new Error('ANALYTICS_ADMIN_PIN must contain between 6 and 64 characters');
+    }
+    this.adminPinDigest = adminPin && adminPin !== 'disabled' ? digest(adminPin) : null;
     this.fetcher = options.fetcher ?? fetch;
     this.now = options.now ?? Date.now;
     this.secure = options.redirectUri.startsWith('https://');
   }
 
-  get configured(): boolean { return Boolean(this.clientId && this.clientSecret); }
+  get googleConfigured(): boolean { return Boolean(this.clientId && this.clientSecret); }
+  get pinConfigured(): boolean { return this.adminPinDigest !== null; }
+  get configured(): boolean { return this.googleConfigured || this.pinConfigured; }
 
   begin(req: http.IncomingMessage, res: http.ServerResponse): void {
-    if (!this.configured) { res.writeHead(503, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' }).end('Google OAuth is not configured'); return; }
+    if (!this.googleConfigured) { res.writeHead(503, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' }).end('Google OAuth is not configured'); return; }
     this.sweep();
     const state = randomBytes(24).toString('base64url');
     this.states.set(state, { expiresAt: this.now() + STATE_MS });
@@ -102,6 +114,31 @@ export class GoogleAnalyticsAuth {
     return user?.analyticsAuthorized ? { email: user.email } : null;
   }
 
+  completePin(res: http.ServerResponse, pin: string): void {
+    const now = this.now();
+    this.pinFailures = this.pinFailures.filter(at => at > now - PIN_FAILURE_WINDOW_MS);
+    if (!this.adminPinDigest) {
+      this.pinResponse(res, 503, 'pin_not_configured'); return;
+    }
+    if (this.pinFailures.length >= PIN_MAX_FAILURES) {
+      this.pinResponse(res, 429, 'too_many_attempts', this.pinRetryAfter(now)); return;
+    }
+    const valid = timingSafeEqual(this.adminPinDigest, digest(pin.trim()));
+    if (!valid) {
+      this.pinFailures.push(now);
+      const limited = this.pinFailures.length >= PIN_MAX_FAILURES;
+      this.pinResponse(res, limited ? 429 : 401, limited ? 'too_many_attempts' : 'invalid_pin',
+        limited ? this.pinRetryAfter(now) : undefined);
+      return;
+    }
+    this.pinFailures = [];
+    res.writeHead(200, {
+      'Content-Type': 'application/json',
+      'Set-Cookie': this.issueAuthorizedSession('Admin PIN'),
+      'Cache-Control': 'no-store',
+    }).end('{"authenticated":true}');
+  }
+
   logout(req: http.IncomingMessage, res: http.ServerResponse): void {
     const id = parseCookies(req.headers.cookie)[SESSION_COOKIE]; if (id) this.sessions.delete(id);
     res.writeHead(204, { 'Set-Cookie': cookie(SESSION_COOKIE, '', 0, this.secure), 'Cache-Control': 'no-store' }).end();
@@ -111,13 +148,29 @@ export class GoogleAnalyticsAuth {
   issueSession(email: string): string {
     const normalized = email.trim().toLowerCase();
     if (!isAnalyticsEmailAllowed(normalized, this.analyticsAllowedEmails)) throw new Error('email is not authorized');
+    return this.issueAuthorizedSession(normalized);
+  }
+
+  private issueAuthorizedSession(email: string): string {
     const id = randomBytes(32).toString('base64url');
     this.sessions.set(id, {
-      email: normalized,
-      analyticsAuthorized: isAnalyticsEmailAllowed(normalized, this.analyticsAllowedEmails),
+      email,
+      analyticsAuthorized: true,
       expiresAt: this.now() + SESSION_MS,
     });
     return cookie(SESSION_COOKIE, id, SESSION_MS, this.secure);
+  }
+
+  private pinRetryAfter(now: number): number {
+    return Math.max(1, Math.ceil(((this.pinFailures[0] ?? now) + PIN_FAILURE_WINDOW_MS - now) / 1000));
+  }
+
+  private pinResponse(res: http.ServerResponse, status: number, error: string, retryAfter?: number): void {
+    res.writeHead(status, {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-store',
+      ...(retryAfter ? { 'Retry-After': String(retryAfter) } : {}),
+    }).end(JSON.stringify({ error }));
   }
 
   private redirectDenied(
@@ -144,6 +197,10 @@ export function isAnalyticsEmailAllowed(email: string, allowedEmail: string | re
 
 function cookie(name: string, value: string, durationMs: number, secure: boolean): string {
   return `${name}=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(durationMs / 1000)}${secure ? '; Secure' : ''}`;
+}
+
+function digest(value: string): Buffer {
+  return createHash('sha256').update(value).digest();
 }
 
 function parseCookies(header?: string): Record<string, string> {

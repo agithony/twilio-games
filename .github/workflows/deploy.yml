@@ -68,6 +68,7 @@ jobs:
           DUB_API_KEY: ${{ secrets.DUB_API_KEY }}
           DUB_FOLDER_ID: ${{ secrets.DUB_FOLDER_ID }}
           DUB_SHORT_DOMAIN: ${{ vars.DUB_SHORT_DOMAIN }}
+          ANALYTICS_ADMIN_PIN: ${{ secrets.ANALYTICS_ADMIN_PIN }}
         run: |
           if [ -z "$TWILIO_AUTH_TOKEN" ]; then
             echo "TWILIO_AUTH_TOKEN is required for fail-closed production webhooks." >&2
@@ -76,6 +77,10 @@ jobs:
           if { [ -n "$DUB_API_KEY" ] && [ -z "$DUB_SHORT_DOMAIN" ]; } \
               || { [ -z "$DUB_API_KEY" ] && [ -n "$DUB_SHORT_DOMAIN" ]; }; then
             echo "DUB_API_KEY and DUB_SHORT_DOMAIN must be configured together." >&2
+            exit 1
+          fi
+          if [ -n "$ANALYTICS_ADMIN_PIN" ] && { [ "${#ANALYTICS_ADMIN_PIN}" -lt 6 ] || [ "${#ANALYTICS_ADMIN_PIN}" -gt 64 ]; }; then
+            echo "ANALYTICS_ADMIN_PIN must contain between 6 and 64 characters when configured." >&2
             exit 1
           fi
           if [ -z "$TWILIO_PT_AUTH_TOKEN" ] || [ "$TWILIO_PT_AUTH_TOKEN" = "$TWILIO_AUTH_TOKEN" ]; then
@@ -316,6 +321,7 @@ jobs:
           EDITOR_TOKEN: ${{ secrets.EDITOR_TOKEN }}
           GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          ANALYTICS_ADMIN_PIN: ${{ secrets.ANALYTICS_ADMIN_PIN }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           DUB_API_KEY: ${{ secrets.DUB_API_KEY }}
           DUB_FOLDER_ID: ${{ secrets.DUB_FOLDER_ID }}
@@ -336,6 +342,7 @@ jobs:
                 "editor-token=$EDITOR_TOKEN" \
                 "google-oauth-client-id=$GOOGLE_OAUTH_CLIENT_ID" \
                 "google-oauth-client-secret=$GOOGLE_OAUTH_CLIENT_SECRET" \
+                "analytics-admin-pin=${ANALYTICS_ADMIN_PIN:-disabled}" \
                 "openai-api-key=${OPENAI_API_KEY:-disabled}" \
                 "dub-api-key=${DUB_API_KEY:-disabled}" \
                 "dub-folder-id=${DUB_FOLDER_ID:-disabled}" \
@@ -360,6 +367,7 @@ jobs:
           EDITOR_TOKEN: ${{ secrets.EDITOR_TOKEN }}
           GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          ANALYTICS_ADMIN_PIN: ${{ secrets.ANALYTICS_ADMIN_PIN }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           DUB_API_KEY: ${{ secrets.DUB_API_KEY }}
           DUB_FOLDER_ID: ${{ secrets.DUB_FOLDER_ID }}
@@ -781,6 +789,7 @@ jobs:
                 "editor-token=${EDITOR_TOKEN:-}" \
                 "google-oauth-client-id=${GOOGLE_OAUTH_CLIENT_ID:-}" \
                 "google-oauth-client-secret=${GOOGLE_OAUTH_CLIENT_SECRET:-}" \
+                "analytics-admin-pin=${ANALYTICS_ADMIN_PIN:-disabled}" \
                 "openai-api-key=${OPENAI_API_KEY:-disabled}" \
                 "dub-api-key=${DUB_API_KEY:-disabled}" \
                 "dub-folder-id=${DUB_FOLDER_ID:-disabled}" \

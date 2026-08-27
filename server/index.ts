@@ -45,6 +45,7 @@ const analyticsAuth = new GoogleAnalyticsAuth({
   clientSecret: process.env.GOOGLE_OAUTH_CLIENT_SECRET,
   redirectUri: `${publicBaseUrl.replace(/\/$/, '')}/auth/google/callback`,
   allowedEmail: process.env.ANALYTICS_ALLOWED_EMAIL,
+  adminPin: process.env.ANALYTICS_ADMIN_PIN,
 });
 const arcadeEvents = new ArcadeEventHub(error => {
   console.error('[arcade-events] subscriber failed:', error instanceof Error ? error.message : String(error));

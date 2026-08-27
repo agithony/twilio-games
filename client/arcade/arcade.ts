@@ -1112,7 +1112,7 @@ async function stationAction(action:StationAction,game?:PlayableGame):Promise<vo
   const resetting=action==='reset';
   const reason=stationAuditReason(action,game);
   if(action==='fail'&&!window.confirm('Cancel this game start and return players to recruiting?'))return;
-  if(action==='complete'&&!window.confirm('End the live game now? Use this only if the game cannot finish normally.'))return;
+  if(action==='complete'&&!window.confirm('End the live game and disconnect all player calls now? Use this only if the game cannot finish normally.'))return;
   if(action==='select'&&!['racer','monsters','fighter'].includes(game??'')){setNotice('Select an enabled playable game.','error');return;}
   if(!state.operatorStationEtag){setNotice('Refresh the event before taking action.','error');return;}
   stationActionSaving=true;
@@ -1352,7 +1352,7 @@ function renderStationControls(phase:StationPhase):void{
   const gameSelect=el<HTMLSelectElement>('station-game');
   for(const option of [...gameSelect.options])option.disabled=!state.adminConfig?.station.games[option.value as PlayableGame].enabled;
   if(gameSelect.selectedOptions[0]?.disabled)gameSelect.value=[...gameSelect.options].find(option=>!option.disabled)?.value??'';
-  el('station-control-help').textContent=paused&&actionable?'Standalone play is active. This previous event queue is preserved until you reset it.':phase==='ATTRACT'?'Waiting for players. Actions appear when the event begins.':phase==='RECRUITING'?'Choose game now skips the remaining countdown. New arrivals wait for the following game.':phase==='LAUNCHING'?'The game is connecting to the big screen. Cancel only if it cannot start.':phase==='PLAYING'?'End the game here only if it cannot finish on its own.':phase==='RESULTS'?(state.operatorStation?.resultsHeld?'Results are held until you continue.':`Results continue automatically after ${state.adminConfig?.station.timings.resultsSeconds??10} seconds.`):'Only actions available right now are shown.';
+  el('station-control-help').textContent=paused&&actionable?'Standalone play is active. This previous event queue is preserved until you reset it.':phase==='ATTRACT'?'Waiting for players. Actions appear when the event begins.':phase==='RECRUITING'?'Choose game now skips the remaining countdown. New arrivals wait for the following game.':phase==='LAUNCHING'?'The game is connecting to the big screen. Cancel only if it cannot start.':phase==='PLAYING'?'This ends the game immediately and disconnects its player calls.':phase==='RESULTS'?(state.operatorStation?.resultsHeld?'Results are held until you continue.':`Results continue automatically after ${state.adminConfig?.station.timings.resultsSeconds??10} seconds.`):'Only actions available right now are shown.';
 }
 
 function controlActionName(value:string):string{
