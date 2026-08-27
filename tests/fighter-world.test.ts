@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { applyFighterCommand, createFighterWorld, FIGHTER_RUN_BACKWARD_DISTANCE,
   FIGHTER_RUN_BACKWARD_DURATION, FIGHTER_RUN_FORWARD_DISTANCE, FIGHTER_RUN_FORWARD_DURATION,
+  FIGHTER_ACTION_PLAYBACK_SPEED, FIGHTER_ACTION_TIMINGS, FIGHTER_JUMP_TWEEN_SECONDS,
+  FIGHTER_REACTION_PLAYBACK_SPEED,
   FIGHTER_MIN_SEPARATION, tickFighterWorld, type FighterCommand, type FighterWorld } from '../shared/fighter-world';
 
 describe('fighter world', () => {
@@ -77,6 +79,25 @@ describe('fighter world', () => {
     applyFighterCommand(world, 'p1', 'punch');
     tickFighterWorld(world, 0.4);
     expect(world.p2.health).toBe(91);
+  });
+
+  it('uses shorter responsive combat locks while keeping impact delayed',()=>{
+    const world=createFighterWorld();world.p1.x=0;world.p2.x=1;
+    applyFighterCommand(world,'p1','punch');
+    expect(world.p1.busyUntil).toBeCloseTo(FIGHTER_ACTION_TIMINGS.punch.recovery);
+    expect(tickFighterWorld(world,FIGHTER_ACTION_TIMINGS.punch.impact-0.01)).toEqual([]);
+    expect(tickFighterWorld(world,0.02)).toContainEqual({type:'hit',attacker:'p1',defender:'p2',damage:9,blocked:false});
+    expect(world.p2.busyUntil-world.now).toBeCloseTo(FIGHTER_ACTION_TIMINGS.hitStun);
+    tickFighterWorld(world,1);
+    applyFighterCommand(world,'p2','block');expect(world.p2.busyUntil-world.now).toBeCloseTo(FIGHTER_ACTION_TIMINGS.block);
+    tickFighterWorld(world,1);
+    applyFighterCommand(world,'p2','jump');
+    expect(world.p2.airborneUntil-world.now).toBeCloseTo(FIGHTER_ACTION_TIMINGS.jumpAirborne);
+    expect(world.p2.busyUntil-world.now).toBeCloseTo(FIGHTER_ACTION_TIMINGS.jumpRecovery);
+    expect(FIGHTER_ACTION_TIMINGS.punch.impact*FIGHTER_ACTION_PLAYBACK_SPEED.punch!).toBeCloseTo(0.324);
+    expect(FIGHTER_ACTION_TIMINGS.kick.impact*FIGHTER_ACTION_PLAYBACK_SPEED.kick!).toBeCloseTo(0.552);
+    expect(FIGHTER_ACTION_TIMINGS.hitStun*FIGHTER_REACTION_PLAYBACK_SPEED).toBeCloseTo(0.575);
+    expect(FIGHTER_JUMP_TWEEN_SECONDS).toBeLessThan(FIGHTER_ACTION_TIMINGS.jumpRecovery);
   });
 
   it('reduces damage while blocking', () => {

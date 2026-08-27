@@ -65,6 +65,17 @@ describe('RaceWorld', () => {
     w.applyIntent('p1', 'MOVE_LEFT'); expect(car().targetLane).toBe(0);   // clamped
   });
 
+  it('changes lanes quickly while preserving a visible smooth transition', () => {
+    startRacing(w);
+    const before=w.snapshot().cars.find(car=>car.id==='p1')!;
+    w.applyIntent('p1','MOVE_RIGHT');const target=laneX(before.targetLane+1);
+    w.step(STEP);const first=w.snapshot().cars.find(car=>car.id==='p1')!.x;
+    expect(Math.abs(target-first)).toBeLessThan(Math.abs(target-before.x));expect(first).not.toBe(target);
+    for(let step=1;step<10;step++)w.step(STEP);
+    const after=w.snapshot().cars.find(car=>car.id==='p1')!.x;
+    expect(Math.abs(target-after)).toBeCloseTo(Math.abs(target-before.x)*0.1,5);
+  });
+
   it('BOOST increases speed, BRAKE decreases it', () => {
     startRacing(w);
     const base = w.snapshot().cars[0]!.speed;

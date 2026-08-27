@@ -1,11 +1,12 @@
 import type { WorldSnapshot, CarState } from '../shared/types';
 
 interface Stamped { recvT: number; snap: WorldSnapshot; }
+export const RACER_INTERPOLATION_DELAY_MS = 100;
 
 export class InterpolationBuffer {
   private buf: Stamped[] = [];
   private delayMs: number;
-  constructor(delayMs = 100) { this.delayMs = delayMs; }
+  constructor(delayMs = RACER_INTERPOLATION_DELAY_MS) { this.delayMs = delayMs; }
 
   push(snap: WorldSnapshot, recvT: number): void {
     this.buf.push({ recvT, snap });
@@ -20,8 +21,8 @@ export class InterpolationBuffer {
     const last = this.buf[this.buf.length - 1]!;
     // If render time has run PAST the newest snapshot (a packet was late/dropped), don't FREEZE —
     // briefly EXTRAPOLATE forward from the last two snapshots so cars keep gliding. Capped so a long
-    // gap doesn't fling them off; clamped to the sim length elsewhere. This hides the ~64ms deployed
-    // cadence + occasional jitter that otherwise reads as stutter.
+    // gap doesn't fling them off; clamped to the sim length elsewhere. This hides occasional
+    // snapshot jitter that otherwise reads as stutter.
     if (target >= last.recvT) {
       if (this.buf.length < 2) return last.snap;
       const prev = this.buf[this.buf.length - 2]!;

@@ -79,7 +79,7 @@ export type ServerMessage =
   | { type: 'joined'; playerId: string; lane: number; roomCode: string }
   | { type: 'error'; code: string; message: string }
   | { type: 'items'; items: Item[]; map?: string | null }   // sent once at race start (map = chosen level)
-  | { type: 'snapshot'; snapshot: WorldSnapshot } // sent ~20-30/s during a race
+  | { type: 'snapshot'; snapshot: WorldSnapshot } // sent ~30/s during a race
   | { type: 'event'; event: GameEvent }           // announcer cues (lead change, finish, ...)
   | { type: 'lobby'; roomCode: string; players: LobbyPlayer[]; phase: Phase }   // roster (~2/s in pre-race)
   | { type: 'select_state'; roomCode: string; phase: Phase; players: LobbyPlayer[];

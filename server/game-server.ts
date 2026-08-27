@@ -45,6 +45,9 @@ export function parseClientMessage(raw: string): ParseResult {
 }
 function err(code: string, message: string): ParseResult { return { type: 'error', code, message }; }
 
+export const RACER_BROADCAST_HZ = 30;
+const RACER_LOBBY_BROADCAST_HZ = 2;
+
 interface Conn { ws: WebSocket; roomCode?: string; playerId?: string; locale?: SupportedLocale; stationDisplay?: boolean; hostAuthorized?: boolean; }
 
 export class GameServer {
@@ -57,6 +60,7 @@ export class GameServer {
   private lobbyTick = 0;
   private readonly port: number | undefined;
   private readonly broadcastEvery: number;
+  private readonly lobbyBroadcastEvery: number;
   /** Supplies the selectable cars/maps for newly created rooms (set by the http server, which owns
    *  the manifest + map list). Sync + cached so getOrCreate stays synchronous. */
   private roomConfig: (() => RoomConfig) | null = null;
@@ -78,7 +82,9 @@ export class GameServer {
   constructor(opts: { port?: number; server?: HttpServer; broadcastHz?: number; displayToken?: string }) {
     this.port = opts.port;
     this.displayToken = opts.displayToken?.trim() ?? '';
-    this.broadcastEvery = 1 / (opts.broadcastHz ?? 20);
+    const broadcastHz=opts.broadcastHz??RACER_BROADCAST_HZ;
+    this.broadcastEvery = 1 / broadcastHz;
+    this.lobbyBroadcastEvery=Math.max(1,Math.round(broadcastHz/RACER_LOBBY_BROADCAST_HZ));
     if (opts.server) this.attach(opts.server);
   }
 
@@ -180,6 +186,7 @@ export class GameServer {
         if ('error' in res) return this.send(conn, { type: 'error', code: res.error, message: res.error });
         conn.roomCode = msg.roomCode; conn.playerId = res.playerId;
         this.send(conn, { type: 'joined', playerId: res.playerId, lane: res.lane, roomCode: msg.roomCode });
+        if(['countdown','racing'].includes(room.phase))this.send(conn,anyItems(room));
         this.pushLobby(msg.roomCode);   // update every conn's roster instantly
         break;
       }
@@ -452,9 +459,8 @@ export class GameServer {
     let last = process.hrtime.bigint();
     // Run the loop at ~120Hz target. The sim steps by real dt (frame-rate independent) so this only
     // affects the GRANULARITY at which the broadcast accumulator is checked: a faster loop means the
-    // accumulator reaches broadcastEvery (50ms) close to on-time even when the container starves the
-    // timer to ~60ms actual. At 60Hz target, a starved tick meant broadcasts landed at ~64ms (≈15Hz);
-    // the tighter target keeps the effective broadcast rate near the intended 20Hz. The loop body is
+    // accumulator reaches broadcastEvery (~33ms) close to on-time even when the container starves the
+    // timer. The tighter target keeps the effective broadcast rate near the intended 30Hz. The loop body is
     // cheap (one small room), so the extra wakeups cost almost nothing.
     this.loop = setInterval(() => {
       const now = process.hrtime.bigint();
@@ -553,12 +559,14 @@ export class GameServer {
       const room = this.rooms.find(c.roomCode); if (!room) continue;
       // A room is EITHER pre/post-race (roster/select/results) OR racing per tick — send one kind.
       if (GameServer.isPreOrPost(room.phase)) {
-        // Throttle to ~2/s (every 10th broadcast ≈ 2/s at 20Hz). No snapshot/events out of race.
-        if (tick % 10 === 0) this.send(c, this.preRaceMessage(room));
+        // Keep menus/results near 2Hz even when the live-race snapshot rate changes.
+        if (tick % this.lobbyBroadcastEvery === 0) this.send(c, this.preRaceMessage(room));
         continue;
       }
       const snap = room.snapshot(); if (!snap) continue;
-      this.send(c, { type: 'snapshot', snapshot: snap });
+      // Static course items are delivered by the dedicated `items` message. Do not resend the whole
+      // course 30 times per second; reconnecting displays receive `items` before their next snapshot.
+      this.send(c, { type: 'snapshot', snapshot: { ...snap, items: [] } });
     }
   }
 

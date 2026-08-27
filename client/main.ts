@@ -1,7 +1,7 @@
 import { GameConnection } from './net';
 import { KeyboardAdapter } from './input-keyboard';
 import { Renderer } from './renderer';
-import { InterpolationBuffer } from './interpolation';
+import { InterpolationBuffer, RACER_INTERPOLATION_DELAY_MS } from './interpolation';
 import { countdownDisplay, isCountdownSoundCue } from '../shared/countdown';
 import { AssetLoader } from './asset-loader';
 import { Screens } from './screens';
@@ -71,12 +71,9 @@ const renderer = new Renderer(document.getElementById('app')!, assets);
 if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
   (window as unknown as { __renderer?: unknown }).__renderer = renderer;
 }
-// 150ms interpolation delay (was 100): the deployed server broadcasts at ~64ms/snapshot (not the
-// ideal 50ms) with some jitter, so 100ms left barely one snapshot of runway → one late packet
-// stalled motion. 150ms keeps ~2+ snapshots buffered so playback stays smooth; the buffer also
-// extrapolates briefly past the newest snapshot instead of freezing. Small cost: +50ms input-to-
-// screen latency, imperceptible vs. the smoothness win.
-const buffer = new InterpolationBuffer(150);
+// At 30 snapshots/second, 100ms normally keeps about three samples available for smooth movement
+// while avoiding the extra fixed latency of the previous 150ms buffer.
+const buffer = new InterpolationBuffer(RACER_INTERPOLATION_DELAY_MS);
 const big = document.getElementById('big')!;
 const lobbyEl = document.getElementById('lobby')!;
 const splitLabelsEl = document.getElementById('split-labels')!;

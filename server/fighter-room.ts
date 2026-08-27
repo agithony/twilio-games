@@ -3,10 +3,12 @@ import { FIGHTER_MAPS, FIGHTER_ROSTER, type FighterMapEntry } from '../shared/fi
 import { FIGHTER_INTRO_SECONDS, type FighterLobbyPlayer, type FighterPhase, type FighterState } from '../shared/fighter-protocol';
 
 interface Player { playerId: string; name: string; nameConfirmed: boolean; fighterId: string | null; side: FighterId; }
+interface QueuedFighterCommand { command: FighterCommand; queuedAt: number; }
 
 export const FIGHTER_LOADING_TIMEOUT_SECONDS = 150;
 export const FIGHTER_VICTORY_SECONDS = 10.5;
-const MAX_VOICE_COMMAND_QUEUE = 12;
+export const MAX_VOICE_COMMAND_QUEUE = 2;
+export const FIGHTER_VOICE_COMMAND_TTL_SECONDS = 2.25;
 const SOLO_AI_FIGHTERS = ['cinder-capone', 'gran-slam', 'iron-oni', 'shroom-boom', 'sir-knockout', 'velvet-thunder', 'nyx'];
 
 export class FighterRoom {
@@ -24,13 +26,14 @@ export class FighterRoom {
   private loadingElapsed = 0;
   private loadingGeneration = 0;
   private victory = 0;
-  private voiceCommands = new Map<string, FighterCommand[]>();
+  private voiceCommands = new Map<string, QueuedFighterCommand[]>();
   private expectedHumanPlayers = 1;
   private automaticSetup=false;
   private fixedExpectedHumanPlayers=false;
   private rng: number;
 
-  constructor(readonly code: string, seed = 0x12345678, private maps: FighterMapEntry[] = FIGHTER_MAPS) { this.rng = seed >>> 0; }
+  constructor(readonly code: string, seed = 0x12345678, private maps: FighterMapEntry[] = FIGHTER_MAPS,
+    private readonly now:()=>number=Date.now) { this.rng = seed >>> 0; }
   setMaps(maps: FighterMapEntry[]): void { if (maps.length) this.maps = maps; }
 
   addPlayer(name: string, preferredSide?: FighterId, nameConfirmed = true): { playerId: string } | { error: string } {
@@ -125,11 +128,11 @@ export class FighterRoom {
     this.events.push(...events); return events;
   }
   voiceCommand(playerId: string, command: FighterCommand): boolean {
-    const events = this.command(playerId, command); if (events.length) return true;
     if (this.phase !== 'fight' || !this.world || !this.hasPlayer(playerId)) return false;
-    const queued = this.voiceCommands.get(playerId) ?? [];
+    const queued = this.activeVoiceCommands(playerId);
+    if (!queued.length) { const events = this.command(playerId, command); if (events.length) return true; }
     if (queued.length >= MAX_VOICE_COMMAND_QUEUE) return false;
-    queued.push(command); this.voiceCommands.set(playerId, queued); return true;
+    queued.push({ command, queuedAt: this.now() }); this.voiceCommands.set(playerId, queued); return true;
   }
   tick(delta: number): void {
     if (this.phase === 'loading') {
@@ -163,11 +166,11 @@ export class FighterRoom {
     const resolved = tickFighterWorld(this.world, delta);
     this.events.push(...resolved);
     if (this.world.status === 'fighting') {
-      for (const [playerId, queued] of this.voiceCommands) {
-        const next = queued[0]; if (!next) { this.voiceCommands.delete(playerId); continue; }
-        const events = this.command(playerId, next);
-        if (events.length) queued.shift();
-        if (!queued.length) this.voiceCommands.delete(playerId);
+      for (const [playerId] of this.voiceCommands) {
+        const active=this.activeVoiceCommands(playerId),next=active[0];if(!next)continue;
+        const events = this.command(playerId, next.command);
+        if (events.length) active.shift();
+        if (!active.length) this.voiceCommands.delete(playerId);
       }
     } else this.voiceCommands.clear();
     if (this.world.status === 'finished') { this.phase = 'victory'; this.victory = FIGHTER_VICTORY_SECONDS; }
@@ -196,6 +199,14 @@ export class FighterRoom {
   get expectedPlayerCount(): number { return this.expectedHumanPlayers; }
   get hasExpectedPlayers(): boolean { return this.players.length >= this.expectedHumanPlayers; }
   get isEmpty(): boolean { return this.players.length === 0; }
+
+  private activeVoiceCommands(playerId:string):QueuedFighterCommand[]{
+    const queued=this.voiceCommands.get(playerId)??[];
+    if(!this.world)return queued;
+    const active=queued.filter(entry=>this.now()-entry.queuedAt<FIGHTER_VOICE_COMMAND_TTL_SECONDS*1000);
+    if(active.length)this.voiceCommands.set(playerId,active);else this.voiceCommands.delete(playerId);
+    return active;
+  }
 
   private nameForSide(side: FighterId): string { return this.lobbyPlayers().find(p => p.side === side)?.name ?? 'Rival'; }
   private reconcileSetup():void {
