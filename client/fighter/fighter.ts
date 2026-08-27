@@ -14,6 +14,8 @@ import { commonText, locale } from '../i18n';
 import { isCountdownSoundCue } from '../../shared/countdown';
 import { DEFAULT_ROOM } from '../../shared/constants';
 import { FIGHTER_RUN_BACKWARD_DURATION, FIGHTER_RUN_FORWARD_DURATION,
+  FIGHTER_ACTION_PLAYBACK_SPEED, FIGHTER_JUMP_TWEEN_SECONDS,
+  FIGHTER_REACTION_PLAYBACK_SPEED,
   type FighterCommand, type FighterEvent, type FighterId, type FighterWorld } from '../../shared/fighter-world';
 import type { FighterMapEntry, FighterRosterEntry } from '../../shared/fighter-roster';
 import { fighterIntroStage, type FighterState } from '../../shared/fighter-protocol';
@@ -529,7 +531,7 @@ function applyEvents(events: FighterEvent[]): void {
   for (const event of events) {
     if (event.type === 'action') {
       const pool = event.command === 'forward' ? 'walk' : event.command === 'back' ? 'walk-back' : event.command;
-      const actionDuration = actors[event.fighter].playRandom(pool, { speed: 1 });
+      const actionDuration = actors[event.fighter].playRandom(pool, { speed: FIGHTER_ACTION_PLAYBACK_SPEED[event.command]??1 });
       if (event.command === 'punch') getSoundEffectsManager().playFighterPunch();
       else if (event.command === 'kick') getSoundEffectsManager().playFighterKick();
       if (event.command === 'forward' || event.command === 'back') {
@@ -537,8 +539,8 @@ function applyEvents(events: FighterEvent[]): void {
       }
       const player = state?.players.find(candidate => candidate.side === event.fighter);
       if (player && !player.isAi) { announce(t('event.playerCommand', { name: player.name, command: commandLabel(event.command).toLocaleLowerCase(locale) })); flashButton(event.command); }
-    } else if (event.type === 'move') movement[event.fighter] = { from: event.from, to: event.to, elapsed: 0, jump: event.jump === true, duration: event.jump ? .82 : actionDurations[event.fighter] };
-    else if (event.type === 'hit') { if (!event.blocked) actors[event.defender].playRandom('reaction', { speed: 1.15 }); showImpact(event.blocked ? t('event.blocked') : `-${event.damage}`, event.defender); }
+    } else if (event.type === 'move') movement[event.fighter] = { from: event.from, to: event.to, elapsed: 0, jump: event.jump === true, duration: event.jump ? FIGHTER_JUMP_TWEEN_SECONDS : actionDurations[event.fighter] };
+    else if (event.type === 'hit') { if (!event.blocked) actors[event.defender].playRandom('reaction', { speed: FIGHTER_REACTION_PLAYBACK_SPEED }); showImpact(event.blocked ? t('event.blocked') : `-${event.damage}`, event.defender); }
     else if (event.type === 'miss' && event.attacker === mySide) announce(t('event.missed'));
     else if (event.type === 'ko') {
       actors[event.loser].playRandom('fall', { hold: true, lockFloor: true });

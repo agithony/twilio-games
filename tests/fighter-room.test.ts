@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FIGHTER_LOADING_TIMEOUT_SECONDS, FIGHTER_VICTORY_SECONDS, FighterRoom } from '../server/fighter-room';
+import { FIGHTER_LOADING_TIMEOUT_SECONDS, FIGHTER_VICTORY_SECONDS, FIGHTER_VOICE_COMMAND_TTL_SECONDS, MAX_VOICE_COMMAND_QUEUE, FighterRoom } from '../server/fighter-room';
 import { FIGHTER_INTRO_SECONDS } from '../shared/fighter-protocol';
 
 describe('fighter room', () => {
@@ -207,14 +207,31 @@ describe('fighter room', () => {
     expect(room.phase).toBe('fighter_select');
   });
 
-  it('keeps a full voice-command burst queued beyond the old expiry window', () => {
+  it('keeps at most two pending voice commands and preserves their order', () => {
     const room = new FighterRoom('4821'); const a = room.addPlayer('A'), b = room.addPlayer('B');
     if ('error' in a || 'error' in b) throw new Error('join failed');
     room.advance(); room.selectFighter(a.playerId, 'nyx'); room.selectFighter(b.playerId, 'wraith');
     room.advance(); room.selectMap(a.playerId,'void'); room.advance(); room.ready(room.state().loadingGeneration); room.tick(FIGHTER_INTRO_SECONDS); room.tick(6);
-    for (let index = 0; index < 12; index++) expect(room.voiceCommand(a.playerId, 'jump')).toBe(true);
+    expect(MAX_VOICE_COMMAND_QUEUE).toBe(2);
+    expect(room.voiceCommand(a.playerId,'jump')).toBe(true);
+    expect(room.voiceCommand(a.playerId,'punch')).toBe(true);
+    expect(room.voiceCommand(a.playerId,'kick')).toBe(true);
+    expect(room.voiceCommand(a.playerId,'block')).toBe(false);
     const events = room.drainEvents();
-    for (let index = 0; index < 150; index++) { room.tick(0.1); events.push(...room.drainEvents()); }
-    expect(events.filter(event => event.type === 'action' && event.fighter === 'p1' && event.command === 'jump')).toHaveLength(12);
+    for (let index = 0; index < 20; index++) { room.tick(0.1); events.push(...room.drainEvents()); }
+    expect(events.flatMap(event=>event.type==='action'&&event.fighter==='p1'?[event.command]:[]))
+      .toEqual(['jump','punch','kick']);
+  });
+
+  it('expires stale queued voice commands',()=>{
+    let now=0;const room=new FighterRoom('4821',1,undefined,()=>now);const a=room.addPlayer('A'),b=room.addPlayer('B');
+    if('error'in a||'error'in b)throw new Error('join failed');
+    room.advance();room.selectFighter(a.playerId,'nyx');room.selectFighter(b.playerId,'wraith');
+    room.advance();room.selectMap(a.playerId,'void');room.advance();room.ready(room.state().loadingGeneration);room.tick(FIGHTER_INTRO_SECONDS);room.tick(6);
+    room.voiceCommand(a.playerId,'kick');room.voiceCommand(a.playerId,'punch');room.voiceCommand(a.playerId,'block');
+    now=FIGHTER_VOICE_COMMAND_TTL_SECONDS*1000;room.tick(1);
+    expect(room.voiceCommand(a.playerId,'jump')).toBe(true);
+    const commands=room.drainEvents().flatMap(event=>event.type==='action'&&event.fighter==='p1'?[event.command]:[]);
+    expect(commands).toEqual(['kick','jump']);
   });
 });

@@ -158,6 +158,8 @@ Car and track selection is deterministic and never uses OpenAI. Station Racer pr
 
 During countdown and racing, finalized transcripts use the fast local intent path. Command bursts can fire in order, while revisable interim hypotheses never mutate the car.
 
+Racer simulates at 60Hz, sends display snapshots at 30Hz, and renders with a 100ms interpolation buffer. Lane changes remain smooth rather than snapping and reach roughly 90% of the new lane in 167ms.
+
 | Action | Speech |
 |---|---|
 | Move left | `left` |
@@ -221,7 +223,9 @@ Combat commands are:
 | Kick | `kick`, `roundhouse` |
 | Block | `block`, `guard`, `defend` |
 
-Fighter and arena choices and combat commands act only on finalized transcripts, preventing revised interim speech from firing the wrong move. Final transcripts can contain a chain such as `forward then block` with up to 12 actions, or a repeat such as `punch five times` with a maximum repeat count of six.
+Fighter and arena choices and combat commands act only on finalized transcripts, preventing revised interim speech from firing the wrong move. The parser recognizes chains and repeat phrases, but the room executes one action immediately and retains at most two waiting actions. Waiting commands expire after 2.25 seconds so stale moves cannot fire much later.
+
+Combat locks remain long enough for readable animation, but punch, kick, block, jump, and hit reactions use shorter synchronized timings. Forward and back retain their measured animation durations so movement distance and presentation stay aligned.
 
 The common 30-second caller binding and up-to-two Relay recovery attempts apply to Fighter. Hit and miss cues are throttled, and the phone host narrates the intro, countdown, health context, and result.
 

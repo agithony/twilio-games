@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { InterpolationBuffer } from '../client/interpolation';
+import { InterpolationBuffer, RACER_INTERPOLATION_DELAY_MS } from '../client/interpolation';
 import type { WorldSnapshot } from '../shared/types';
 
 function snap(tick: number, z: number): WorldSnapshot {
@@ -10,6 +10,7 @@ function snap(tick: number, z: number): WorldSnapshot {
 }
 
 describe('InterpolationBuffer', () => {
+  it('uses the 100ms Racer presentation buffer',()=>{expect(RACER_INTERPOLATION_DELAY_MS).toBe(100);});
   it('returns null before any snapshot', () => {
     expect(new InterpolationBuffer().sample(1000)).toBeNull();
   });

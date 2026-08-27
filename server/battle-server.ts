@@ -1,5 +1,5 @@
 // The /battle WebSocket server for Voice Monsters. Turn-based + EVENT-DRIVEN: unlike the racer's
-// GameServer (which ticks a continuous sim at 20Hz and streams snapshots), this pushes battle_state
+// GameServer (which runs a 60Hz simulation and streams snapshots at 30Hz), this pushes battle_state
 // only when something changes — a join, a monster pick, a resolved turn. Wraps BattleRoom; keeps the
 // racer's server untouched. Supports standalone (port) + mounted (attach + handleUpgrade) modes so
 // the HTTP host can serve /game and /battle side by side.

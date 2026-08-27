@@ -274,6 +274,8 @@ describe('FighterServer WebSocket authority and lifecycle', () => {
     expect(room.phase).toBe('fight');
     expect(fighter!.voiceCommand('VOICE', p1, 'forward')).toBe(true);
     expect(fighter!.voiceCommand('VOICE', p1, 'forward')).toBe(true);
+    expect(fighter!.voiceCommand('VOICE', p1, 'punch')).toBe(true);
+    expect(fighter!.voiceCommand('VOICE', p1, 'kick')).toBe(false);
   });
 
   it('hard-aborts a station room and reconnect state', async () => {

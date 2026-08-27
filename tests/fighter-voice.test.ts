@@ -185,8 +185,8 @@ describe('fighter voice session', () => {
     bob.prompt('forward kick punch jump');
     for(let index=0;index<140;index++)game.tick(0.1);
     const actions=game.events.filter(event=>event.type==='action');
-    expect(actions.filter(event=>event.fighter==='p1').map(event=>event.command)).toEqual(['forward','punch','kick','jump']);
-    expect(actions.filter(event=>event.fighter==='p2').map(event=>event.command)).toEqual(['forward','kick','punch','jump']);
+    expect(actions.filter(event=>event.fighter==='p1').map(event=>event.command)).toEqual(['forward','punch','kick']);
+    expect(actions.filter(event=>event.fighter==='p2').map(event=>event.command)).toEqual(['forward','kick','punch']);
   });
 
   it('uses station participant order while both callers own their setup choices', () => {

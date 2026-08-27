@@ -34,9 +34,23 @@ export type FighterEvent =
   | { type: 'miss'; attacker: FighterId }
   | { type: 'ko'; winner: FighterId; loser: FighterId };
 
+export const FIGHTER_ACTION_TIMINGS = {
+  punch: { impact: 0.27, recovery: 0.7 },
+  kick: { impact: 0.46, recovery: 0.95 },
+  block: 0.8,
+  jumpAirborne: 0.64,
+  jumpRecovery: 0.8,
+  hitStun: 0.4,
+} as const;
+export const FIGHTER_ACTION_PLAYBACK_SPEED:Partial<Record<FighterCommand,number>>={
+  punch:1.2,kick:1.2,block:1.2,jump:1.125,
+};
+export const FIGHTER_JUMP_TWEEN_SECONDS=0.73;
+export const FIGHTER_REACTION_PLAYBACK_SPEED=1.4375;
+
 const ATTACKS = {
-  punch: { damage: 9, range: 1.6, impact: 0.32, recovery: 0.85 },
-  kick: { damage: 15, range: 1.9, impact: 0.55, recovery: 1.15 },
+  punch: { damage: 9, range: 1.6, ...FIGHTER_ACTION_TIMINGS.punch },
+  kick: { damage: 15, range: 1.9, ...FIGHTER_ACTION_TIMINGS.kick },
 } as const;
 
 // Measured from the normalized root travel and duration of run-forward.fbx/run-backward.fbx.
@@ -92,14 +106,14 @@ export function applyFighterCommand(
   }
 
   if (command === 'block') {
-    self.blockingUntil = world.now + 0.95;
-    self.busyUntil = world.now + 0.95;
+    self.blockingUntil = world.now + FIGHTER_ACTION_TIMINGS.block;
+    self.busyUntil = world.now + FIGHTER_ACTION_TIMINGS.block;
     return events;
   }
 
   if (command === 'jump') {
-    self.airborneUntil = world.now + 0.72;
-    self.busyUntil = world.now + 0.9;
+    self.airborneUntil = world.now + FIGHTER_ACTION_TIMINGS.jumpAirborne;
+    self.busyUntil = world.now + FIGHTER_ACTION_TIMINGS.jumpRecovery;
     const opponent = world[other(fighter)];
     const toward = Math.sign(opponent.x - self.x) || (fighter === 'p1' ? 1 : -1);
     const from = self.x;
@@ -138,7 +152,7 @@ export function tickFighterWorld(world: FighterWorld, delta: number): FighterEve
     const blocked = defender.blockingUntil >= pending.impactAt;
     const damage = blocked ? Math.max(1, Math.round(attack.damage * 0.2)) : attack.damage;
     defender.health = Math.max(0, defender.health - damage);
-    if (!blocked) defender.busyUntil = Math.max(defender.busyUntil, world.now + 0.5);
+    if (!blocked) defender.busyUntil = Math.max(defender.busyUntil, world.now + FIGHTER_ACTION_TIMINGS.hitStun);
     events.push({ type: 'hit', attacker: pending.attacker, defender: defenderId, damage, blocked });
     if (defender.health === 0) {
       world.status = 'finished';

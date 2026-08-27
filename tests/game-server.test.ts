@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { WebSocket } from 'ws';
-import { GameServer } from '../server/game-server';
+import { GameServer, RACER_BROADCAST_HZ } from '../server/game-server';
 import { HttpServer, isLateRacerGameplayPrompt } from '../server/http-server';
 import type { ServerMessage } from '../shared/types';
 import { mkdir, unlink, writeFile } from 'node:fs/promises';
@@ -17,6 +17,7 @@ function connect(port: number) {
 const wait = (ms: number) => new Promise(r => setTimeout(r, ms));
 
 describe('GameServer integration', () => {
+  it('uses 30Hz snapshots by default',()=>{expect(RACER_BROADCAST_HZ).toBe(30);});
   it('a client can join and receive a joined ack with a lane', async () => {
     server = new GameServer({ port: 0, broadcastHz: 30 });
     const port = await server.start();
@@ -39,6 +40,15 @@ describe('GameServer integration', () => {
     await wait(200);
     expect(c.inbox.some(m => m.type === 'items')).toBe(true);
     expect(c.inbox.some(m => m.type === 'snapshot')).toBe(true);
+    expect(c.inbox.find(m=>m.type==='snapshot')?.snapshot.items).toEqual([]);
+  });
+
+  it('sends course items to a player joining a live race',async()=>{
+    server=new GameServer({port:0});const port=await server.start(),first=connect(port);await first.open();
+    first.ws.send(JSON.stringify({type:'join',roomCode:'LATE',name:'Ada'}));await wait(20);
+    first.ws.send(JSON.stringify({type:'ready'}));await wait(50);
+    const late=connect(port);await late.open();late.ws.send(JSON.stringify({type:'join',roomCode:'LATE',name:'Bo'}));await wait(50);
+    expect(late.inbox.some(message=>message.type==='items'&&message.items.length>0)).toBe(true);
   });
 
   it('holds a station countdown until its authenticated display finishes renderer warmup', async () => {

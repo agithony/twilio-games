@@ -11,6 +11,7 @@ interface PlayerInit { id: string; name: string; color: string; carIndex?: numbe
 
 const COUNTDOWN_SECONDS = 6.2;
 const BOOST_RESPAWN = 0.5;   // seconds a collected boost stays gone before respawning for trailers
+const LANE_EASE_REMAINDER_PER_SECOND = 1e-6;
 
 export class RaceWorld {
   readonly items: Item[] = [];
@@ -122,7 +123,7 @@ export class RaceWorld {
       // player boost decays toward cruise; AI handled by server-side controllers later
       c.boost = lerp(c.boost, 0, 0.6 * dt);
       const tx = laneX(c.targetLane);
-      c.x = lerp(c.x, tx, 1 - Math.pow(0.0001, dt));
+      c.x = lerp(c.x, tx, 1 - Math.pow(LANE_EASE_REMAINDER_PER_SECOND, dt));
       c.lane = c.targetLane;
       if (c.powerActive > 0) c.powerActive -= dt;
       if (c.stunned > 0) c.stunned -= dt;
