@@ -109,7 +109,7 @@ flowchart TD
   Lock --> Launch[LAUNCHING opens the assigned engine room and sends call-now notices]
   Launch --> Calls[Each admitted phone calls and binds to its persisted participant slot]
   Calls --> Setup[Each player makes their own setup choices]
-  Setup --> Gates[Racer advances on caller commands; Monsters and Fighter advance automatically]
+  Setup --> Gates[Racer and Fighter advance on caller commands; Monsters advances automatically]
   Gates --> Play[PLAYING uses authoritative commands and state]
   Play --> Results[RESULTS records outcomes and queues eligible notices]
   Results --> Next{Next ready pool exists?}
@@ -126,7 +126,7 @@ flowchart TD
   Route --> Fighter[Voice Fighter standalone flow]
 ```
 
-During an active station event, incoming calls route directly to each admitted caller's assigned game room without asking for a room code. Each caller controls one stable engine slot and makes only their own car, monster, fighter, track, or arena choices. Racer prompts personal choices one caller at a time, waits at the lobby, car, and track gates until every required choice is complete and every assigned caller is connected, and lets either caller say `start` or `next` to advance. Callers can explicitly correct a choice before advancing. Monsters and Fighter retain automatic setup progression. Display-keyboard input cannot advance station setup. A two-player Racer match renders split-screen views plus numbered player markers above both cars. All three games admit exactly one or two humans; Monsters and Fighter add an AI opponent for solo play.
+During an active station event, incoming calls route directly to each admitted caller's assigned game room without asking for a room code. Each caller controls one stable engine slot and makes only their own car, monster, fighter, track, or arena choices. Racer and Fighter wait at each setup gate until every required choice is complete and let either caller say `start` or `next` to advance. Callers can explicitly correct a choice before advancing. Monsters retains automatic setup progression. Display-keyboard input cannot advance station setup. A two-player Racer match renders split-screen views plus numbered player markers above both cars. All three games admit exactly one or two humans; Monsters and Fighter add an AI opponent for solo play.
 
 When station mode is `off`, the home page becomes the standalone launcher. Standalone calls use room `4821` by default, but they still require an eligible open shared display. `/voice/join` remains a legacy alias that accepts posted DTMF digits as a room code. Mode-off deployments with standalone Voice disabled, and standalone calls without an eligible display, receive localized Say-and-Hangup TwiML.
 
@@ -134,7 +134,7 @@ When station mode is `off`, the home page becomes the standalone launcher. Stand
 
 The implemented station keeps one persistent station, one active round, and one active match on one shared display. Its phases are `ATTRACT`, `RECRUITING`, `GAME_SELECTION`, `LOCKED`, `LAUNCHING`, `PLAYING`, and `RESULTS`. Persisted timestamps drive automatic transitions; in-memory timers only wake the reducer. Players who arrive after admission enter the next round, and overflow keeps FIFO priority and any paid reservation.
 
-Implemented: runtime `off`, `coin_only`, and `lead_capture` modes; browser and deterministic Messaging onboarding; signed player sessions; per-player wallets and challenges; tolerant ready-pool voting; fixed 1-2 player capacities; caller-scoped multiplayer setup; explicit Racer phase gates; authenticated display launch; authoritative results; restart recovery; operator controls; Conversation Memory profile enrichment; and a durable, retrying, state-revalidating outbound notice worker.
+Implemented: runtime `off`, `coin_only`, and `lead_capture` modes; browser and deterministic Messaging onboarding; signed player sessions; per-player wallets and challenges; tolerant ready-pool voting; fixed 1-2 player capacities; caller-scoped multiplayer setup; explicit Racer and Fighter phase gates; authenticated display launch; authoritative results; restart recovery; operator controls; Conversation Memory profile enrichment; and a durable, retrying, state-revalidating outbound notice worker.
 
 Roadmap or external work: Conversation Intelligence analysis, richer Memory and knowledge experiences, conversational rematches, production sender and template approval, and live end-to-end Twilio/Azure acceptance. The broader smart-queue domain exists in code, but the current one-display game cycle uses station rounds and FIFO ready entries defined by the Expo Station plan.
 
@@ -185,7 +185,7 @@ The home route changes with the runtime mode. Mode `off` shows the standalone th
 
 The shared screen and operator preview display a visitor QR that opens `/join`. English entry offers configured SMS and WhatsApp buttons; Portuguese entry offers WhatsApp with a prefilled `ENTRAR` command. Lead-capture mode adds browser registration for both locales as a visually secondary fallback, while the server continues to reject Portuguese SMS entry attempts. Every accepted reply states the next required answer. During game selection, ready players vote by game name/number or from `/player`; ties and missing votes use the configured automatic fallback.
 
-Standalone shared displays start as spectators and do not consume a player slot; `P` adds or removes a local keyboard tester. Manual display-keyboard phase control applies only to standalone play: `Enter` advances supported menu phases, while Racer also uses left arrow to go back and right arrow to advance. Station-managed displays disable local players and display-driven setup advancement. Admitted Racer callers advance after completing their individual choices; Monsters and Fighter advance automatically.
+Standalone shared displays start as spectators and do not consume a player slot; `P` adds or removes a local keyboard tester. Manual display-keyboard phase control applies only to standalone play: `Enter` advances supported menu phases, while Racer also uses left arrow to go back and right arrow to advance. Station-managed displays disable local players and display-driven setup advancement. Admitted Racer and Fighter callers advance after completing their individual choices; Monsters advances automatically.
 
 Standalone keyboard controls:
 

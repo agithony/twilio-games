@@ -9,8 +9,8 @@
 > **Current implementation delta (2026-07-25):** Direct Conversation Relay owns Voice. Signed
 > `POST /sms` owns SMS/WhatsApp commands and immediate replies; Conversation Orchestrator and TAC
 > enrich Conversation Memory only. One individual FIFO ready line feeds up to two assigned callers
-> in Racer, Monsters, or Fighter, with FIFO overflow and caller-scoped setup. Racer uses explicit
-> caller-driven phase gates; Monsters and Fighter advance setup automatically. WhatsApp
+> in Racer, Monsters, or Fighter, with FIFO overflow and caller-scoped setup. Racer and Fighter use
+> explicit caller-driven phase gates; Monsters advances setup automatically. WhatsApp
 > call-now uses the approved Phone CTA when configured. Every playable game emits factual results,
 > and the operator can reset Racer leaderboard records for one selected map.
 

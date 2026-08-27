@@ -198,7 +198,9 @@ describe('FighterServer WebSocket authority and lifecycle', () => {
     const playerId = fighter!.voiceJoin('HOST-LOSS', 'Ada', undefined, 1)!;
     expect(fighter!.voiceAdvance('HOST-LOSS', playerId)).toBe(true);
     expect(fighter!.voiceSelectFighter('HOST-LOSS', playerId, 'nyx')).toBe(true);
+    expect(fighter!.voiceAdvance('HOST-LOSS', playerId)).toBe(true);
     expect(fighter!.voiceSelectMap('HOST-LOSS', playerId, 'void')).toBe(true);
+    expect(fighter!.voiceAdvance('HOST-LOSS', playerId)).toBe(true);
     const generation = fighter!.findRoom('HOST-LOSS')!.state().loadingGeneration;
     send(host, { type: 'ready', loadingGeneration: generation });
     await waitFor(host, message => message.type === 'fighter_state' && message.phase === 'intro');
@@ -258,7 +260,7 @@ describe('FighterServer WebSocket authority and lifecycle', () => {
     expect(fighter!.findRoom('HOME')?.hasPlayer(joined.playerId as string)).toBe(false);
   });
 
-  it('gates the voice lobby, then keeps selections independent and advances automatically', async () => {
+  it('keeps voice selections independent and requires explicit phase advances', async () => {
     await start();
     const p1 = fighter!.voiceJoin(' voice ', 'Ada')!;
     const p2 = fighter!.voiceJoin('VOICE', 'Bob')!;
@@ -267,10 +269,14 @@ describe('FighterServer WebSocket authority and lifecycle', () => {
     expect(fighter!.findRoom('VOICE')?.phase).toBe('fighter_select');
     expect(fighter!.voiceSelectFighter('VOICE', p1, 'nyx')).toBe(true);
     expect(fighter!.voiceSelectFighter('VOICE', p2, 'wraith')).toBe(true);
+    expect(fighter!.findRoom('VOICE')?.phase).toBe('fighter_select');
+    expect(fighter!.voiceAdvance('VOICE', p1)).toBe(true);
     expect(fighter!.findRoom('VOICE')?.phase).toBe('map_select');
     expect(fighter!.voiceSelectMap('VOICE', p2, 'void')).toBe(true);
     expect(fighter!.voiceSelectMap('VOICE', p1, 'void')).toBe(true);
     const room = fighter!.findRoom('VOICE')!;
+    expect(room.phase).toBe('map_select');
+    expect(fighter!.voiceAdvance('VOICE', p2)).toBe(true);
     expect(room.phase).toBe('loading');
     expect(room.ready(room.state().loadingGeneration)).toBe(true);
     room.tick(FIGHTER_INTRO_SECONDS); room.tick(6);

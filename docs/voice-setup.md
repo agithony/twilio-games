@@ -129,7 +129,7 @@ Speech barge-in stops Relay TTS. Voice Racer and Voice Monsters also invalidate 
 
 Station games admit up to two callers. The persisted match roster supplies an expected caller count of one or two and a stable slot for each caller. The server reuses each registered first name instead of asking for it again; only a station identity without a stored completed name falls back to voice name capture.
 
-Each caller controls only their personal setup choices. Racer keeps explicit shared phase gates: after all expected callers connect, either caller says `start`; after every caller picks a car, either says `next`; after every caller casts one track vote, either says `start`. Fighter also keeps an explicit lobby gate: after onboarding and all expected callers connect, either caller says `next`; fighter choices then advance to individual arena votes automatically. Monsters advances from monster choices automatically. A one-caller Monsters or Fighter match creates an AI opponent after that caller finishes setup; a one-caller Racer follows the same explicit gates with one caller.
+Each caller controls only their personal setup choices. Racer and Fighter keep explicit shared phase gates: after all expected callers connect, either caller advances into vehicle or fighter selection; after every caller makes that choice, either says `next`; after every caller casts a track or arena vote, either says `start`. Monsters advances from monster choices automatically. A one-caller Monsters or Fighter match creates an AI opponent after that caller finishes setup; solo Racer and Fighter follow the same explicit gates with one caller.
 
 A station match starts only when the display has acknowledged the current launch generation, the selected engine has started, and every expected caller is connected and bound. The launch timeout is also the setup inactivity window. After all expected callers connect, each final speech prompt or DTMF input from either caller moves that deadline forward by the configured launch timeout; partial transcripts do not. Activity extends setup but does not mark gameplay started or redeem a coin.
 
@@ -201,7 +201,7 @@ The common 30-second caller binding and up-to-two Relay recovery attempts apply 
 
 ## Voice Fighter
 
-Voice Fighter accepts up to two humans during the lobby or fighter-selection phase. A solo player receives an AI rival. New callers cannot join after setup has moved beyond fighter selection. Each caller owns their fighter choice and arena vote. The lobby requires an explicit voice command; later setup phases advance automatically when all required choices are complete.
+Voice Fighter accepts up to two humans during the lobby or fighter-selection phase. A solo player receives an AI rival. New callers cannot join after setup has moved beyond fighter selection. Each caller owns their fighter choice and arena vote, and every setup screen requires an explicit voice command before advancing.
 
 The voice flow is:
 
@@ -209,9 +209,10 @@ The voice flow is:
 2. Listen to the controls and how-to-play instructions while the display remains in the lobby.
 3. After the expected callers are ready, either player says `next` to open fighter selection.
 4. Each player says their own fighter name or number.
-5. Arena voting opens automatically; each player says their own arena name or number.
-6. The selected arena loads automatically after every player votes, then starts the intro and countdown.
-7. In standalone play, say `rematch` after the fight and victory sequence. Station play returns to the station results and requeue flow instead.
+5. After every player chooses, either player says `next` to open arena voting.
+6. Each player says their own arena name or number, then either player says `start` after every vote is in.
+7. The selected arena loads, then starts the intro and countdown.
+8. In standalone play, say `rematch` after the fight and result sequence. The caller hears whether they were victorious or lost. Station play returns to the station results and requeue flow instead.
 
 Combat commands are:
 

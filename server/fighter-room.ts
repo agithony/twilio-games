@@ -41,7 +41,7 @@ export class FighterRoom {
     const side: FighterId = preferredSide ?? (this.players.some(player => player.side === 'p1') ? 'p2' : 'p1');
     if (this.players.some(player => player.side === side)) return { error: 'room_full' };
     const player = { playerId: `f${this.nextPlayer++}`, name: cleanName(name), nameConfirmed, fighterId: null, side };
-    this.players.push(player);this.players.sort((left,right)=>left.side.localeCompare(right.side));this.reconcileSetup();
+    this.players.push(player);this.players.sort((left,right)=>left.side.localeCompare(right.side));
     if (!nameConfirmed && this.phase === 'fighter_select') this.phase = 'lobby';
     return { playerId: player.playerId };
   }
@@ -53,7 +53,6 @@ export class FighterRoom {
       && (this.phase === 'lobby' || this.phase === 'fighter_select' || this.phase === 'map_select')) {
       this.players[0]!.side = 'p1';
     }
-    this.reconcileSetup();
   }
   removePlayer(id: string): void {
     this.players = this.players.filter((player) => player.playerId !== id);
@@ -69,29 +68,31 @@ export class FighterRoom {
         this.phase = 'fighter_select'; this.world = null; this.selectedMap = null;this.mapVotes.clear();this.aiFighterId = null;
       }
     }
-    this.reconcileSetup();
   }
-  setName(id: string, name: string): void { const player = this.players.find(p => p.playerId === id); if (player) { player.name = cleanName(name);player.nameConfirmed=true;this.reconcileSetup(); } }
+  setName(id: string, name: string): void { const player = this.players.find(p => p.playerId === id); if (player) { player.name = cleanName(name);player.nameConfirmed=true; } }
   hasConfirmedName(id:string):boolean{return this.players.find(player=>player.playerId===id)?.nameConfirmed===true;}
   selectFighter(id: string, fighterId: string): boolean {
     if (this.phase !== 'fighter_select' || !FIGHTER_ROSTER.some(f => f.id === fighterId)) return false;
     const player = this.players.find(p => p.playerId === id);
     if (!player || this.players.some(p => p !== player && p.fighterId === fighterId)) return false;
-    player.fighterId=fighterId;this.reconcileSetup();return true;
+    player.fighterId=fighterId;return true;
   }
   nextUnselectedPlayerId(): string | null { return this.players.find(player => !player.fighterId)?.playerId ?? null; }
   selectMap(playerId:string,mapId: string): boolean {
     if (this.phase !== 'map_select' || !this.maps.some(map => map.id === mapId)) return false;
     if(!this.players.some(player=>player.playerId===playerId))return false;
-    this.mapVotes.set(playerId,mapId);this.selectedMap=this.mapVoteWinner();this.reconcileSetup();return true;
+    this.mapVotes.set(playerId,mapId);this.selectedMap=this.mapVoteWinner();return true;
   }
   advance(playerId?: string): boolean {
-    if(this.automaticSetup&&this.phase!=='lobby'&&this.phase!=='results')return false;
-    if(this.automaticSetup&&this.phase==='lobby'&&(!playerId||!this.hasPlayer(playerId)))return false;
+    if(this.automaticSetup&&['lobby','fighter_select','map_select'].includes(this.phase)
+      &&(!playerId||!this.hasPlayer(playerId)))return false;
     if (this.phase === 'lobby' && this.players.length >= this.expectedHumanPlayers
       && this.players.every(player=>player.nameConfirmed)) { this.phase = 'fighter_select'; return true; }
-    if (this.phase === 'fighter_select' && this.players.length >= this.expectedHumanPlayers && this.players.every(p => p.fighterId)) { this.phase = 'map_select'; return true; }
-    if (this.phase === 'map_select' && this.selectedMap && this.players.length >= this.expectedHumanPlayers)return this.beginLoading();
+    if (this.phase === 'fighter_select' && this.players.length >= this.expectedHumanPlayers && this.players.every(p => p.fighterId)) {
+      this.phase = 'map_select';this.selectedMap=this.mapVoteWinner();return true;
+    }
+    if (this.phase === 'map_select' && this.selectedMap && this.players.length >= this.expectedHumanPlayers
+      && (!this.automaticSetup||this.players.every(player=>this.mapVotes.has(player.playerId))))return this.beginLoading();
     if (this.phase === 'results') {
       this.phase = 'fighter_select'; this.world = null; this.selectedMap = null;this.mapVotes.clear();
       this.aiFighterId = null;
@@ -211,13 +212,6 @@ export class FighterRoom {
   }
 
   private nameForSide(side: FighterId): string { return this.lobbyPlayers().find(p => p.side === side)?.name ?? 'Rival'; }
-  private reconcileSetup():void {
-    if(!this.automaticSetup||this.players.length<this.expectedHumanPlayers||!this.players.every(player=>player.nameConfirmed))return;
-    if(this.phase==='fighter_select'&&this.players.every(player=>player.fighterId)){
-      this.phase='map_select';this.selectedMap=this.mapVoteWinner();
-    }
-    if(this.phase==='map_select'&&this.players.every(player=>this.mapVotes.has(player.playerId)))this.beginLoading();
-  }
   private mapVoteWinner():string|null {
     const counts=new Map<string,number>();
     for(const mapId of this.mapVotes.values())counts.set(mapId,(counts.get(mapId)??0)+1);

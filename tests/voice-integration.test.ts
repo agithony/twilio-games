@@ -670,9 +670,11 @@ describe('voice integration (fake Conversation Relay client)', () => {
       }
       voice.send(JSON.stringify({ type: 'prompt', voicePrompt: 'próximo', last: true })); await wait(90);
       voice.send(JSON.stringify({ type: 'prompt', voicePrompt: 'Circuito do Vazio', last: true })); await wait(500);
+      voice.send(JSON.stringify({ type: 'prompt', voicePrompt: 'lutar', last: true })); await wait(90);
       const latest = states.at(-1);
       expect(latest?.players.some((player: any) => player.name === 'Ana' && player.fighterId === 'nyx')).toBe(true);
       expect(latest?.selectedMap).toBe('void');
+      expect(latest?.phase).toBe('loading');
       const output = spoken.map(message => message.token).join(' ');
       expect(output).toContain('Luta por Voz');
       expect(output).toContain('Nix');
