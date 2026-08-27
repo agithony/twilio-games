@@ -3,12 +3,15 @@ import { FIGHTER_LOADING_TIMEOUT_SECONDS, FIGHTER_VICTORY_SECONDS, FIGHTER_VOICE
 import { FIGHTER_INTRO_SECONDS } from '../shared/fighter-protocol';
 
 describe('fighter room', () => {
-  it('keeps standalone Fighter in lobby until every caller confirms a name', () => {
+  it('keeps standalone Fighter in lobby until a named caller explicitly advances', () => {
     const room = new FighterRoom('NAMES', 1);
     room.expectHumanPlayers(1);
     const caller = room.addPlayer('Caller', undefined, false); if ('error' in caller) throw new Error(caller.error);
     expect(room.phase).toBe('lobby');
     room.setName(caller.playerId, 'Ada');
+    expect(room.phase).toBe('lobby');
+    expect(room.advance()).toBe(false);
+    expect(room.advance(caller.playerId)).toBe(true);
     expect(room.phase).toBe('fighter_select');
   });
   it('runs lobby through selection into a solo AI fight', () => {
@@ -74,6 +77,7 @@ describe('fighter room', () => {
     expect(room.state()).toMatchObject({ expectedPlayerCount: 2, hasExpectedPlayers: false });
     const a=room.addPlayer('A','p1');if('error' in a)throw new Error(a.error);
     expect(room.state()).toMatchObject({ expectedPlayerCount: 2, hasExpectedPlayers: true });
+    expect(room.phase).toBe('lobby');expect(room.advance()).toBe(false);expect(room.advance(a.playerId)).toBe(true);
     expect(room.back()).toBe(false);expect(room.phase).toBe('fighter_select');
     room.selectFighter(b.playerId,'wraith');
     room.selectFighter(a.playerId,'nyx');expect(room.phase).toBe('map_select');expect(room.advance()).toBe(false);
@@ -90,7 +94,7 @@ describe('fighter room', () => {
   it('lets a lone retained player continue automatically after a no-show drop', () => {
     const room=new FighterRoom('4821');room.expectHumanPlayers(2);
     const b=room.addPlayer('B','p2');if('error' in b)throw new Error(b.error);
-    room.expectHumanPlayers(1);room.selectFighter(b.playerId,'wraith');
+    room.expectHumanPlayers(1);room.advance(b.playerId);room.selectFighter(b.playerId,'wraith');
 
     expect(room.canControlSetup(b.playerId)).toBe(true);
     expect(room.state()).toMatchObject({expectedPlayerCount:1,hasExpectedPlayers:true,players:[expect.objectContaining({playerId:b.playerId,side:'p1'})]});
@@ -100,6 +104,7 @@ describe('fighter room', () => {
     const room=new FighterRoom('STANDALONE-DROP');room.expectHumanPlayers(2,false);
     const a=room.addPlayer('Ada'),b=room.addPlayer('Bo');if('error' in a||'error' in b)throw new Error('join failed');
     room.removePlayer(b.playerId);
+    room.advance(a.playerId);
     room.selectFighter(a.playerId,'nyx');
     expect(room.phase).toBe('map_select');
     room.selectMap(a.playerId,'void');
@@ -108,6 +113,7 @@ describe('fighter room', () => {
   it('rebuilds standalone loading setup when one caller disconnects', () => {
     const room=new FighterRoom('LOADING-DROP');room.expectHumanPlayers(2,false);
     const a=room.addPlayer('Ada'),b=room.addPlayer('Bo');if('error' in a||'error' in b)throw new Error('join failed');
+    room.advance(a.playerId);
     room.selectFighter(a.playerId,'nyx');room.selectFighter(b.playerId,'wraith');
     room.selectMap(a.playerId,'void');room.selectMap(b.playerId,'void');
     expect(room.phase).toBe('loading');
@@ -156,6 +162,7 @@ describe('fighter room', () => {
   it('reopens fighter selection for a replacement when a player leaves arena voting',()=>{
     const room=new FighterRoom('4821');room.expectHumanPlayers(2);
     const a=room.addPlayer('A','p1'),b=room.addPlayer('B','p2');if('error'in a||'error'in b)throw new Error('join failed');
+    room.advance(a.playerId);
     room.selectFighter(a.playerId,'nyx');room.selectFighter(b.playerId,'wraith');expect(room.phase).toBe('map_select');
     room.selectMap(a.playerId,'void');room.removePlayer(b.playerId);
     expect(room.state()).toMatchObject({phase:'fighter_select',selectedMap:null,mapVotesByPlayerId:{}});
@@ -165,6 +172,7 @@ describe('fighter room', () => {
   it.each(['count-first','remove-first'] as const)('reconciles arena voting when a no-show is dropped %s',order=>{
     const room=new FighterRoom('4821');room.expectHumanPlayers(2);
     const a=room.addPlayer('A','p1'),b=room.addPlayer('B','p2');if('error'in a||'error'in b)throw new Error('join failed');
+    room.advance(a.playerId);
     room.selectFighter(a.playerId,'nyx');room.selectFighter(b.playerId,'wraith');room.selectMap(a.playerId,'void');
     if(order==='count-first')room.expectHumanPlayers(1);
     room.removePlayer(b.playerId);
