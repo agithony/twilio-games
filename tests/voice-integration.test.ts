@@ -542,8 +542,8 @@ describe('voice integration (fake Conversation Relay client)', () => {
     display.send(JSON.stringify({ type: 'spectate', roomCode, locale: 'pt-BR' }));
 
     const voice = new WebSocket(`ws://127.0.0.1:${port}/voice`);
-    const spoken: { token: string; lang?: string }[] = [];
-    voice.on('message', data => { const message = JSON.parse(data.toString()) as Record<string, unknown>; if (message.type === 'text') { spoken.push({ token: String(message.token), lang: typeof message.lang === 'string' ? message.lang : undefined }); acknowledgeText(voice, message); } });
+    const spoken: { token: string; lang?: string;interruptible?:boolean;preemptible?:boolean }[] = [];
+    voice.on('message', data => { const message = JSON.parse(data.toString()) as Record<string, unknown>; if (message.type === 'text') { spoken.push({ token: String(message.token), lang: typeof message.lang === 'string' ? message.lang : undefined,interruptible:message.interruptible===true,preemptible:message.preemptible===true }); acknowledgeText(voice, message); } });
     await new Promise<void>(resolve => voice.on('open', resolve));
     voice.send(JSON.stringify({
       type: 'setup', callSid: 'CA-PT-MONSTERS', from: '+5511888888888',
@@ -571,6 +571,7 @@ describe('voice integration (fake Conversation Relay client)', () => {
       expect(events.some(event => event.kind === 'move_used' && event.moveId === 'sparkmouse.zap')).toBe(true);
       expect(spoken.some(message => message.token.includes('Monstros por Voz'))).toBe(true);
       expect(spoken.every(message => message.lang === 'pt-BR')).toBe(true);
+      expect(spoken.every(message=>message.interruptible&&message.preemptible)).toBe(true);
     } finally {
       closeWs(voice);
       closeWs(display);

@@ -195,7 +195,9 @@ Root battle commands are:
 | Taunt | `taunt`, `mock`, `provoke`, `jeer`, `insult` | `4` |
 | Leave move list | `back`, `cancel`, `return`, `never mind`, `undo` | Not applicable |
 
-Inside the move list, numbers `1` through `4` choose the corresponding move. Move names support exact and distinctive partial matches. Battle actions use final transcripts only, are accepted only on the caller's turn, and are held while prior move commentary is still resolving. Commentary is paced with the display.
+Inside the move list, numbers `1` through `4` choose the corresponding move. Move names support exact and distinctive partial matches. Battle actions use final transcripts only and are accepted only on the caller's turn. Without interruption, commentary remains paced with the display.
+
+Monster move names can also be spoken directly from the root menu, and combined phrases such as `fight one` or `fight Thunder Jolt` execute the requested attack without an extra turn. Monsters talk-back is explicitly interruptible and preemptible: speech, keypad input, or a replacement response cancels queued commentary so stale narration cannot block the caller's next command.
 
 The common 30-second caller binding and up-to-two Relay recovery attempts apply to Monsters.
 
