@@ -296,7 +296,7 @@ export class BattleVoiceSession {
       if (!snap.myName && this.captureName(text, snap.phase)) return;
     }
 
-    // BATTLE (caller's turn): FIGHT opens the move menu AND reads the moves aloud (so a phone-only caller
+    // BATTLE (caller's turn): ATTACK opens the move menu AND reads the moves aloud (so a phone-only caller
     // knows their options); then a move name/number commits the attack. GUARD/ITEM/TAUNT commit directly.
     if (snap.phase === 'battle' && (this.draining || this.evQ.length > 0) && this.looksLikeBattleCommand(text, snap)) {
       this.deps.say(this.text('voice.resolving'));

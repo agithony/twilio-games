@@ -182,14 +182,14 @@ The voice flow is:
 2. After the expected callers are ready, either player says `next` to open monster selection.
 3. Each player says their own monster name, number, or ordinal such as `the second one`.
 4. After every player picks, either player says `battle` to begin.
-5. On your turn, say `fight` to hear the four moves, then say a move name or number. A move name can also be spoken directly from the root menu.
+5. On your turn, say `attack` to hear the four moves, then say a move name or number. `Fight` remains an accepted alias, and a move name can also be spoken directly from the root menu.
 6. In standalone play, say `rematch` after the final result is ready. Station play returns to the station results and requeue flow instead.
 
 Root battle commands are:
 
 | Action | Speech | Root number |
 |---|---|---|
-| Open moves | `fight` (canonical), `attack` (accepted alias) | `1` |
+| Open moves | `attack` (canonical), `fight` (accepted alias) | `1` |
 | Guard | `guard`, `block`, `brace`, `defend`, `shield` | `2` |
 | Use potion | `item`, `potion`, `heal`, `bag`, `medicine` | `3` |
 | Taunt | `taunt`, `mock`, `provoke`, `jeer`, `insult` | `4` |
@@ -197,7 +197,7 @@ Root battle commands are:
 
 Inside the move list, numbers `1` through `4` choose the corresponding move. Move names support exact and distinctive partial matches. Battle actions use final transcripts only and are accepted only on the caller's turn. Without interruption, commentary remains paced with the display.
 
-Monster move names can also be spoken directly from the root menu, and combined phrases such as `fight one` or `fight Thunder Jolt` execute the requested attack without an extra turn. Monsters talk-back is explicitly interruptible and preemptible: speech, keypad input, or a replacement response cancels queued commentary so stale narration cannot block the caller's next command.
+Monster move names can also be spoken directly from the root menu, and combined phrases such as `attack one` or `attack Thunder Jolt` execute the requested move without an extra turn. Monsters talk-back is explicitly interruptible and preemptible: speech, keypad input, or a replacement response cancels queued commentary so stale narration cannot block the caller's next command.
 
 The common 30-second caller binding and up-to-two Relay recovery attempts apply to Monsters.
 

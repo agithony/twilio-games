@@ -81,6 +81,13 @@ describe('buildBattleSystemPrompt', () => {
     expect(p.toLowerCase()).toMatch(/turn/);
   });
 
+  it('uses attack as the presented command while retaining internal action compatibility', () => {
+    const english=buildBattleSystemPrompt(ctx({phase:'battle',myMonster:'Sparkmouse',moves:['Thunder Jolt'],whoseTurn:'me'}));
+    const portuguese=buildBattleSystemPrompt(ctx({phase:'battle',myMonster:'Sparkmouse',moves:['Choque Trovejante'],whoseTurn:'me'}),'pt-BR');
+    expect(english).toMatch(/say "ATTACK"/i);expect(english).not.toMatch(/say "FIGHT"/i);
+    expect(portuguese).toMatch(/diga "atacar"/i);expect(portuguese).not.toMatch(/diga "lutar"/i);
+  });
+
   it('mentions Twilio Conversation Relay so it can answer "how does this work"', () => {
     expect(buildBattleSystemPrompt(ctx()).toLowerCase()).toContain('conversation relay');
   });
@@ -98,6 +105,7 @@ describe('BATTLE_HOST_TOOLS', () => {
     expect(names).toContain('select_monster');
     expect(names).toContain('choose_action');
     expect(names).toContain('advance');
+    expect(BATTLE_HOST_TOOLS.find(tool=>tool.name==='choose_action')?.description).toContain('attack:<move name>');
   });
 });
 
@@ -137,7 +145,7 @@ describe('battleHostTurn', () => {
   });
 
   it('relies on battle event commentary after an action instead of double-speaking the model reply', async () => {
-    const llm = new FakeLlm({ say: 'Thunder Jolt!', toolCalls: [{ name: 'choose_action', args: { action: 'fight:Thunder Jolt' } }] });
+    const llm = new FakeLlm({ say: 'Thunder Jolt!', toolCalls: [{ name: 'choose_action', args: { action: 'attack:Thunder Jolt' } }] });
     const reply = await battleHostTurn(llm, ctx({ phase: 'battle', chooseAction: () => null }), []);
     expect(reply).toBeNull();
   });

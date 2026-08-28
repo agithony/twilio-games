@@ -15,9 +15,9 @@ describe('relayTextChunks', () => {
   });
 
   it('splits dense Voice Monsters controls around or-say phrasing', () => {
-    const chunks = relayTextChunks('How to play: on your turn, say fight, then pick one of the four attacks. You can also say guard, item, or taunt.');
+    const chunks = relayTextChunks('How to play: on your turn, say attack, then pick one of the four moves. You can also say guard, item, or taunt.');
     expect(chunks.length).toBeGreaterThan(1);
-    expect(chunks.join(' ')).toContain('say fight');
+    expect(chunks.join(' ')).toContain('say attack');
   });
 
   it('leaves short non-instruction commentary as one utterance', () => {

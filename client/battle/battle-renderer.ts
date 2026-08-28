@@ -1,6 +1,6 @@
 // The Game Boy battle SCREEN for Voice Monsters. Renders the classic boxed layout on a canvas in the
 // DMG 4-shade palette: the enemy monster up-right (front-facing), your monster down-left, an HP box
-// per side (name · Lv · HP bar), and the bottom command window (FIGHT / MONSTER / ITEM / RUN + the
+// per side (name · Lv · HP bar), and the bottom command window (ATTACK / GUARD / ITEM / TAUNT + the
 // 4-move list). Turn-based, so the monster whose turn it is faces the camera; here BOTH are always
 // drawn (enemy front / you back) as in the originals, and we animate the attacker on each hit.
 //
@@ -307,7 +307,7 @@ export class BattleRenderer {
     ctx.restore();
   }
 
-  /** Root action menu: FIGHT / GUARD / ITEM / TAUNT in two columns. GUARD/ITEM/TAUNT show a one-word
+  /** Root action menu: ATTACK / GUARD / ITEM / TAUNT in two columns. GUARD/ITEM/TAUNT show a one-word
    *  hint (ITEM shows the remaining Potion count). */
   private drawRootMenu(): void {
     const potions = this.snap ? (this.mySide === 'b' ? this.snap.potions.b : this.snap.potions.a) : 0;
@@ -325,7 +325,7 @@ export class BattleRenderer {
     });
   }
 
-  /** FIGHT submenu: the 4 moves in two columns. Each cell: FULL move name on one row, then a rating
+  /** ATTACK submenu: the 4 moves in two columns. Each cell: FULL move name on one row, then a rating
    *  row below — power PIPS + accuracy %. Pips show EFFECTIVENESS VS THE CURRENT FOE (power × type
    *  multiplier), not raw power — so a weak super-effective move out-pips a strong resisted one, and
    *  "pick the fullest" becomes genuinely correct + rewards type play. Accuracy % is the risk knob. */

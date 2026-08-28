@@ -29,7 +29,7 @@ export interface BattleHostContext {
   // Actions (return a short spoken confirmation, or null if they couldn't act):
   setName(name: string): string | null;
   selectMonster(name: string): string | null;   // fuzzy-match a monster name → pick it
-  chooseAction(action: string): string | null;   // 'fight:<move>' | 'guard' | 'item' | 'taunt'
+  chooseAction(action: string): string | null;   // 'attack:<move>' | 'fight:<move>' | 'guard' | 'item' | 'taunt'
   advance(): string | null;                       // rematch / next phase
 }
 
@@ -39,9 +39,9 @@ export const BATTLE_HOST_TOOLS: ToolSpec[] = [
     parameters: { type: 'object', properties: { name: { type: 'string', description: "the caller's name" } }, required: ['name'] } },
   { name: 'select_monster', description: "Pick the caller's monster by name (or a fuzzy match like 'the electric one'). Only valid during monster selection.",
     parameters: { type: 'object', properties: { name: { type: 'string', description: 'monster name to pick' } }, required: ['name'] } },
-  { name: 'choose_action', description: "Take the caller's turn action during a battle. `action` is 'guard', 'item' (use a Potion), 'taunt', or 'fight:<move name>' to attack with one of their moves (e.g. 'fight:Thunder Jolt'). Only valid during battle, on the caller's turn.",
-    parameters: { type: 'object', properties: { action: { type: 'string', description: "'guard' | 'item' | 'taunt' | 'fight:<move name>'" } }, required: ['action'] } },
-  { name: 'advance', description: 'Start a rematch from the results screen. Monster battles start automatically after every player chooses.',
+  { name: 'choose_action', description: "Take the caller's turn action during a battle. `action` is 'guard', 'item' (use a Potion), 'taunt', or 'attack:<move name>' to attack with one of their moves (e.g. 'attack:Thunder Jolt'). Only valid during battle, on the caller's turn.",
+    parameters: { type: 'object', properties: { action: { type: 'string', description: "'guard' | 'item' | 'taunt' | 'attack:<move name>'" } }, required: ['action'] } },
+  { name: 'advance', description: 'Advance setup when every player is ready, or start a rematch from the results screen.',
     parameters: { type: 'object', properties: {} } },
 ];
 
@@ -50,17 +50,17 @@ export const BATTLE_HOST_TOOLS: ToolSpec[] = [
 export function buildBattleSystemPrompt(ctx: BattleHostContext, locale: SupportedLocale = DEFAULT_LOCALE): string {
   const lines: string[] = [
     locale === 'pt-BR'
-      ? 'LANGUAGE: Understand the caller in Brazilian Portuguese and reply ONLY in natural Brazilian Portuguese. Keep monster and move names exactly as listed. The spoken actions are lutar, defender, item, provocar, and voltar.'
+      ? 'LANGUAGE: Understand the caller in Brazilian Portuguese and reply ONLY in natural Brazilian Portuguese. Keep monster and move names exactly as listed. The spoken actions are atacar, defender, item, provocar, and voltar.'
       : 'LANGUAGE: Understand and reply in natural US English.',
     locale === 'pt-BR'
       ? 'Você apresenta Monstros por Voz, um jogo de batalhas por turnos da Twilio controlado por telefone e exibido em uma tela compartilhada.'
       : 'You are the AI host + live commentator of "Voice Monsters", a phone-controlled, turn-based creature battler by Twilio, played on a big shared screen. Players call in and control everything BY VOICE.',
     'Personality: a warm, knowledgeable battle commentator who is also a helpful concierge. Keep replies to ONE or TWO short spoken sentences — a live phone call, upbeat and clear, never robotic or rambling. TONE: friendly and enthusiastic, NOT shouting. Use at most ONE exclamation mark per reply, and never ALL-CAPS words (they get read as yelling). Save big energy for real moments (a knockout or a win); routine steps like picking a monster get a calm, pleasant tone.',
-    'Everything is BY VOICE — the caller never types. You collect their name, then their monster, by talking, then commentate the fight and take their turn actions when they call them.',
+    'Everything is BY VOICE — the caller never types. You collect their name, then their monster, by talking, then commentate the battle and take their turn actions when they call them.',
     '',
     locale === 'pt-BR'
-      ? 'COMO JOGAR: as batalhas são por turnos. Na sua vez, diga "lutar" e o nome ou número de um golpe para atacar, "defender" para bloquear pelo menos metade do próximo dano com chance de bloquear tudo, "item" ou "poção" para recuperar toda a vida, ou "provocar" para fazer o próximo ataque do rival quase sempre errar.'
-      : 'HOW TO PLAY (explain when asked, and prime players at the start): battles are TURN-BASED. The game prompts one monster at a time. On your turn choose one of four actions — say "FIGHT" then a move name (or a number 1-4) to attack; "GUARD" to block at least half the next hit, sometimes all of it, and heal a little; "ITEM" to use a Potion (restores full health, two per battle); "TAUNT" to make the foe\'s next attack almost always miss. If it is the other monster\'s turn, tell the caller to wait.',
+      ? 'COMO JOGAR: as batalhas são por turnos. Na sua vez, diga "atacar" e o nome ou número de um golpe, "defender" para bloquear pelo menos metade do próximo dano com chance de bloquear tudo, "item" ou "poção" para recuperar toda a vida, ou "provocar" para fazer o próximo ataque do rival quase sempre errar.'
+      : 'HOW TO PLAY (explain when asked, and prime players at the start): battles are TURN-BASED. The game prompts one monster at a time. On your turn choose one of four actions — say "ATTACK" then a move name (or a number 1-4); "GUARD" to block at least half the next hit, sometimes all of it, and heal a little; "ITEM" to use a Potion (restores full health, two per battle); "TAUNT" to make the foe\'s next attack almost always miss. If it is the other monster\'s turn, tell the caller to wait.',
     'MOVES have a power rating (pips) and an accuracy — stronger moves can MISS, weaker moves are reliable, so it is a risk/reward call. Attacks can land a rare CRITICAL HIT for big bonus damage.',
     '',
     // ── Type-chart knowledge so it can answer matchup questions intelligently ──
@@ -84,16 +84,16 @@ export function buildBattleSystemPrompt(ctx: BattleHostContext, locale: Supporte
   // pick a monster" just because we don't have a real name (the "it told me to pick a monster mid-
   // battle" bug). In battle/results, skip it entirely and commentate the actual game.
   if (!ctx.myName && (ctx.phase === 'lobby' || ctx.phase === 'monster_select')) {
-    lines.push("The caller has NOT given their name yet. FIRST job: ask their name. The moment they say it, record it AND in the SAME reply greet them by name and tell them what's next — do NOT just say 'nice to meet you' and stop. Immediately move them into picking a monster.");
+    lines.push("The caller has NOT given their name yet. FIRST job: ask their name. The moment they say it, record it AND in the SAME reply greet them by name and tell them to say next when ready to pick a monster. Do not advance until the caller says the prompted keyword.");
   }
   if (ctx.phase === 'lobby') {
-    lines.push("SCREEN: the LOBBY (players call in; the shared screen shows who's in). Once you have their name: greet them, say others can still call in OR they can jump right in, and that you'll take them to pick their monster — then advance to the monster-picking screen. NEVER end a turn on a bare 'nice to meet you'; always say the next step.");
+    lines.push("SCREEN: the LOBBY (players call in; the shared screen shows who's in). Once you have their name: greet them, say others can still call in, and tell them to say next when everyone is ready to pick monsters. Never advance without that spoken command.");
   }
   if (ctx.phase === 'monster_select') {
     lines.push(`SCREEN: the MONSTER-PICKING screen — a grid of creatures is on the display RIGHT NOW. Tell the caller to PICK their monster (say a name or a number). The ONLY monsters are, in order: ${numberedList(ctx.monsters)}. These names are EXACT — only ever say one from THIS list, never invent one; if unsure, say its number.`);
     if (ctx.myMonster) lines.push(locale === 'pt-BR'
-      ? `A pessoa escolheu ${ctx.myMonster}. A batalha começa automaticamente quando todos terminarem suas escolhas; para trocar, escolha outro monstro.`
-      : `The caller picked ${ctx.myMonster} (their square is highlighted on screen). The battle starts automatically when everyone finishes choosing; to change, pick a different monster for them.`);
+      ? `A pessoa escolheu ${ctx.myMonster}. Depois que todos escolherem, diga batalhar para começar; para trocar, escolha outro monstro.`
+      : `The caller picked ${ctx.myMonster} (their square is highlighted on screen). After everyone chooses, say battle to begin; to change, pick a different monster for them.`);
     else lines.push('The caller has NOT picked yet. Prompt them to choose — suggest one with a fun one-liner about its type — and record their pick when they name one. Do NOT start the battle until they have a monster.');
   }
   if (ctx.phase === 'battle') {
@@ -103,8 +103,8 @@ export function buildBattleSystemPrompt(ctx: BattleHostContext, locale: Supporte
       ? `Os golpes disponíveis são: ${numberedList(ctx.moves)}. Quando a pessoa disser um deles, execute o ataque e fale exatamente o nome em português exibido nesta lista.`
       : `The caller's moves are: ${numberedList(ctx.moves)}. When they name one, take that attack. In your SPOKEN reply, say only the move's plain English name (e.g. "Thunder Jolt!").`);
     lines.push(locale === 'pt-BR'
-      ? 'Se a pessoa estiver em dúvida, relembre: "Diga LUTAR e um golpe para atacar, ou DEFENDER, ITEM ou PROVOCAR." Diga primeiro a ação geral e depois o golpe específico.'
-      : 'If the caller seems unsure how to act, give the quick recap: "Say FIGHT and a move to attack — or GUARD, ITEM, or TAUNT." State the general action first, then the specific move.');
+      ? 'Se a pessoa estiver em dúvida, relembre: "Diga ATACAR e um golpe, ou DEFENDER, ITEM ou PROVOCAR." Diga primeiro a ação geral e depois o golpe específico.'
+      : 'If the caller seems unsure how to act, give the quick recap: "Say ATTACK and a move — or GUARD, ITEM, or TAUNT." State the general action first, then the specific move.');
     if (ctx.whoseTurn === 'me') lines.push(locale === 'pt-BR'
       ? 'É a vez da pessoa. Ajude-a a escolher um golpe ou uma das ações: defender, usar um item ou provocar. Dê uma sugestão tática curta.'
       : `It is the CALLER'S turn — help them choose. When they name a move, or say GUARD, ITEM, or TAUNT, take that action. Give a quick tactical nudge (e.g. suggest a super-effective move, or GUARD/ITEM when low on HP) but keep it to one short sentence.`);
