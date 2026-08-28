@@ -85,7 +85,8 @@ export class BattleVoiceSession {
   private authoritativeName: string | null = null;
   private stationManaged=false;
   private stationAssignment: { side: 'a' | 'b'; expectedPlayers: number } | null = null;
-  private lastFinalCommand: { text: string; beforeContext: string; afterContext: string; at: number } | null = null;
+  private lastFinalCommand: { text: string; beforeContext: string; afterContext: string; at: number; inputSignal:number } | null = null;
+  private inputSignal=0;
   private awaitingName = false;
   private applyingSetupChange=false;
   private lastCanAdvanceLobby=false;
@@ -160,8 +161,9 @@ export class BattleVoiceSession {
       }
       case 'prompt': {
         if (!this.code || !this.playerId) return;
+        this.cancelNarration();
         const text = msg.voicePrompt.trim();
-        if (!msg.last) { this.turnEpoch++; return; }
+        if (!msg.last) { this.inputSignal++;this.turnEpoch++; return; }
         if (text) {
           const normalized = normalizeForMatching(text, this.commandLocale);
           const snap = this.deps.snapshot(this.code, this.playerId, this.commandLocale);
@@ -174,20 +176,26 @@ export class BattleVoiceSession {
           const repeatedSameContext = this.lastFinalCommand?.beforeContext === beforeContext
             && this.lastFinalCommand.afterContext === beforeContext;
           const repeatWindow = repeatedTransition ? FINAL_REPEAT_GUARD_MS : SAME_CONTEXT_REPEAT_GUARD_MS;
+          const signaledNewUtterance=this.lastFinalCommand?.inputSignal!==this.inputSignal;
+          const reusableTransition=this.lastFinalCommand
+            ?this.isReusableTransition(normalized,this.lastFinalCommand.beforeContext,this.lastFinalCommand.afterContext):false;
           if (this.lastFinalCommand?.text === normalized && now - this.lastFinalCommand.at < repeatWindow
-            && (repeatedTransition || repeatedSameContext)) return;
+            && (repeatedTransition || repeatedSameContext)&&!signaledNewUtterance&&!reusableTransition){this.speakReprompt();return;}
           this.handleUtterance(text);
           const afterContext = this.finalCommandContext(this.deps.snapshot(this.code, this.playerId, this.commandLocale));
-          this.lastFinalCommand = { text: normalized, beforeContext, afterContext, at: now };
-        }
+          this.lastFinalCommand = { text: normalized, beforeContext, afterContext, at: now,inputSignal:this.inputSignal };
+        }else this.speakReprompt();
         break;
       }
       case 'interrupt':
+        this.cancelNarration();
+        this.inputSignal++;
         this.turnEpoch++;   // caller barged in → drop any in-flight LLM reply
         this.lastFinalCommand = null;
         break;
       case 'dtmf': {
         if (!this.code || !this.playerId) return;
+        this.cancelNarration();this.inputSignal++;
         const digit = msg.digit.trim();
         if (/^[0-9*#]$/.test(digit)) {
           this.handleUtterance(digit === '0' ? this.backCommand() : digit);
@@ -229,7 +237,7 @@ export class BattleVoiceSession {
     if(snap.phase==='results'&&this.stationManaged){
       this.deps.say(this.text('voice.waitOperator'));return;
     }
-    if (snap.phase === 'results' && (!snap.canRematch || this.draining || this.evQ.length > 0) && isAdvanceWord(text, this.commandLocale)) {
+    if (snap.phase === 'results' && (!snap.canRematch || this.draining || this.evQ.length > 0)) {
       this.deps.say(this.text('voice.holdFinal'));
       return;
     }
@@ -311,7 +319,7 @@ export class BattleVoiceSession {
       if (res) {
         if (res.kind === 'openFight') {
           this.menuLevel = 'fight';
-          this.deps.openFight(this.code!, this.playerId!);
+          if(snap.activeMenu!=='fight')this.deps.openFight(this.code!, this.playerId!);
           this.speakMoveChoices(snap);
           return;
         }
@@ -345,6 +353,12 @@ export class BattleVoiceSession {
     return before.startsWith('lobby:') && after.startsWith('monster_select:')
       || before.startsWith('monster_select:') && after.startsWith('battle:')
       || before.includes(':root:') && after.includes(':fight:');
+  }
+
+  private isReusableTransition(text:string,before:string,after:string):boolean{
+    if(before.startsWith('monster_select:')&&after.startsWith('battle:'))return isAdvanceWord(text,this.commandLocale);
+    return parseMoveNumber(text,this.commandLocale)===null&&before.includes(':root:')&&after.includes(':fight:')
+      &&matchBattleAction(text,{moves:[],potions:0,level:'root'},this.commandLocale)?.kind==='openFight';
   }
 
   private looksLikeBattleCommand(text: string, snap: BattleVoiceSnapshot): boolean {
@@ -435,6 +449,7 @@ export class BattleVoiceSession {
   private introDone = false;   // one dramatic "X vs Y" intro + how-to-play recap per battle
   private evQ: BattleEvent[] = [];   // events queued to narrate, drained on the SAME clock as the screen
   private draining = false;
+  private narrationGeneration=0;
   private settleWaiters: (() => void)[] = [];
   private pendingStateCue = false;
   private lastTurnCueKey = '';
@@ -485,13 +500,27 @@ export class BattleVoiceSession {
     if (actionSide && this.lastActionSide && this.lastActionSide !== actionSide) {
       this.lastActionSide = actionSide;
       this.evQ.unshift(ev);
-      this.deps.setTimer(() => this.drainEvents(), HANDOFF_PAUSE_MS);
+      this.scheduleNarrationDrain(HANDOFF_PAUSE_MS);
       return;
     }
     if (actionSide) this.lastActionSide = actionSide;
     this.speakEvent(ev);
     // Match the screen: hold for this event's own dwell, then narrate the next event/state cue.
-    this.deps.setTimer(() => this.drainEvents(), dwellForEvent(ev));
+    this.scheduleNarrationDrain(dwellForEvent(ev));
+  }
+
+  private scheduleNarrationDrain(delay:number):void{
+    const generation=this.narrationGeneration;
+    this.deps.setTimer(()=>{if(generation===this.narrationGeneration)this.drainEvents();},delay);
+  }
+
+  private cancelNarration():void{
+    this.narrationGeneration++;
+    this.evQ=[];
+    this.draining=false;
+    this.pendingStateCue=false;
+    this.lastActionSide=null;
+    for(const resolve of this.settleWaiters.splice(0))resolve();
   }
 
   /** Speak the commentary for ONE event (intro on turn 1, else the scripted line). */
@@ -641,7 +670,7 @@ export class BattleVoiceSession {
   }
 
   handleClose(): void {
-    this.turnEpoch++;
+    this.turnEpoch++;this.cancelNarration();
     const preserve=this.stationManaged&&this.code&&this.playerId
       &&this.deps.snapshot(this.code,this.playerId,this.commandLocale)?.phase==='results';
     if (this.code && this.playerId&&!preserve) this.deps.leave(this.code, this.playerId, this.callSid ?? '');
@@ -650,10 +679,7 @@ export class BattleVoiceSession {
 
   handleReplaced(): void {
     this.turnEpoch++;
-    this.evQ = [];
-    this.draining = false;
-    for (const resolve of this.settleWaiters.splice(0)) resolve();
-    this.pendingStateCue = false;
+    this.cancelNarration();
     this.code = null; this.playerId = null; this.callSid = null;
   }
 }

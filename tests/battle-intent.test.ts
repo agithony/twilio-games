@@ -55,13 +55,13 @@ const ctx = (over: Partial<BattleMenuCtx> = {}): BattleMenuCtx => ({
 });
 
 describe('matchBattleAction — ROOT keywords', () => {
-  it('opens the fight menu before accepting a Portuguese move name or number', () => {
+  it('accepts a Portuguese move in the same utterance as fight', () => {
     const localized = { moves: [
       { id: 'sparkmouse.jolt', name: 'Choque Trovejante' },
       { id: 'sparkmouse.zap', name: 'Descarga Estática' },
     ], potions: 2, level: 'root' as const };
-    expect(matchBattleAction('lutar dois', localized, 'pt-BR')).toEqual({ kind: 'openFight' });
-    expect(matchBattleAction('ataque com choque trovejante', localized, 'pt-BR')).toEqual({ kind: 'openFight' });
+    expect(matchBattleAction('lutar dois', localized, 'pt-BR')).toEqual({ kind: 'fight', moveId: 'sparkmouse.zap' });
+    expect(matchBattleAction('ataque com choque trovejante', localized, 'pt-BR')).toEqual({ kind: 'fight', moveId: 'sparkmouse.jolt' });
     expect(matchBattleAction('dois', { ...localized, level: 'fight' }, 'pt-BR')).toEqual({ kind: 'fight', moveId: 'sparkmouse.zap' });
     expect(matchBattleAction('choque trovejante', { ...localized, level: 'fight' }, 'pt-BR')).toEqual({ kind: 'fight', moveId: 'sparkmouse.jolt' });
   });
@@ -79,6 +79,12 @@ describe('matchBattleAction — ROOT keywords', () => {
   it('keeps a repeated fight command idempotent while the move menu is open', () => {
     expect(matchBattleAction('fight', { ...ctx(), level: 'fight' })).toEqual({ kind: 'openFight' });
     expect(matchBattleAction('lutar', { ...ctx(), level: 'fight' }, 'pt-BR')).toEqual({ kind: 'openFight' });
+  });
+
+  it('accepts a move in the same utterance as fight or attack', () => {
+    expect(matchBattleAction('fight one',ctx())).toEqual({kind:'fight',moveId:moves[0].id});
+    expect(matchBattleAction('fight Thunder Jolt',ctx())).toEqual({kind:'fight',moveId:moves[0].id});
+    expect(matchBattleAction('attack with Static Zap',ctx())).toEqual({kind:'fight',moveId:moves[1].id});
   });
 
   it('"guard"/"block"/"brace"/"defend" → guard', () => {
@@ -105,10 +111,10 @@ describe('matchBattleAction — ROOT keywords', () => {
     expect(matchBattleAction('provoke the foe', ctx())).toEqual({ kind: 'taunt' });
   });
 
-  it('requires the fight submenu before accepting a move name', () => {
-    expect(matchBattleAction('Thunder Jolt', ctx())).toBeNull();
-    expect(matchBattleAction('use tackle', ctx())).toBeNull();
-    expect(matchBattleAction('zap them', ctx())).toBeNull();
+  it('accepts unambiguous move names directly from the root menu', () => {
+    expect(matchBattleAction('Thunder Jolt', ctx())).toEqual({kind:'fight',moveId:moves[0].id});
+    expect(matchBattleAction('use tackle', ctx())).toEqual({kind:'fight',moveId:moves[3].id});
+    expect(matchBattleAction('zap them', ctx())).toEqual({kind:'fight',moveId:moves[1].id});
   });
 
   it('a bare NUMBER at root selects the ROOT action (1 fight, 2 guard, 3 item, 4 taunt)', () => {

@@ -851,7 +851,7 @@ export class HttpServer {
       : route === 'fighter'
         ? (fighter?.boundRoomCode ? { game: 'fighter', roomCode: fighter.boundRoomCode } : null)
         : (adapter.boundRoomCode ? { game: 'racer', roomCode: adapter.boundRoomCode } : null));
-    const say = (text: string, isCurrent?: () => boolean) => sendRelayText(ws, text, relayLocale, isCurrent);
+    const say = (text: string, isCurrent?: () => boolean) => sendRelayText(ws, text, relayLocale, isCurrent,route==='battle');
     const processFrame = (raw: string) => {
       if (route === null) {
         try {
@@ -2641,7 +2641,8 @@ function relayQueue(ws: WebSocket): RelayQueue {
   return queue;
 }
 
-function sendRelayText(ws: WebSocket, text: string, locale: SupportedLocale = DEFAULT_LOCALE, isCurrent?: () => boolean): void {
+function sendRelayText(ws: WebSocket, text: string, locale: SupportedLocale = DEFAULT_LOCALE,
+  isCurrent?: () => boolean,preemptible=false): void {
   const chunks = relayTextChunks(text, locale);
   if (!chunks.length || ws.readyState !== ws.OPEN || (isCurrent && !isCurrent())) return;
   const queue = relayQueue(ws);
@@ -2661,7 +2662,8 @@ function sendRelayText(ws: WebSocket, text: string, locale: SupportedLocale = DE
         .replace(/0/g, '\u2060').replace(/1/g, '\u200B');
       const wireToken = `${speechToken}${marker}`;
       const played = waitForRelayPlayback(queue, wireToken, generation);
-      ws.send(JSON.stringify({ type: 'text', token: wireToken, last: true, lang: locale }));
+      ws.send(JSON.stringify({ type: 'text', token: wireToken, last: true, lang: locale,
+        ...(preemptible?{interruptible:true,preemptible:true}:{}) }));
       queue.lastAt = Date.now();
       await played;
     }

@@ -689,7 +689,32 @@ describe('BattleVoiceSession', () => {
     session.handleMessage(prompt('fight'));
     session.handleMessage(prompt('fight'));
     expect(log.filter(entry => entry === 'openFight')).toHaveLength(1);
-    expect(said.filter(text => /thunder jolt/i.test(text))).toHaveLength(1);
+    // The repeated final may have preempted the first options token, so re-send the choices.
+    expect(said.filter(text => /thunder jolt/i.test(text))).toHaveLength(2);
+  });
+
+  it('lets fight start the battle and immediately open moves in the new phase', () => {
+    let snap=battleSnap({myName:'Ada',myMonsterId:'sparkmouse',myMonsterName:'Sparkmouse',canStartBattle:true});
+    const {deps,log,said}=fakeDeps({snapshot:()=>snap});
+    deps.advance=()=>{log.push('advance');snap=activeBattle();return true;};
+    deps.openFight=()=>{log.push('openFight');snap={...snap,activeMenu:'fight'};};
+    const session=new BattleVoiceSession(deps);session.handleMessage(setup());said.length=0;
+    session.handleMessage(prompt('fight'));
+    session.handleMessage(prompt('fight'));
+    expect(log).toEqual(expect.arrayContaining(['advance','openFight']));
+    expect(said.join(' ')).toMatch(/Thunder Jolt.*Static Zap/i);
+  });
+
+  it('accepts the same number as a new utterance after it opens the fight menu', () => {
+    let snap=activeBattle();
+    const {deps,log}=fakeDeps({snapshot:()=>snap});
+    deps.openFight=()=>{log.push('openFight');snap={...snap,activeMenu:'fight'};};
+    const session=new BattleVoiceSession(deps);session.handleMessage(setup());
+    session.handleMessage(prompt('one'));
+    session.handleMessage(prompt('one',false));
+    session.handleMessage(prompt('one'));
+    expect(log.filter(entry=>entry==='openFight')).toHaveLength(1);
+    expect(log.some(entry=>entry.includes('sparkmouse.jolt'))).toBe(true);
   });
 
   it('does not reinterpret a delayed numeric Fight choice as move one', () => {
@@ -822,7 +847,7 @@ describe('BattleVoiceSession', () => {
     expect(said.some(t => /shellback.*please wait|please wait.*shellback/i.test(t))).toBe(true);
   });
 
-  it('does not accept the next battle command while attack commentary is still resolving', () => {
+  it('lets a new command interrupt stale attack commentary', () => {
     let snap = battleSnap({
       phase: 'battle', myName: 'Bo', mySide: 'b', myMonsterId: 'shellback', myMonsterName: 'Shellback', myMonsterType: 'water',
       foeName: 'Ada', foeMonsterName: 'Sparkmouse', foeMonsterType: 'electric', myHp: 82, myMaxHp: 82, foeHp: 70, foeMaxHp: 70,
@@ -839,16 +864,13 @@ describe('BattleVoiceSession', () => {
     s.onBattleEvent({ kind: 'move_used', by: 'a', moveId: 'sparkmouse.jolt', moveName: 'Thunder Jolt' });
     s.handleMessage(prompt('guard'));
 
-    expect(log.some(l => l.startsWith('action '))).toBe(false);
-    expect(said.some(t => /resolving the last move/i.test(t))).toBe(true);
-
-    timers.shift()?.();
-    snap = { ...snap, activeSide: 'b', whoseTurn: 'me' };
-    s.handleMessage(prompt('guard'));
     expect(log.some(l => l.includes('"kind":"guard"'))).toBe(true);
+    const count=said.length;
+    timers.shift()?.();
+    expect(said).toHaveLength(count);
   });
 
-  it('uses the existing resolving cue for DTMF during commentary', () => {
+  it('lets DTMF interrupt commentary and open the move menu', () => {
     const timers: (() => void)[] = [];
     const { deps, log, said } = fakeDeps({
       snapshot: () => activeBattle(),
@@ -861,8 +883,23 @@ describe('BattleVoiceSession', () => {
 
     session.handleMessage(dtmf('1'));
 
-    expect(log).not.toContain('openFight');
-    expect(said.join(' ')).toMatch(/resolving the last move/i);
+    expect(log).toContain('openFight');
+    expect(said.join(' ')).toMatch(/Thunder Jolt.*Static Zap/i);
+  });
+
+  it('cancels all queued commentary and stale timers on interrupt', async () => {
+    const timers:(()=>void)[]=[];
+    const {deps,said}=fakeDeps({snapshot:()=>activeBattle(),setTimer:fn=>timers.push(fn)});
+    const session=new BattleVoiceSession(deps);session.handleMessage(setup());said.length=0;
+    session.onBattleEvent({kind:'move_used',by:'a',moveId:'sparkmouse.jolt',moveName:'Thunder Jolt'});
+    session.onBattleEvent({kind:'effectiveness',on:'b',multiplier:2,label:"It's super effective!"});
+    const settled=session.whenSpeechSettled();
+    session.handleMessage(JSON.stringify({type:'interrupt',utteranceUntilInterrupt:'Thunder',durationUntilInterruptMs:120}));
+    await settled;
+    const count=said.length;
+    for(const timer of timers.splice(0))timer();
+    expect(said).toHaveLength(count);
+    expect(said.join(' ')).not.toMatch(/super effective/i);
   });
 
   it('drops a superseded LLM turn when a newer interim arrives', async () => {
@@ -963,7 +1000,7 @@ describe('BattleVoiceSession', () => {
     const { deps, log, said } = fakeDeps({
       snapshot: () => battleSnap({
         phase: 'results', myName: 'Ada', myMonsterId: 'sparkmouse', myMonsterName: 'Sparkmouse',
-        foeName: 'Bo', foeMonsterName: 'Embertail', winnerName: 'Ada',
+        foeName: 'Bo', foeMonsterName: 'Embertail', winnerName: 'Ada',canRematch:false,
       }),
       setTimer: (fn: () => void) => { timers.push(fn); },
     });
@@ -981,7 +1018,7 @@ describe('BattleVoiceSession', () => {
     const timers: (() => void)[] = [];
     let advanced = false;
     const { deps } = fakeDeps({
-      snapshot: () => battleSnap({ phase: 'results', myName: 'Ada', winnerName: 'Ada' }),
+      snapshot: () => battleSnap({ phase: 'results', myName: 'Ada', winnerName: 'Ada',canRematch:false }),
       setTimer: (fn: () => void) => { timers.push(fn); },
       converse: async (_code, _id, _text, isCurrent) => {
         if (isCurrent()) advanced = true;
