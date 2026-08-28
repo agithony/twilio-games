@@ -124,7 +124,7 @@ describe('BattleVoiceSession', () => {
     const arrival=said.join(' ').toLowerCase();
     expect(arrival).toContain('ada');
     expect(arrival).toContain('voice monsters');
-    expect(arrival).toMatch(/fight|attack/);
+    expect(arrival).toContain('attack');
     expect(arrival).toMatch(/say next.*choose monsters/i);
     expect(arrival).not.toContain('your name');
     session.handleMessage(prompt('call me Mallory'));
@@ -292,7 +292,7 @@ describe('BattleVoiceSession', () => {
     expect(said[1]).toMatch(/conversation relay/i);
     expect(said[2]).toMatch(/what.*name/i);
     s.handleMessage(prompt("I'm Ada"));
-    expect(said.slice(3).join(' ')).toMatch(/nice to meet.*before you start.*say fight.*say next.*choose monsters/i);
+    expect(said.slice(3).join(' ')).toMatch(/nice to meet.*before you start.*say attack.*say next.*choose monsters/i);
   });
 
   it('captures the caller name in the lobby BEFORE anything else (deterministic, no LLM)', () => {
@@ -376,7 +376,7 @@ describe('BattleVoiceSession', () => {
     { label: 'Portuguese unnamed lobby', locale: 'pt-BR', snap: battleSnap({ phase: 'lobby', myName: null }), utterance: 'o que devo fazer agora?', expected: /primeiro nome.*Ana/i },
     { label: 'English monster select', locale: undefined, snap: battleSnap({ myName: 'Ada' }), utterance: 'the fiery-looking one', expected: /own monster.*name or number/i },
     { label: 'Portuguese monster select', locale: 'pt-BR', snap: battleSnap({ myName: 'Ada' }), utterance: 'quero o monstro de fogo', expected: /próprio monstro.*nome ou número/i },
-    { label: 'English battle root', locale: undefined, snap: activeBattle(), utterance: 'something else', expected: /fight.*guard.*item.*taunt/i },
+    { label: 'English battle root', locale: undefined, snap: activeBattle(), utterance: 'something else', expected: /attack.*guard.*item.*taunt/i },
     { label: 'Portuguese fight menu', locale: 'pt-BR', snap: activeBattle({ activeMenu: 'fight' }), utterance: 'não sei qual', expected: /seus golpes.*Thunder Jolt.*Static Zap/i },
   ])('uses a phase-correct scripted reprompt without an LLM: $label', async ({ locale, snap, utterance, expected }) => {
     const { deps, said } = fakeDeps({ snapshot: () => snap });
@@ -403,7 +403,7 @@ describe('BattleVoiceSession', () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(said.join(' ')).toMatch(/fight.*guard.*item.*taunt/i);
+    expect(said.join(' ')).toMatch(/attack.*guard.*item.*taunt/i);
   });
 
   it('never sends unknown setup speech to the conversational host',async()=>{
@@ -612,7 +612,7 @@ describe('BattleVoiceSession', () => {
     s.handleMessage(setup()); said.length = 0;
     s.onBattleEvent({ kind: 'turn_start', turn: 1 });
     expect(said.some(t => t.includes('Sparkmouse') && t.includes('Galecoil'))).toBe(true);   // X vs Y
-    expect(said.some(t => /fight/i.test(t) && /guard|item|taunt/i.test(t))).toBe(true);        // how-to recap
+    expect(said.some(t => /attack/i.test(t) && /guard|item|taunt/i.test(t))).toBe(true);        // how-to recap
   });
 
   it('on battle state start, tells the active caller they go first and includes the type matchup', () => {
@@ -630,7 +630,7 @@ describe('BattleVoiceSession', () => {
 
     expect(said.some(t => /sparkmouse.*shellback/i.test(t) && /electric.*water/i.test(t))).toBe(true);
     expect(said.some(t => /you go first|your turn/i.test(t))).toBe(true);
-    expect(said.filter(t => /fight/i.test(t) && /guard|item|taunt/i.test(t))).toHaveLength(1);
+    expect(said.filter(t => /attack/i.test(t) && /guard|item|taunt/i.test(t))).toHaveLength(1);
   });
 
   it('on battle state start, tells the waiting caller the other monster goes first', () => {
@@ -647,7 +647,7 @@ describe('BattleVoiceSession', () => {
     s.onBattleStateChanged();
 
     expect(said.some(t => /sparkmouse goes first|wait for sparkmouse/i.test(t))).toBe(true);
-    expect(said.filter(t => /fight/i.test(t) && /guard|item|taunt/i.test(t))).toHaveLength(0);
+    expect(said.filter(t => /attack/i.test(t) && /guard|item|taunt/i.test(t))).toHaveLength(0);
   });
 
   it('saying FIGHT on your turn opens the server-synced fight menu and reads the four moves', () => {
@@ -1146,7 +1146,7 @@ describe('BattleVoiceSession', () => {
     expect(log.some(line => line.includes('"kind":"guard"'))).toBe(true);
     said.length = 0;
     s.handleMessage(prompt('ajuda'));
-    expect(said.join(' ')).toMatch(/lutar.*defender.*item.*provocar/i);
+    expect(said.join(' ')).toMatch(/atacar.*defender.*item.*provocar/i);
   });
 
   it('understands Portuguese monster ordinals, advance words, and caller names', () => {

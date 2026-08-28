@@ -1,8 +1,8 @@
 // Map a caller's spoken utterance to a battle command. Two matchers live here, both PURE + shared by
 // the (future) CR voice adapter and the client:
 //   • matchMove       — an utterance → one of the active monster's 4 move slots (name or number).
-//   • matchBattleAction — an utterance → a TWO-LEVEL menu action (FIGHT/GUARD/ITEM/TAUNT at the root;
-//                         the 4 moves once FIGHT is open) given the caller's current menu context.
+//   • matchBattleAction — an utterance → a TWO-LEVEL menu action (ATTACK/GUARD/ITEM/TAUNT at the root;
+//                         the 4 moves once ATTACK is open) given the caller's current menu context.
 // Priority within a move match: explicit NUMBER → name match. (Mirrors the racer's number/fuzzy
 // approach but self-contained in shared/ so both layers use it.)
 import type { BattleAction } from './battle-world';
@@ -58,8 +58,8 @@ export function matchMove(spoken: string, names: string[], locale: SupportedLoca
 
 // ── the two-level command menu, by voice ───────────────────────────────────────────────────────────
 // ROOT keyword → action synonyms. A word-boundary match anywhere in the utterance fires it, so
-// "let me fight", "brace for it", "use a potion" all work. Ordered most-specific first isn't needed —
-// each set is disjoint. FIGHT opens the moves unless the same utterance also names an attack.
+// "let me attack", "brace for it", "use a potion" all work. Ordered most-specific first isn't needed —
+// each set is disjoint. ATTACK opens the moves unless the same utterance also names a move.
 const COMMAND_WORDS: Record<SupportedLocale, {
   guard: string[]; item: string[]; taunt: string[]; fight: string[]; back: string[];
 }> = {

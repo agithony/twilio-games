@@ -107,7 +107,7 @@ let myId: string | null = null;
 let state: BattleStateMsg | null = null;
 let draining = false;                 // events currently animating
 let lockedMoveName: string | null = null;   // the move I committed this turn (for the "locked" beat)
-let menuLevel: 'root' | 'fight' = 'root';   // two-level command menu: root actions → FIGHT's moves
+let menuLevel: 'root' | 'fight' = 'root';   // two-level command menu: root actions → ATTACK's moves
 let phoneNumber = '';   // the number players call to join (from /api/config) — shown in the lobby join flow
 let phoneQr = '/brand/join-qr.png?v=2';
 let joinedHere = false;
@@ -585,7 +585,7 @@ function toggleSelfPlaying(): void {
 }
 
 // Keyboard: during MY choosing turn the command menu is two levels —
-//   root: 1 FIGHT (→ opens the moves) · 2 GUARD · 3 ITEM (Potion) · 4 TAUNT
+//   root: 1 ATTACK (→ opens the moves) · 2 GUARD · 3 ITEM (Potion) · 4 TAUNT
 //   fight: 1–4 pick a move, 0 goes back to root.
 // Lobby/select/results: P adds/drops a keyboard tester (shared screen); Enter advances the flow.
 addEventListener('keydown', (e) => {
@@ -623,7 +623,7 @@ function handleMenuKey(key: string): void {
     else if (key === '4') applyMenuAction({ kind: 'taunt' });
     return;
   }
-  // fight submenu
+  // attack submenu
   if (key === '0' || key === 'Escape') { applyMenuAction({ kind: 'back' }); return; }
   if (/^[1-4]$/.test(key)) {
     const mv = mySnapMoves()[parseInt(key, 10) - 1];

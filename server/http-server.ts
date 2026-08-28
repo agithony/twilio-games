@@ -1054,8 +1054,8 @@ export class HttpServer {
     const numbers = selectionNumberHints(locale);
     if (game === 'battle') {
       const commands = locale === 'pt-BR'
-        ? ['lutar', 'luta', 'lute', 'batalhar', 'combater', 'atacar', 'ataque', 'ataca', 'defender', 'bloquear', 'item', 'poção', 'curar', 'provocar', 'voltar', 'cancelar', 'começar', 'revanche']
-        : ['fight', 'fights', 'flight', 'guard', 'item', 'potion', 'taunt', 'attack', 'heal', 'back', 'start', 'rematch'];
+        ? ['atacar', 'ataque', 'ataca', 'lutar', 'luta', 'lute', 'batalhar', 'combater', 'defender', 'bloquear', 'item', 'poção', 'curar', 'provocar', 'voltar', 'cancelar', 'começar', 'revanche']
+        : ['attack', 'fight', 'fights', 'flight', 'guard', 'item', 'potion', 'taunt', 'heal', 'back', 'start', 'rematch'];
       const monsters = rosterEntries();
       const primaryNames = monsters.map(monster => localizedMonsterName(locale, monster.id));
       const primaryMoves = monsters.flatMap(monster => monster.moves.map(move => localizedMoveName(locale, move.id)));
@@ -1773,8 +1773,8 @@ export class HttpServer {
     if (a === 'guard') return { kind: 'guard' };
     if (a === 'item' || a === 'potion') return { kind: 'item', item: 'potion' };
     if (a === 'taunt') return { kind: 'taunt' };
-    if (a.startsWith('fight')) {
-      const moveName = action.split(':').slice(1).join(':').trim() || action.replace(/^fight\s*/i, '').trim();
+    if (/^(?:attack|fight)\b/i.test(a)) {
+      const moveName = action.split(':').slice(1).join(':').trim() || action.replace(/^(?:attack|fight)\s*/i, '').trim();
       const i = matchChoice(moveName, moves.map(m => m.name));
       if (i >= 0) return { kind: 'fight', moveId: moves[i]!.id };
     }
