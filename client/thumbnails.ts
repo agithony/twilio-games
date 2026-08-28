@@ -106,6 +106,20 @@ function whenIdle(): Promise<void> {
   });
 }
 
+async function waitUntilRenderAllowed(canRender: () => boolean): Promise<void> {
+  while (!canRender()) await new Promise(resolve => setTimeout(resolve, 250));
+}
+
+/** Wait for the boost model without coupling its portrait to car or track asset readiness. */
+export async function renderBoostThumbnailAsync(
+  assets: AssetLoader, size = 96, canRender: () => boolean = () => true,
+): Promise<string> {
+  if (!await assets.boostReady()) return '';
+  await waitUntilRenderAllowed(canRender);
+  await whenIdle();
+  try { return renderBoostThumbnail(assets, size); } catch { return ''; }
+}
+
 /**
  * Render the car-select portraits from the AssetLoader's already-normalized templates, cloning each
  * with SkeletonUtils.clone. ONE fresh renderer per car (see file header). Paces work to main-thread
@@ -115,18 +129,25 @@ function whenIdle(): Promise<void> {
  */
 export async function renderCarThumbnailsAsync(
   assets: AssetLoader, onOne: (i: number, url: string) => void, size = 256,
-  shouldContinue: () => boolean = () => true,
+  canRender: () => boolean = () => true,
 ): Promise<string[]> {
   const n = assets.carCount();
   if (n === 0) return [];
   const out: string[] = new Array(n).fill('');
+  const pending = new Map<number, Promise<number>>();
   for (let i = 0; i < n; i++) {
-    if (!shouldContinue()) break;
+    pending.set(i, Promise.resolve().then(() => assets.carReady(i)).then(() => i, () => i));
+  }
+  while (pending.size) {
+    const i = await Promise.race(pending.values());
+    pending.delete(i);
+    await waitUntilRenderAllowed(canRender);
     await whenIdle();                            // let attract paint before this synchronous render
-    if (!shouldContinue()) break;
-    const url = shootCar(assets.carTemplate(i), size);
+    await waitUntilRenderAllowed(canRender);
+    let url = '';
+    try { url = shootCar(assets.carTemplate(i), size); } catch { /* keep the fallback tile */ }
     out[i] = url;
-    onOne(i, url);
+    try { onOne(i, url); } catch { /* one tile must not stop the remaining portraits */ }
   }
   return out;
 }

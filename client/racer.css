@@ -251,6 +251,7 @@ html[data-theme="light"] .cl-row.cl-power :is(.cl-say,.cl-action) { color:#0E3E9
   position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
 .tile .ph::after { content: ''; width: 18px; height: 18px; margin-left: 8px; border: 2px solid var(--glass-brd-2);
   border-top-color: var(--red); border-radius: 50%; animation: spin .8s linear infinite; }
+.tile .ph.unavailable::after { display: none; }
 .tile .cname { text-align: center; font-size: 12px; font-weight: 700; margin-top: 3px;
   display: flex; align-items: center; justify-content: center; line-height: 1.1;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

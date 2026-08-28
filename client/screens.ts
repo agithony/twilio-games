@@ -36,6 +36,7 @@ export class Screens {
   private text: ReturnType<typeof createTranslator<RacerMessageKey>>;
   private carNames: string[] = [];
   private carThumbs: string[] = [];
+  private unavailableCarThumbs = new Set<number>();
   private mapPreviews: Record<string, string> = {};
   /** Rendered boost-orb thumbnail (data-URL) for the lobby "How to play" NITRO row; '' until it lands. */
   private boostThumb = '';
@@ -121,14 +122,16 @@ export class Screens {
   /** Progressive thumbnails: a portrait finished — store it and live-swap that tile's <img> (no
    *  rebuild, so no animation replay). Only rebuilds if the tile isn't in the DOM yet. */
   setCarThumb(i: number, url: string): void {
-    if (!url) return;
-    this.carThumbs[i] = url;
+    if (url) { this.carThumbs[i] = url; this.unavailableCarThumbs.delete(i); }
+    else this.unavailableCarThumbs.add(i);
     const img = this.root.querySelector(`img[data-car-thumb="${i}"]`);
-    if (img instanceof HTMLImageElement) {
+    if (url && img instanceof HTMLImageElement) {
       img.src = url; img.style.opacity = '1';
       // Remove the "CAR N" + spinner placeholder — it's position:absolute; inset:0, so if left in
       // place it sits ON TOP of the finished portrait forever (the "stuck loading" overlay bug).
       this.root.querySelector(`span.ph[data-ph="${i}"]`)?.remove();
+    } else if (!url) {
+      this.root.querySelector(`span.ph[data-ph="${i}"]`)?.classList.add('unavailable');
     } else if (this.visible && this.phase === 'car_select') {
       this.rerenderCarSelect(true);
     }
@@ -242,9 +245,10 @@ export class Screens {
     const claimed = claimedBy.length > 0;
     const claim = claimed ? cssColor(claimedBy[0]!.color) : '';
     const url = this.carThumbs[i];
+    const unavailable = this.unavailableCarThumbs.has(i);
     const portrait = url
       ? `<div class="portrait"><img data-car-thumb="${i}" src="${url}" alt="" style="opacity:1"></div>`
-      : `<div class="portrait"><img data-car-thumb="${i}" alt="" style="opacity:0"><span class="ph" data-ph="${i}">${this.text('screen.car.placeholder', { number: i + 1 })}</span></div>`;
+      : `<div class="portrait"><img data-car-thumb="${i}" alt="" style="opacity:0"><span class="ph${unavailable ? ' unavailable' : ''}" data-ph="${i}">${this.text('screen.car.placeholder', { number: i + 1 })}</span></div>`;
     const badges = claimedBy.map(p =>
       `<span class="badge" style="background:${cssColor(p.color)}">${esc(p.name)}</span>`).join('');
     return `
