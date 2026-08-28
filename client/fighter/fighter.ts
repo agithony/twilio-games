@@ -2,9 +2,10 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { FighterActor } from './fighter-actor';
+import { FighterActorLoadCoordinator, fighterActorLoadContext, type FighterActorLoadContext } from './fighter-actor-loading';
 import { FIGHTERS, FIGHTER_ASSET_VERSION, loadAnimationSources } from './fighter-assets';
 import { FighterAtmosphere, fighterAtmosphereSpec, type FighterAtmosphereSpec } from './fighter-atmosphere';
-import { FighterConnection } from './fighter-net';
+import { FighterConnection, type FighterConnectionState } from './fighter-net';
 import { isInteractiveShortcutTarget, resolveNumericSelection } from './fighter-client-utils';
 import { frameStaticPortraitArena, proceduralFallbackCamera, responsiveVerticalFov, shouldUseLivePortraitArena } from './fighter-camera';
 import { getSoundEffectsManager } from '../sound-effects';
@@ -106,6 +107,7 @@ let roster: FighterRosterEntry[] = [];
 let maps: FighterMapEntry[] = [];
 let phoneNumber = t('phone.fallback');
 const FIGHTER_ACTOR_TIMEOUT_MS = 105_000;
+const FIGHTER_ACTOR_FALLBACK_MS = 12_000;
 const FIGHTER_MAP_TIMEOUT_MS = 15_000;
 let phoneQr = '/brand/join-qr.png?v=2';
 let movement: Partial<Record<FighterId, { from: number; to: number; elapsed: number; jump: boolean; duration: number }>> = {};
@@ -118,6 +120,7 @@ let mapReadyId = '';
 let failedMapKey = '';
 let readySentFor = '';
 let readyTimer: ReturnType<typeof setTimeout> | null = null;
+const actorLoadCoordinator = new FighterActorLoadCoordinator(FIGHTER_ACTOR_FALLBACK_MS);
 let mapModel: THREE.Object3D | null = null;
 let mapBackdrop: THREE.WebGLRenderTarget | null = null;
 let mapAtmosphere: FighterAtmosphere | null = null;
@@ -133,8 +136,9 @@ const cameraAxis = new THREE.Vector3(), cameraTarget = new THREE.Vector3(), came
 let flowMessage = '';
 let animationSources: Awaited<ReturnType<typeof loadAnimationSources>> | null = null;
 const actorLoads = new Map<string, Promise<FighterActor>>();
+const fallbackActorIds = new Set<string>();
+const deferredRealActors = new Map<string, FighterActor>();
 let preparedFightKey = '';
-let actorLoadFailedKey = '';
 let fightStartedKey = '';
 let bufferedEvents: FighterEvent[] = [];
 let initializationAttempt = 0;
@@ -143,6 +147,7 @@ let numericBuffer = '';
 let numericTimer: ReturnType<typeof setTimeout> | null = null;
 let focusBeforeError: HTMLElement | null = null;
 let isHost = false;
+let fighterConnectionState: FighterConnectionState = 'connecting';
 let resultRevealAt = 0;
 let resultTimer: ReturnType<typeof setTimeout> | null = null;
 let introSegment = '';
@@ -156,9 +161,11 @@ connection.onEvents(handleEvents);
 connection.onError((code, message) => { console.error(`[fighter] ${code}: ${message}`); flowMessage = localizedServerError(code) ?? t('error.invalidResponse'); lastOverlayKey = ''; renderFlow(); });
 connection.onHostIdentity(host => { isHost = host; lastOverlayKey = ''; renderFlow(); });
 connection.onConnectionState(status => {
+  fighterConnectionState = status;
   connectionStatus.dataset.state = status;
   connectionStatus.textContent = commonText(status === 'closed' ? 'connection.closed' : `connection.${status}`);
-  if (status === 'reconnecting') {
+  if (status !== 'connected') {
+    isHost = false;
     readySentFor = '';
     if (readyTimer) { clearTimeout(readyTimer); readyTimer = null; }
   }
@@ -179,12 +186,14 @@ connection.onState(next => {
     flowMessage = ''; numericBuffer = ''; if (numericTimer) { clearTimeout(numericTimer); numericTimer = null; }
   }
   if (phaseChanged) {
-    if (next.phase === 'loading') { preparedFightKey = ''; actorLoadFailedKey = ''; fightStartedKey = ''; bufferedEvents = []; }
+    if (next.phase === 'loading') { preparedFightKey = ''; fightStartedKey = ''; bufferedEvents = []; }
+    if (next.phase === 'lobby' || next.phase === 'fighter_select') resetFallbackActors();
     if (next.phase === 'loading' || next.phase === 'intro') countdownSoundPlayed = false;
     if (next.phase !== 'results' && resultTimer) { clearTimeout(resultTimer); resultTimer = null; resultRevealAt = 0; }
     if (['lobby', 'fighter_select', 'map_select', 'loading'].includes(next.phase)) getMusicManager().switchContext('lobby');
   }
   state = next;
+  if (!fighterActorLoadContext(next)) actorLoadCoordinator.clear();
   if (next.phase === 'countdown') {
     const count = Math.ceil(next.countdown ?? 0);
     if (locale === 'en-US' && isCountdownSoundCue(count) && !countdownSoundPlayed) { countdownSoundPlayed = true; getSoundEffectsManager().playCountdown(); }
@@ -199,7 +208,7 @@ connection.onState(next => {
   updateNames(next);
   if (next.phase === 'map_select') for (const player of next.players) if (!player.isAi && player.fighterId) preloadFighterActor(player.fighterId);
   if (next.selectedMap && ['loading', 'intro', 'countdown', 'fight', 'victory', 'results'].includes(next.phase)) applyMapTheme(next.selectedMap);
-  if ((next.phase === 'loading' || next.phase === 'intro' || next.phase === 'countdown') && (phaseChanged || selectionChanged || !actors)) prepareFight(next);
+  if (fighterActorLoadContext(next) && (phaseChanged || selectionChanged || !actors)) prepareFight(next);
   if (phaseChanged && next.phase === 'intro') beginIntro(next);
   if (previousPhase === 'intro' && next.phase === 'countdown') endIntro(next);
   if (next.phase === 'loading') maybeSignalReady();
@@ -226,7 +235,10 @@ const stopVoiceNumberUpdates = watchVoiceNumber(locale, async number => {
   }
   renderFlow();
 });
-addEventListener('pagehide', stopVoiceNumberUpdates, { once: true });
+addEventListener('pagehide', () => {
+  stopVoiceNumberUpdates(); actorLoadCoordinator.clear();
+  if (readyTimer) { clearTimeout(readyTimer); readyTimer = null; }
+}, { once: true });
 
 function setLoading(progress: number, label: string): void {
   const value = Math.round(progress * 100); loadingLabel.textContent = label;
@@ -421,19 +433,20 @@ function endIntro(current: FighterState): void {
 }
 
 function prepareFight(next: FighterState): void {
-  const p1 = next.players.find(player => player.side === 'p1'); const p2 = next.players.find(player => player.side === 'p2');
-  if (!p1?.fighterId || !p2?.fighterId) return;
-  const key = `${p1.fighterId}:${p2.fighterId}`;
-  if (actorLoadFailedKey === key) return;
-  if (!loadedActors.has(p1.fighterId) || !loadedActors.has(p2.fighterId)) { void ensureFightActors(p1.fighterId, p2.fighterId, key); return; }
+  const context = fighterActorLoadContext(next);
+  if (!context) return;
+  const { p1Id, p2Id } = context;
+  const key = `${p1Id}:${p2Id}`;
+  if (!loadedActors.has(p1Id) || !loadedActors.has(p2Id)) { ensureFightActors(context); return; }
   if (key !== actorKey) {
     if (actors) { scene.remove(actors.p1.root, actors.p2.root); actors = null; }
-    const left = loadedActors.get(p1.fighterId), right = loadedActors.get(p2.fighterId); if (!left || !right) return;
+    const left = loadedActors.get(p1Id), right = loadedActors.get(p2Id); if (!left || !right) return;
     actors = { p1: left, p2: right }; actorKey = key;
     scene.add(left.root, right.root);
-    trimActorCache(new Set([p1.fighterId, p2.fighterId]));
+    trimActorCache(new Set([p1Id, p2Id]));
   }
   if (!actors) return;
+  actorLoadCoordinator.clear();
   const setupKey = `${key}:${next.selectedMap ?? ''}`;
   if (preparedFightKey !== setupKey) {
     preparedFightKey = setupKey; movement = {};
@@ -444,48 +457,82 @@ function prepareFight(next: FighterState): void {
   if (next.phase === 'fight') startFightPresentation(setupKey);
 }
 
-async function ensureFightActors(p1Id: string, p2Id: string, expectedKey: string): Promise<void> {
+function ensureFightActors(context: FighterActorLoadContext): void {
   if (!animationSources) return;
+  const { p1Id, p2Id } = context;
   const load = (id: string) => {
     const existing = loadedActors.get(id); if (existing) return Promise.resolve(existing);
     let pending = actorLoads.get(id);
     if (!pending) {
       const spec = FIGHTERS.find(fighter => fighter.id === id); if (!spec) return Promise.reject(new Error(t('error.unknownFighter', { id })));
       pending = loadFighterActor(spec); actorLoads.set(id, pending);
-      void pending.then(actor => { loadedActors.set(id, actor); trimActorCache(new Set([p1Id, p2Id])); })
-        .finally(() => actorLoads.delete(id)).catch(() => {});
+      const currentLoad = pending;
+      void pending.then(actor => storeLoadedActor(id, actor, new Set([p1Id, p2Id])))
+        .finally(() => { if (actorLoads.get(id) === currentLoad) actorLoads.delete(id); }).catch(() => {});
     }
     return pending;
   };
-  try {
-    const results = await Promise.allSettled([load(p1Id), load(p2Id)]);
-    const failed = results.find(result => result.status === 'rejected');
-    if (failed?.status === 'rejected') throw failed.reason;
-    const current = `${state?.players.find(player => player.side === 'p1')?.fighterId}:${state?.players.find(player => player.side === 'p2')?.fighterId}`;
-    if (state && current === expectedKey && (state.phase === 'loading' || state.phase === 'intro' || state.phase === 'countdown' || state.phase === 'fight')) {
-      actorLoadFailedKey = '';
-      prepareFight(state); if (state.phase === 'intro') beginIntro(state); maybeSignalReady();
-    }
-  } catch (error) {
-    const current = `${state?.players.find(player => player.side === 'p1')?.fighterId}:${state?.players.find(player => player.side === 'p2')?.fighterId}`;
-    if (state?.phase !== 'loading' || current !== expectedKey) return;
-    actorLoadFailedKey = expectedKey;
-    console.error('Fighter model failed to load; blocking match readiness.', error);
-    showAssetError(t('error.fighterLoad'), error, stationDisplay.active
-      ? [{ label: t('action.retry'), action: reloadForAssetRetry }]
-      : [
-        { label: t('action.retry'), action: () => { actorLoadFailedKey = ''; hideAssetError(); void ensureFightActors(p1Id, p2Id, expectedKey); } },
-        { label: t('action.cancel'), secondary: true, action: () => { hideAssetError(); connection.back(); } },
-      ]);
+  actorLoadCoordinator.start(
+    context.key,
+    async () => {
+      await Promise.all([load(p1Id), load(p2Id)]);
+    },
+    () => fighterActorLoadContext(state)?.key === context.key,
+    () => finishActorPreparation(context),
+    error => {
+      if (error) console.warn('Fighter model failed to load; using fallback actors.', error);
+      else console.warn(`Fighter models were not ready after ${FIGHTER_ACTOR_FALLBACK_MS / 1000} seconds; using fallback actors.`);
+      installFallbackActors(context);
+    },
+  );
+}
+
+function finishActorPreparation(context: FighterActorLoadContext): void {
+  if (!state || fighterActorLoadContext(state)?.key !== context.key) return;
+  prepareFight(state);
+  if (state.phase === 'intro') beginIntro(state);
+  maybeSignalReady();
+}
+
+function installFallbackActors(context: FighterActorLoadContext): void {
+  for (const id of [context.p1Id, context.p2Id]) {
+    if (loadedActors.has(id)) continue;
+    const color = roster.find(fighter => fighter.id === id)?.color ?? '#ef223a';
+    loadedActors.set(id, FighterActor.fallback(color));
+    fallbackActorIds.add(id);
   }
+  finishActorPreparation(context);
+}
+
+function storeLoadedActor(id: string, actor: FighterActor, keep: Set<string>): void {
+  const existing = loadedActors.get(id);
+  if (!existing) loadedActors.set(id, actor);
+  else if (fallbackActorIds.has(id)) {
+    deferredRealActors.get(id)?.dispose();
+    deferredRealActors.set(id, actor);
+  } else actor.dispose();
+  trimActorCache(keep);
+}
+
+function resetFallbackActors(): void {
+  if (!fallbackActorIds.size) return;
+  if (actors) { scene.remove(actors.p1.root, actors.p2.root); actors = null; actorKey = ''; preparedFightKey = ''; }
+  for (const id of fallbackActorIds) {
+    const fallback = loadedActors.get(id);
+    const replacement = deferredRealActors.get(id);
+    if (replacement) { loadedActors.set(id, replacement); deferredRealActors.delete(id); }
+    else loadedActors.delete(id);
+    fallback?.dispose();
+  }
+  fallbackActorIds.clear();
 }
 
 function preloadFighterActor(id: string): void {
   if (!animationSources || loadedActors.has(id) || actorLoads.has(id)) return;
   const spec = FIGHTERS.find(fighter => fighter.id === id); if (!spec) return;
   const pending = loadFighterActor(spec); actorLoads.set(id, pending);
-  void pending.then(actor => { loadedActors.set(id, actor); trimActorCache(new Set([id])); })
-    .finally(() => actorLoads.delete(id)).catch(() => {});
+  void pending.then(actor => storeLoadedActor(id, actor, new Set([id])))
+    .finally(() => { if (actorLoads.get(id) === pending) actorLoads.delete(id); }).catch(() => {});
 }
 
 function loadFighterActor(spec: (typeof FIGHTERS)[number]): Promise<FighterActor> {
@@ -552,10 +599,13 @@ function applyEvents(events: FighterEvent[]): void {
 }
 
 function trimActorCache(keep: Set<string>): void {
+  const current = fighterActorLoadContext(state);
+  if (current) { keep.add(current.p1Id); keep.add(current.p2Id); }
   for (const [id, actor] of loadedActors) {
     if (loadedActors.size <= 4) break;
     if (keep.has(id) || actor === actors?.p1 || actor === actors?.p2) continue;
-    loadedActors.delete(id); actor.dispose();
+    loadedActors.delete(id); fallbackActorIds.delete(id); actor.dispose();
+    const deferred = deferredRealActors.get(id); deferredRealActors.delete(id); deferred?.dispose();
   }
 }
 
@@ -775,7 +825,7 @@ function disposeObjectResources(root: THREE.Object3D): void {
 }
 
 function maybeSignalReady(): void {
-  if (!isHost || state?.phase !== 'loading' || !state.selectedMap || mapReadyId !== state.selectedMap) return;
+  if (fighterConnectionState !== 'connected' || !isHost || state?.phase !== 'loading' || !state.selectedMap || mapReadyId !== state.selectedMap) return;
   const p1Id = state.players.find(player => player.side === 'p1')?.fighterId;
   const p2Id = state.players.find(player => player.side === 'p2')?.fighterId;
   if (!p1Id || !p2Id || !loadedActors.has(p1Id) || !loadedActors.has(p2Id)) return;
@@ -788,10 +838,10 @@ function maybeSignalReady(): void {
   // authoritative countdown begins only after the browser has actually become responsive.
   readyTimer = setTimeout(() => {
     readyTimer = null;
-    if (state?.phase !== 'loading' || state.selectedMap !== mapId
+    if (fighterConnectionState !== 'connected' || !isHost || state?.phase !== 'loading' || state.selectedMap !== mapId
       || mapReadyId !== mapId || `${state.loadingGeneration}:${state.selectedMap}` !== readinessKey) return;
     requestAnimationFrame(() => requestAnimationFrame(() => {
-      if (state?.phase !== 'loading' || state.selectedMap !== mapId || mapReadyId !== mapId || !actors
+      if (fighterConnectionState !== 'connected' || !isHost || state?.phase !== 'loading' || state.selectedMap !== mapId || mapReadyId !== mapId || !actors
         || `${state.loadingGeneration}:${state.selectedMap}` !== readinessKey) return;
       readySentFor = readinessKey;
       stationDisplay.markEngineReady();

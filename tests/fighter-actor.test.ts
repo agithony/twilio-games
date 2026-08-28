@@ -5,6 +5,13 @@ import { FighterActor } from '../client/fighter/fighter-actor';
 interface ActorState { currentId: string }
 
 describe('FighterActor playback', () => {
+  it('creates a visible procedural actor when an FBX model is unavailable', () => {
+    const actor = FighterActor.fallback('#ef223a');
+    expect(new THREE.Box3().setFromObject(actor.root).isEmpty()).toBe(false);
+    expect(actor.model.children.length).toBeGreaterThan(0);
+    actor.dispose();
+  });
+
   it('holds a knockout fall on the floor without starting get-up', () => {
     const model = new THREE.Group();
     const body = new THREE.Mesh(new THREE.BoxGeometry(1, 2, 1));
