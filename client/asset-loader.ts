@@ -133,12 +133,11 @@ export class AssetLoader {
       for (let index = 0; index < this.manifest.cars.length; index++) this.startCarLoad(index);
       this.barrierLoad = this.manifest.barrier ? this.startBarrierLoad() : Promise.resolve();
       this.boostLoad = this.manifest.boostPad ? this.startBoostLoad() : Promise.resolve();
-      this.carsReady = Promise.all([...this.carLoads, this.barrierLoad, this.boostLoad]).then(() => undefined);
+      this.carsReady = Promise.allSettled([...this.carLoads, this.barrierLoad, this.boostLoad]).then(() => undefined);
     } finally { clearTimeout(timeout); }
   }
 
-  /** Resolves once every car/barrier/boost GLB has finished loading (or immediately if none). The
-   *  thumbnail renderer awaits this so it doesn't snapshot half-loaded templates. */
+  /** Resolves once every car/barrier/boost GLB has settled (or immediately if none). */
   carsReady: Promise<void> = Promise.resolve();
 
   async waitForGameplayAssets(carIndexes: readonly number[]): Promise<void> {
@@ -314,8 +313,16 @@ export class AssetLoader {
   }
 
   carTemplate(i: number): THREE.Group | null { return this.cars.length ? this.cars[i % this.cars.length] ?? null : null; }
+  async carReady(i: number): Promise<boolean> {
+    try { await (this.carLoads[i] ?? Promise.resolve()); } catch { return false; }
+    return this.carLoadStates[i] === 'ready' && Boolean(this.cars[i]);
+  }
   barrierTemplate(): THREE.Group | null { return this.barrier; }
   boostTemplate(): THREE.Group | null { return this.boost; }
+  async boostReady(): Promise<boolean> {
+    try { await this.boostLoad; } catch { return false; }
+    return this.boostLoadState === 'ready' && Boolean(this.boost);
+  }
   /** The manifest car-model filenames in order (car index i uses carFile(i)). Used to key per-level
    *  car-scale overrides by MODEL (so each car model can be sized per level), not by join index. */
   carFiles(): string[] { return this.manifest.cars.map(r => r.file); }

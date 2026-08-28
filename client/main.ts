@@ -6,7 +6,7 @@ import { countdownDisplay, isCountdownSoundCue } from '../shared/countdown';
 import { AssetLoader } from './asset-loader';
 import { Screens } from './screens';
 import type { GlobalEntry } from './screens';
-import { renderCarThumbnailsAsync, renderMapThumbnail, renderBoostThumbnail } from './thumbnails';
+import { renderCarThumbnailsAsync, renderMapThumbnail, renderBoostThumbnailAsync } from './thumbnails';
 import { AttractMode } from './attract';
 import { Announcer } from './announcer';
 import QRCode from 'qrcode';
@@ -514,6 +514,19 @@ async function loadAssetsInBackground(): Promise<void> {
   try { await assets.loadManifest(); } catch { /* primitives — game still runs */ }
   // Friendly names are cheap → publish them now so the car grid has labels right away.
   try { screens.setCarCatalog(assets.carNames().map(name => localizedCarName(locale, name)), []); } catch { /* no manifest */ }
+  // Portrait captures run independently from the backdrop. A slow map or prop must not leave the car
+  // grid spinning, and a live station race pauses this cosmetic work instead of cancelling it.
+  const capturesMayStart = new Promise<void>(resolve => setTimeout(resolve, 1500));
+  const canCapture = () => !stationDisplay.active || !raceLive;
+  void (async () => {
+    await capturesMayStart;
+    await renderCarThumbnailsAsync(assets, (i, url) => screens.setCarThumb(i, url), 256, canCapture);
+  })().catch(() => { /* failed tiles keep their styled fallback */ });
+  void (async () => {
+    await capturesMayStart;
+    const orb = await renderBoostThumbnailAsync(assets, 96, canCapture);
+    if (orb) { setOrbThumb(orb); screens.setBoostThumb(orb); }
+  })().catch(() => { /* keep text-only nitro label */ });
   // Load a map for the backdrop: an explicit ?map= wins; otherwise grab the first authored map so
   // the attract-mode demo races a real neon track (not the bare generated straight). The race itself
   // re-applies the lobby's chosen map on start (via onItems), so this is just the menu backdrop.
@@ -528,27 +541,6 @@ async function loadAssetsInBackground(): Promise<void> {
   maybeMarkStationReady();
   if (wantAttract) reallyStartAttract();
 
-  // Portraits: render after the attract reveal has SETTLED (its first ~1.5s of frames are the
-  // stuttery warmup — shader compile, shadow-map init), so the heavy per-car renders don't fight the
-  // demo's opening animation. WAIT for the car GLBs to finish streaming in first (loadManifest now
-  // resolves before they're all loaded, so the menu/background show fast) — snapshotting a half-
-  // loaded template would render a primitive. renderCarThumbnailsAsync paces to main-thread idle.
-  await new Promise(r => setTimeout(r, 1500));
-  if (stationDisplay.active && raceLive) return;
-  try { await assets.carsReady; } catch { /* some cars may stay primitive */ }
-  // Boost-orb image: shoot the real pad model once, then show it in the HUD gauge + lobby legend so
-  // players learn what the glowing orbs on the track actually are (was a generic ⚡ emoji). '' → the
-  // gauge/legend keep a plain text label (no broken image).
-  try {
-    if (stationDisplay.active && raceLive) return;
-    const orb = renderBoostThumbnail(assets);
-    if (orb) { setOrbThumb(orb); screens.setBoostThumb(orb); }
-  } catch { /* keep text-only nitro label */ }
-  try {
-    await renderCarThumbnailsAsync(assets, (i, url) => screens.setCarThumb(i, url), 256,
-      () => !stationDisplay.active || !raceLive);
-  } catch { /* placeholders remain */ }
-
   // Map previews LAST (heaviest — full scenery GLBs): render each authored map's 3D world to a tile
   // image so the map-select screen shows what the track looks like, not a blank card. Pace each one
   // to main-thread idle so a big scenery render can't hitch the attract demo.
@@ -556,9 +548,9 @@ async function loadAssetsInBackground(): Promise<void> {
     const maps = await fetchMaps();
     const previews: Record<string, string> = {};
     for (const [name, cfg] of Object.entries(maps)) {
-      if (stationDisplay.active && raceLive) return;
+      while (!canCapture()) await new Promise(resolve => setTimeout(resolve, 250));
       await whenIdle();
-      if (stationDisplay.active && raceLive) return;
+      while (!canCapture()) await new Promise(resolve => setTimeout(resolve, 250));
       const url = await renderMapThumbnail(cfg);
       if (url) previews[name] = url;
     }
