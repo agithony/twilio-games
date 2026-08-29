@@ -195,7 +195,7 @@ describe('Arcade Voice routing', () => {
     expect(xml).not.toContain('<ConversationRelay');
   });
 
-  it('registers Karaoke recency only after display authentication and spectating', async () => {
+  it('registers Karaoke recency from an explicit standalone display without station credentials', async () => {
     const { port } = await harness({ active: false, standaloneVoiceEnabled: true });
     const rejectedStatus = new Promise<number>(resolve => {
       const rejected = new WebSocket(`ws://127.0.0.1:${port}/karaoke`, {
@@ -223,11 +223,6 @@ describe('Arcade Voice routing', () => {
       display.once('open', resolve);
       display.once('error', reject);
     });
-    display.send(JSON.stringify({ type: 'spectate', roomCode: '4821' }));
-    await new Promise(resolve => setTimeout(resolve, 20));
-    expect(await (await incomingCall(port)).text()).not.toContain('<ConversationRelay');
-
-    display.send(JSON.stringify({ type: 'display_auth', roomCode: '4821', token: DISPLAY_TOKEN }));
     display.send(JSON.stringify({ type: 'spectate', roomCode: '4821' }));
     await new Promise(resolve => setTimeout(resolve, 20));
     const xml = await (await incomingCall(port)).text();

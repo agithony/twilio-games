@@ -87,6 +87,7 @@ export class KaraokeServer {
   private onDisplayAuthenticated: ((ws: WebSocket) => void) | null = null;
   private onDisplayRegistered: ((ws: WebSocket, roomCode: string) => void) | null = null;
   private allowBrowserPlayer: (roomCode: string) => boolean = () => true;
+  private requiresDisplayAuth: (roomCode: string) => boolean = () => false;
 
   constructor(options: KaraokeServerOptions = {}) {
     this.displayToken = options.displayToken?.trim() ?? '';
@@ -134,6 +135,9 @@ export class KaraokeServer {
   setOnDisplayAuthenticated(fn: (ws: WebSocket) => void): void { this.onDisplayAuthenticated = fn; }
   setOnDisplayRegistered(fn: (ws: WebSocket, roomCode: string) => void): void { this.onDisplayRegistered = fn; }
   setBrowserPlayerAdmission(fn: (roomCode: string) => boolean): void { this.allowBrowserPlayer = fn; }
+  setDisplayAuthenticationRequirement(fn: (roomCode: string) => boolean): void {
+    this.requiresDisplayAuth = fn;
+  }
 
   setSongs(songs: readonly KaraokeSong[]): void {
     if (!songs.length || new Set(songs.map(song => song.id)).size !== songs.length) {
@@ -333,7 +337,7 @@ export class KaraokeServer {
       }
       const code = canonicalRoomCode(msg.roomCode);
       if (conn.roomCode && conn.roomCode !== code) this.detachDisplay(conn);
-      const stationDisplay = !this.allowBrowserPlayer(code);
+      const stationDisplay = this.requiresDisplayAuth(code);
       if (stationDisplay && !conn.displayAuthenticated) {
         this.send(conn, { type: 'error', code: 'bad_display_auth', message: 'Invalid display token.' });
         return;
@@ -370,7 +374,7 @@ export class KaraokeServer {
         break;
       case 'advance':
         if (!isHost) this.rejectAuthority(conn);
-        else if (!this.allowBrowserPlayer(room.code) && room.phase === 'results') {
+        else if (this.requiresDisplayAuth(room.code) && room.phase === 'results') {
           this.send(conn, { type: 'error', code: 'station_requeue_required', message: 'Join the queue again to sing again.' });
         } else if (!room.advance(conn.playerId)) {
           this.send(conn, { type: 'error', code: 'not_ready', message: 'Complete the current step first.' });
@@ -546,7 +550,7 @@ export class KaraokeServer {
 
   private designateHost(code: string): void {
     const next = [...this.conns].find(candidate => candidate.roomCode === code && candidate.display
-      && (this.allowBrowserPlayer(code) ? candidate.hostAuthorized : candidate.displayAuthenticated)
+      && (this.requiresDisplayAuth(code) ? candidate.displayAuthenticated : candidate.hostAuthorized)
       && candidate.ws.readyState === WebSocket.OPEN);
     if (next) this.hosts.set(code, next);
     this.pushHostIdentity(code);
@@ -575,7 +579,7 @@ export class KaraokeServer {
 
   private isAuthorizedHost(code: string, conn: Connection): boolean {
     return this.hosts.get(code) === conn
-      && (this.allowBrowserPlayer(code) || conn.displayAuthenticated === true);
+      && (!this.requiresDisplayAuth(code) || conn.displayAuthenticated === true);
   }
 
   private reap(code: string): void {
@@ -619,7 +623,7 @@ export class KaraokeServer {
   voiceAdvance(code: string, playerId: string): boolean {
     code = canonicalRoomCode(code);
     const room = this.rooms.get(code);
-    if (!room || (!this.allowBrowserPlayer(code) && room.phase === 'results')) return false;
+    if (!room || (this.requiresDisplayAuth(code) && room.phase === 'results')) return false;
     const advanced = room.advance(playerId);
     if (room.phase === 'loading') this.pushHostIdentity(code);
     this.pushState(code);

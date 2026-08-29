@@ -464,13 +464,16 @@ export function karaokeDisplayMode(
   hostname: string,
   explicitDisplay: boolean,
   stationDisplay: boolean,
-  displayToken: string | null,
 ): boolean {
-  return explicitDisplay || stationDisplay || (!karaokeLoopbackHostname(hostname) && Boolean(displayToken));
+  return explicitDisplay || stationDisplay || !karaokeLoopbackHostname(hostname);
 }
 
-export function karaokeDisplayPairingRequired(hostname: string, displayToken: string | null): boolean {
-  return !karaokeLoopbackHostname(hostname) && !displayToken;
+export function karaokeDisplayPairingRequired(
+  hostname: string,
+  stationLaunchRequested: boolean,
+  displayToken: string | null,
+): boolean {
+  return !karaokeLoopbackHostname(hostname) && stationLaunchRequested && !displayToken;
 }
 
 export function clampKaraokeVisualOffsetMs(value: number): number {

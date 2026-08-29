@@ -494,6 +494,7 @@ export class HttpServer {
       && this.standaloneVoiceEnabled
       && this.arcadeApi?.standaloneVoiceAvailable?.() !== false
       && this.arcadeApi?.standaloneGameEnabled?.('karaoke') !== false);
+    this.karaoke.setDisplayAuthenticationRequirement(roomCode => !allowBrowserPlayer(roomCode));
     this.game.setOnDisplayAuthenticated(ws => this.registerStandaloneDisplay('racer', ws));
     this.battle.setOnDisplayAuthenticated(ws => this.registerStandaloneDisplay('battle', ws));
     this.fighter.setOnDisplayAuthenticated(ws => this.registerStandaloneDisplay('fighter', ws));
@@ -641,7 +642,9 @@ export class HttpServer {
           if (standaloneDisplay) this.registerStandaloneDisplay('fighter', ws);
         });
       } else if (path === '/karaoke') {
-        this.karaoke.handleUpgrade(req, socket, head);
+        this.karaoke.handleUpgrade(req, socket, head, ws => {
+          if (standaloneDisplay) this.registerStandaloneDisplay('karaoke', ws);
+        });
       } else if (path === '/karaoke-media') {
         this.karaokeMedia.handleUpgrade(req, socket, head);
       } else {
