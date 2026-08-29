@@ -66,17 +66,17 @@ describe('karaoke weighted scoring', () => {
     fillWord(scorer);
     scorer.replaceLyricResult('weighted-result', [evidence('hello', undefined, undefined, 0.5)], true);
     const summary = scorer.summary();
-    expect(summary.components).toEqual({ timing: 1, lyrics: 0.5, pitch: 1 });
-    expect(summary.score).toBe(0.5 * 1 + 0.3 * 0.5 + 0.2 * 1);
+    expect(summary.components).toEqual({ timing: 0.85, lyrics: 0.5, pitch: 0.85 });
+    expect(summary.score).toBe(0.5 * 0.85 + 0.3 * 0.5 + 0.2 * 0.85);
     expect(summary.words[0]).toMatchObject({
-      timingScore: 1,
+      timingScore: 0.85,
       lyricScore: 0.5,
-      pitchScore: 1,
+      pitchScore: 0.85,
       lyricEvidence: {
         source: 'fake', sourceStartMs: 1_050, sourceEndMs: 1_150, confidence: 0.5, final: true,
       },
     });
-    expect(summary.words[0]?.score).toBe(0.5 * 1 + 0.3 * 0.5 + 0.2 * 1);
+    expect(summary.words[0]?.score).toBe(0.5 * 0.85 + 0.3 * 0.5 + 0.2 * 0.85);
   });
 
   it('scores observations by media timestamp and gates timing and pitch on voice activity', () => {
@@ -107,7 +107,7 @@ describe('karaoke weighted scoring', () => {
     });
   });
 
-  it('denies timing and pitch credit without matching lyric evidence while recognition is active', () => {
+  it('keeps reduced acoustic credit without making singing ASR a hard gate', () => {
     const scorer = new KaraokeScoreAccumulator([WORD], {
       lyricRecognitionAvailable: true,
       earlyToleranceMs: 0,
@@ -115,10 +115,10 @@ describe('karaoke weighted scoring', () => {
     });
     fillWord(scorer);
     expect(scorer.summary()).toMatchObject({
-      score: 0,
+      score: 0.49,
       lyricRecognitionAvailable: true,
-      components: { timing: 0, lyrics: 0, pitch: 0 },
-      words: [{ score: 0, timingScore: 0, lyricScore: 0, pitchScore: 0 }],
+      components: { timing: 0.7, lyrics: 0, pitch: 0.7 },
+      words: [{ score: 0.49, timingScore: 0.7, lyricScore: 0, pitchScore: 0.7 }],
     });
     expect(scorer.disableLyricRecognition()).toBe(true);
     expect(scorer.summary()).toMatchObject({
@@ -145,7 +145,7 @@ describe('karaoke weighted scoring', () => {
     wrong.replaceLyricResult('wrong', [evidence('provider-secret-transcript')], true);
     const summary = wrong.summary();
     expect(summary.lyricScore).toBe(0);
-    expect(summary.words[0]?.lyricEvidence?.confidence).toBe(1);
+    expect(summary.words[0]?.lyricEvidence).toBeNull();
     expect(JSON.stringify(summary)).not.toContain('provider-secret-transcript');
   });
 
@@ -162,6 +162,15 @@ describe('karaoke weighted scoring', () => {
     fillWord(scorer, words[1]);
     scorer.replaceLyricResult('later-word', [evidence('second', 320, 380)], true);
     expect(scorer.summary().words.map(word => word.lyricScore)).toEqual([0, 1]);
+
+    const noisy = new KaraokeScoreAccumulator(words, {
+      lyricRecognitionAvailable: true, earlyToleranceMs: 0, lateToleranceMs: 0,
+      lyricAlignmentToleranceMs: 100,
+    });
+    fillWord(noisy, words[0]);
+    fillWord(noisy, words[1]);
+    noisy.replaceLyricResult('sequence', [evidence('wrong', 0, 100), evidence('second', 320, 380)], true);
+    expect(noisy.summary().words.map(word => word.lyricScore)).toEqual([0, 1]);
   });
 
   it('replaces interim revisions and deduplicates final results instead of double counting', () => {
@@ -171,9 +180,9 @@ describe('karaoke weighted scoring', () => {
     fillWord(scorer);
     expect(scorer.replaceLyricResult('segment-1', [evidence('hello', undefined, undefined, 0.4)], false)).toBe(true);
     expect(scorer.summary().lyricScore).toBe(0.4);
-    expect(scorer.summary({ finalLyricsOnly: true }).score).toBe(0);
+    expect(scorer.summary({ finalLyricsOnly: true }).score).toBe(0.49);
     expect(scorer.replaceLyricResult('segment-1', [evidence('wrong')], false)).toBe(true);
-    expect(scorer.summary().score).toBe(0);
+    expect(scorer.summary().score).toBe(0.49);
     expect(scorer.replaceLyricResult('segment-1', [evidence('hello', undefined, undefined, 0.8)], true)).toBe(true);
     expect(scorer.summary().lyricScore).toBe(0.8);
     expect(scorer.summary({ finalLyricsOnly: true }).lyricScore).toBe(0.8);

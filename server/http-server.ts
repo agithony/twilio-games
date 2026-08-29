@@ -1729,6 +1729,10 @@ export class HttpServer {
   private onKaraokeMediaFinalized(result: KaraokeMediaFinalResult, attempt: KaraokeMediaAttempt): void {
     const binding = this.karaokeVoiceCallBindings.get(attempt.callSid);
     if (!this.karaokeAttemptMatchesBinding(attempt, binding) || binding!.attemptId !== result.attemptId) return;
+    const voicedWords = result.scoring.words.filter(word => word.coverage > 0).length;
+    const recognizedWords = result.scoring.words.filter(word => (word.lyricEvidence?.confidence ?? 0) > 0).length;
+    const diagnostics = result.diagnostics;
+    console.log(`[karaoke] score finalized call=${attempt.callSid.slice(0, 8)} room=${attempt.roomCode} score=${result.score} accepted=${result.scoreAccepted} words=${result.scoring.words.length} voicedWords=${voicedWords} recognizedWords=${recognizedWords} voicedRatio=${diagnostics.voicedRatio.toFixed(3)} pitchRatio=${diagnostics.pitchDetectionRatio.toFixed(3)} timing=${diagnostics.timingScore.toFixed(3)} lyrics=${diagnostics.lyricScore.toFixed(3)} pitch=${diagnostics.pitchScore.toFixed(3)} calibrationMs=${attempt.calibrationOffsetMs}`);
     binding!.mediaFinalized = true;
     binding!.scoreAccepted = result.scoreAccepted;
     transitionKaraokeLifecycle(binding!, 'media-finalized');

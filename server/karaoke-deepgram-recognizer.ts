@@ -101,7 +101,7 @@ class DirectDeepgramLyricRecognizerSession implements KaraokeStreamingLyricRecog
   constructor(options: DirectSessionOptions) {
     this.onResult = options.onResult;
     this.onError = options.onError;
-    const url = deepgramListenUrl(options.endpoint, options.locale);
+    const url = deepgramListenUrl(options.endpoint, options.locale, options.expectedWords);
     this.socket = options.createSocket(url, {
       headers: { Authorization: `Token ${options.apiKey}` },
       perMessageDeflate: false,
@@ -309,7 +309,7 @@ export function parseDeepgramKaraokeMessage(data: RawData | string): ParsedDeepg
   });
 }
 
-function deepgramListenUrl(endpoint: string, locale: string): string {
+function deepgramListenUrl(endpoint: string, locale: string, expectedWords: readonly string[]): string {
   if (!/^[A-Za-z]{2,3}(?:-[A-Za-z]{2,4})?$/.test(locale)) throw new TypeError('Deepgram locale is invalid');
   const url = new URL(endpoint);
   url.searchParams.set('model', 'nova-3');
@@ -320,6 +320,10 @@ function deepgramListenUrl(endpoint: string, locale: string): string {
   url.searchParams.set('interim_results', 'true');
   url.searchParams.set('punctuate', 'true');
   url.searchParams.set('smart_format', 'false');
+  const keyterms = [...new Set(expectedWords.map(word => word.trim()).filter(word => (
+    word.length >= 4 && word.length <= 64 && !/[\p{Cc}]/u.test(word)
+  )))].slice(0, 50);
+  for (const keyterm of keyterms) url.searchParams.append('keyterm', keyterm);
   return url.toString();
 }
 

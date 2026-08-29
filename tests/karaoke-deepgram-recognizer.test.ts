@@ -76,7 +76,10 @@ describe('direct Deepgram Karaoke recognizer', () => {
         return socket;
       },
     });
-    const recognizer = factory.create({ locale: 'pt-BR', onResult: result => results.push(result), onError: errors });
+    const recognizer = factory.create({
+      locale: 'pt-BR', expectedWords: ['tom', 'ritmo', 'ritmo'],
+      onResult: result => results.push(result), onError: errors,
+    });
     const inbound = new Uint8Array(3_200).fill(0xaa);
     recognizer.acceptAudio({ audio: inbound, mediaTimestampMs: 1_000, durationMs: 400 });
     expect(socket.sent).toHaveLength(0);
@@ -89,6 +92,7 @@ describe('direct Deepgram Karaoke recognizer', () => {
       model: 'nova-3', encoding: 'mulaw', sample_rate: '8000', channels: '1',
       language: 'pt-BR', interim_results: 'true', punctuate: 'true', smart_format: 'false',
     });
+    expect(url.searchParams.getAll('keyterm')).toEqual(['ritmo']);
     expect(authorization).toBe('Token deepgram-test-key');
     expect(socket.sent).toEqual([inbound]);
 
@@ -117,7 +121,7 @@ describe('direct Deepgram Karaoke recognizer', () => {
     const recognizer = new DirectDeepgramLyricRecognizerFactory({
       apiKey: 'deepgram-test-key',
       createSocket: () => socket,
-    }).create({ locale: 'en-US', onResult: vi.fn(), onError: errors });
+    }).create({ locale: 'en-US', expectedWords: [], onResult: vi.fn(), onError: errors });
     socket.emit('close', 1_006);
     expect(errors).toHaveBeenCalledOnce();
     recognizer.close();
@@ -130,7 +134,7 @@ describe('direct Deepgram Karaoke recognizer', () => {
     const recognizer = new DirectDeepgramLyricRecognizerFactory({
       apiKey: 'deepgram-test-key',
       createSocket: () => socket,
-    }).create({ locale: 'en-US', onResult: vi.fn(), onError: errors });
+    }).create({ locale: 'en-US', expectedWords: [], onResult: vi.fn(), onError: errors });
     const finalized = recognizer.finalize();
     socket.emit('close', 1_011);
     await finalized;

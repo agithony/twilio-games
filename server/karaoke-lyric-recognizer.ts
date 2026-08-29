@@ -33,6 +33,7 @@ export interface KaraokeStreamingLyricRecognizer {
 
 export interface KaraokeLyricRecognizerSessionOptions {
   readonly locale: string;
+  readonly expectedWords: readonly string[];
   readonly onResult: (result: KaraokeLyricRecognitionResult) => void;
   readonly onError: () => void;
 }

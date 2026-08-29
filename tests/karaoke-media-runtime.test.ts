@@ -445,7 +445,7 @@ describe('KaraokeMediaSession scoring and cleanup', () => {
       const recognizer = factory.sessions[0]!;
       recognizer.emit(lyricResult('wrong', 0, 400, false));
       coverSong(session, 600, 0, 0, 440);
-      expect(scoreServer.hits).toEqual([{ wordId: 'runtime-word-1', judgment: 'miss', points: 0 }]);
+      expect(scoreServer.hits).toEqual([{ wordId: 'runtime-word-1', judgment: 'good', points: 49_000 }]);
       const finalized = session.finalize('stop');
       expect(runtime.attemptState(issued.attemptId)).toBe('finalizing');
       setTimeout(() => {
@@ -468,17 +468,17 @@ describe('KaraokeMediaSession scoring and cleanup', () => {
     }
   });
 
-  it('does not award instrumental timing or pitch without lyric evidence while Deepgram is active', async () => {
+  it('reduces acoustic credit without making missing lyric evidence a hard gate', async () => {
     const factory = new FakeLyricRecognizerFactory(true, 'deepgram');
     const { runtime, scoreServer } = createRuntime(undefined, { lyricRecognizerFactory: factory });
     const session = runtime.startSession(startFrame(runtime.issueAttempt(BASE_REQUEST)));
     for (const frame of toneFrames(440, 600)) session.acceptMedia(frame);
     coverSong(session, 600, 0, 0, 440);
     const result = await session.finalize('stop');
-    expect(result.score).toBe(0);
-    expect(result.scoring.components).toEqual({ timing: 0, lyrics: 0, pitch: 0 });
+    expect(result.score).toBe(49_000);
+    expect(result.scoring.components).toEqual({ timing: 0.7, lyrics: 0, pitch: 0.7 });
     expect(result.judgments).toEqual([
-      { wordId: 'runtime-word-1', judgment: 'miss', points: 0 },
+      { wordId: 'runtime-word-1', judgment: 'good', points: 49_000 },
     ]);
     expect(scoreServer.hits).toEqual(result.judgments);
     runtime.close();
@@ -518,7 +518,7 @@ describe('KaraokeMediaSession scoring and cleanup', () => {
       expect(factory.sessions[0]!.close).not.toHaveBeenCalled();
       await vi.advanceTimersByTimeAsync(1);
       const result = await finalized;
-      expect(result.score).toBe(0);
+      expect(result.score).toBe(49_000);
       expect(result.scoreAccepted).toBe(false);
       expect(result.diagnostics.lyricFinalizationTimedOut).toBe(true);
       expect(factory.sessions[0]!.close).toHaveBeenCalledOnce();
