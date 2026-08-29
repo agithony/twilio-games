@@ -1706,7 +1706,10 @@ export class HttpServer {
     binding.pendingHandoff = { ...intent, handoffData: handoff.handoffData };
     if (!sendRelayHandoff(ws, handoff)) {
       binding.pendingHandoff = null;
-    } else transitionKaraokeLifecycle(binding, 'handoff-pending');
+    } else {
+      transitionKaraokeLifecycle(binding, 'handoff-pending');
+      console.log(`[karaoke] media handoff requested call=${sid.slice(0, 8)} room=${binding.code} generation=${intent.loadingGeneration}`);
+    }
   }
 
   private onKaraokeMediaStarted(attempt: KaraokeMediaAttempt, streamSid: string): void {
@@ -1720,6 +1723,7 @@ export class HttpServer {
     binding!.streamSid = streamSid;
     binding!.mediaStarted = true;
     transitionKaraokeLifecycle(binding!, 'media-started');
+    console.log(`[karaoke] media stream started call=${attempt.callSid.slice(0, 8)} room=${attempt.roomCode} generation=${attempt.loadingGeneration}`);
   }
 
   private onKaraokeMediaFinalized(result: KaraokeMediaFinalResult, attempt: KaraokeMediaAttempt): void {
@@ -2530,6 +2534,7 @@ export class HttpServer {
         calibrationOffsetMs: this.karaokeCalibrationOffsetMs,
       });
       const streamName = `karaoke-${attempt.attemptId}`;
+      console.log(`[karaoke] media attempt issued call=${callSid.slice(0, 8)} room=${intent.roomCode} generation=${intent.loadingGeneration}`);
       const xml = twimlKaraokeMedia({
         streamName,
         wsUrl: `${this.publicBaseUrl.replace(/^https?/, 'wss')}/karaoke-media`,

@@ -153,7 +153,7 @@ describe('KaraokeVoiceSession', () => {
     expect(game.selectionCalls).toBe(1);
   });
 
-  it('requires completed disclosure and preparation playback before Start and media handoff', async () => {
+  it('requires completed consent disclosure but never blocks media handoff on preparation TTS', async () => {
     const game = karaokeVoiceGame('en-US', true);
     const singer = game.connect('CA-CONSENT');
     singer.prompt('Ada');
@@ -167,15 +167,11 @@ describe('KaraokeVoiceSession', () => {
     expect(game.room.phase).toBe('loading');
     game.room.ready(game.room.state().loadingGeneration);
     game.stateChanged();
-    expect(game.handoffs).toHaveLength(0);
+    expect(game.handoffs).toHaveLength(1);
     singer.prompt('is it ready');
-    expect(game.handoffs).toHaveLength(0);
+    expect(game.handoffs).toHaveLength(1);
 
     game.playAllSpeech(false);
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(game.handoffs).toHaveLength(0);
-    game.playAllSpeech();
     await Promise.resolve();
     expect(game.handoffs).toHaveLength(1);
   });
