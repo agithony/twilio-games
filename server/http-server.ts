@@ -576,7 +576,10 @@ export class HttpServer {
     this.karaoke.setOnRoomEvents((roomCode, events) => {
       for (const event of events) {
         if (event.type === 'result') this.persistKaraokeResult(roomCode, event.result);
-        else if (event.type === 'loading_timeout') this.handleKaraokeLoadingTimeout(roomCode);
+        else if (event.type === 'loading_timeout') {
+          console.warn(`[karaoke] loading timeout room=${roomCode} generation=${event.generation} displayReady=${event.displayReady} mediaReady=${event.mediaReady}`);
+          this.handleKaraokeLoadingTimeout(roomCode);
+        }
       }
       this.notifyKaraokeVoiceState(roomCode);
     });

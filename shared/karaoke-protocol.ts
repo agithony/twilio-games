@@ -38,7 +38,7 @@ export type KaraokeEvent =
   | { type: 'combo'; combo: number; bestCombo: number; atMs: number }
   | { type: 'countdown'; count: 3 | 2 | 1; atMs: number }
   | { type: 'start'; startedAtMs: number; endsAtMs: number }
-  | { type: 'loading_timeout'; generation: number; atMs: number }
+  | { type: 'loading_timeout'; generation: number; displayReady: boolean; mediaReady: boolean; atMs: number }
   | { type: 'result'; result: KaraokeResult };
 
 export interface KaraokeState {

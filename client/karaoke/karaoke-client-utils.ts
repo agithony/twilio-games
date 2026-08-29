@@ -476,6 +476,16 @@ export function karaokeDisplayPairingRequired(
   return !karaokeLoopbackHostname(hostname) && stationLaunchRequested && !displayToken;
 }
 
+export function karaokeAudioPreflightRequired(
+  localTesting: boolean,
+  audioRunning: boolean,
+  muted: boolean,
+  phase?: KaraokePhase,
+): boolean {
+  return !localTesting && (!audioRunning || muted)
+    && (phase === undefined || phase === 'lobby' || phase === 'song_select' || phase === 'loading');
+}
+
 export function clampKaraokeVisualOffsetMs(value: number): number {
   if (!Number.isFinite(value)) return 0;
   const stepped = Math.round(value / KARAOKE_VISUAL_OFFSET_STEP_MS) * KARAOKE_VISUAL_OFFSET_STEP_MS;

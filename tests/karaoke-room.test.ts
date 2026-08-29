@@ -93,7 +93,7 @@ describe('authoritative karaoke room', () => {
       displayReady: false, mediaReady: false,
     });
     expect(room.drainEvents()).toEqual([
-      { type: 'loading_timeout', generation, atMs: now },
+      { type: 'loading_timeout', generation, displayReady: false, mediaReady: false, atMs: now },
     ]);
   });
 
