@@ -238,13 +238,13 @@ describe('Voice Karaoke client timeline utilities', () => {
     expect(karaokeLocalTestingAllowed('127.0.0.1', false)).toBe(true);
     expect(karaokeLocalTestingAllowed('games.example', false)).toBe(false);
     expect(karaokeLocalTestingAllowed('localhost', true)).toBe(false);
-    expect(karaokeDisplayMode('games.example', false, false, 'paired-token')).toBe(true);
-    expect(karaokeDisplayMode('games.example', true, false, null)).toBe(true);
-    expect(karaokeDisplayMode('games.example', false, false, null)).toBe(false);
-    expect(karaokeDisplayMode('localhost', false, false, 'paired-token')).toBe(false);
-    expect(karaokeDisplayPairingRequired('games.example', null)).toBe(true);
-    expect(karaokeDisplayPairingRequired('games.example', 'paired-token')).toBe(false);
-    expect(karaokeDisplayPairingRequired('localhost', null)).toBe(false);
+    expect(karaokeDisplayMode('games.example', false, false)).toBe(true);
+    expect(karaokeDisplayMode('games.example', true, false)).toBe(true);
+    expect(karaokeDisplayMode('localhost', false, false)).toBe(false);
+    expect(karaokeDisplayPairingRequired('games.example', true, null)).toBe(true);
+    expect(karaokeDisplayPairingRequired('games.example', true, 'paired-token')).toBe(false);
+    expect(karaokeDisplayPairingRequired('games.example', false, null)).toBe(false);
+    expect(karaokeDisplayPairingRequired('localhost', true, null)).toBe(false);
   });
 
   it('clamps visual calibration to 20ms steps without depending on browser storage', () => {

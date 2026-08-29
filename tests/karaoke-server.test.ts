@@ -140,6 +140,7 @@ describe('KaraokeServer authority and lifecycle', () => {
   it('requires station display authentication and singer-owned setup/readiness', async () => {
     const port = await start({ displayToken: 'secret' });
     karaoke!.setBrowserPlayerAdmission(code => code !== 'PAID');
+    karaoke!.setDisplayAuthenticationRequirement(code => code === 'PAID');
     const singer = karaoke!.voiceJoin('paid', 'Caller', 1, false)!;
     const display = await connect(port);
     send(display, { type: 'spectate', roomCode: 'PAID', locale: 'pt-BR' });
@@ -172,6 +173,7 @@ describe('KaraokeServer authority and lifecycle', () => {
   it('does not treat standalone host capability as station authentication', async () => {
     const port = await start({ displayToken: 'secret' });
     karaoke!.setBrowserPlayerAdmission(code => code !== 'PAID');
+    karaoke!.setDisplayAuthenticationRequirement(code => code === 'PAID');
     const display = await connect(port);
     send(display, { type: 'spectate', roomCode: 'FREE' });
     await waitFor(display, message => message.type === 'host_identity'
@@ -181,9 +183,22 @@ describe('KaraokeServer authority and lifecycle', () => {
     expect(karaoke!.findRoom('PAID')).toBeUndefined();
   });
 
+  it('allows an unauthenticated standalone display while browser singers remain disabled', async () => {
+    const port = await start({ displayToken: 'secret' });
+    karaoke!.setBrowserPlayerAdmission(() => false);
+    karaoke!.setDisplayAuthenticationRequirement(code => code === 'PAID');
+    const display = await connect(port);
+    send(display, { type: 'spectate', roomCode: 'FREE' });
+    await waitFor(display, message => message.type === 'host_identity'
+      && message.roomCode === 'FREE' && message.isHost === true);
+    send(display, { type: 'join', roomCode: 'FREE', name: 'Browser singer' });
+    await waitFor(display, message => message.type === 'error' && message.code === 'station_voice_only');
+  });
+
   it('atomically replaces an authenticated host without invalidating an active countdown', async () => {
     const port = await start({ displayToken: 'secret' });
     karaoke!.setBrowserPlayerAdmission(() => false);
+    karaoke!.setDisplayAuthenticationRequirement(() => true);
     const singer = karaoke!.voiceJoin('LOSS', 'Ada')!;
     karaoke!.voiceAdvance('LOSS', singer);
     karaoke!.voiceSelectSong('LOSS', singer, NEVER_GONNA_GIVE_YOU_UP.id);

@@ -516,6 +516,7 @@ describe('Arcade browser UI', () => {
   it('installs and confirms booth access independently from the operator session', () => {
     expect(html).toContain('id="display-connect-panel"');
     expect(html).toContain('id="connect-booth-display"');
+    expect(html).toMatch(/href="\/analytics"[^>]*>View analytics<\/a>/);
     expect(html).toContain('id="overview-display"');
     expect(script).toContain("config&&config.arcade.mode!=='off'&&display?.configured&&!displayConnected&&!display.checking");
     expect(script).toContain("show('display-connect-panel',pairingRequired)");

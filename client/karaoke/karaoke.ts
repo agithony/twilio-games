@@ -54,9 +54,12 @@ if (pageUrl.searchParams.has('hostToken')) {
 const params = pageUrl.searchParams;
 const roomCode = params.get('room') || DEFAULT_ROOM;
 const stationDisplay = createStationDisplay();
-let displayPairingRequired = karaokeDisplayPairingRequired(location.hostname, stationDisplay.displayToken);
+const stationLaunchRequested = params.has('station') || params.has('match') || params.has('launchGeneration');
+let displayPairingRequired = karaokeDisplayPairingRequired(
+  location.hostname, stationLaunchRequested, stationDisplay.displayToken,
+);
 const isDisplay = karaokeDisplayMode(
-  location.hostname, params.get('display') === '1', stationDisplay.active, stationDisplay.displayToken,
+  location.hostname, params.get('display') === '1', stationDisplay.active,
 );
 document.body.classList.toggle('event-display', isDisplay);
 const guideMode = karaokeGuideModeAllowed(
@@ -232,9 +235,9 @@ function connect(): void {
     }
     if (code === 'bad_display_auth' && !localTestingAllowed) {
       rejectDisplayToken(stationDisplay.displayToken);
-      displayPairingRequired = true;
+      displayPairingRequired = stationLaunchRequested;
       flowMessage = '';
-      connection?.leaveAndClose(roomCode);
+      if (displayPairingRequired) connection?.leaveAndClose(roomCode);
     } else flowMessage = localizedError(code);
     renderFlow(true);
   });
