@@ -20,6 +20,7 @@ import type {
   KaraokeStreamingLyricRecognizer,
 } from './karaoke-lyric-recognizer';
 import {
+  TwilioMediaStreamParseError,
   TwilioMediaStreamParser,
   type TwilioMediaFrame,
   type TwilioStartFrame,
@@ -1113,15 +1114,21 @@ export class KaraokeMediaRuntime {
 
   handleUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer): boolean {
     this.assertOpen();
-    if (!this.validateUpgradeRequest(request) || !this.upgrade
-      || this.connections.size >= this.maxActiveSessions) {
+    const pathValid = request.url === this.path && !request.url.includes('?');
+    const secureRequest = this.isSecureRequest(request);
+    const signatureValid = this.validateUpgradeSignature(request);
+    const validRequest = pathValid && secureRequest && signatureValid;
+    const capacityAvailable = this.connections.size < this.maxActiveSessions;
+    if (!validRequest || !this.upgrade || !capacityAvailable) {
+      console.warn(`[karaoke] media upgrade rejected pathValid=${pathValid} secureRequest=${secureRequest} signatureValid=${signatureValid} upgradeConfigured=${Boolean(this.upgrade)} capacityAvailable=${capacityAvailable}`);
       rejectUpgrade(socket);
       return false;
     }
     this.upgrade(request, socket, head, accepted => {
       try {
         this.acceptSocket(accepted);
-      } catch {
+      } catch (error) {
+        console.warn(`[karaoke] media socket rejected ${karaokeMediaErrorDescription(error)}`);
         accepted.close(1013, 'karaoke media unavailable');
       }
     });
@@ -1297,6 +1304,7 @@ export class KaraokeMediaConnection {
     } catch (error) {
       const oversized = error instanceof KaraokeMediaError && error.code === 'SESSION_LIMIT'
         && error.message === 'WebSocket message is too large';
+      console.warn(`[karaoke] media frame rejected ${karaokeMediaErrorDescription(error)}`);
       this.session?.abort();
       this.finishSocket(oversized ? 1009 : 1008, oversized ? 'message too large' : 'karaoke media rejected');
     }
@@ -1336,6 +1344,13 @@ export class KaraokeMediaConnection {
       }
     }
   }
+}
+
+function karaokeMediaErrorDescription(error: unknown): string {
+  if (error instanceof KaraokeMediaError || error instanceof TwilioMediaStreamParseError) {
+    return `code=${error.code} message=${error.message}`;
+  }
+  return `code=UNKNOWN message=${error instanceof Error ? error.message.slice(0, 160) : 'unknown error'}`;
 }
 
 function publicAttempt(attempt: StoredAttempt): KaraokeMediaAttempt {
