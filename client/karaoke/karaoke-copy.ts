@@ -56,6 +56,9 @@ export interface KaraokeCopy {
   lightTheme: string;
   darkTheme: string;
   home: string;
+  displayAuthTitle: string;
+  displayAuthBody: string;
+  displayAuthAction: string;
 }
 
 const ENGLISH: KaraokeCopy = {
@@ -80,6 +83,9 @@ const ENGLISH: KaraokeCopy = {
   visualOffsetHelp: 'Positive visual delay means lyrics move later.',
   lyricsEarlier: 'Lyrics earlier', lyricsLater: 'Lyrics later', resetOffset: 'Reset',
   lightTheme: 'Light theme', darkTheme: 'Dark theme', home: 'Home',
+  displayAuthTitle: 'Pair this display',
+  displayAuthBody: 'Open the operator console in this tab and choose Pair this tab as the big screen. Then reopen Voice Karaoke.',
+  displayAuthAction: 'Open operator console',
 };
 
 const PORTUGUESE: KaraokeCopy = {
@@ -104,6 +110,9 @@ const PORTUGUESE: KaraokeCopy = {
   visualOffsetHelp: 'Atraso visual positivo move a letra para mais tarde.',
   lyricsEarlier: 'Letra mais cedo', lyricsLater: 'Letra mais tarde', resetOffset: 'Redefinir',
   lightTheme: 'Tema claro', darkTheme: 'Tema escuro', home: 'Início',
+  displayAuthTitle: 'Conecte esta tela',
+  displayAuthBody: 'Abra o console do operador nesta aba e escolha Conectar esta aba como tela principal. Depois, abra o Karaokê por Voz novamente.',
+  displayAuthAction: 'Abrir console do operador',
 };
 
 export function karaokeCopy(locale: SupportedLocale): KaraokeCopy {

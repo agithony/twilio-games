@@ -460,6 +460,19 @@ export function karaokeLocalTestingAllowed(hostname: string, stationDisplay: boo
   return !stationDisplay && karaokeLoopbackHostname(hostname);
 }
 
+export function karaokeDisplayMode(
+  hostname: string,
+  explicitDisplay: boolean,
+  stationDisplay: boolean,
+  displayToken: string | null,
+): boolean {
+  return explicitDisplay || stationDisplay || (!karaokeLoopbackHostname(hostname) && Boolean(displayToken));
+}
+
+export function karaokeDisplayPairingRequired(hostname: string, displayToken: string | null): boolean {
+  return !karaokeLoopbackHostname(hostname) && !displayToken;
+}
+
 export function clampKaraokeVisualOffsetMs(value: number): number {
   if (!Number.isFinite(value)) return 0;
   const stepped = Math.round(value / KARAOKE_VISUAL_OFFSET_STEP_MS) * KARAOKE_VISUAL_OFFSET_STEP_MS;
