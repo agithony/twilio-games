@@ -73,9 +73,7 @@ export class KaraokeVoiceSession {
   private readonly announcedResultGenerations = new Set<number>();
   private consentReadySongId: string | null = null;
   private consentAttempt: symbol | null = null;
-  private readonly preparationAcknowledgedGenerations = new Set<number>();
-  private readonly preparationAttempts = new Map<number, symbol>();
-  private readonly preparationFailures = new Map<number, number>();
+  private readonly preparationAnnouncedGenerations = new Set<number>();
   private text: (key: KaraokeMessageKey, values?: MessageValues) => string =
     createTranslator(DEFAULT_LOCALE, KARAOKE_MESSAGES);
 
@@ -105,8 +103,7 @@ export class KaraokeVoiceSession {
         this.announcedResultGenerations.delete(snapshot.result.generation);
         this.announceResult(snapshot);
       } else if (snapshot?.phase === 'loading') {
-        this.preparationAcknowledgedGenerations.delete(snapshot.loadingGeneration);
-        this.preparationAttempts.delete(snapshot.loadingGeneration);
+        this.preparationAnnouncedGenerations.delete(snapshot.loadingGeneration);
         this.acknowledgeLoading(snapshot);
       }
       return;
@@ -121,8 +118,7 @@ export class KaraokeVoiceSession {
         this.announcedResultGenerations.delete(snapshot.result.generation);
         this.announceResult(snapshot);
       } else if (snapshot?.phase === 'loading') {
-        this.preparationAcknowledgedGenerations.delete(snapshot.loadingGeneration);
-        this.preparationAttempts.delete(snapshot.loadingGeneration);
+        this.preparationAnnouncedGenerations.delete(snapshot.loadingGeneration);
         this.acknowledgeLoading(snapshot);
       }
       return;
@@ -132,8 +128,7 @@ export class KaraokeVoiceSession {
     const snapshot = this.currentSnapshot();
     if (!snapshot) return;
     if (snapshot.phase === 'loading') {
-      this.preparationAcknowledgedGenerations.delete(snapshot.loadingGeneration);
-      this.preparationAttempts.delete(snapshot.loadingGeneration);
+      this.preparationAnnouncedGenerations.delete(snapshot.loadingGeneration);
       this.acknowledgeLoading(snapshot);
       return;
     }
@@ -382,8 +377,7 @@ export class KaraokeVoiceSession {
     const snapshot = this.currentSnapshot();
     if (!snapshot) return;
     if (snapshot.phase === 'loading') {
-      this.preparationAcknowledgedGenerations.delete(snapshot.loadingGeneration);
-      this.preparationAttempts.delete(snapshot.loadingGeneration);
+      this.preparationAnnouncedGenerations.delete(snapshot.loadingGeneration);
       this.acknowledgeLoading(snapshot);
       return;
     }
@@ -464,33 +458,11 @@ export class KaraokeVoiceSession {
   private acknowledgeLoading(snapshot: KaraokeVoiceSnapshot): void {
     if (snapshot.phase !== 'loading' || snapshot.loadingGeneration < 1) return;
     const generation = snapshot.loadingGeneration;
-    if (this.preparationAcknowledgedGenerations.has(generation)) {
-      this.requestHandoff(snapshot);
-      return;
+    if (!this.preparationAnnouncedGenerations.has(generation)) {
+      this.preparationAnnouncedGenerations.add(generation);
+      this.deps.say(this.text('voice.preparing'));
     }
-    if (this.preparationAttempts.has(generation)) return;
-    const attempt = Symbol(String(generation));
-    this.preparationAttempts.set(generation, attempt);
-    const delivery = this.deps.say(this.text('voice.preparing'));
-    const complete = (played: boolean) => {
-      if (this.preparationAttempts.get(generation) !== attempt) return;
-      this.preparationAttempts.delete(generation);
-      const current = this.currentSnapshot();
-      if (!played) {
-        if (current?.phase === 'loading' && current.loadingGeneration === generation) {
-          const failures = (this.preparationFailures.get(generation) ?? 0) + 1;
-          this.preparationFailures.set(generation, failures);
-          if (failures === 1) queueMicrotask(() => this.acknowledgeLoading(current));
-        }
-        return;
-      }
-      if (current?.phase !== 'loading' || current.loadingGeneration !== generation) return;
-      this.preparationFailures.delete(generation);
-      this.preparationAcknowledgedGenerations.add(generation);
-      this.requestHandoff(current);
-    };
-    if (delivery && typeof delivery.then === 'function') void delivery.then(complete, () => complete(false));
-    else complete(true);
+    this.requestHandoff(snapshot);
   }
 
   private announceResult(snapshot: KaraokeVoiceSnapshot): void {
@@ -508,7 +480,6 @@ export class KaraokeVoiceSession {
 
   private requestHandoff(snapshot: KaraokeVoiceSnapshot): void {
     if (snapshot.phase !== 'loading' || !snapshot.displayReady || !snapshot.selectedSong || snapshot.loadingGeneration < 1
-      || !this.preparationAcknowledgedGenerations.has(snapshot.loadingGeneration)
       || this.handedOffGenerations.has(snapshot.loadingGeneration)) return;
     this.handedOffGenerations.add(snapshot.loadingGeneration);
     this.deps.requestMediaHandoff({
@@ -561,9 +532,7 @@ export class KaraokeVoiceSession {
     this.lastFinal = null;
     this.consentReadySongId = null;
     this.consentAttempt = null;
-    this.preparationAcknowledgedGenerations.clear();
-    this.preparationAttempts.clear();
-    this.preparationFailures.clear();
+    this.preparationAnnouncedGenerations.clear();
   }
 }
 
