@@ -71,13 +71,13 @@ describe('TwilioMediaStreamParser', () => {
     expect(parser.parse(stop(3))).toMatchObject({ event: 'stop', sequenceNumber: 3, streamSid: STREAM_SID });
   });
 
-  it('accepts deployed Twilio Call protocol version forms while rejecting other majors', () => {
-    for (const version of ['1.0', '1.0.0', '1.1.0']) {
-      expect(new TwilioMediaStreamParser().parse(JSON.stringify({ event: 'connected', protocol: 'Call', version })))
+  it('treats bounded connected protocol metadata as informational', () => {
+    for (const [protocol, version] of [['Call', '1.0'], ['Call', '1.0.0'], ['Audio', '0.1']]) {
+      expect(new TwilioMediaStreamParser().parse(JSON.stringify({ event: 'connected', protocol, version })))
         .toEqual({ event: 'connected', protocol: 'Call', version: '1.0.0' });
     }
     expectCode(() => new TwilioMediaStreamParser().parse(JSON.stringify({
-      event: 'connected', protocol: 'Call', version: '2.0.0',
+      event: 'connected', protocol: '', version: '1',
     })), 'INVALID_FRAME');
   });
 
