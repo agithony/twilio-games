@@ -45,21 +45,21 @@ describe('Twilio Games runtime configuration', () => {
         racer: { enabled: true },
         monsters: { enabled: true },
         fighter: { enabled: true },
+        karaoke: { enabled: true },
       },
       comingSoon: {
         trivia: { enabled: true },
-        karaoke: { enabled: true },
       },
       automaticSelection: {
         policy: 'best_fit_rotation',
-        order: ['racer', 'monsters', 'fighter'],
+        order: ['racer', 'monsters', 'fighter', 'karaoke'],
       },
       qrRail: 'auto',
     });
     expect(DEFAULT_ARCADE_CONFIG.coins).toMatchObject({
       startingBalance: 1,
       defaultGameCost: 1,
-      gameCosts: { racer: 1, monsters: 1, fighter: 1, trivia: 1 },
+      gameCosts: { racer: 1, monsters: 1, fighter: 1, karaoke: 1, trivia: 1 },
       chargePolicy: 'per_player',
       consumeWhen: 'match_start',
     });
@@ -184,7 +184,7 @@ describe('Twilio Games runtime configuration', () => {
 
   it('requires exact station game settings and an enabled game while arcade mode is on', () => {
     const allDisabled = rawConfig();
-    for (const game of ['racer', 'monsters', 'fighter']) allDisabled.station.games[game].enabled = false;
+    for (const game of ['racer', 'monsters', 'fighter', 'karaoke']) allDisabled.station.games[game].enabled = false;
     expect(parseArcadeConfig(allDisabled).station.games.racer.enabled).toBe(false);
 
     allDisabled.arcade.mode = 'coin_only';
@@ -201,6 +201,10 @@ describe('Twilio Games runtime configuration', () => {
     const missingGame = rawConfig();
     delete missingGame.station.games.fighter;
     expectInvalid(missingGame);
+
+    const retiredConcept = rawConfig();
+    retiredConcept.station.comingSoon.karaoke = { enabled: true };
+    expectInvalid(retiredConcept);
   });
 
   it.each(['best_fit_rotation', 'round_robin', 'fixed_priority'] as const)(
@@ -208,10 +212,10 @@ describe('Twilio Games runtime configuration', () => {
     policy => {
       const candidate = rawConfig();
       candidate.station.automaticSelection.policy = policy;
-      candidate.station.automaticSelection.order = ['fighter', 'racer', 'monsters'];
+      candidate.station.automaticSelection.order = ['fighter', 'racer', 'monsters', 'karaoke'];
       expect(parseArcadeConfig(candidate).station.automaticSelection).toEqual({
         policy,
-        order: ['fighter', 'racer', 'monsters'],
+        order: ['fighter', 'racer', 'monsters', 'karaoke'],
       });
     },
   );
@@ -220,8 +224,8 @@ describe('Twilio Games runtime configuration', () => {
     for (const order of [
       ['racer', 'monsters'],
       ['racer', 'monsters', 'fighter', 'racer'],
-      ['racer', 'racer', 'fighter'],
-      ['racer', 'monsters', 'trivia'],
+      ['racer', 'racer', 'fighter', 'karaoke'],
+      ['racer', 'monsters', 'fighter', 'trivia'],
     ]) {
       const candidate = rawConfig();
       candidate.station.automaticSelection.order = order;
@@ -485,6 +489,7 @@ describe('Twilio Games runtime configuration', () => {
     ['gameCosts', 'racer', 0],
     ['gameCosts', 'monsters', 2],
     ['gameCosts', 'fighter', 1.5],
+    ['gameCosts', 'karaoke', 2],
     ['gameCosts', 'trivia', 2],
   ])('rejects non-one station coin cost %s.%s = %s', (field, game, value) => {
     const candidate = rawConfig();

@@ -16,14 +16,14 @@ export type PublicStationProjection = Readonly<{
   nextReadyCount: number;
   roster: readonly Readonly<{ position: number; displayName: string; status: StationReadyEntry['status'] }>[];
   games: readonly Readonly<{
-    id: 'racer' | 'monsters' | 'fighter';
+    id: PlayableArcadeGame;
     capacity: number;
     playNow: number;
     overflow: number;
     choices: number;
   }>[];
   launch: Readonly<{
-    game: 'racer' | 'monsters' | 'fighter';
+    game: PlayableArcadeGame;
     route: string;
     roomCode: string;
     matchId: string;
@@ -49,7 +49,7 @@ export type PlayerStationProjection = Readonly<{
     status: StationReadyEntry['status'];
     position: number | null;
     reservation: Readonly<{ amount: number; status: string }> | null;
-    gameChoice: 'racer' | 'monsters' | 'fighter' | null;
+    gameChoice: PlayableArcadeGame | null;
   }> | null;
   availableBalance: number;
 }>;
@@ -68,6 +68,7 @@ export type OperatorStationProjection = Readonly<{
     availableBalance: number;
     connected: boolean;
   }>[];
+  voteCounts: readonly Readonly<{ game: PlayableArcadeGame; count: number }>[];
   recentControls: readonly ArcadeState['stationControlEvents'][number][];
   resultsHeld: boolean;
 }>;
@@ -271,6 +272,11 @@ export function projectOperatorStation(
       availableBalance: state.wallets[entry.playerId]
         ? availableBalance(state.wallets[entry.playerId]!)
         : 0,
+    })),
+    voteCounts: PLAYABLE_ARCADE_GAMES.map(game => ({
+      game: game.id,
+      count: Object.values(activeRound?.gameChoicesByReadyEntryId ?? {})
+        .filter(choice => choice === game.id).length,
     })),
     recentControls: state.stationControlEvents
       .filter(event => event.stationId === aggregate.station.id)

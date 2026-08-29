@@ -212,7 +212,7 @@ describe('Arcade station reducer', () => {
     expect(state.rounds['round-1']?.gameChoicesByReadyEntryId).toEqual({});
   });
 
-  it.each([['racer', 2], ['monsters', 2], ['fighter', 2]] as const)('enforces %s capacity %d', (game, capacity) => {
+  it.each([['racer', 2], ['monsters', 2], ['fighter', 2], ['karaoke', 1]] as const)('enforces %s capacity %d', (game, capacity) => {
     let state = createArcadeStation('ARCADE-01', T0);
     for (let index = 1; index <= 4; index++) state = insert(state, `player-${index}`, index);
     state = closeStationRecruiting(state, { at: at(90), expectedRevision: state.station.revision });
@@ -568,6 +568,26 @@ describe('Arcade station reducer', () => {
     expect(state.readyEntries['ready-3']).toMatchObject({ status: 'ADMITTED', overflowOrdinal: null });
     expect(state.matches['match-no-show']?.overflowReadyEntryIds).toEqual(['ready-4', 'ready-5']);
     expect(state.matches['match-no-show']).toMatchObject({ launchGeneration: 2, launchRequestedAt: at(93) });
+    expect(() => assertStationInvariants(state)).not.toThrow();
+  });
+
+  it('replaces the only admitted Karaoke no-show when overflow exists', () => {
+    let state = createArcadeStation('ARCADE-01', T0);
+    for (let index = 1; index <= 3; index++) state = insert(state, `player-${index}`, index);
+    state = closeStationRecruiting(state, { at: at(90), expectedRevision: state.station.revision });
+    state = selectStationGame(state, {
+      game: 'karaoke', matchId: 'karaoke-no-show', engineRoomCode: 'SING', at: at(91),
+      expectedRevision: state.station.revision,
+    });
+    state = requestStationLaunch(state, { at: at(92), expectedRevision: state.station.revision });
+
+    state = dropStationAdmittedEntry(state, {
+      readyEntryId: 'ready-1', at: at(93), expectedRevision: state.station.revision,
+    });
+
+    expect(state.matches['karaoke-no-show']?.participantReadyEntryIds).toEqual(['ready-2']);
+    expect(state.matches['karaoke-no-show']?.overflowReadyEntryIds).toEqual(['ready-3']);
+    expect(state.readyEntries['ready-2']).toMatchObject({ status: 'ADMITTED', overflowOrdinal: null });
     expect(() => assertStationInvariants(state)).not.toThrow();
   });
 

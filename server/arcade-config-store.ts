@@ -36,6 +36,7 @@ const LEGACY_CONFIG_SCHEMA_VERSION = 1;
 const STATION_CONFIG_SCHEMA_VERSION = 2;
 const CHALLENGE_MESSAGE_CONFIG_SCHEMA_VERSION = 3;
 const HOME_CONCEPT_CONFIG_SCHEMA_VERSION = 4;
+const PRE_KARAOKE_CONFIG_SCHEMA_VERSION = 5;
 const LEGACY_CONFIG_KEYS = [
   'schemaVersion', 'version', 'updatedAt', 'updatedBy',
   'arcade', 'registration', 'coins', 'earning', 'queue', 'channels', 'postGame', 'intelligence',
@@ -788,29 +789,33 @@ function parseStoredConfig(input: unknown): ParsedStoredConfig {
     throw new Error('stored config must be an object');
   }
   const object = decoded as Record<string, unknown>;
+  if (object.schemaVersion === PRE_KARAOKE_CONFIG_SCHEMA_VERSION) {
+    const snapshot = parseArcadeConfig(promoteKaraokeConfig(object));
+    return { snapshot, hashConfig: decoded };
+  }
   if (object.schemaVersion === HOME_CONCEPT_CONFIG_SCHEMA_VERSION) {
-    const snapshot = parseArcadeConfig({
+    const snapshot = parseArcadeConfig(promoteKaraokeConfig({
       ...object,
-      schemaVersion: ARCADE_CONFIG_SCHEMA_VERSION,
+      schemaVersion: PRE_KARAOKE_CONFIG_SCHEMA_VERSION,
       station: addHomeConceptSettings(object.station),
-    });
+    }));
     return { snapshot, hashConfig: decoded };
   }
   if (object.schemaVersion === CHALLENGE_MESSAGE_CONFIG_SCHEMA_VERSION) {
-    const snapshot = parseArcadeConfig({
+    const snapshot = parseArcadeConfig(promoteKaraokeConfig({
       ...object,
-      schemaVersion: ARCADE_CONFIG_SCHEMA_VERSION,
+      schemaVersion: PRE_KARAOKE_CONFIG_SCHEMA_VERSION,
       station: addHomeConceptSettings(object.station),
       earning: addChallengeMessages(object.earning),
       postGame: normalizeLegacyPostGame(object.postGame, object.channels),
-    });
+    }));
     return { snapshot, hashConfig: decoded };
   }
   if (object.schemaVersion === STATION_CONFIG_SCHEMA_VERSION) {
     const legacyChannels = object.channels as Record<string, unknown>;
-    const snapshot = parseArcadeConfig({
+    const snapshot = parseArcadeConfig(promoteKaraokeConfig({
       ...object,
-      schemaVersion: ARCADE_CONFIG_SCHEMA_VERSION,
+      schemaVersion: PRE_KARAOKE_CONFIG_SCHEMA_VERSION,
       station: addHomeConceptSettings(object.station),
       earning: addChallengeMessages(object.earning),
       postGame: normalizeLegacyPostGame(object.postGame, object.channels),
@@ -818,7 +823,7 @@ function parseStoredConfig(input: unknown): ParsedStoredConfig {
         ...legacyChannels,
         voiceNumbers: { 'en-US': null, 'pt-BR': null },
       },
-    });
+    }));
     return { snapshot, hashConfig: decoded };
   }
   if (object.schemaVersion !== LEGACY_CONFIG_SCHEMA_VERSION) {
@@ -869,8 +874,11 @@ function parseStoredConfig(input: unknown): ParsedStoredConfig {
         : 1)
       : legacyCoins.startingBalance,
     defaultGameCost: 1,
-    gameCosts: { racer: 1, monsters: 1, fighter: 1, trivia: 1 },
-  } : object.coins;
+    gameCosts: { racer: 1, monsters: 1, fighter: 1, karaoke: 1, trivia: 1 },
+  } : {
+    ...legacyCoins,
+    gameCosts: { ...legacyCosts, karaoke: 1 },
+  };
   const migratedPostGame = unsupportedPostGame
     ? { ...legacyPostGame, enabled: false }
     : object.postGame;
@@ -897,6 +905,57 @@ function parseStoredConfig(input: unknown): ParsedStoredConfig {
     // Hash historical records using their untouched v1 shape, not the safe runtime migration.
     hashConfig: decoded,
   };
+}
+
+/** Promotes the exact schema-v5 game lists while retaining the original object for audit hashing. */
+function promoteKaraokeConfig(object: Record<string, unknown>): unknown {
+  const station = storedRecord(object.station, '$.station');
+  const games = storedRecord(station.games, '$.station.games');
+  requireStoredKeys(games, ['racer', 'monsters', 'fighter'], '$.station.games');
+  const comingSoon = storedRecord(station.comingSoon, '$.station.comingSoon');
+  requireStoredKeys(comingSoon, ['trivia', 'karaoke'], '$.station.comingSoon');
+  const retiredKaraoke = storedRecord(comingSoon.karaoke, '$.station.comingSoon.karaoke');
+  requireStoredKeys(retiredKaraoke, ['enabled'], '$.station.comingSoon.karaoke');
+  if (typeof retiredKaraoke.enabled !== 'boolean') {
+    throw new Error('$.station.comingSoon.karaoke.enabled must be boolean');
+  }
+  const automaticSelection = storedRecord(station.automaticSelection, '$.station.automaticSelection');
+  const order = automaticSelection.order;
+  if (!Array.isArray(order) || order.length !== 3
+    || new Set(order).size !== 3
+    || order.some(game => !['racer', 'monsters', 'fighter'].includes(String(game)))) {
+    throw new Error('$.station.automaticSelection.order must contain the three schema-v5 station games exactly once');
+  }
+  const coins = storedRecord(object.coins, '$.coins');
+  const gameCosts = storedRecord(coins.gameCosts, '$.coins.gameCosts');
+  requireStoredKeys(gameCosts, ['racer', 'monsters', 'fighter', 'trivia'], '$.coins.gameCosts');
+  const { karaoke: _retiredConcept, ...currentConcepts } = comingSoon;
+  return {
+    ...object,
+    schemaVersion: ARCADE_CONFIG_SCHEMA_VERSION,
+    station: {
+      ...station,
+      games: { ...games, karaoke: { enabled: false } },
+      comingSoon: currentConcepts,
+      automaticSelection: { ...automaticSelection, order: [...order, 'karaoke'] },
+    },
+    coins: { ...coins, gameCosts: { ...gameCosts, karaoke: 1 } },
+  };
+}
+
+function storedRecord(value: unknown, path: string): Record<string, unknown> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`${path} must be an object`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function requireStoredKeys(value: Record<string, unknown>, keys: readonly string[], path: string): void {
+  const actual = Object.keys(value).sort();
+  const expected = [...keys].sort();
+  if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) {
+    throw new Error(`${path} has malformed schema-v5 fields`);
+  }
 }
 
 function normalizeLegacyPostGame(value: unknown, channelsValue: unknown): unknown {

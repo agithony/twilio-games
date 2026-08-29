@@ -92,11 +92,12 @@ Open **Settings > Secrets and variables > Actions > Secrets** and configure:
 | `VOICE_RELAY_TOKEN` | Yes | Independent random token of at least 32 characters for Conversation Relay setup-frame authentication; do not reuse `TWILIO_AUTH_TOKEN` |
 | `ARCADE_SIGNING_SECRET` | Yes | Exactly 64 hexadecimal characters; derives separate signed player-session and challenge-token keys |
 | `ARCADE_DISPLAY_TOKEN` | Yes | Random server-held kiosk capability of at least 16 characters; required for display-ready and station game controls |
-| `EDITOR_TOKEN` | Strongly recommended for public deployments | Stored as Container App secret `editor-token`; protects disk-writing editor and garage APIs |
+| `EDITOR_TOKEN` | Yes | Stored as Container App secret `editor-token`; production startup and deploy validation fail closed without it |
 | `GOOGLE_OAUTH_CLIENT_ID` | Required for Google private-access login | Stored as Container App secret `google-oauth-client-id`; Google OAuth web client ID |
 | `GOOGLE_OAUTH_CLIENT_SECRET` | Required for Google private-access login | Stored as Container App secret `google-oauth-client-secret`; Google OAuth web client secret |
 | `ANALYTICS_ADMIN_PIN` | Required when Google is unset | 6-64 character alternative login for analytics and operator access; stored as Container App secret `analytics-admin-pin` |
 | `OPENAI_API_KEY` | No | Enables English free-form Racer and Monsters help; empty uses deterministic behavior, and Portuguese free-form OpenAI remains disabled |
+| `DEEPGRAM_API_KEY` | Yes | Enables direct 8 kHz inbound caller-audio lyric verification for Voice Karaoke; production fails closed without it because Karaoke is enabled by default |
 | `DUB_API_KEY` | No | Enables shortening of eligible challenge portal URLs when paired with `DUB_SHORT_DOMAIN`; empty preserves the original application URL |
 | `DUB_FOLDER_ID` | No | Optional Dub folder for created challenge links; it has no effect without an enabled Dub shortener |
 
@@ -113,9 +114,11 @@ Credential sources:
 
 `VOICE_RELAY_TOKEN` protects the public `/voice` WebSocket. The server embeds it in Conversation Relay custom parameters in its TwiML and validates the subsequent setup frame. You do not paste it into Twilio Console and must not reuse either account Auth Token.
 
-The workflow validates webhook authentication, TAC credentials, the dedicated Relay token, both Arcade secrets, and the Dub key/domain pairing before touching Azure. Missing OpenAI and Dub secrets use the placeholder `disabled`, which the server treats as unset.
+Create `DEEPGRAM_API_KEY` in the Deepgram project selected for the event and scope/rotate it according to Deepgram's current key controls. Before setting it, approve Deepgram as a third-party audio processor and configure the account's region, retention, and model-improvement settings. The application sends only live inbound Karaoke caller audio, never the backing track, and does not persist raw audio or recognized transcripts. Deepgram's own processing and retention remain governed by the Deepgram account and contract.
 
-An empty primary or Portuguese Auth Token makes the corresponding production webhooks fail closed. An empty `EDITOR_TOKEN` leaves editor and garage writes open. Production deployment requires at least one complete Google OAuth configuration or `ANALYTICS_ADMIN_PIN`; either method protects analytics and operator access.
+The workflow validates webhook authentication, TAC credentials, the dedicated Relay token, both Arcade secrets, the editor token, the Deepgram key required by enabled Voice Karaoke, and the Dub key/domain pairing before touching Azure. Missing OpenAI and Dub secrets use the placeholder `disabled`, which the server treats as unset.
+
+An empty primary or Portuguese Auth Token makes the corresponding production webhooks fail closed. Production also rejects an empty `EDITOR_TOKEN`, preventing editor and garage writes from failing open. Production deployment requires at least one complete Google OAuth configuration or `ANALYTICS_ADMIN_PIN`; either method protects analytics and operator access.
 
 ## Configure GitHub Actions variables
 
@@ -133,6 +136,7 @@ Open **Settings > Secrets and variables > Actions > Variables** and configure as
 | `CR_TTS_VOICE_PT_BR` | No | Optional Brazilian Portuguese ElevenLabs voice ID; empty uses Relay's `pt-BR` default |
 | `DEFAULT_LOCALE` | No | Fallback when the dialed number and selected display do not identify a locale; defaults to `en-US` |
 | `OPENAI_MODEL` | No | OpenAI model name; empty defaults to `gpt-4o-mini` |
+| `KARAOKE_CALIBRATION_OFFSET_MS` | No | Integer from `-5000` to `5000`; shifts authoritative handset scoring after measured carrier/venue calibration; defaults to `0` |
 | `ANALYTICS_ALLOWED_EMAIL` | No | One exact verified Google email allowed to view analytics in addition to `@twilio.com` accounts |
 | `TWILIO_CONVERSATION_CONFIGURATION_ID` | Yes | Active Conversation Orchestrator configuration ID matching `conv_configuration_<26 lowercase letters or digits>` and linked to the Memory store |
 | `DUB_SHORT_DOMAIN` | No | Custom Dub hostname such as `go.example.com`; must be configured together with `DUB_API_KEY` |
@@ -149,6 +153,7 @@ gh secret set TWILIO_API_KEY
 gh secret set TWILIO_API_SECRET
 openssl rand -hex 32 | gh secret set VOICE_RELAY_TOKEN
 gh secret set ANALYTICS_ADMIN_PIN
+gh secret set DEEPGRAM_API_KEY
 ```
 
 Set the non-secret IDs and senders after provisioning them:
@@ -157,6 +162,7 @@ Set the non-secret IDs and senders after provisioning them:
 gh variable set TWILIO_SMS_NUMBER --body '+1...'
 gh variable set TWILIO_WHATSAPP_NUMBER --body '+1...'
 gh variable set TWILIO_CONVERSATION_CONFIGURATION_ID --body 'conv_configuration_...'
+gh variable set KARAOKE_CALIBRATION_OFFSET_MS --body '0'
 gh variable set DUB_SHORT_DOMAIN --body 'go.example.com'
 ```
 
@@ -200,7 +206,7 @@ Each deployment run performs these operations:
 6. Reads the ACR admin username/password and stores the password as the Container App secret `acr-password`. The workflow enables the admin account only when it creates ACR; an existing registry must already have `adminUserEnabled=true` or the credential step fails.
 7. Accepts an existing app in `Single` or `Multiple` mode only when exactly one revision is active, switches to `Multiple` when needed, pins traffic to that revision, deactivates it, and waits for zero replicas. It also accepts a stopped, zero-running-replica first-deployment retry. Any other revision topology fails closed. On first create, it creates an Azure-resource-tagged zero-replica shell, then stops its temporary revision.
 8. Applies `.github/containerapp.yaml` as a uniquely named full-spec revision, including the Azure Files mount, one-replica limit, 2 vCPU, 4 GiB memory, health probes, secrets, and complete runtime environment.
-9. Requires the exact SHA image revision to be `Provisioned`, `Healthy`, and latest-ready with the expected mount and `/livez` probes; asserts it is the only running revision; then checks `/livez`, dependency-aware `/healthz`, `/`, `/instructions`, `/join`, and `/player` plus the `/operator` authentication redirect through the candidate revision FQDN before public cutover.
+9. Requires the exact SHA image revision to be `Provisioned`, `Healthy`, and latest-ready with the expected mount and `/livez` probes; asserts it is the only running revision; then checks `/livez`, dependency-aware `/healthz`, `/`, `/instructions`, `/join`, `/player`, `/karaoke.html`, and `/analytics` plus the `/operator` authentication redirect through the candidate revision FQDN before public cutover.
 10. Assigns public traffic, then requires exact `Single` revision mode around the verified revision. Automatic snapshot restore is allowed only before the candidate can produce external or public durable side effects. If outbound delivery is enabled, restore becomes unsafe before the candidate update because its worker can call Twilio as soon as the revision starts. Once restore is unsafe, a failure leaves current data and revision state intact for manual recovery rather than erasing accepted interactions.
 
 The workflow is create-if-missing for supporting infrastructure, not a full declarative reconciliation system. For example, it does not change an existing storage SKU, share quota, region, resource tags, ACR admin setting, or Log Analytics configuration to match the checked-in defaults.
@@ -315,14 +321,14 @@ Keep runtime mode `off` during provisioning. After item 1 passes, open the event
 7. Switch the event to free play and confirm no wallet grants, reservations, or redemptions are created.
 8. Call the English number and confirm either configured Voice Auth Token can validate the request, the English `To` number selects English recognition/TTS, and the call reaches its assigned generated room.
 9. Call the Portuguese number and confirm either configured Voice Auth Token can validate the request, the Portuguese `To` number selects `pt-BR`, and free-form OpenAI help remains disabled.
-10. Complete Racer, Monsters, and Fighter once and confirm the operator sees authoritative results.
+10. Complete Racer, Monsters, Fighter, and Karaoke once and confirm the operator sees authoritative results. Confirm Racer and Karaoke results appear on their all-time leaderboards, then use the operator score controls to reset one test track and one test song.
 11. Reset an inactive test player from `/operator`. The reset must delete the linked Conversation Memory profile before local identity, wallet, messaging, and roster retirement commits; it fails closed if Memory deletion is unavailable or fails. Confirm the next `JOIN` creates a fresh profile and wallet. Never reset a connected caller or a player with an active game, coin hold, or pending outbound notice.
 12. If proactive messaging is enabled, confirm SMS delivery callbacks, all three WhatsApp call-now states where practical, and one approved out-of-session template.
 13. With the event paused, authenticate at `/operator` in the intended booth tab and select **Pair this tab as the big screen**. Confirm the same tab returns to `/`, display access is held only in `sessionStorage`, and no credential appears in the URL. During a launch, verify an absent or rejected display session links to the authenticated operator flow instead of showing a secret field or a stuck countdown. Then restart the Container App, sign in again because sessions are process-local, and confirm persisted event recovery, wallet balances, and Memory-linked messaging still work.
 
 ## Persistent storage operations
 
-Azure Files is mounted at `/app/appdata`; `scripts/start.sh` links `/app/data` to `/app/appdata/data`. Persistent files include activation analytics, the leaderboard, Racer maps, Monsters arena configuration after its first save, Fighter map catalog, and generated Fighter previews.
+Azure Files is mounted at `/app/appdata`; `scripts/start.sh` links `/app/data` to `/app/appdata/data`. Persistent files include activation analytics, the Racer and Karaoke leaderboards, Racer maps, Monsters arena configuration, Karaoke venue and timing configuration, Fighter map catalog, and generated Fighter previews.
 
 Back up the share before destructive editor work or rollback across a data-format change. The workflow creates a temporary pre-rollout share snapshot after the old writer stops. It deletes the snapshot after success and restores it automatically only while no external or public side effects can have occurred. Azure retention policies and long-lived backups remain an operator responsibility.
 
@@ -330,11 +336,11 @@ Do not place image-owned assets or `assets/manifest.json` on the share without c
 
 ## Configuration gaps and security notes
 
-`FIGHTER_DISPLAY_TOKEN` remains available as a server-side standalone override for custom integrations, but browser URLs no longer accept display credentials. The deployed server passes `ARCADE_DISPLAY_TOKEN` to Fighter, Racer, and Monsters, so station engine rooms share the kiosk capability installed through `/operator`.
+`FIGHTER_DISPLAY_TOKEN` remains available as a server-side standalone override for custom integrations, but browser URLs no longer accept display credentials. The deployed server passes `ARCADE_DISPLAY_TOKEN` to Fighter, Racer, Monsters, and Karaoke, so station engine rooms share the kiosk capability installed through `/operator`.
 
 `VOICE_RELAY_TOKEN` is wired as its own Container App secret and is mandatory in the deployment workflow. Rotate it independently from `TWILIO_AUTH_TOKEN`; the server places the current value in newly generated Conversation Relay setup parameters.
 
-`OPENAI_API_KEY`, `DUB_API_KEY`, and `DUB_FOLDER_ID` are stored as Container App secrets and referenced from the container environment; their values are not rendered into the checked deployment YAML. `DUB_SHORT_DOMAIN` is a non-secret rendered value.
+`OPENAI_API_KEY`, `DEEPGRAM_API_KEY`, `DUB_API_KEY`, and `DUB_FOLDER_ID` are stored as Container App secrets and referenced from the container environment; their values are not rendered into the checked deployment YAML. `DUB_SHORT_DOMAIN` and `KARAOKE_CALIBRATION_OFFSET_MS` are non-secret rendered values. An absent Deepgram key fails production validation and startup while Voice Karaoke is enabled by default.
 
 The workflow creates a new ACR with its admin account enabled, but it does not enable or reconcile that setting on an existing ACR. Every deployment reads an admin password and places it in the Container App as `acr-password`; existing ACR must therefore already have the admin account enabled. This uses long-lived registry credentials. A managed identity with `AcrPull` would reduce credential exposure and rotation work.
 

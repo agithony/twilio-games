@@ -4,7 +4,7 @@
   <img src="docs/assets/twilio-games-icon.png" alt="Twilio Games: Play together. Talk to play." width="460">
 </p>
 
-Twilio Games is a shared-screen platform for three voice-controlled games. In an active station, English players enter through SMS or WhatsApp, with a browser fallback in lead-capture mode; Portuguese players use WhatsApp or the same lead-capture browser fallback. Messaging is always presented as the preferred path. Players then enter the ready pool and call the locale-specific Twilio number when admitted. Conversation Relay sends speech and DTMF events directly to the Node.js server, which applies deterministic commands to authoritative game state and returns updates to the display and caller.
+Twilio Games is a shared-screen platform for four voice-controlled games. In an active station, English players enter through SMS or WhatsApp, with a browser fallback in lead-capture mode; Portuguese players use WhatsApp or the same lead-capture browser fallback. Messaging is always presented as the preferred path. Players then enter the ready pool and call the locale-specific Twilio number when admitted. Conversation Relay handles setup and talk-back; Voice Karaoke hands its performance phase to a timestamped Twilio Media Stream for deterministic rhythm and pitch scoring.
 
 ![CI](https://img.shields.io/github/actions/workflow/status/agithony/twilio-games/ci.yml) ![Top language](https://img.shields.io/github/languages/top/agithony/twilio-games) ![Last commit](https://img.shields.io/github/last-commit/agithony/twilio-games) ![Twilio](https://img.shields.io/badge/Twilio-EF223A?logo=twilio&logoColor=white)
 
@@ -15,8 +15,9 @@ The current games are:
 | Voice Racer | Real-time, three-lane 3D racing for 1-2 human players | `left`, `right`, `boost`, `brake`, `nitro` |
 | Voice Monsters | Turn-based creature battles for 1-2 human players; AI fills the solo opponent | Names or numbers, `attack` (`fight` alias), move names, `guard`, `item`, `taunt` |
 | Voice Fighter | Real-time side-view 3D fighting for 1-2 human players; AI fills the solo opponent | Names or numbers, `forward`, `back`, `jump`, `punch`, `kick`, `block` |
+| Voice Karaoke | One-singer 3D rhythm performance with falling lyric words and a live band | Song number or title, then sing each word on its authored beat and pitch |
 
-All three games support a spectator display, phone callers, keyboard testing, music, sound effects, spoken guidance, and reconnectable WebSocket sessions. The signed `POST /sms` webhook owns deterministic SMS and WhatsApp commands and immediate replies. Conversation Orchestrator and Twilio Agent Connect (TAC) only enrich Conversation Memory; a separate durable outbox sends proactive station notices through the Twilio Messaging REST API.
+All four games support a spectator display, phone callers, music, sound effects, spoken guidance, and reconnectable WebSocket sessions. Karaoke browser controls are deliberately demo-only because production scores come from authenticated caller audio. The signed `POST /sms` webhook owns deterministic SMS and WhatsApp commands and immediate replies. Conversation Orchestrator and Twilio Agent Connect (TAC) only enrich Conversation Memory; a separate durable outbox sends proactive station notices through the Twilio Messaging REST API.
 
 The home and playable games support US English and Brazilian Portuguese. The language picker updates
 the shared display, deterministic commands, Conversation Relay recognition, and spoken responses.
@@ -68,8 +69,10 @@ flowchart LR
   Voice -->|Signed POST /voice/incoming| HTTP[Node.js HTTP server]
   HTTP -->|TwiML Connect| Relay[Conversation Relay]
   Relay <-->|Speech, DTMF, and talk-back over /voice| Router[Voice router]
-  Router --> Hosts[Authoritative Racer, Monsters, and Fighter hosts]
-  Display[Shared browser display] <-->|/game, /battle, or /fighter| Hosts
+  Router --> Hosts[Authoritative Racer, Monsters, Fighter, and Karaoke hosts]
+  Router -->|Performance handoff| Media[Timestamped inbound Media Stream]
+  Media --> Hosts
+  Display[Shared browser display] <-->|/game, /battle, /fighter, or /karaoke| Hosts
 
   Player <-->|SMS or WhatsApp| Messaging[Twilio Messaging]
   Messaging -->|Signed POST /sms| Direct[POST /sms: deterministic commands and replies]
@@ -124,9 +127,10 @@ flowchart TD
   Route --> Racer[Voice Racer standalone flow]
   Route --> Monsters[Voice Monsters standalone flow]
   Route --> Fighter[Voice Fighter standalone flow]
+  Route --> Karaoke[Voice Karaoke setup, Media Stream performance, and result flow]
 ```
 
-During an active station event, incoming calls route directly to each admitted caller's assigned game room without asking for a room code. Each caller controls one stable engine slot and makes only their own car, monster, fighter, track, or arena choices. Racer, Monsters, and Fighter wait at each setup gate until every required choice is complete and let either caller say the prompted keyword to advance. Callers can explicitly correct a choice before advancing. Display-keyboard input cannot advance station setup. A two-player Racer match renders split-screen views plus numbered player markers above both cars. All three games admit exactly one or two humans; Monsters and Fighter add an AI opponent for solo play.
+During an active station event, incoming calls route directly to each admitted caller's assigned game room without asking for a room code. Each caller controls one stable engine slot and makes only their own car, monster, fighter, song, track, or arena choices. Every game waits at explicit setup gates. Voice Karaoke admits one singer and requires both display-audio readiness and an authenticated Media Stream before its countdown; the other games admit one or two humans, and Monsters and Fighter add an AI opponent for solo play. In Standalone Play, Setup exposes the same persisted game order as the home-screen display order; the first three enabled games appear on page one.
 
 When station mode is `off`, the home page becomes the standalone launcher. Standalone calls use room `4821` by default, but they still require an eligible open shared display. `/voice/join` remains a legacy alias that accepts posted DTMF digits as a room code. Mode-off deployments with standalone Voice disabled, and standalone calls without an eligible display, receive localized Say-and-Hangup TwiML.
 
@@ -175,7 +179,8 @@ The home route changes with the runtime mode. Mode `off` shows the standalone th
 | Voice Racer | <http://localhost:5173/play.html?display=1&room=4821> | Spectator and operator display |
 | Voice Monsters | <http://localhost:5173/monsters.html?display=1&room=4821> | Spectator and operator display |
 | Voice Fighter | <http://localhost:5173/fighter.html?display=1&room=4821> | Spectator and operator display |
-| Editors | <http://localhost:5173/editor> | Choose the Racer level, Monsters arena, or Fighter map editor |
+| Editors | <http://localhost:5173/editor> | Choose the Racer level, Monsters arena, Fighter map, or Karaoke venue editor |
+| Karaoke venue editor | <http://localhost:5173/editor?game=karaoke> | Place all five GLBs, set responsive cameras/highway, tune the drum anchor and lights, and save the live venue |
 | Garage | <http://localhost:5173/garage> | Inspect and configure Racer models and manifest entries |
 | Activation analytics | <http://localhost:5173/analytics> | Private date-filtered engagement dashboard and PDF reports |
 | Visitor join | <http://localhost:5173/join> | English: configured SMS or WhatsApp; Portuguese: WhatsApp; both locales: browser fallback in lead-capture mode |
@@ -203,13 +208,16 @@ WhatsApp call-now delivery uses the locale's approved `twilio/call-to-action` te
 
 ## Editors and Assets
 
-`/editor` is a hub for three persistent content tools:
+`/editor` is a hub for four persistent content tools:
 
 - Voice Racer level editor: tracks, maps, props, lighting, cameras, and preview shots.
 - Voice Monsters arena editor: arena transform, framing, and spin settings.
 - Voice Fighter map editor: GLB placement, floor, boundaries, cameras, map catalog, and preview capture.
+- Voice Karaoke venue editor: the stage and four performer GLBs, degree-based XYZ transforms, `batteria` or manual drum anchoring, landscape/compact/portrait cameras, responsive lyric highway, and concert lights.
 
 `/garage` configures Racer model roles, order, transforms, and animation settings in `assets/manifest.json`. On public deployments, set `EDITOR_TOKEN`; editor write requests then require the same token, which can be supplied with the editor's `?token=` query parameter.
+
+The Karaoke runtime and editor read strict versioned venue data from public no-store `GET /api/karaoke-venue`. `POST /api/karaoke-venue` validates the complete object before an atomic `data/karaoke-venue.json` replacement and uses the shared editor token. `GET /api/karaoke-asset-files` supplies only direct safe release GLB basenames from `assets/karaoke`; `_raw` content and nested directories are never listed or served. On first boot, `assets/karaoke/venue.json` seeds a missing or invalid live file without replacing valid editor-authored data.
 
 ```bash
 npm run inspect-assets
@@ -249,7 +257,7 @@ The application runs locally without Twilio or OpenAI credentials. Configure the
 | `ARCADE_CONFIG_DIRECTORY` | Persistent Arcade configuration and audit directory | `data/` |
 | `ARCADE_SIGNING_SECRET` | Exactly 64 hexadecimal characters used to derive player-session and challenge-token keys when station mode is enabled | Not read while station mode is `off` |
 | `ARCADE_STATE_PATH` | Persistent players, wallets, queue and station state, Messaging identities, receipts, and notification outbox | `data/arcade-state.json` |
-| `ARCADE_DISPLAY_TOKEN` | Server-held kiosk capability used by Racer, Monsters, and Fighter station displays; production requires at least 16 characters | Unset |
+| `ARCADE_DISPLAY_TOKEN` | Server-held kiosk capability used by Racer, Monsters, Fighter, and Karaoke station displays; production requires at least 16 characters | Unset |
 | `ARCADE_STANDALONE_VOICE_ENABLED` | Allows standalone-mode calls to join the game currently open on the shared display | `false` in production; `true` otherwise |
 | `ARCADE_TAC_ENABLED` | Enables the TAC gateway for Orchestrator capture and Conversation Memory enrichment | Enabled unless set to `false`; `dev:arcade:server` disables it |
 | `ARCADE_OUTBOUND_MESSAGING_ENABLED` | Kill switch for durable proactive SMS and WhatsApp notices; valid REST credentials and channel senders are also required | `false` unless exactly `true` |
@@ -268,15 +276,16 @@ The application runs locally without Twilio or OpenAI credentials. Configure the
 | `DUB_FOLDER_ID` | Optional Dub folder for generated challenge links | Unset |
 | `FIGHTER_DISPLAY_TOKEN` | Server-side Fighter host capability for custom standalone integrations; normal startup prefers `ARCADE_DISPLAY_TOKEN`, and browser URLs never accept it | Unset |
 | `GAME_SERVER_URL` | Vite development proxy target | `http://localhost:8080` |
-| `MAPS_PATH`, `ARENA_PATH`, `FIGHTER_MAPS_PATH` | Live writable game configuration paths | Files under `data/` |
-| `BUNDLED_MAPS_PATH`, `BUNDLED_ARENA_PATH`, `BUNDLED_FIGHTER_MAPS_PATH` | Seed configuration paths | Files under `assets/` |
+| `MAPS_PATH`, `ARENA_PATH`, `FIGHTER_MAPS_PATH`, `KARAOKE_VENUE_PATH`, `KARAOKE_TIMINGS_PATH`, `KARAOKE_LEADERBOARD_PATH` | Live writable game configuration, Karaoke timing, and score paths | Files under `data/` |
+| `BUNDLED_MAPS_PATH`, `BUNDLED_ARENA_PATH`, `BUNDLED_FIGHTER_MAPS_PATH`, `BUNDLED_KARAOKE_VENUE_PATH` | Seed configuration paths | Files under `assets/` |
+| `KARAOKE_ASSET_DIRECTORY` | Direct release GLB directory used by the Karaoke editor picker | `assets/karaoke` |
 | `FIGHTER_PREVIEW_DIR` | Writable Fighter preview directory | `data/fighter-previews` |
 
 When signature validation is enabled without `TWILIO_AUTH_TOKEN`, primary-account Twilio webhooks fail closed. Public station deployments also need independent `VOICE_RELAY_TOKEN`, `ARCADE_SIGNING_SECRET`, and `ARCADE_DISPLAY_TOKEN` values. The operator action installs the display capability in browser session storage; do not place display tokens in URLs. `/operator`, every `/api/admin/` route, and `/analytics` require the same Google-or-PIN session. Set `EDITOR_TOKEN` wherever editor writes are exposed.
 
 ## Activation Analytics
 
-`/analytics` reports engaged participants, sessions, completion, active play time, accepted voice commands, daily trends, per-game performance, and popular maps, characters, and vehicles. Filters accept endpoints no more than 366 days apart, which permits 367 inclusive UTC date buckets, and an individual game. The PDF button downloads the same filtered report model shown on screen.
+`/analytics` reports engaged participants, sessions, completion, abandonment, active play time, accepted voice commands, daily trends, per-game performance, and popular maps, songs, characters, and vehicles. Filters accept endpoints no more than 366 days apart, which permits 367 inclusive UTC date buckets, and an individual game. The PDF button downloads the same filtered report model shown on screen.
 
 Private analytics and operator access use Google OAuth or `ANALYTICS_ADMIN_PIN`. Google accepts verified emails ending exactly in `@twilio.com`, plus one exact exception configured through `ANALYTICS_ALLOWED_EMAIL`. Both methods create the same server-side eight-hour HTTP-only, SameSite=Lax session; the server adds `Secure` over HTTPS. Configure the Google web client redirect URI as `<PUBLIC_BASE_URL>/auth/google/callback`. See [Analytics setup](docs/analytics.md).
 
@@ -299,25 +308,29 @@ Additional Chromium-based render checks are available when a compatible browser 
 ```bash
 npm run smoke
 npm run smoke:editor
+npm run smoke:karaoke-editor
 ```
 
 GitHub Actions runs Node.js 22.13, validates Git LFS pointer metadata without downloading binaries, installs with `npm ci`, typechecks, runs the test suite, builds the Vite client, and reports high-severity dependency audit results without making that audit step blocking.
 
 ## Deployment
 
-Production uses one Azure Container Apps replica. The image contains the built Vite multi-page client and runs one Node.js process that serves pages, APIs, static assets, Twilio webhooks, and the `/game`, `/battle`, `/fighter`, and `/voice` WebSockets.
+Production uses one Azure Container Apps replica. The image contains the built Vite multi-page client and runs one Node.js process that serves pages, APIs, static assets, Twilio webhooks, and the `/game`, `/battle`, `/fighter`, `/karaoke`, `/karaoke-media`, and `/voice` WebSockets.
 
 The CI workflow runs on pushes and pull requests and checks LFS pointers, `npm ci`, typechecking, all tests, the client build, and a non-blocking high-severity dependency audit without spending GitHub LFS bandwidth. Separately, pushes to `main` and manual deploy runs execute the deploy workflow's own `typecheck`, test, and build checks, then validate production credentials. The deploy does not consume the reusable CI job.
 
-The deploy workflow hydrates an immutable private Azure Blob bundle and verifies every Fighter binary against its committed LFS SHA-256 before building commit-SHA and `latest` image tags in ACR. It then stops the previous writer, snapshots Azure Files, applies a uniquely named revision, and verifies the exact SHA tag. Neither ACR tag is registry-enforced immutable. Before public cutover the workflow requires that revision to be `Provisioned`, `Healthy`, latest-ready, active with one replica, the only running revision, mounted to `appdata`, and configured with the expected startup, readiness, and liveness probes on `/livez`. It then requires HTTP 200 from `/livez`, dependency-aware `/healthz`, `/`, `/instructions`, `/join`, and `/player`, plus the expected authentication redirect from `/operator`, before assigning traffic and restoring single-revision mode. It does not run live Twilio, Conversation Memory, writable Azure Files, or WebSocket gameplay acceptance tests.
+The deploy workflow hydrates an immutable private Azure Blob bundle and verifies every Fighter binary against its committed LFS SHA-256 before building commit-SHA and `latest` image tags in ACR. It then stops the previous writer, snapshots Azure Files, applies a uniquely named revision, and verifies the exact SHA tag. Neither ACR tag is registry-enforced immutable. Before public cutover the workflow requires that revision to be `Provisioned`, `Healthy`, latest-ready, active with one replica, the only running revision, mounted to `appdata`, and configured with the expected startup, readiness, and liveness probes on `/livez`. It then requires HTTP 200 from `/livez`, dependency-aware `/healthz`, `/`, `/instructions`, `/join`, `/player`, `/karaoke.html`, and `/analytics`, plus the expected authentication redirect from `/operator`, before assigning traffic and restoring single-revision mode. It does not run live Twilio, Conversation Memory, writable Azure Files, or WebSocket gameplay acceptance tests.
 
 The single-replica limit is a correctness requirement because rooms, active matches, call sessions, and WebSocket coordination are in memory. `DATA_MOUNT=/app/appdata` links `/app/data` to the Azure Files share. The persistent set is:
 
 - `data/leaderboard.json`: Racer leaderboard.
+- `data/karaoke-leaderboard.json`: per-song Voice Karaoke leaderboard.
 - `data/analytics.json`: bounded anonymous daily activation rollups.
 - `data/maps.json`: live Racer map catalog, seeded from bundled assets.
 - `data/arena.json`: live Monsters arena configuration after its first save.
 - `data/fighter-maps.json` and `data/fighter-previews/*.png`: live Fighter catalog and generated previews.
+- `data/karaoke-venue.json`: live strict Karaoke venue, seeded from `assets/karaoke/venue.json`.
+- `data/karaoke-timings.json`: live sparse per-word Karaoke timing overrides.
 - `data/arcade-config.json` and `data/arcade-config-audit.jsonl`: versioned station configuration and hash-chained audit.
 - `data/arcade-state.json`: players, leads, wallets, queue and station state, Messaging identities, receipts, and the outbound notice outbox.
 

@@ -4,13 +4,28 @@ import { unlink, writeFile, mkdir } from 'node:fs/promises';
 
 // Unique temp leaderboard path per test (concurrent files / leftover .tmp can't race).
 let LB = 'data/_test-lb.json';
+let KARAOKE_LB = 'data/_test-karaoke-lb.json';
 let n = 0;
-beforeEach(async () => { await mkdir('data', { recursive: true }); LB = `data/_test-lb-${process.pid}-${n++}.json`; });
+beforeEach(async () => {
+  await mkdir('data', { recursive: true });
+  const suffix = `${process.pid}-${n++}`;
+  LB = `data/_test-lb-${suffix}.json`;
+  KARAOKE_LB = `data/_test-karaoke-lb-${suffix}.json`;
+});
 let srv: HttpServer;
-afterEach(async () => { await srv?.stop(); try { await unlink(LB); } catch {} });
+afterEach(async () => {
+  await srv?.stop();
+  for (const file of [LB, KARAOKE_LB]) try { await unlink(file); } catch {}
+});
 
 function makeServer() {
-  return new HttpServer({ port: 0, publicBaseUrl: 'http://localhost', validateSignatures: false, leaderboardPath: LB });
+  return new HttpServer({
+    port: 0,
+    publicBaseUrl: 'http://localhost',
+    validateSignatures: false,
+    leaderboardPath: LB,
+    karaokeLeaderboardPath: KARAOKE_LB,
+  });
 }
 
 const seed = [
@@ -48,5 +63,23 @@ describe('leaderboard API', () => {
     const res = await fetch(`http://127.0.0.1:${port}/api/leaderboard`);
     expect(res.status).toBe(200);
     expect((await res.json()).entries).toEqual([]);
+  });
+
+  it('returns Karaoke scores descending per song without private engine identities', async () => {
+    await writeFile(KARAOKE_LB, JSON.stringify([
+      { name: 'Ada', songId: 'song-a', score: 80_000, bestCombo: 40, at: 2, enginePlayerId: 'ROOM:p1' },
+      { name: 'Bo', songId: 'song-a', score: 90_000, bestCombo: 30, at: 1 },
+      { name: 'Cy', songId: 'song-b', score: 100_000, bestCombo: 50, at: 3 },
+    ]));
+    srv = makeServer();
+    const port = await srv.start();
+    const response = await fetch(`http://127.0.0.1:${port}/api/karaoke/leaderboard?song=song-a&limit=10`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    const payload = await response.json() as { entries: Array<{ name: string }> };
+    expect(payload.entries.map(entry => entry.name)).toEqual(['Bo', 'Ada']);
+    expect(JSON.stringify(payload)).not.toContain('enginePlayerId');
+    expect((await fetch(`http://127.0.0.1:${port}/api/karaoke/leaderboard`)).status).toBe(400);
+    expect((await fetch(`http://127.0.0.1:${port}/api/karaoke/leaderboard?song=song-a&limit=10x`)).status).toBe(400);
   });
 });

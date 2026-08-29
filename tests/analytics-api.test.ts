@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { rm } from 'node:fs/promises';
 import { HttpServer } from '../server/http-server';
 import { GoogleAnalyticsAuth } from '../server/google-analytics-auth';
+import type { AnalyticsStore } from '../server/analytics-store';
 
 let server: HttpServer | undefined;
 const analyticsPath = `data/_test-analytics-api-${process.pid}.json`;
@@ -19,9 +20,16 @@ describe('analytics API', () => {
     server = new HttpServer({ port: 0, publicBaseUrl: 'http://localhost', validateSignatures: false, analyticsAuth: auth, analyticsPath });
     const port = await server.start(), url = `http://127.0.0.1:${port}/api/analytics`;
     expect((await fetch(url)).status).toBe(401);
+    const today = new Date().toISOString().slice(0, 10);
+    (server as unknown as { analytics: AnalyticsStore }).analytics.recordMatch({
+      game: 'karaoke', participantIds: ['karaoke:room:p1'], durationSeconds: 45, completed: false,
+    });
     const response = await fetch(url, { headers: { cookie } });
     expect(response.status).toBe(200); expect(response.headers.get('cache-control')).toBe('no-store');
-    expect((await response.json()).summary.sessions).toBe(0);
+    const report = await response.json();
+    expect(report.range.to).toBe(today);
+    expect(report.summary).toMatchObject({ sessions: 1, completed: 0, abandoned: 1, playSeconds: 45 });
+    expect(report.games.karaoke).toMatchObject({ sessions: 1, abandoned: 1, playSeconds: 45 });
   });
 
   it('reports the current Google user and downloads an authenticated PDF', async () => {

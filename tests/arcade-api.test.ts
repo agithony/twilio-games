@@ -132,6 +132,7 @@ async function harness(options: {
     mapsPath: path.join(directory, 'maps.json'),
     arenaPath: path.join(directory, 'arena.json'),
     leaderboardPath: path.join(directory, 'leaderboard.json'),
+    karaokeLeaderboardPath: path.join(directory, 'karaoke-leaderboard.json'),
     fighterMapsPath: path.join(directory, 'fighter-maps.json'),
     fighterPreviewDir: path.join(directory, 'fighter-previews'),
     clientDir: path.join(directory, 'client'),
@@ -318,6 +319,11 @@ describe('Arcade API', () => {
       { name:'Bo',map:'Silver Lake',carIndex:1,finishT:32,at:2 },
       { name:'Cy',map:'Neon City',carIndex:0,finishT:33,at:3 },
     ]));
+    const karaokeLeaderboardPath = path.join(directory!, 'karaoke-leaderboard.json');
+    await writeFile(karaokeLeaderboardPath, JSON.stringify([
+      {name:'Dee',songId:'never-gonna-give-you-up',score:90000,bestCombo:40,at:4},
+      {name:'Eli',songId:'never-gonna-give-you-up',score:85000,bestCombo:35,at:5},
+    ]));
     const endpoint=`${baseUrl}/api/admin/arcade/leaderboards`;
 
     expect((await fetch(endpoint)).status).toBe(401);
@@ -328,6 +334,11 @@ describe('Arcade API', () => {
       {game:'racer',resettable:true,maps:[{map:'Neon City',records:1},{map:'Silver Lake',records:2}]},
       {game:'monsters',resettable:false,maps:[]},
       {game:'fighter',resettable:false,maps:[]},
+      {game:'karaoke',resettable:true,maps:[
+        {map:'a-thousand-miles',label:'A Thousand Miles',records:0},
+        {map:'luz-no-ritmo-dev',label:'Luz no Ritmo',records:0},
+        {map:'never-gonna-give-you-up',label:'Never Gonna Give You Up',records:2},
+      ]},
     ]});
     const etag=listed.headers.get('etag');expect(etag).toMatch(/^"leaderboard-[a-f0-9]{16}"$/);
     const resetHeaders={...ADMIN_HEADER,'Content-Type':'application/json',Origin:'http://localhost'};
@@ -348,6 +359,11 @@ describe('Arcade API', () => {
       body:JSON.stringify({game:'racer',map:'Neon City',reason:`concurrent cleanup ${index}`}),
     })));
     expect(concurrent.map(response=>response.status).sort()).toEqual([200,412]);
+    const afterRacer=await fetch(endpoint,{headers:ADMIN_HEADER}),karaokeEtag=afterRacer.headers.get('etag');
+    const karaokeReset=await fetch(`${endpoint}/reset`,{method:'POST',headers:{...resetHeaders,'If-Match':karaokeEtag!},body:JSON.stringify({game:'karaoke',map:'never-gonna-give-you-up',reason:'event cleanup'})});
+    expect(karaokeReset.status).toBe(200);
+    expect(await karaokeReset.json()).toEqual({game:'karaoke',map:'never-gonna-give-you-up',deleted:2,remaining:0});
+    expect(JSON.parse(await readFile(karaokeLeaderboardPath,'utf8'))).toEqual([]);
   });
 
   it('connects an authenticated same-origin booth display without initializing mode-off player state', async () => {
@@ -872,12 +888,18 @@ describe('Arcade API', () => {
     expect(publicProjection.games).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 'fighter', choices: 1 }),
       expect.objectContaining({ id: 'racer', choices: 0 }),
+      expect.objectContaining({ id: 'karaoke', capacity: 1, choices: 0 }),
     ]));
     expect(JSON.stringify(publicProjection)).not.toContain('gameChoicesByReadyEntryId');
     expect(JSON.stringify(publicProjection)).not.toContain('station-ready-entry');
     const operatorProjection = await (await fetch(`${baseUrl}/api/admin/arcade/station`, {
       headers: ADMIN_HEADER,
     })).json();
+    expect(operatorProjection.voteCounts).toEqual(expect.arrayContaining([
+      { game: 'fighter', count: 1 },
+      { game: 'karaoke', count: 0 },
+    ]));
+    expect(JSON.stringify(operatorProjection.voteCounts)).not.toContain('station-ready-entry');
     expect(JSON.stringify(operatorProjection)).not.toContain('gameChoicesByReadyEntryId');
     expect(JSON.stringify(operatorProjection)).not.toContain('gameChoice');
 

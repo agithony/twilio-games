@@ -3,9 +3,16 @@ import { wireThemeToggle } from '../theme';
 import { locale as resolvedLocale } from '../i18n';
 import { effectivePublicVisitorBaseUrl, fetchPublicStation, rejectDisplayToken, resolveStationQrImage, stationQrAsset, storeDisplayToken } from '../station-client';
 import { getSoundEffectsManager } from '../sound-effects';
+import type { HomeConcept } from '../../shared/arcade-config';
+import {
+  isPlayableArcadeGame,
+  PLAYABLE_ARCADE_GAMES,
+  type PlayableArcadeGame,
+} from '../../shared/arcade-games';
+import { gameTitle } from '../../shared/i18n/content';
 
 type ArcadeMode = 'off' | 'coin_only' | 'lead_capture';
-type PlayableGame = 'racer' | 'monsters' | 'fighter';
+type PlayableGame = PlayableArcadeGame;
 type ChargePolicy = 'per_player' | 'per_match' | 'host_sponsors' | 'free';
 type StationPhase = 'ATTRACT' | 'RECRUITING' | 'GAME_SELECTION' | 'LOCKED' | 'LAUNCHING' | 'PLAYING' | 'RESULTS';
 type OperatorTab = 'operator-overview' | 'live-event' | 'messages' | 'setup';
@@ -18,12 +25,13 @@ interface StationView { phase:string;revision:number;deadline:string|null;ready:
 interface Challenge { id:string;title:string;message:string|null;rewardCoins:number;displayOrder:number;claimCount:number;maxClaimsPerPlayer:number;available:boolean;startsAt:string|null;endsAt:string|null; }
 interface AdminChallenge { id:string;title:string;message:string|null;url:string;rewardCoins:number;enabled:boolean;maxClaimsPerPlayer:number;displayOrder:number;startsAt:string|null;endsAt:string|null; }
 interface GameChoiceResponse { gameChoice:PlayableGame; }
-interface AdminConfig extends Record<string,unknown> { version:number;updatedAt:string;updatedBy:string;schemaVersion:number;arcade:{mode:ArcadeMode;cabinetId:string};station:{timings:{recruitingSeconds:number;hardDeadlineSeconds:number;selectionSeconds:number;lockedSeconds:number;launchTimeoutSeconds:number;resultsSeconds:number;postGameRecruitingSeconds:number};games:Record<PlayableGame,{enabled:boolean}>;comingSoon:Record<'trivia'|'karaoke',{enabled:boolean}>;automaticSelection:{policy:'best_fit_rotation'|'round_robin'|'fixed_priority';order:PlayableGame[]};qrRail:'auto'|'always'|'hidden'};coins:{startingBalance:number;chargePolicy:ChargePolicy};channels:{voice:boolean;sms:boolean;whatsapp:boolean;voiceNumbers:Record<'en-US'|'pt-BR',string|null>};earning:{enabled:boolean;challenges:AdminChallenge[]};postGame:{enabled:boolean;channels:Array<'sms'|'whatsapp'>;includeCoinBalance:boolean;includeChallenges:boolean}; }
+interface AdminConfig extends Record<string,unknown> { version:number;updatedAt:string;updatedBy:string;schemaVersion:number;arcade:{mode:ArcadeMode;cabinetId:string};station:{timings:{recruitingSeconds:number;hardDeadlineSeconds:number;selectionSeconds:number;lockedSeconds:number;launchTimeoutSeconds:number;resultsSeconds:number;postGameRecruitingSeconds:number};games:Record<PlayableGame,{enabled:boolean}>;comingSoon:Record<HomeConcept,{enabled:boolean}>;automaticSelection:{policy:'best_fit_rotation'|'round_robin'|'fixed_priority';order:PlayableGame[]};qrRail:'auto'|'always'|'hidden'};coins:{startingBalance:number;chargePolicy:ChargePolicy};channels:{voice:boolean;sms:boolean;whatsapp:boolean;voiceNumbers:Record<'en-US'|'pt-BR',string|null>};earning:{enabled:boolean;challenges:AdminChallenge[]};postGame:{enabled:boolean;channels:Array<'sms'|'whatsapp'>;includeCoinBalance:boolean;includeChallenges:boolean}; }
 interface OperatorStationView {
   station:{phase:StationPhase;revision:number;updatedAt:string;activeRoundId:string|null;nextRoundId:string|null;activeGame:PlayableGame|null;activeMatchId:string|null};
   round:{phase:string;firstCoinAt:string;recruitingEndsAt:string|null;hardEndsAt:string|null;selectionEndsAt:string|null;lockedEndsAt:string|null;resultsAt:string|null;selectedGame:PlayableGame|null}|null;
   match:{game:PlayableGame;phase:string;participantReadyEntryIds:string[];overflowReadyEntryIds:string[];launchGeneration:number;launchRequestedAt:string|null;displayReadyAt:string|null;startedAt:string|null;completedAt:string|null;result:{source:'ENGINE'|'RECOVERY'|'LEGACY_UNAVAILABLE';participants:Array<{readyEntryId:string;rank:number|null;completed:boolean;won:boolean|null;score:number|null;durationSeconds:number|null}>}|null}|null;
   readyEntries:Array<{id:string;roundId:string;displayName:string;originalReadyAt:string;status:string;overflowOrdinal:number|null;availableBalance:number;connected:boolean}>;
+  voteCounts:Array<{game:PlayableGame;count:number}>;
   recentControls:Array<{id:string;action:string;actorKind:'operator'|'system';actorSubject:string;reason:string;fromRevision:number;toRevision:number;occurredAt:string}>;
   resultsHeld:boolean;
 }
@@ -31,7 +39,7 @@ interface OperatorPlayerRecoveryItem {playerId:string;displayName:string;identit
 interface OperatorPlayerRecoveryPage {configVersion:number;startingBalance:number;players:OperatorPlayerRecoveryItem[];nextCursor:string|null;}
 interface MessagingFailedNotice { notificationId:string;kind:string;channel:'sms'|'whatsapp';status:'FAILED';attempts:number;maximumAttempts:number;lastErrorCode:string|null;lastErrorMessage:string|null;terminalReason:string|null;updatedAt:string;expiresAt:string;retryEligible:boolean;retryIneligibleReason:string|null; }
 interface AdminStatus { display:{configured:boolean;connected:boolean;checking:boolean;lastSeenAt:string|null;presenceTimeoutSeconds:number};messaging:{configured:boolean;enabled:boolean;started:boolean;lastError:string|null;channels:Record<'sms'|'whatsapp',boolean>;counts:Record<string,number>;recentFailures:MessagingFailedNotice[];onboarding:Record<'sms'|'whatsapp',boolean>;storage:{players:number;messagingIdentities:number;identityCapacity:number;remainingIdentityCapacity:number;channelAddresses:number;drafts:number;cleanupEligible:number;retentionDays:number;pruneBatchSize:number}|null}|null; }
-interface LeaderboardAdminSummary { games:Array<{game:PlayableGame;resettable:boolean;maps:Array<{map:string;records:number}>}>; }
+interface LeaderboardAdminSummary { games:Array<{game:PlayableGame;resettable:boolean;maps:Array<{map:string;label?:string;records:number}>}>; }
 
 class ApiError extends Error { constructor(readonly status:number,readonly code:string,message:string){super(message);} }
 
@@ -51,6 +59,8 @@ const state: {
 } = { config:null,deployment:null,player:null,wallet:null,station:null,adminConfig:null,operatorStation:null,operatorStationEtag:null,adminStatus:null,operatorPlayers:null,leaderboardSummary:null,leaderboardEtag:null };
 
 const notice = el('notice'), modeBadge = el('mode-badge'), heroBalance = el('hero-balance');
+const PLAYABLE_GAMES: readonly PlayableGame[] = PLAYABLE_ARCADE_GAMES.map(game => game.id);
+const HOME_CONCEPTS: readonly HomeConcept[] = ['trivia'];
 const operatorView = location.pathname === '/operator' || location.pathname === '/operator/';
 const OPERATOR_TABS:readonly OperatorTab[]=['operator-overview','live-event','messages','setup'];
 const playerPortuguese = !operatorView && resolvedLocale === 'pt-BR';
@@ -84,7 +94,7 @@ el('discard-mode-changes').addEventListener('click',()=>void discardModeChanges(
 el<HTMLFormElement>('station-controls').addEventListener('submit', event => event.preventDefault());
 el<HTMLSelectElement>('admin-charge-policy').addEventListener('change', renderChargePolicy);
 el<HTMLSelectElement>('admin-selection-policy').addEventListener('change',renderPrioritySettings);
-for(const control of document.querySelectorAll<HTMLSelectElement>('[data-game-priority]'))control.addEventListener('change',syncPriorityOrder);
+for(const control of document.querySelectorAll<HTMLSelectElement>('[data-game-priority]'))control.addEventListener('change',event=>swapPriorityOrder(event.currentTarget as HTMLSelectElement));
 el('add-admin-challenge').addEventListener('click',()=>openChallengeEditor());
 el<HTMLInputElement>('admin-challenges-enabled').addEventListener('change',()=>void saveChallengeAvailability());
 el('cancel-admin-challenge').addEventListener('click',closeChallengeEditor);
@@ -109,14 +119,14 @@ el('cancel-station-reset').addEventListener('click',cancelStationReset);
 el<HTMLFormElement>('station-reset-form').addEventListener('submit',event=>{event.preventDefault();void stationAction('reset');});
 el<HTMLDialogElement>('station-reset-dialog').addEventListener('cancel',event=>{event.preventDefault();cancelStationReset();});
 el('review-preserved-flow').addEventListener('click',()=>activateOperatorTab('live-event',true,true));
-el('admin-mode').addEventListener('change',renderRuntimeSummary);
+el('admin-mode').addEventListener('change',()=>{renderPrioritySettings();renderRuntimeSummary();});
 el('admin-sms').addEventListener('change',renderRuntimeSummary);
 el('admin-whatsapp').addEventListener('change',renderRuntimeSummary);
 el('admin-voice').addEventListener('change',renderRuntimeSummary);
 el('admin-voice-en-us').addEventListener('input',renderRuntimeSummary);
 el('admin-voice-pt-br').addEventListener('input',renderRuntimeSummary);
-for(const game of ['racer','monsters','fighter'])el(`admin-game-${game}`).addEventListener('change',renderRuntimeSummary);
-for(const concept of ['trivia','karaoke'])el(`admin-coming-soon-${concept}`).addEventListener('change',renderRuntimeSummary);
+for(const game of PLAYABLE_GAMES)el(`admin-game-${game}`).addEventListener('change',renderRuntimeSummary);
+for(const concept of HOME_CONCEPTS)el(`admin-coming-soon-${concept}`).addEventListener('change',renderRuntimeSummary);
 window.setInterval(()=>{renderStationDeadline();renderOperatorOverview();},1000);
 window.addEventListener('beforeunload',event=>{if(modeFormDirty){event.preventDefault();event.returnValue='';}});
 applyTheme();
@@ -484,6 +494,7 @@ function renderGameChoice():void{
     : playerText('No choice yet. Pick one below.','Nenhuma escolha ainda. Escolha abaixo.');
   for(const button of panel.querySelectorAll<HTMLButtonElement>('[data-game-choice]')){
     const game=button.dataset.gameChoice as PlayableGame;
+    button.querySelector<HTMLElement>('b')!.textContent=gameName(game);
     const enabled=state.config?.station.games[game]?.enabled===true;
     const selected=game===choice;
     button.hidden=!enabled;
@@ -571,8 +582,8 @@ async function checkAdmin(forceConfigRender=false):Promise<void>{
   el<HTMLInputElement>('admin-voice').checked=state.adminConfig.channels.voice;
   el<HTMLInputElement>('admin-voice-en-us').value=state.adminConfig.channels.voiceNumbers['en-US']??'';
   el<HTMLInputElement>('admin-voice-pt-br').value=state.adminConfig.channels.voiceNumbers['pt-BR']??'';
-  for(const game of ['racer','monsters','fighter'] as const)el<HTMLInputElement>(`admin-game-${game}`).checked=state.adminConfig.station.games[game].enabled;
-  for(const concept of ['trivia','karaoke'] as const)el<HTMLInputElement>(`admin-coming-soon-${concept}`).checked=state.adminConfig.station.comingSoon[concept].enabled;
+  for(const game of PLAYABLE_GAMES)el<HTMLInputElement>(`admin-game-${game}`).checked=state.adminConfig.station.games[game].enabled;
+  for(const concept of HOME_CONCEPTS)el<HTMLInputElement>(`admin-coming-soon-${concept}`).checked=state.adminConfig.station.comingSoon[concept].enabled;
   el<HTMLSelectElement>('admin-selection-policy').value=state.adminConfig.station.automaticSelection.policy;
   applyPriorityOrder(state.adminConfig.station.automaticSelection.order);
   el<HTMLSelectElement>('admin-qr-rail').value=state.adminConfig.station.qrRail;
@@ -646,13 +657,13 @@ async function saveMode(event:Event):Promise<void>{
   if(selectedMode!=='off'&&!(settings.channels as AdminConfig['channels']).voice){setNotice('Open events need Voice controls turned on.','error');return;}
   if(selectedMode!=='off'&&!voiceReady){setNotice('Add valid English and Portuguese voice numbers before opening the event.','error');return;}
   const station=settings.station as AdminConfig['station'];
-  for(const game of ['racer','monsters','fighter'] as const)station.games[game].enabled=el<HTMLInputElement>(`admin-game-${game}`).checked;
-  for(const concept of ['trivia','karaoke'] as const)station.comingSoon[concept].enabled=el<HTMLInputElement>(`admin-coming-soon-${concept}`).checked;
+  for(const game of PLAYABLE_GAMES)station.games[game].enabled=el<HTMLInputElement>(`admin-game-${game}`).checked;
+  for(const concept of HOME_CONCEPTS)station.comingSoon[concept].enabled=el<HTMLInputElement>(`admin-coming-soon-${concept}`).checked;
   if(selectedMode!=='off'&&!Object.values(station.games).some(game=>game.enabled)){setNotice('Choose at least one game before opening the event.','error');return;}
   const selectionPolicy=el<HTMLSelectElement>('admin-selection-policy').value as AdminConfig['station']['automaticSelection']['policy'];
   const selectedOrder=el<HTMLInputElement>('admin-game-order').value.split(',').map(value=>value.trim()) as PlayableGame[];
-  const validOrder=selectedOrder.length===3&&new Set(selectedOrder).size===3&&selectedOrder.every(game=>['racer','monsters','fighter'].includes(game));
-  if(selectionPolicy==='fixed_priority'&&!validOrder){setNotice('Choose each game once in the priority order.','error');return;}
+  const validOrder=selectedOrder.length===PLAYABLE_GAMES.length&&new Set(selectedOrder).size===PLAYABLE_GAMES.length&&selectedOrder.every(game=>PLAYABLE_GAMES.includes(game));
+  if((selectedMode==='off'||selectionPolicy==='fixed_priority')&&!validOrder){setNotice('Choose each game once in the display order.','error');return;}
   const order=validOrder?selectedOrder:config.station.automaticSelection.order;
   station.automaticSelection.policy=selectionPolicy;station.automaticSelection.order=order;station.qrRail=el<HTMLSelectElement>('admin-qr-rail').value as AdminConfig['station']['qrRail'];
   const postGame=settings.postGame as AdminConfig['postGame'];
@@ -851,14 +862,27 @@ function renderChargePolicy():void{
   renderRuntimeSummary();
 }
 function applyPriorityOrder(order:readonly PlayableGame[]):void{
-  document.querySelectorAll<HTMLSelectElement>('[data-game-priority]').forEach((control,index)=>{control.value=order[index]??['racer','monsters','fighter'][index]!;});
+  document.querySelectorAll<HTMLSelectElement>('[data-game-priority]').forEach((control,index)=>{control.value=order[index]??PLAYABLE_GAMES[index]!;});
   syncPriorityOrder();
 }
 function syncPriorityOrder():void{
   el<HTMLInputElement>('admin-game-order').value=[...document.querySelectorAll<HTMLSelectElement>('[data-game-priority]')].map(control=>control.value).join(',');
 }
+function swapPriorityOrder(changed:HTMLSelectElement):void{
+  const controls=[...document.querySelectorAll<HTMLSelectElement>('[data-game-priority]')];
+  const prior=el<HTMLInputElement>('admin-game-order').value.split(',');
+  const index=controls.indexOf(changed),duplicate=prior.findIndex((game,position)=>game===changed.value&&position!==index);
+  if(index>=0&&duplicate>=0&&prior[index])controls[duplicate]!.value=prior[index]!;
+  syncPriorityOrder();
+}
 function renderPrioritySettings():void{
-  el('priority-order-field').hidden=el<HTMLSelectElement>('admin-selection-policy').value!=='fixed_priority';
+  const standalone=el<HTMLSelectElement>('admin-mode').value==='off';
+  el('selection-policy-field').hidden=standalone;
+  el('priority-order-field').hidden=!standalone&&el<HTMLSelectElement>('admin-selection-policy').value!=='fixed_priority';
+  el('game-order-label').textContent=standalone?'Standalone display order':'Priority order';
+  el('game-order-help').textContent=standalone
+    ? 'Choose the order of game cards on the standalone screen. The first three appear on page one.'
+    : 'Choose which enabled game wins when priority selection is used.';
 }
 function numberField(id:string):number{return Number(el<HTMLInputElement>(id).value);}
 function renderRuntimeSummary():void{
@@ -868,7 +892,7 @@ function renderRuntimeSummary():void{
   const voiceNumbers=effectiveVoiceNumbers();
   const remoteReady=(sms&&Boolean(smsNumber))||(whatsapp&&Boolean(whatsappNumber));
   const voiceReady=Boolean(voiceNumbers['en-US']&&voiceNumbers['pt-BR']);
-  const gamesReady=['racer','monsters','fighter'].some(game=>el<HTMLInputElement>(`admin-game-${game}`).checked);
+  const gamesReady=PLAYABLE_GAMES.some(game=>el<HTMLInputElement>(`admin-game-${game}`).checked);
   const entryReady=modeSelect.value==='lead_capture'||remoteReady;
   const status=modeSelect.value==='off'?(voice&&voiceReady&&gamesReady?'Standalone ready':'Needs setup'):voice&&voiceReady&&gamesReady&&entryReady?'Ready to open':'Needs setup';
   el('runtime-summary').textContent=status;
@@ -1111,10 +1135,10 @@ function applyOperatorStation(view:OperatorStationView|null,response:Response):v
 async function stationAction(action:StationAction,game?:PlayableGame):Promise<void>{
   if(stationActionSaving)return;
   const resetting=action==='reset';
+  if(action==='select'&&(!game||!PLAYABLE_GAMES.includes(game))){setNotice('Select an enabled playable game.','error');return;}
   const reason=stationAuditReason(action,game);
   if(action==='fail'&&!window.confirm('Cancel this game start and return players to recruiting?'))return;
   if(action==='complete'&&!window.confirm('End the live game and disconnect all player calls now? Use this only if the game cannot finish normally.'))return;
-  if(action==='select'&&!['racer','monsters','fighter'].includes(game??'')){setNotice('Select an enabled playable game.','error');return;}
   if(!state.operatorStationEtag){setNotice('Refresh the event before taking action.','error');return;}
   stationActionSaving=true;
   const form=el<HTMLFormElement>(resetting?'station-reset-form':'station-controls');setBusy(form,true);
@@ -1154,14 +1178,16 @@ async function stationAction(action:StationAction,game?:PlayableGame):Promise<vo
 }
 
 function stationAuditReason(action:StationAction,game?:PlayableGame):string{
-  return action==='close'?'Operator ended joining and opened voting'
-    :action==='select'?`Operator confirmed ${gameName(game??'racer')}`
-    :action==='launch'?'Operator requested game start'
-    :action==='fail'?'Operator cancelled game start'
-    :action==='complete'?'Operator ended game from console'
-    :action==='advance'?'Operator closed results and continued'
-    :action==='hold'?'Operator held results on screen'
-    :'Operator reset event flow';
+  switch(action){
+    case'close':return'Operator ended joining and opened voting';
+    case'select':if(!game)throw new Error('A playable game is required for selection');return`Operator confirmed ${gameName(game)}`;
+    case'launch':return'Operator requested game start';
+    case'fail':return'Operator cancelled game start';
+    case'complete':return'Operator ended game from console';
+    case'advance':return'Operator closed results and continued';
+    case'hold':return'Operator held results on screen';
+    case'reset':return'Operator reset event flow';
+  }
 }
 
 function stationActionName(action:StationAction):string{
@@ -1246,7 +1272,7 @@ function renderOperatorStation():void{
   const view=state.operatorStation,phase=view?.station.phase??'ATTRACT';
   el('station-phase').textContent=phaseName(phase);el('station-phase-value').textContent=phaseName(phase);
   el('station-revision').textContent=String(view?.station.revision??0);renderStationDeadline();
-  renderStationFacts('station-round',view?.round?[['Status',phaseName(view.round.phase)],['Started',formatTimestamp(view.round.firstCoinAt)],['Next game',view.round.selectedGame?gameName(view.round.selectedGame):'Not chosen'],['Last update',formatTimestamp(view.station.updatedAt)]]:[],'Waiting for the first player.');
+  renderStationFacts('station-round',view?.round?[['Status',phaseName(view.round.phase)],['Started',formatTimestamp(view.round.firstCoinAt)],['Votes',formatVoteCounts(view.voteCounts)],['Next game',view.round.selectedGame?gameName(view.round.selectedGame):'Not chosen'],['Last update',formatTimestamp(view.station.updatedAt)]]:[],'Waiting for the first player.');
   renderStationFacts('station-match',view?.match?[['Game',gameName(view.match.game)],['Status',phaseName(view.match.phase)],[phase==='RESULTS'?'Players completed':'Playing now',String(view.match.participantReadyEntryIds.length)],['Waiting next',String(view.match.overflowReadyEntryIds.length)],['Big screen',view.match.displayReadyAt?'Ready':'Connecting'],...(phase==='RESULTS'?[['Outcome',matchOutcome(view)] as [string,string]]:[])]:[],'No game is active.');
   renderStationRoster(view);renderStationAudit(view);renderStationControls(phase);renderOperatorOverview();
 }
@@ -1277,6 +1303,10 @@ function matchOutcome(view:OperatorStationView):string{
   }).join(' · ');
 }
 
+function formatVoteCounts(counts:OperatorStationView['voteCounts']):string{
+  return counts.map(item=>`${gameName(item.game)} ${item.count}`).join(' · ');
+}
+
 function renderStationRoster(view:OperatorStationView|null):void{
   const host=el('station-ready');host.replaceChildren();
   const roundIds=new Set([view?.station.activeRoundId,view?.station.nextRoundId].filter((id):id is string=>Boolean(id)));
@@ -1293,7 +1323,7 @@ function renderStationRoster(view:OperatorStationView|null):void{
     if(state.adminConfig?.coins.chargePolicy!=='free'&&entry.status!=='LEFT'){
       const grant=document.createElement('button');grant.type='button';grant.className='button quiet';grant.textContent='Add coins';grant.addEventListener('click',()=>void grantPlayerCoins(entry,grant));actions.append(grant);
     }
-    if(state.adminConfig?.arcade.mode!=='off'&&entry.status==='ADMITTED'&&!entry.connected&&['LOCKED','LAUNCHING'].includes(view?.station.phase??'')&&(view?.match?.participantReadyEntryIds.length??0)>1){
+    if(state.adminConfig?.arcade.mode!=='off'&&entry.status==='ADMITTED'&&!entry.connected&&['LOCKED','LAUNCHING'].includes(view?.station.phase??'')&&((view?.match?.participantReadyEntryIds.length??0)>1||(view?.match?.overflowReadyEntryIds.length??0)>0)){
       const drop=document.createElement('button');drop.type='button';drop.className='button danger';drop.textContent='Remove no-show';drop.addEventListener('click',()=>void dropNoShow(entry));actions.append(drop);
     }
     if(state.adminConfig?.arcade.mode!=='off'&&!entry.connected&&['READY','OVERFLOW','COMPLETED'].includes(entry.status)){
@@ -1451,7 +1481,7 @@ function renderMessagingStatus():void{
 async function refreshLeaderboardSummary():Promise<void>{
   try{
     const {payload,response}=await request<LeaderboardAdminSummary>('/api/admin/arcade/leaderboards');
-    state.leaderboardSummary=payload;state.leaderboardEtag=response.headers.get('ETag');renderLeaderboardReset();
+    state.leaderboardSummary={games:PLAYABLE_GAMES.map(game=>payload.games.find(item=>item.game===game)??{game,resettable:false,maps:[]})};state.leaderboardEtag=response.headers.get('ETag');renderLeaderboardReset();
   }catch(error){
     state.leaderboardSummary=null;state.leaderboardEtag=null;
     el('leaderboard-reset-status').textContent=error instanceof ApiError?error.message:'Score controls are unavailable.';
@@ -1464,7 +1494,7 @@ function renderLeaderboardReset():void{
   const mapSelect=el<HTMLSelectElement>('leaderboard-reset-map'),previousMap=mapSelect.value;
   const summary=state.leaderboardSummary?.games.find(item=>item.game===game);
   mapSelect.replaceChildren();
-  for(const map of summary?.maps??[]){const option=document.createElement('option');option.value=map.map;option.textContent=`${map.map} (${map.records} record${map.records===1?'':'s'})`;mapSelect.append(option);}
+  for(const map of summary?.maps??[]){const option=document.createElement('option');option.value=map.map;option.textContent=`${map.label??map.map} (${map.records} record${map.records===1?'':'s'})`;mapSelect.append(option);}
   if(previousMap&&summary?.maps.some(item=>item.map===previousMap))mapSelect.value=previousMap;
   const selected=summary?.maps.find(item=>item.map===mapSelect.value);
   const reason=el<HTMLInputElement>('leaderboard-reset-reason').value.trim();
@@ -1476,8 +1506,8 @@ function renderLeaderboardReset():void{
     : !summary.resettable
       ? `${gameName(game)} does not store persistent scores, so there is nothing to reset.`
       : selected
-        ? `${selected.records} stored result${selected.records===1?'':'s'} on ${selected.map}. This cannot be undone.`
-        : 'No Voice Racer maps are available.';
+        ? `${selected.records} stored ${gameName(game)} result${selected.records===1?'':'s'} for ${selected.label??selected.map}. This cannot be undone.`
+        : `No ${gameName(game)} leaderboard categories are available.`;
 }
 
 async function resetLeaderboard():Promise<void>{
@@ -1486,12 +1516,12 @@ async function resetLeaderboard():Promise<void>{
   const reason=el<HTMLInputElement>('leaderboard-reset-reason').value.trim();
   const summary=state.leaderboardSummary?.games.find(item=>item.game===game),selected=summary?.maps.find(item=>item.map===map);
   if(!summary?.resettable||!selected||!reason||!state.leaderboardEtag){renderLeaderboardReset();return;}
-  if(!window.confirm(`Delete all ${selected.records} stored Voice Racer result${selected.records===1?'':'s'} for ${map}? This cannot be undone.`))return;
+  if(!window.confirm(`Delete all ${selected.records} stored ${gameName(game)} result${selected.records===1?'':'s'} for ${selected.label??map}? This cannot be undone.`))return;
   const button=el<HTMLButtonElement>('leaderboard-reset-button');button.disabled=true;button.textContent='Resetting...';
   try{
     const result=await api<{deleted:number}>('/api/admin/arcade/leaderboards/reset',{method:'POST',headers:{'Content-Type':'application/json','If-Match':state.leaderboardEtag,'Idempotency-Key':crypto.randomUUID()},body:JSON.stringify({game,map,reason})});
     el<HTMLInputElement>('leaderboard-reset-reason').value='';
-    await refreshLeaderboardSummary();setNotice(`Deleted ${result.deleted} stored result${result.deleted===1?'':'s'} from ${map}.`,'success');
+    await refreshLeaderboardSummary();setNotice(`Deleted ${result.deleted} stored ${gameName(game)} result${result.deleted===1?'':'s'} from ${selected.label??map}.`,'success');
   }catch(error){
     if(error instanceof ApiError&&error.status===412)await refreshLeaderboardSummary();
     showError(error);
@@ -1542,7 +1572,7 @@ function showError(error:unknown):void{const playerErrors:Record<string,[string,
   : error instanceof ApiError?error.message:error instanceof Error?error.message:String(error);setNotice(message,'error');}
 function setBusy(form:HTMLFormElement,busy:boolean):void{for(const control of form.elements)if(control instanceof HTMLButtonElement||control instanceof HTMLInputElement||control instanceof HTMLSelectElement)control.disabled=busy;}
 function show(id:string,visible:boolean):void{el(id).hidden=!visible;}function toggleButton(id:string,visible:boolean):void{el<HTMLButtonElement>(id).hidden=!visible;}
-function text(data:FormData,key:string):string{return String(data.get(key)??'').trim();}function gameName(game:string):string{return({racer:'Voice Racer',monsters:'Voice Monsters',fighter:'Voice Fighter'} as Record<string,string>)[game]??game;}
+function text(data:FormData,key:string):string{return String(data.get(key)??'').trim();}function gameName(game:string):string{return isPlayableArcadeGame(game)?gameTitle(resolvedLocale,game):game;}
 function phaseName(value:string):string{return({ATTRACT:'Waiting for players',RECRUITING:'Players joining',GAME_SELECTION:'Choosing the next game',LOCKED:'Players confirmed',LAUNCHING:'Starting game',PLAYING:'Game in progress',RESULTS:'Showing results',READY:'In line',ADMITTED:'Up next',OVERFLOW:'Waiting for next game',COMPLETED:'Complete',LEFT:'Left',FAILED:'Needs attention'} as Record<string,string>)[value]??value.toLowerCase().replaceAll('_',' ').replace(/(^|\s)\S/g,letter=>letter.toUpperCase());}
 function playerStateName(value:string):string{const english=({READY:"You're in line",ADMITTED:"You're up next",OVERFLOW:"You're in line for the following game",PLAYING:'Game in progress',COMPLETED:'Game complete',LEFT:'You left the line',ATTRACT:'Waiting for players',RECRUITING:'Waiting for more players',GAME_SELECTION:'Choosing the next game',LOCKED:'Get ready',LAUNCHING:'Game starting',RESULTS:'Game complete',WAITING:"You're in line",APPROACHING:'Stay close',CALLED:"It's almost your turn",CHECKED_IN:"You're checked in",ACTIVE_LOBBY:'Ready to start',DEFERRED:'Playing later',NO_SHOW:'Check in missed',LEFT_QUEUE:'You left the line',RELEASED:'Coin returned',ACTIVE:'Ready',REDEEMED:'Used'} as Record<string,string>)[value];if(!playerPortuguese)return english??value.replaceAll('_',' ');return({READY:'Você está na fila',ADMITTED:'Você é o próximo',OVERFLOW:'Você está na fila para o jogo seguinte',PLAYING:'Jogo em andamento',COMPLETED:'Jogo concluído',LEFT:'Você saiu da fila',ATTRACT:'Aguardando jogadores',RECRUITING:'Aguardando mais jogadores',GAME_SELECTION:'Escolhendo o próximo jogo',LOCKED:'Prepare-se',LAUNCHING:'Jogo começando',RESULTS:'Partida concluída',WAITING:'Você está na fila',APPROACHING:'Fique por perto',CALLED:'Quase sua vez',CHECKED_IN:'Entrada confirmada',ACTIVE_LOBBY:'Pronto para começar',DEFERRED:'Jogar depois',NO_SHOW:'Entrada perdida',LEFT_QUEUE:'Você saiu da fila',RELEASED:'Moeda devolvida',ACTIVE:'Pronta',REDEEMED:'Usada'} as Record<string,string>)[value]??value.replaceAll('_',' ');}
 function formatTimestamp(value:string):string{const date=new Date(value);return Number.isNaN(date.getTime())?'Unknown':date.toLocaleString([],{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});}

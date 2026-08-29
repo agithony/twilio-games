@@ -2,6 +2,7 @@
 //   ?game=racer   → the existing Voice Racer level editor (client/level.ts, UNCHANGED — dynamically
 //                   imported so its module-level boot runs against the racer chrome already in the DOM)
 //   ?game=battler → the Voice Monsters arena editor (client/editor/arena-editor.ts)
+//   ?game=karaoke → the Voice Karaoke venue and word-timing editors
 //   (no ?game)    → the picker
 // The editor token (?token=) is preserved across navigation so a gated deploy stays authorized.
 import { injectMagicHat } from '../magic-hat';
@@ -38,6 +39,10 @@ function showPicker(): void {
           <div class="hub-card-name">Voice Fighter</div>
           <div class="hub-card-desc">Map editor — GLB placement, fight boundaries, floor and camera</div>
         </a>
+        <a class="hub-card" href="?game=karaoke${tokenQ}">
+          <div class="hub-card-name">Voice Karaoke</div>
+          <div class="hub-card-desc">Venue and word timing — band, cameras, lyric targets, starts and sustains</div>
+        </a>
       </div>
     </div>`;
 }
@@ -57,6 +62,17 @@ async function boot(): Promise<void> {
     document.title = 'Voice Fighter — Map Editor';
     const { FighterMapEditor } = await import('./fighter-map-editor');
     new FighterMapEditor(document.getElementById('app')!);
+  } else if (game === 'karaoke') {
+    setRacerChrome(false);
+    if (params.get('tool') === 'timing') {
+      document.title = 'Voice Karaoke — Word Timing';
+      const { KaraokeTimingEditor } = await import('./karaoke-timing-editor');
+      new KaraokeTimingEditor(document.getElementById('app')!);
+    } else {
+      document.title = 'Voice Karaoke — Venue Editor';
+      const { KaraokeVenueEditor } = await import('./karaoke-venue-editor');
+      new KaraokeVenueEditor(document.getElementById('app')!);
+    }
   } else {
     document.title = 'Twilio Games — Editors';
     showPicker();

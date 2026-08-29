@@ -7,7 +7,10 @@ import { BattleServer } from '../server/battle-server';
 import { FighterServer } from '../server/fighter-server';
 import { FIGHTER_VICTORY_SECONDS } from '../server/fighter-room';
 import { HttpServer } from '../server/http-server';
+import { KaraokeServer } from '../server/karaoke-server';
 import { FIGHTER_INTRO_SECONDS } from '../shared/fighter-protocol';
+import { NEVER_GONNA_GIVE_YOU_UP } from '../shared/karaoke-songs';
+import { KARAOKE_COUNTDOWN_MS } from '../shared/karaoke-protocol';
 
 let server: HttpServer | undefined;
 let directory: string | undefined;
@@ -49,11 +52,37 @@ async function harness() {
     clientDir: path.join(directory, 'client'),
   });
   await server.start();
-  const games = server as unknown as { battle: BattleServer; fighter: FighterServer };
+  const games = server as unknown as { battle: BattleServer; fighter: FighterServer; karaoke: KaraokeServer };
   return { ...games, started, completed, abandoned };
 }
 
 describe('station engine room lifecycle', () => {
+  it('does not start Karaoke on display readiness alone and abandons one dual-ready performance once', async () => {
+    const { karaoke, started, completed, abandoned } = await harness();
+    const roomCode = 'KARAOKE-LIFECYCLE';
+    const playerId = karaoke.voiceJoin(roomCode, 'Ada', 1)!;
+    karaoke.voiceAdvance(roomCode, playerId);
+    karaoke.voiceSelectSong(roomCode, playerId, NEVER_GONNA_GIVE_YOU_UP.id);
+    karaoke.voiceAdvance(roomCode, playerId);
+    const generation = karaoke.findRoom(roomCode)!.state().loadingGeneration;
+
+    expect(karaoke.findRoom(roomCode)!.ready(generation)).toBe(true);
+    karaoke.voiceAdvance(roomCode, playerId);
+    expect(karaoke.findRoom(roomCode)?.state().phase).toBe('loading');
+    expect(started).not.toHaveBeenCalled();
+    expect(karaoke.markMediaReady(
+      roomCode, playerId, NEVER_GONNA_GIVE_YOU_UP.id, generation, KARAOKE_COUNTDOWN_MS,
+    )).toBe(true);
+    expect(started).toHaveBeenCalledTimes(1);
+    expect(started).toHaveBeenCalledWith('karaoke', roomCode);
+
+    karaoke.voiceLeave(roomCode, playerId);
+    karaoke.voiceLeave(roomCode, playerId);
+    expect(abandoned).toHaveBeenCalledTimes(1);
+    expect(abandoned).toHaveBeenCalledWith('karaoke', roomCode);
+    expect(completed).not.toHaveBeenCalled();
+  });
+
   it('keeps Monsters setup inert and abandons a started battle exactly once', async () => {
     const { battle, started, completed, abandoned } = await harness();
     const roomCode = 'MONSTER-LIFECYCLE';

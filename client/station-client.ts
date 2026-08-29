@@ -1,22 +1,25 @@
+import type { HomeConcept, StationGame } from '../shared/arcade-config';
+import type { PlayableArcadeGame } from '../shared/arcade-games';
+
 export type StationPhase = 'ATTRACT' | 'RECRUITING' | 'GAME_SELECTION' | 'LOCKED' | 'LAUNCHING' | 'PLAYING' | 'RESULTS';
 
 export interface PublicStation {
   phase: StationPhase;
   revision: number;
-  activeGame: 'racer' | 'monsters' | 'fighter' | null;
+  activeGame: PlayableArcadeGame | null;
   deadline: string | null;
   currentReadyCount: number;
   nextReadyCount: number;
   roster: readonly { position: number; displayName: string; status: string }[];
   games: readonly {
-    id: 'racer' | 'monsters' | 'fighter';
+    id: PlayableArcadeGame;
     capacity: number;
     choices: number;
     playNow: number;
     overflow: number;
   }[];
   launch: {
-    game: 'racer' | 'monsters' | 'fighter';
+    game: PlayableArcadeGame;
     route: string;
     roomCode: string;
     matchId: string;
@@ -39,9 +42,9 @@ export interface PublicArcadeConfig {
   coins: { startingBalance: number; chargePolicy: 'per_player' | 'per_match' | 'host_sponsors' | 'free' };
   station: {
     timings: { recruitingSeconds:number;hardDeadlineSeconds:number;selectionSeconds:number;lockedSeconds:number;launchTimeoutSeconds:number;resultsSeconds:number;postGameRecruitingSeconds:number };
-    games: Record<'racer'|'monsters'|'fighter',{enabled:boolean}>;
-    comingSoon: Record<'trivia'|'karaoke',{enabled:boolean}>;
-    automaticSelection: { policy:'best_fit_rotation'|'round_robin'|'fixed_priority';order:readonly ('racer'|'monsters'|'fighter')[] };
+    games: Record<StationGame,{enabled:boolean}>;
+    comingSoon: Record<HomeConcept,{enabled:boolean}>;
+    automaticSelection: { policy:'best_fit_rotation'|'round_robin'|'fixed_priority';order:readonly StationGame[] };
     qrRail: 'auto'|'always'|'hidden';
   };
 }

@@ -106,6 +106,21 @@ describe('deployment rollback safety', () => {
     expect(workflow).toContain('DUB_API_KEY and DUB_SHORT_DOMAIN must be configured together.');
   });
 
+  it('fails closed and wires required Karaoke credentials and calibration in both deploy branches', () => {
+    expect(containerApp).toContain('- name: deepgram-api-key');
+    expect(containerApp).toContain('secretRef: deepgram-api-key');
+    expect(containerApp).toContain('secretRef: editor-token');
+    expect(containerApp).toMatch(/name: KARAOKE_CALIBRATION_OFFSET_MS\s+value: "\$\{KARAOKE_CALIBRATION_OFFSET_MS\}"/);
+    expect(workflow).toContain('DEEPGRAM_API_KEY is required while Voice Karaoke is enabled by default.');
+    expect(workflow).toContain('EDITOR_TOKEN must contain at least 16 characters');
+    expect(workflow.match(/"deepgram-api-key=\$\{DEEPGRAM_API_KEY:-disabled\}"/g)).toHaveLength(2);
+    expect(workflow).toContain('"editor-token=$EDITOR_TOKEN"');
+    expect(workflow).toContain('"editor-token=${EDITOR_TOKEN:-}"');
+    expect(workflow).toContain('KARAOKE_CALIBRATION_OFFSET_MS: ${{ vars.KARAOKE_CALIBRATION_OFFSET_MS }}');
+    expect(workflow).toContain("${KARAOKE_CALIBRATION_OFFSET_MS}");
+    expect(serverIndex).toContain('process.env.KARAOKE_CALIBRATION_OFFSET_MS || 0');
+  });
+
   it('provisions the optional analytics PIN as a Container App secret', () => {
     expect(containerApp).toContain('- name: analytics-admin-pin');
     expect(containerApp).toContain('secretRef: analytics-admin-pin');

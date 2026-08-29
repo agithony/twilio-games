@@ -121,7 +121,7 @@ describe('Arcade client completeness', () => {
   });
 
   it('never offers disabled games and preserves global game numbers', () => {
-    expect(arcade).toContain("games:Record<PlayableGame,{enabled:boolean}>;comingSoon:Record<'trivia'|'karaoke',{enabled:boolean}>");
+    expect(arcade).toContain('games:Record<PlayableGame,{enabled:boolean}>;comingSoon:Record<HomeConcept,{enabled:boolean}>');
     expect(arcade).toContain('const enabled=state.config?.station.games[game]?.enabled===true');
     expect(arcade).toContain('button.hidden=!enabled');
     expect(arcade).toContain('button.disabled=gameChoiceSaving||!enabled');
@@ -129,5 +129,7 @@ describe('Arcade client completeness', () => {
     expect(arcadeHtml).toMatch(/data-game-choice="racer"><span>1<\/span>/);
     expect(arcadeHtml).toMatch(/data-game-choice="monsters"><span>2<\/span>/);
     expect(arcadeHtml).toMatch(/data-game-choice="fighter"><span>3<\/span>/);
+    expect(arcadeHtml).toMatch(/data-game-choice="karaoke"><span>4<\/span>/);
+    expect(arcadeHtml).not.toContain('admin-coming-soon-karaoke');
   });
 });

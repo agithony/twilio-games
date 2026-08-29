@@ -3,7 +3,7 @@ set -e
 
 # If an Azure Files mount is present, point the app's mutable data dir at it so RUNTIME-MUTABLE
 # state survives container restarts + redeploys:
-#   - data/leaderboard.json — the persistent global leaderboard
+#   - data/leaderboard.json and data/karaoke-leaderboard.json — persistent scoreboards
 #   - data/analytics.json   — bounded daily activation analytics rollups
 #   - data/maps.json        — LIVE level configs authored in the editor (seeded once from the
 #                             image's assets/maps/maps.json on first boot; see http-server.seedMapsFile)

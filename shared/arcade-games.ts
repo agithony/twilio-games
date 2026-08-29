@@ -1,7 +1,7 @@
-import type { ArcadeGame } from './arcade-config';
+import type { ArcadeGame, StationGame } from './arcade-config';
 import { MAX_PLAYERS } from './constants';
 
-export type PlayableArcadeGame = Exclude<ArcadeGame, 'trivia'>;
+export type PlayableArcadeGame = StationGame;
 
 export type ArcadeGameDefinition = Readonly<{
   id: ArcadeGame;
@@ -25,6 +25,10 @@ export const ARCADE_GAME_DEFINITIONS: Readonly<Record<ArcadeGame, ArcadeGameDefi
     id: 'fighter', route: '/fighter.html', humanCapacity: 2, minimumHumans: 1,
     aiFallback: true, playable: true,
   }),
+  karaoke: Object.freeze({
+    id: 'karaoke', route: '/karaoke.html', humanCapacity: 1, minimumHumans: 1,
+    aiFallback: false, playable: true,
+  }),
   trivia: Object.freeze({
     id: 'trivia', route: null, humanCapacity: null, minimumHumans: null,
     aiFallback: false, playable: false,
@@ -40,8 +44,12 @@ export function arcadeGameDefinition(game: ArcadeGame): ArcadeGameDefinition {
   return ARCADE_GAME_DEFINITIONS[game];
 }
 
-export function isPlayableArcadeGame(value: unknown): value is PlayableArcadeGame {
+export function isArcadeGame(value: unknown): value is ArcadeGame {
   return typeof value === 'string'
-    && Object.prototype.hasOwnProperty.call(ARCADE_GAME_DEFINITIONS, value)
+    && Object.prototype.hasOwnProperty.call(ARCADE_GAME_DEFINITIONS, value);
+}
+
+export function isPlayableArcadeGame(value: unknown): value is PlayableArcadeGame {
+  return isArcadeGame(value)
     && ARCADE_GAME_DEFINITIONS[value as ArcadeGame].playable;
 }

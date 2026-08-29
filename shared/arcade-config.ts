@@ -1,7 +1,9 @@
-export const ARCADE_CONFIG_SCHEMA_VERSION = 5 as const;
+// Activate v6 writes only after every rollback target can read v6. Promotion is intentionally one-way;
+// deployment must provide the staged compatibility gate rather than relying on a lossy downmigration.
+export const ARCADE_CONFIG_SCHEMA_VERSION = 6 as const;
 
 export type ArcadeMode = 'off' | 'coin_only' | 'lead_capture';
-export type ArcadeGame = 'racer' | 'monsters' | 'fighter' | 'trivia';
+export type ArcadeGame = 'racer' | 'monsters' | 'fighter' | 'karaoke' | 'trivia';
 export type RegistrationFieldKey =
   | 'firstName'
   | 'lastName'
@@ -46,8 +48,8 @@ export type ArcadeSettings = {
   readonly displayName: string;
 };
 
-export type StationGame = 'racer' | 'monsters' | 'fighter';
-export type HomeConcept = 'trivia' | 'karaoke';
+export type StationGame = Exclude<ArcadeGame, 'trivia'>;
+export type HomeConcept = Extract<ArcadeGame, 'trivia'>;
 export type AutomaticSelectionPolicy = 'best_fit_rotation' | 'round_robin' | 'fixed_priority';
 export type StationQrRail = 'auto' | 'always' | 'hidden';
 
@@ -88,12 +90,7 @@ export type RegistrationSettings = {
   readonly marketingConsentMode: MarketingConsentMode;
 };
 
-export type GameCosts = {
-  readonly racer: number;
-  readonly monsters: number;
-  readonly fighter: number;
-  readonly trivia: number;
-};
+export type GameCosts = Readonly<Record<ArcadeGame, number>>;
 
 export type CoinSettings = {
   readonly startingBalance: number;
@@ -221,8 +218,8 @@ const CONFIG_KEYS = [
 const SETTINGS_KEYS = [
   'arcade', 'station', 'registration', 'coins', 'earning', 'queue', 'channels', 'postGame', 'intelligence',
 ] as const;
-const STATION_GAMES: readonly StationGame[] = ['racer', 'monsters', 'fighter'];
-const HOME_CONCEPTS: readonly HomeConcept[] = ['trivia', 'karaoke'];
+export const STATION_GAMES: readonly StationGame[] = Object.freeze(['racer', 'monsters', 'fighter', 'karaoke']);
+const HOME_CONCEPTS: readonly HomeConcept[] = ['trivia'];
 const REGISTRATION_FIELD_KEYS: readonly RegistrationFieldKey[] = [
   'firstName', 'lastName', 'workEmail', 'companyName', 'phoneNumber', 'countryCode',
 ];
@@ -498,6 +495,7 @@ function parseStation(value: unknown, mode: ArcadeMode): StationSettings {
     racer: parseStationGame(gameInput.racer, '$.station.games.racer'),
     monsters: parseStationGame(gameInput.monsters, '$.station.games.monsters'),
     fighter: parseStationGame(gameInput.fighter, '$.station.games.fighter'),
+    karaoke: parseStationGame(gameInput.karaoke, '$.station.games.karaoke'),
   };
   if (mode !== 'off' && !STATION_GAMES.some(game => games[game].enabled)) {
     invalid('$.station.games', 'at least one game must be enabled when arcade mode is not off');
@@ -505,7 +503,6 @@ function parseStation(value: unknown, mode: ArcadeMode): StationSettings {
   const conceptInput = exactObject(object.comingSoon, HOME_CONCEPTS, '$.station.comingSoon');
   const comingSoon: HomeConceptSettings = {
     trivia: parseStationGame(conceptInput.trivia, '$.station.comingSoon.trivia'),
-    karaoke: parseStationGame(conceptInput.karaoke, '$.station.comingSoon.karaoke'),
   };
 
   const selectionInput = exactObject(
@@ -517,13 +514,13 @@ function parseStation(value: unknown, mode: ArcadeMode): StationSettings {
     invalid('$.station.automaticSelection.order', 'expected an array');
   }
   if (selectionInput.order.length !== STATION_GAMES.length) {
-    invalid('$.station.automaticSelection.order', 'must contain all three station games exactly once');
+    invalid('$.station.automaticSelection.order', 'must contain all station games exactly once');
   }
   const order = selectionInput.order.map((game, index) => (
     enumAt(game, STATION_GAMES, `$.station.automaticSelection.order[${index}]`)
   ));
   if (new Set(order).size !== STATION_GAMES.length) {
-    invalid('$.station.automaticSelection.order', 'must contain all three station games exactly once');
+    invalid('$.station.automaticSelection.order', 'must contain all station games exactly once');
   }
 
   return {
@@ -611,7 +608,7 @@ function parseCoins(value: unknown): CoinSettings {
     'startingBalance', 'defaultGameCost', 'gameCosts', 'chargePolicy', 'consumeWhen',
     'expiresAfterHours', 'refundOnLobbyTimeout', 'disconnectGraceSeconds',
   ], '$.coins');
-  const costs = exactObject(object.gameCosts, ['racer', 'monsters', 'fighter', 'trivia'], '$.coins.gameCosts');
+  const costs = exactObject(object.gameCosts, ['racer', 'monsters', 'fighter', 'karaoke', 'trivia'], '$.coins.gameCosts');
   const expiresAfterHours = object.expiresAfterHours === null
     ? null
     : integerAt(object.expiresAfterHours, 1, 87_600, '$.coins.expiresAfterHours');
@@ -631,6 +628,7 @@ function parseCoins(value: unknown): CoinSettings {
       racer: stationGameCostAt(costs.racer, '$.coins.gameCosts.racer'),
       monsters: stationGameCostAt(costs.monsters, '$.coins.gameCosts.monsters'),
       fighter: stationGameCostAt(costs.fighter, '$.coins.gameCosts.fighter'),
+      karaoke: stationGameCostAt(costs.karaoke, '$.coins.gameCosts.karaoke'),
       trivia: stationGameCostAt(costs.trivia, '$.coins.gameCosts.trivia'),
     },
     chargePolicy,
@@ -1025,14 +1023,14 @@ const DEFAULT_CONFIG_INPUT = {
       racer: { enabled: true },
       monsters: { enabled: true },
       fighter: { enabled: true },
+      karaoke: { enabled: true },
     },
     comingSoon: {
       trivia: { enabled: true },
-      karaoke: { enabled: true },
     },
     automaticSelection: {
       policy: 'best_fit_rotation',
-      order: ['racer', 'monsters', 'fighter'],
+      order: ['racer', 'monsters', 'fighter', 'karaoke'],
     },
     qrRail: 'auto',
   },
@@ -1052,7 +1050,7 @@ const DEFAULT_CONFIG_INPUT = {
   coins: {
     startingBalance: 1,
     defaultGameCost: 1,
-    gameCosts: { racer: 1, monsters: 1, fighter: 1, trivia: 1 },
+    gameCosts: { racer: 1, monsters: 1, fighter: 1, karaoke: 1, trivia: 1 },
     chargePolicy: 'per_player',
     consumeWhen: 'match_start',
     expiresAfterHours: null,

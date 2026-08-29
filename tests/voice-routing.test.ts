@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import WebSocket from 'ws';
 import type { ArcadeApi } from '../server/arcade-api';
-import { HttpServer } from '../server/http-server';
+import { HttpServer, karaokeBrowserTestingAllowed, resolveVoiceRelayToken } from '../server/http-server';
 import type { SupportedLocale } from '../shared/i18n/locales';
 import { monsterName } from '../shared/i18n/content';
 import { rosterEntries } from '../shared/monster-roster';
@@ -33,6 +33,7 @@ async function harness(options: {
   voiceAvailable?: boolean;
   authToken?: string;
   additionalAuthTokens?: readonly string[];
+  standaloneGameEnabled?: boolean;
 }) {
   directory = await mkdtemp(path.join(tmpdir(), 'voice-routing-'));
   const stationVoiceRoute = vi.fn(async () => {
@@ -54,7 +55,7 @@ async function harness(options: {
     voiceLocaleForNumber,
     stationVoiceRoute,
     standaloneVoiceAvailable:vi.fn(()=>options.voiceAvailable??true),
-    standaloneGameEnabled:vi.fn(()=>true),
+    standaloneGameEnabled:vi.fn(()=>options.standaloneGameEnabled ?? true),
   } as unknown as ArcadeApi;
   server = new HttpServer({
     port: 0,
@@ -99,6 +100,20 @@ async function incomingCall(port: number, input: {
 }
 
 describe('Arcade Voice routing', () => {
+  it('keeps hidden Karaoke browser testing loopback-only and out of production', () => {
+    expect(karaokeBrowserTestingAllowed('development', 'http://localhost:8081')).toBe(true);
+    expect(karaokeBrowserTestingAllowed('test', 'http://127.0.0.1:8081')).toBe(true);
+    expect(karaokeBrowserTestingAllowed('production', 'http://localhost:8081')).toBe(false);
+    expect(karaokeBrowserTestingAllowed('development', 'https://games.example')).toBe(false);
+  });
+  it('never reuses the Twilio webhook secret as a Relay bearer outside loopback development', () => {
+    expect(resolveVoiceRelayToken('https://games.example', undefined, 'twilio-secret', 'production')).toBe('');
+    expect(resolveVoiceRelayToken('https://games.example', undefined, 'twilio-secret', 'test')).toBe('');
+    expect(resolveVoiceRelayToken('http://localhost:8080', undefined, 'twilio-secret', 'test')).toBe('twilio-secret');
+    expect(resolveVoiceRelayToken('https://games.example', 'relay-secret', 'twilio-secret', 'production'))
+      .toBe('relay-secret');
+  });
+
   it.each([
     ['en-US', 'Twilio Games voice play is unavailable right now. Please ask booth staff for help. Goodbye.'],
     ['pt-BR', 'Os jogos por voz do Twilio Games não estão disponíveis agora. Peça ajuda à equipe. Até logo.'],
@@ -180,6 +195,83 @@ describe('Arcade Voice routing', () => {
     expect(xml).not.toContain('<ConversationRelay');
   });
 
+  it('registers Karaoke recency only after display authentication and spectating', async () => {
+    const { port } = await harness({ active: false, standaloneVoiceEnabled: true });
+    const rejectedStatus = new Promise<number>(resolve => {
+      const rejected = new WebSocket(`ws://127.0.0.1:${port}/karaoke`, {
+        headers: { Origin: 'https://attacker.example' },
+      });
+      rejected.once('unexpected-response', (_request, response) => resolve(response.statusCode ?? 0));
+    });
+    await expect(rejectedStatus).resolves.toBe(403);
+
+    const spectator = new WebSocket(`ws://127.0.0.1:${port}/karaoke`, {
+      headers: { Origin: 'http://localhost' },
+    });
+    await new Promise<void>((resolve, reject) => {
+      spectator.once('open', resolve);
+      spectator.once('error', reject);
+    });
+    spectator.send(JSON.stringify({ type: 'spectate', roomCode: '4821' }));
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(await (await incomingCall(port)).text()).not.toContain('<ConversationRelay');
+
+    const display = new WebSocket(`ws://127.0.0.1:${port}/karaoke?display=1`, {
+      headers: { Origin: 'http://localhost' },
+    });
+    await new Promise<void>((resolve, reject) => {
+      display.once('open', resolve);
+      display.once('error', reject);
+    });
+    display.send(JSON.stringify({ type: 'spectate', roomCode: '4821' }));
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(await (await incomingCall(port)).text()).not.toContain('<ConversationRelay');
+
+    display.send(JSON.stringify({ type: 'display_auth', roomCode: '4821', token: DISPLAY_TOKEN }));
+    display.send(JSON.stringify({ type: 'spectate', roomCode: '4821' }));
+    await new Promise(resolve => setTimeout(resolve, 20));
+    const xml = await (await incomingCall(port)).text();
+    expect(xml).toContain('<Parameter name="game" value="karaoke"');
+    spectator.close();
+    display.close();
+  });
+
+  it('rejects direct nonstation Karaoke players while standalone mode is disabled', async () => {
+    const { port } = await harness({ active: false, standaloneVoiceEnabled: false });
+    const player = new WebSocket(`ws://127.0.0.1:${port}/karaoke`, {
+      headers: { Origin: 'http://localhost' },
+    });
+    await new Promise<void>((resolve, reject) => {
+      player.once('open', resolve);
+      player.once('error', reject);
+    });
+    const rejected = new Promise<Record<string, unknown>>(resolve => player.on('message', data => {
+      const message = JSON.parse(data.toString()) as Record<string, unknown>;
+      if (message.type === 'error') resolve(message);
+    }));
+    player.send(JSON.stringify({ type: 'join', roomCode: 'BLOCKED', name: 'Ada' }));
+    await expect(rejected).resolves.toMatchObject({ code: 'station_voice_only' });
+    player.close();
+  });
+
+  it('allows direct Karaoke players only in explicit standalone mode', async () => {
+    const { port } = await harness({ active: false, standaloneVoiceEnabled: true });
+    const player = new WebSocket(`ws://127.0.0.1:${port}/karaoke?display=1`, {
+      headers: { Origin: 'http://localhost' },
+    });
+    await new Promise<void>((resolve, reject) => {
+      player.once('open', resolve);
+      player.once('error', reject);
+    });
+    const joined = new Promise<Record<string, unknown>>(resolve => player.on('message', data => {
+      const message = JSON.parse(data.toString()) as Record<string, unknown>;
+      if (message.type === 'joined') resolve(message);
+    }));
+    player.send(JSON.stringify({ type: 'join', roomCode: 'LOCAL', name: 'Ada' }));
+    await expect(joined).resolves.toMatchObject({ roomCode: 'LOCAL' });
+    player.close();
+  });
+
   it('respects the operator Voice channel setting in standalone play', async()=>{
     const {port}=await harness({active:false,standaloneVoiceEnabled:true,voiceAvailable:false});
     const xml=await(await incomingCall(port)).text();
@@ -210,6 +302,22 @@ describe('Arcade Voice routing', () => {
       ? ['luta', 'lute', 'batalhar', 'combater']
       : ['fights', 'flight']));
     expect(terms).toEqual(expect.arrayContaining(rosterEntries().map(monster => monsterName(locale, monster.id))));
+  });
+
+  it('routes an admitted Karaoke station call with setup mode and song-title hints', async () => {
+    const route: NonNullable<StationVoiceRoute> = {
+      game: 'karaoke', roomCode: 'KARAOKE-ROOM', matchId: 'karaoke-match', launchGeneration: 2,
+      admitted: true, readyEntryId: 'karaoke-ready', participantIndex: 0, participantCount: 1,
+    };
+    const { port } = await harness({ active: true, route, locale: 'en-US' });
+    const xml = await (await incomingCall(port, { callSid: 'CA-karaoke-route' })).text();
+
+    expect(xml).toContain('<ConversationRelay');
+    expect(xml).toContain('<Parameter name="game" value="karaoke"');
+    expect(xml).toContain('<Parameter name="karaokeMode" value="setup"');
+    expect(xml).toContain('<Parameter name="roomCode" value="KARAOKE-ROOM"');
+    expect(xml).toContain('Never Gonna Give You Up');
+    expect(xml).not.toContain('Luz no Ritmo');
   });
 
   it('returns unavailable TwiML when active station routing fails', async () => {

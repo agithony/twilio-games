@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#FFFFFF" />
+  <link rel="icon" href="data:," />
+  <script src="/theme-init.js"></script>
+  <link rel="stylesheet" href="/theme.css" />
+  <link rel="stylesheet" href="./karaoke/karaoke.css" />
+  <title>Voice Karaoke</title>
+</head>
+<body data-phase="lobby">
+  <main id="arena" aria-label="Voice Karaoke concert stage">
+    <section id="stage-loading" class="stage-loading" aria-live="polite" aria-busy="true">
+      <div class="stage-loading-mark"><i></i><b>VK</b></div>
+      <strong id="stage-loading-label">Preparing the stage</strong>
+      <div class="stage-loading-track" role="progressbar" aria-label="Preparing the stage" aria-valuemin="0" aria-valuemax="5" aria-valuenow="0"><i id="stage-loading-progress"></i></div>
+    </section>
+    <section id="stage-fallback" class="stage-fallback" hidden aria-label="Concert stage fallback">
+      <div class="fallback-truss"></div>
+      <div class="fallback-beam beam-left"></div><div class="fallback-beam beam-right"></div>
+      <div class="fallback-band"><i></i><i></i><i></i></div>
+      <strong>VOICE<br>KARAOKE</strong>
+      <div class="fallback-highway" aria-hidden="true">
+        <div class="fallback-lanes"><i></i><i></i><i></i><i></i></div>
+        <div class="fallback-hit-line"></div>
+        <div class="fallback-tiles" data-fallback-tiles></div>
+      </div>
+    </section>
+  </main>
+
+  <a class="game-home" href="/" aria-label="Return to Twilio Games home">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11.5 12 4l9 7.5M5.5 10v10h13V10M9.5 20v-6h5v6" /></svg>
+    <span>Home</span>
+  </a>
+
+  <div id="karaoke-controls" class="karaoke-controls">
+    <div id="music-toggle-container"></div>
+    <button id="theme-toggle" class="round-control" type="button" title="Light theme" aria-label="Light theme">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.66 6.34l1.41-1.41"></path></svg>
+    </button>
+  </div>
+
+  <div id="connection-status" class="connection-status" role="status" aria-live="polite">Connecting</div>
+  <section id="performance-hud" class="hud performance-hud" aria-label="Performance status">
+    <div class="hud-identity"><span id="hud-singer">Singer</span><strong id="hud-song">Voice Karaoke</strong></div>
+    <div class="hud-score"><span>Score</span><strong id="hud-score">0</strong></div>
+    <div class="hud-combo"><span>Combo</span><strong><b id="hud-combo">0</b><small>x</small></strong></div>
+    <div class="song-progress"><i id="song-progress-fill"></i></div>
+    <time id="song-time">0:45</time>
+  </section>
+
+  <div id="flow-overlay" class="flow-overlay" aria-live="polite"></div>
+  <div id="judgment-layer" class="judgment-layer" aria-live="polite" aria-atomic="true"></div>
+  <section class="visually-hidden" aria-live="polite" aria-atomic="true">
+    <p><span id="current-lyric-label">Current lyric:</span> <strong id="current-lyric"></strong></p>
+    <p><span id="upcoming-lyric-label">Upcoming lyric:</span> <strong id="upcoming-lyric"></strong></p>
+  </section>
+  <button id="audio-recovery" class="audio-recovery" type="button" hidden>
+    <span>Enable concert audio</span><small>The browser paused Web Audio.</small>
+  </button>
+  <section id="guide-calibration-rail" class="guide-calibration-rail" aria-label="Guide lyric calibration" hidden>
+    <div class="guide-rail-copy">
+      <strong id="guide-mode-label" class="guide-mode-label" hidden>Guide vocal mode</strong>
+      <span id="keyboard-guide">Keys 1-4 match lanes. Hit each word at the target.</span>
+      <small id="guide-instructions" hidden>Each tile should reach the target on the first consonant.</small>
+    </div>
+    <div class="calibration-readouts">
+      <span><small id="output-latency-label">Device output</small><output id="output-latency">0 ms</output></span>
+      <span><small id="visual-offset-label">Visual delay</small><output id="visual-offset">0 ms</output></span>
+      <em id="visual-offset-help">Positive delay moves lyrics later.</em>
+    </div>
+    <div class="calibration-actions">
+      <button id="lyrics-earlier" type="button">Lyrics earlier</button>
+      <button id="lyrics-later" type="button">Lyrics later</button>
+      <button id="reset-lyrics-offset" type="button">Reset</button>
+    </div>
+  </section>
+
+  <script type="module" src="./karaoke/karaoke.ts"></script>
+</body>
+</html>

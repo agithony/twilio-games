@@ -70,7 +70,8 @@ async function refresh(): Promise<void> {
 function render(report: AnalyticsReport): void {
   const s = report.summary;
   el('kpis').innerHTML = [kpi(number(s.participants), 'Engaged participants'), kpi(number(s.sessions), 'Sessions started'),
-    kpi(`${Math.round(s.completionRate * 100)}%`, 'Completion rate'), kpi(duration(s.playSeconds), 'Active play time'),
+    kpi(`${Math.round(s.completionRate * 100)}%`, 'Completion rate'), kpi(number(s.abandoned), 'Abandoned sessions'),
+    kpi(duration(s.playSeconds), 'Active play time'),
     kpi(number(s.voiceCommands), 'Voice commands')].join('');
   renderTrend(report); renderGames(report); renderSelections(report);
   el('insights').innerHTML = report.insights.map(text => `<li>${escapeHtml(text)}</li>`).join('');
@@ -90,14 +91,14 @@ function renderTrend(report: AnalyticsReport): void {
 }
 
 function renderGames(report: AnalyticsReport): void {
-  const labels: Record<AnalyticsGame,string> = { racer:'Racer', monsters:'Monsters', fighter:'Fighter' };
+  const labels: Record<AnalyticsGame,string> = { racer:'Racer', monsters:'Monsters', fighter:'Fighter', karaoke:'Karaoke' };
   const max = Math.max(1, ...Object.values(report.games).map(value => value.sessions));
   el('games').innerHTML = (Object.entries(report.games) as [AnalyticsGame, AnalyticsReport['games'][AnalyticsGame]][]).map(([game,value]) =>
-    `<div class="game-row"><span class="game-name">${labels[game]}</span><span class="bar"><i style="width:${value.sessions/max*100}%"></i></span><span class="game-value">${number(value.sessions)}<small>${Math.round(value.completionRate*100)}% complete</small></span></div>`).join('');
+    `<div class="game-row"><span class="game-name">${labels[game]}</span><span class="bar"><i style="width:${value.sessions/max*100}%"></i></span><span class="game-value">${number(value.sessions)}<small>${Math.round(value.completionRate*100)}% complete | ${number(value.abandoned)} abandoned | ${duration(value.playSeconds)} active</small></span></div>`).join('');
 }
 
 function renderSelections(report: AnalyticsReport): void {
-  const groups = [['Maps',report.selections.maps],['Characters',report.selections.characters],['Vehicles',report.selections.vehicles]] as const;
+  const groups = [['Maps',report.selections.maps],['Songs',report.selections.songs],['Characters',report.selections.characters],['Vehicles',report.selections.vehicles]] as const;
   el('selections').innerHTML = groups.map(([label,items]) => `<div class="selection-group"><h3>${label}</h3><div class="chips">${items.length ? items.slice(0,5).map(item => `<span class="chip">${escapeHtml(title(item.name))}<b>${item.count}</b></span>`).join('') : '<span class="chip">No data yet</span>'}</div></div>`).join('');
 }
 
@@ -117,7 +118,13 @@ async function logout(): Promise<void> { await fetch('/auth/logout', { method: '
 function lock(): void { auth.hidden = false; dashboard.hidden = true; download.disabled = true; }
 function query(): string { return new URLSearchParams({ from: fromInput.value, to: toInput.value, game: gameInput.value }).toString(); }
 function kpi(value:string,label:string): string { return `<article class="kpi"><strong>${value}</strong><span>${label}</span></article>`; }
-function duration(seconds:number): string { const hours = Math.floor(seconds/3600), minutes = Math.floor(seconds%3600/60); return hours ? `${hours}h ${minutes}m` : `${minutes}m`; }
+function duration(seconds:number): string {
+  const total=Math.max(0,Math.round(seconds));
+  const hours=Math.floor(total/3600),minutes=Math.floor(total%3600/60),remainder=total%60;
+  if(hours)return `${hours}h ${minutes}m`;
+  if(minutes)return `${minutes}m${remainder?` ${remainder}s`:''}`;
+  return `${total}s`;
+}
 function number(value:number): string { return new Intl.NumberFormat().format(value); }
 function title(value:string): string { return value.replace(/[-_]+/g,' ').replace(/\b\w/g,letter=>letter.toUpperCase()); }
 function iso(date:Date): string { return date.toISOString().slice(0,10); }

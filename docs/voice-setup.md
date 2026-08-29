@@ -1,6 +1,6 @@
 # Voice Setup
 
-This guide configures the locale-specific Twilio numbers used by Voice Racer, Voice Monsters, and Voice Fighter. For the project overview and general development setup, see the [README](../README.md).
+This guide configures the locale-specific Twilio numbers used by Voice Racer, Voice Monsters, Voice Fighter, and Voice Karaoke. For the project overview and general development setup, see the [README](../README.md).
 
 ## How Calls Are Routed
 
@@ -21,6 +21,7 @@ In station mode, the server resolves the caller to one persisted admitted player
 | Voice Racer | `http://localhost:5173/play.html?display=1&room=4821` | `/game` |
 | Voice Monsters | `http://localhost:5173/monsters.html?display=1&room=4821` | `/battle` |
 | Voice Fighter | `http://localhost:5173/fighter.html?display=1&room=4821` | `/fighter` |
+| Voice Karaoke | `http://localhost:5173/karaoke.html?display=1&room=4821` | `/karaoke` and `/karaoke-media` |
 
 Room `4821` is the standalone room only. Active station matches use generated 12-character engine room codes.
 
@@ -95,10 +96,12 @@ For a deployed environment, configure the same `POST /voice/incoming` webhook ag
 | `VOICE_RELAY_TOKEN` | Required by production deployment | Independent token of at least 32 characters that authenticates the Conversation Relay `setup` frame. The generated TwiML passes it to Twilio automatically; do not reuse `TWILIO_AUTH_TOKEN`. |
 | `OPENAI_API_KEY` | No | Enables English free-form menu help for Voice Racer and Voice Monsters. Portuguese free-form OpenAI replies are disabled; deterministic localized setup and gameplay remain available. |
 | `OPENAI_MODEL` | No | Overrides the OpenAI model when `OPENAI_API_KEY` is set. |
+| `DEEPGRAM_API_KEY` | Required in production | Direct lyric recognition for Voice Karaoke. Production startup and deployment fail closed when missing because Karaoke is enabled by default. |
+| `KARAOKE_CALIBRATION_OFFSET_MS` | No | Measured signed handset/carrier scoring offset from `-5000` to `5000`; defaults to `0`. |
 | `FIGHTER_DISPLAY_TOKEN` | No | Server-side standalone override for custom Fighter integrations. Browser URLs do not accept display credentials; station booth access is installed through `/operator`. |
 | `NODE_ENV` | No | `production` enables signature validation by default when `TWILIO_VALIDATE_SIGNATURES` is unset, along with production-only warnings and serving behavior. |
 
-`EDITOR_TOKEN`, map paths, arena paths, and persistence paths affect editing and deployment but are not required to place a voice call.
+`EDITOR_TOKEN`, map paths, arena paths, and persistence paths affect editing and deployment but are not required to place a voice call. Production startup still requires `EDITOR_TOKEN` so writable editor routes cannot fail open.
 
 ## Conversation Relay Configuration
 
@@ -233,15 +236,30 @@ Combat locks remain long enough for readable animation, but punch, kick, block, 
 
 The common 30-second caller binding and up-to-two Relay recovery attempts apply to Fighter. Hit and miss cues are throttled, and the phone host narrates the intro, countdown, health context, and result.
 
+## Voice Karaoke
+
+Voice Karaoke admits one singer. Conversation Relay owns setup and results, while the same call transitions to a signed, one-use Twilio Media Stream during the 45-second performance.
+
+1. The caller gives or confirms their name.
+2. The host explains the falling-word highway and display-supplied backing music.
+3. The caller chooses a localized song by number or title.
+4. The caller hears the third-party speech-recognition disclosure, then explicitly says `start` to consent. `#` repeats the disclosure.
+5. The display preloads and unlocks Web Audio, then the server issues a one-use Media Stream handoff.
+6. The countdown starts only after both the display and authenticated inbound stream are ready.
+7. Media timestamps, voice activity, and pitch observations produce authoritative word judgments. Raw caller audio is not retained.
+8. Conversation Relay reconnects after final scoring to announce score and best combo.
+
+The production performance WebSocket is `/karaoke-media`. Twilio must preserve its signed upgrade request, and reverse proxies must expose the public `wss://` URL represented by `PUBLIC_BASE_URL`. Karaoke is enabled in fresh Arcade settings; complete licensed-song, production-GLB, and live handset calibration acceptance before deployment.
+
 ## Test Without Twilio
 
 Run the voice-focused unit and integration tests:
 
 ```bash
-npm test -- voice-intent battle-intent fighter-intent twiml conversation-relay battle-voice fighter-voice voice-integration
+npm test -- voice-intent battle-intent fighter-intent karaoke twiml conversation-relay battle-voice fighter-voice voice-integration
 ```
 
-The integration tests open fake Conversation Relay WebSockets and verify room binding, Racer selection, spoken controls, and Voice Monsters and Voice Fighter reconnection. They do not test Twilio account configuration, public networking, real transcription, TTS quality, or carrier latency.
+The integration tests open fake Conversation Relay and Media Stream WebSockets and verify room binding, setup, handoff security, and deterministic scoring. They do not replace live handset tests for carrier latency, pitch quality, acoustic backing-track bleed, or Twilio callback ordering.
 
 ## Troubleshooting
 
@@ -263,11 +281,11 @@ Confirm the public host supports WebSocket upgrades at `/voice` and that the gen
 
 ### The caller hears the right game but cannot join
 
-Voice Racer may already have two players. Voice Monsters may have two occupied slots. Voice Fighter may have two players or may already be past fighter selection. End stale calls or reset the shared display before retrying.
+Voice Racer may already have two players. Voice Monsters may have two occupied slots. Voice Fighter may have two players or may already be past fighter selection. Voice Karaoke may already have its one microphone slot occupied. End stale calls or reset the shared display before retrying.
 
 ### Speech works only after the caller finishes talking
 
-Confirm the returned TwiML contains `partialPrompts="true"`, `speechModel="flux"`, and `transcriptionProvider="Deepgram"`. All three games act only on finalized gameplay transcripts so revised interim speech cannot execute the wrong command.
+Confirm the returned TwiML contains `partialPrompts="true"`, `speechModel="flux"`, and `transcriptionProvider="Deepgram"`. Racer, Monsters, and Fighter act only on finalized gameplay transcripts. Karaoke uses Relay only for setup and switches to timestamped media for the song.
 
 ### Barge-in does not stop the host
 

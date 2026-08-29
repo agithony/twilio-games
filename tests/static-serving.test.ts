@@ -23,6 +23,7 @@ beforeEach(async () => {
   await mkdir(join(clientDir, 'instructions'), { recursive: true });
   await writeFile(join(clientDir, 'index.html'), '<!doctype html><title>home</title>');
   await writeFile(join(clientDir, 'play.html'), '<!doctype html><title>play</title>');
+  await writeFile(join(clientDir, 'karaoke.html'), '<!doctype html><title>karaoke</title>');
   await writeFile(join(clientDir, 'editor', 'index.html'), '<!doctype html><title>editor</title>');
   await writeFile(join(clientDir, 'garage', 'index.html'), '<!doctype html><title>garage</title>');
   await writeFile(join(clientDir, 'analytics', 'index.html'), '<!doctype html><title>analytics</title>');
@@ -56,7 +57,9 @@ describe('healthz', () => {
     const r = await get(port, '/healthz');
     expect(r.status).toBe(200);
     expect(r.type).toContain('application/json');
-    expect(JSON.parse(r.body).status).toBe('ok');
+    expect(JSON.parse(r.body)).toMatchObject({
+      status: 'ok', karaokeLyricRecognition: 'unavailable', karaokeCalibrationOffsetMs: 0,
+    });
   });
 });
 
@@ -69,9 +72,10 @@ describe('static client serving', () => {
     expect(r.body).toContain('home');
   });
 
-  it('serves /play.html', async () => {
+  it('serves playable top-level game pages', async () => {
     srv = makeServer(); const port = await srv.start();
     expect((await get(port, '/play.html')).body).toContain('play');
+    expect((await get(port, '/karaoke.html')).body).toContain('karaoke');
   });
 
   it('serves clean routes including the dedicated operator console', async () => {
@@ -130,6 +134,21 @@ describe('static client serving', () => {
     expect(r.status).toBe(200);
     expect(r.type).toContain('application/json');
     expect(JSON.parse(r.body).cars).toBeDefined();   // real repo manifest
+  });
+
+  it('serves the bundled strict Karaoke venue config as a static image seed', async () => {
+    srv = makeServer(); const port = await srv.start();
+    const r = await get(port, '/assets/karaoke/venue.json');
+    expect(r.status).toBe(200);
+    expect(r.type).toContain('application/json');
+    expect(JSON.parse(r.body)).toMatchObject({ version: 1 });
+  });
+
+  it('denies every decoded _raw asset path segment', async () => {
+    srv = makeServer(); const port = await srv.start();
+    expect((await get(port, '/assets/karaoke/_raw/stage.glb')).status).toBe(403);
+    expect((await get(port, '/assets/karaoke/%5fraw/stage.glb')).status).toBe(403);
+    expect((await get(port, '/assets/_RAW/secret.glb')).status).toBe(403);
   });
 
   it('maps audio extensions to decodable MIME types (shared-screen music)', () => {

@@ -1,5 +1,5 @@
 import QRCode from 'qrcode';
-import { PLAYABLE_ARCADE_GAMES } from '../shared/arcade-games';
+import { isPlayableArcadeGame, PLAYABLE_ARCADE_GAMES, type PlayableArcadeGame } from '../shared/arcade-games';
 import { gameTitle } from '../shared/i18n/content';
 import { getMusicManager } from './music-manager';
 import { injectMusicToggle } from './music-toggle';
@@ -9,6 +9,7 @@ import { OPERATOR_ICON } from './icon-controls';
 import { wireThemeToggle } from './theme';
 import { createCoinInsertionPresenter } from './coin-insertion';
 import { getSoundEffectsManager } from './sound-effects';
+import { calculatePageCount, clampPageIndex, orderByConfiguredIds, STANDALONE_GAMES_PER_PAGE } from './home-nav';
 import {
   captureDisplayToken,
   displayTokenWasRejected,
@@ -43,10 +44,10 @@ const copy = locale === 'pt-BR' ? {
   standaloneDescription: 'Com tecnologia Twilio ConversationRelay. Sua voz é o controle.',
   quickStartOne: 'Toque no jogo', quickStartTwo: 'Escaneie o código QR', quickStartThree: 'Ligue e jogue por voz',
   standaloneUnavailable: 'Os jogos por voz não estão disponíveis agora. Peça ajuda à equipe.',
+  previousPage: 'Página anterior', nextPage: 'Próxima página', pageStatus: 'Página {page} de {pages}',
   comingSoon: 'Em breve',
-  triviaTitle: 'Quiz por Voz', karaokeTitle: 'Karaokê por Voz',
+  triviaTitle: 'Quiz por Voz',
   triviaPreview: 'Perguntas rápidas, respostas em voz alta e rodadas para todos.',
-  karaokePreview: 'Escolha a música, pegue o microfone e cante pelo telefone.',
   nextGame: 'Próximo jogo', gameComplete: 'Partida concluída',
   playersNext: 'jogadores já estão prontos para a próxima partida',
   displaySetup: 'Conexão segura necessária', missingDisplayToken: 'Tela não conectada',
@@ -59,6 +60,7 @@ const copy = locale === 'pt-BR' ? {
   racerBlurb: 'Uma corrida por uma pista neon controlada por voz.',
   monstersBlurb: 'Comande os golpes em uma batalha tática de criaturas.',
   fighterBlurb: 'Transforme cada golpe gritado em um confronto na arena.',
+  karaokeBlurb: 'Escolha a música e cante cada palavra no tempo certo.',
   freeDescription: 'Escaneie, entre pelo WhatsApp e responda PRONTO quando estiver pronto na tela.',
   freeStep: 'Responda PRONTO na tela',
   vote: 'voto', votes: 'votos', leader: 'Na liderança', tiedLeader: 'Líder empatado', textCommand: 'Envie',
@@ -80,10 +82,10 @@ const copy = locale === 'pt-BR' ? {
   standaloneDescription: 'Powered by Twilio Conversation Relay. Your voice is the controller.',
   quickStartOne: 'Tap the game', quickStartTwo: 'Scan the QR code', quickStartThree: 'Call and play by voice',
   standaloneUnavailable: 'Voice games are unavailable right now. Please ask booth staff for help.',
+  previousPage: 'Previous page', nextPage: 'Next page', pageStatus: 'Page {page} of {pages}',
   comingSoon: 'Coming soon',
-  triviaTitle: 'Voice Trivia', karaokeTitle: 'Voice Karaoke',
+  triviaTitle: 'Voice Trivia',
   triviaPreview: 'Quick questions, spoken answers, and rounds built for everyone.',
-  karaokePreview: 'Pick a song, take the mic, and sing through your phone.',
   nextGame: 'Next game', gameComplete: 'Game complete',
   playersNext: 'players are already ready for the next game',
   displaySetup: 'Secure connection required', missingDisplayToken: 'Display not connected',
@@ -96,6 +98,7 @@ const copy = locale === 'pt-BR' ? {
   racerBlurb: 'A voice powered race dodging obstacles.',
   monstersBlurb: 'Call the moves in a tactical creature battle.',
   fighterBlurb: 'Turn every shouted move into an arena showdown.',
+  karaokeBlurb: 'Pick a song and sing every word on the beat.',
   freeDescription: 'Scan, join, and reply READY when you are at the screen.',
   freeStep: 'Reply READY at the screen',
   vote: 'vote', votes: 'votes', leader: 'Leading', tiedLeader: 'Tied lead', textCommand: 'Text',
@@ -121,11 +124,26 @@ const lockedGame = document.getElementById('lockedGame')!;
 const gameCards = document.getElementById('gameCards')!;
 const phaseEyebrow = document.getElementById('phaseEyebrow')!;
 const standaloneGames = document.getElementById('standaloneGames')!;
+const standaloneGameRegion = document.getElementById('standaloneGameRegion')!;
+const standalonePreviousPage = document.getElementById('standalonePreviousPage') as HTMLButtonElement;
+const standaloneNextPage = document.getElementById('standaloneNextPage') as HTMLButtonElement;
+const standalonePageStatus = document.getElementById('standalonePageStatus')!;
 let standaloneGamesKey='__unset__';
-const selectionVideos = {
+let standaloneLineupKey='__unset__';
+let standalonePageIndex=0;
+const selectionVideos: Partial<Record<PlayableArcadeGame, string>> = {
   racer: '/video/vr-demo.mp4', monsters: '/video/vm-demo.mp4', fighter: '/video/vf-demo.mp4',
-} as const;
-const gameCommands = { racer: 1, monsters: 2, fighter: 3 } as const;
+  karaoke: '/video/vk-demo.mp4',
+};
+const gameCommands: Readonly<Record<PlayableArcadeGame, number>> = {
+  racer: 1, monsters: 2, fighter: 3, karaoke: 4,
+};
+const gameBlurbs: Readonly<Record<PlayableArcadeGame, string>> = {
+  racer: copy.racerBlurb,
+  monsters: copy.monstersBlurb,
+  fighter: copy.fighterBlurb,
+  karaoke: copy.karaokeBlurb,
+};
 
 interface PreviewConnection {
   readonly saveData?: boolean;
@@ -151,8 +169,9 @@ let configuring = false;
 let configurationPending = false;
 let freePlay = false;
 let leadCaptureMode = false;
-let enabledGames = new Set<string>();
-let comingSoon = { trivia: false, karaoke: false };
+let enabledGames = new Set<PlayableArcadeGame>();
+let standaloneGameOrder: PlayableArcadeGame[] = PLAYABLE_ARCADE_GAMES.map(game => game.id);
+let comingSoon = { trivia: false };
 let smsAvailable = false;
 let whatsappAvailable = false;
 let selectionLineup = '';
@@ -190,36 +209,66 @@ function buildGameCard(impact: PublicStation['games'][number]): HTMLElement {
   const card = document.createElement('article');
   card.className = 'game-card';
   card.dataset.game = impact.id;
-  card.innerHTML = `<div class="game-card-media"><span class="game-media-fallback" role="img" aria-label="${gameCommands[impact.id]}, ${title}"><strong>${gameCommands[impact.id]}</strong><b>${title}</b></span><video data-src="${selectionVideos[impact.id]}" preload="none" loop muted playsinline aria-hidden="true"></video>
+  const preview = selectionVideos[impact.id];
+  card.innerHTML = `<div class="game-card-media"><span class="game-media-fallback" role="img" aria-label="${gameCommands[impact.id]}, ${title}"><strong>${gameCommands[impact.id]}</strong><b>${title}</b></span>${preview ? `<video data-src="${preview}" preload="none" loop muted playsinline aria-hidden="true"></video>` : ''}
       <span class="game-command"><small>${copy.textCommand}</small><strong>${gameCommands[impact.id]}</strong></span></div>
     <div class="game-card-body"><div class="game-card-meta"><span data-role="vote-count"></span><b data-role="leader" hidden></b></div>
       <h2>${title}</h2>
       <span class="game-capacity">${format(copy.playerMax, { count: definition.humanCapacity })}</span>
       <div class="capacity"><b data-role="play-now"></b><b data-role="overflow"></b></div></div>`;
-  const video = card.querySelector<HTMLVideoElement>('video')!;
-  video.addEventListener('error', () => card.classList.add('game-card-video-unavailable'), { once: true });
+  card.querySelector<HTMLVideoElement>('video')?.addEventListener(
+    'error', () => card.classList.add('game-card-video-unavailable'), { once: true },
+  );
   return card;
 }
 
 function renderStandaloneLauncher(): void {
-  const key=`${[...enabledGames].sort().join(',')}|${comingSoon.trivia?1:0}${comingSoon.karaoke?1:0}`;if(key===standaloneGamesKey)return;standaloneGamesKey=key;standaloneGames.replaceChildren();
-  const games=PLAYABLE_ARCADE_GAMES.filter(game=>enabledGames.has(game.id));
+  const games=orderByConfiguredIds(PLAYABLE_ARCADE_GAMES,standaloneGameOrder)
+    .filter(game=>enabledGames.has(game.id));
+  const lineupKey=games.map(game=>game.id).join(',');
+  const key=`${lineupKey}|${comingSoon.trivia?1:0}`;
+  if(key===standaloneGamesKey)return;
+  if(lineupKey!==standaloneLineupKey)standalonePageIndex=0;
+  standaloneGamesKey=key;standaloneLineupKey=lineupKey;standaloneGames.replaceChildren();
   renderComingSoon();
-  if(!games.length){const message=document.createElement('p');message.className='standalone-unavailable';message.textContent=copy.standaloneUnavailable;standaloneGames.append(message);return;}
+  if(!games.length){const message=document.createElement('p');message.className='standalone-unavailable';message.textContent=copy.standaloneUnavailable;standaloneGames.append(message);renderStandalonePage();return;}
   standaloneGames.append(...games.map(game => {
     const link = document.createElement('a');
     const url = new URL(game.route, location.origin);
     url.searchParams.set('display', '1');url.searchParams.set('room', '4821');url.searchParams.set('locale', locale);
     link.href=url.toString();link.className='standalone-game';link.dataset.game=game.id;
-    link.innerHTML=`<video data-src="${selectionVideos[game.id]}" preload="none" loop muted playsinline aria-hidden="true"></video><span>${gameTitle(locale,game.id)}</span><p>${game.id==='racer'?copy.racerBlurb:game.id==='monsters'?copy.monstersBlurb:copy.fighterBlurb}</p>`;
+    const preview=selectionVideos[game.id];
+    link.innerHTML=`${preview?`<video data-src="${preview}" preload="none" loop muted playsinline aria-hidden="true"></video>`:''}<span>${gameTitle(locale,game.id)}</span><p>${gameBlurbs[game.id]}</p>`;
     return link;
   }));
+  renderStandalonePage();
+}
+
+function renderStandalonePage(nextPage=standalonePageIndex): void {
+  standaloneGames.querySelectorAll('.standalone-page-placeholder').forEach(placeholder=>placeholder.remove());
+  const cards=[...standaloneGames.querySelectorAll<HTMLElement>('.standalone-game')];
+  const pageCount=calculatePageCount(cards.length);
+  standalonePageIndex=clampPageIndex(nextPage,cards.length);
+  const paginated=pageCount>1;
+  const firstVisible=standalonePageIndex*STANDALONE_GAMES_PER_PAGE;
+  cards.forEach((card,index) => { card.hidden=paginated&&(index<firstVisible||index>=firstVisible+STANDALONE_GAMES_PER_PAGE); });
+  const visibleCount=Math.min(STANDALONE_GAMES_PER_PAGE,Math.max(0,cards.length-firstVisible));
+  if(paginated)standaloneGames.append(...Array.from({length:STANDALONE_GAMES_PER_PAGE-visibleCount},()=>{
+    const placeholder=document.createElement('span');placeholder.className='standalone-page-placeholder';placeholder.setAttribute('aria-hidden','true');return placeholder;
+  }));
+  standaloneGameRegion.classList.toggle('is-paginated',paginated);
+  standalonePreviousPage.hidden=!paginated;standaloneNextPage.hidden=!paginated;standalonePageStatus.hidden=!paginated;
+  standalonePreviousPage.disabled=standalonePageIndex===0;
+  standaloneNextPage.disabled=standalonePageIndex>=pageCount-1;
+  standalonePageStatus.textContent=pageCount>0
+    ? format(copy.pageStatus,{page:standalonePageIndex+1,pages:pageCount})
+    : '';
+  syncPreviewPlayback();
 }
 
 function renderComingSoon(): void {
   document.getElementById('futureTrivia')!.hidden=!comingSoon.trivia;
-  document.getElementById('futureKaraoke')!.hidden=!comingSoon.karaoke;
-  document.getElementById('standaloneFuture')!.hidden=!comingSoon.trivia&&!comingSoon.karaoke;
+  document.getElementById('standaloneFuture')!.hidden=!comingSoon.trivia;
 }
 
 function previewPlaybackAllowed(): boolean {
@@ -232,8 +281,10 @@ function previewPlaybackAllowed(): boolean {
 function syncPreviewPlayback(): void {
   const playbackAllowed = previewPlaybackAllowed();
   document.querySelectorAll<HTMLVideoElement>('.station-view video').forEach(video => {
-    if (!playbackAllowed || !activeView.contains(video)) {
+    const hiddenStandaloneCard=video.closest<HTMLElement>('.standalone-game')?.hidden===true;
+    if (!playbackAllowed || !activeView.contains(video) || hiddenStandaloneCard) {
       video.pause();
+      if(hiddenStandaloneCard&&video.hasAttribute('src')){video.removeAttribute('src');video.load();}
       return;
     }
     const source=video.dataset.src;
@@ -372,6 +423,18 @@ function wireTheme(): void {
   wireThemeToggle(button,{light:copy.lightTheme,dark:copy.darkTheme});
 }
 
+function wireStandalonePagination(): void {
+  standalonePreviousPage.addEventListener('click',()=>renderStandalonePage(standalonePageIndex-1));
+  standaloneNextPage.addEventListener('click',()=>renderStandalonePage(standalonePageIndex+1));
+  document.addEventListener('keydown',event=>{
+    if(!standaloneMode||activeView!==views.standalone||!['ArrowLeft','ArrowRight'].includes(event.key))return;
+    if(event.target instanceof Element&&event.target.closest('input,select,textarea,[contenteditable="true"]'))return;
+    const nextPage=clampPageIndex(standalonePageIndex+(event.key==='ArrowLeft'?-1:1),standaloneGames.querySelectorAll('.standalone-game').length);
+    if(nextPage===standalonePageIndex)return;
+    event.preventDefault();renderStandalonePage(nextPage);
+  });
+}
+
 function localizeStaticPage(): void {
   applyDocumentLocale();
   document.title = copy.pageTitle;
@@ -398,11 +461,11 @@ function localizeStaticPage(): void {
   document.getElementById('standaloneQuickStartOne')!.textContent=copy.quickStartOne;
   document.getElementById('standaloneQuickStartTwo')!.textContent=copy.quickStartTwo;
   document.getElementById('standaloneQuickStartThree')!.textContent=copy.quickStartThree;
+  standalonePreviousPage.setAttribute('aria-label',copy.previousPage);standalonePreviousPage.title=copy.previousPage;
+  standaloneNextPage.setAttribute('aria-label',copy.nextPage);standaloneNextPage.title=copy.nextPage;
   document.getElementById('futureGamesLabel')!.textContent=copy.comingSoon;
   document.getElementById('voiceTriviaTitle')!.textContent=copy.triviaTitle;
-  document.getElementById('voiceKaraokeTitle')!.textContent=copy.karaokeTitle;
   document.getElementById('voiceTriviaDescription')!.textContent=copy.triviaPreview;
-  document.getElementById('voiceKaraokeDescription')!.textContent=copy.karaokePreview;
   document.getElementById('persistentJoinLabel')!.textContent=locale==='pt-BR'?'Proxima rodada':'Next round';
   document.getElementById('persistentJoinTitle')!.textContent=locale==='pt-BR'?'Escaneie para entrar':'Scan to join';
   const operator=document.getElementById('operatorLink')!;operator.innerHTML=OPERATOR_ICON;operator.title=copy.operator;operator.setAttribute('aria-label',copy.operator);
@@ -486,14 +549,17 @@ async function refreshConfiguration(): Promise<void> {
     freePlay = config.coins.chargePolicy === 'free';
     smsAvailable = locale !== 'pt-BR' && config.channels.sms && Boolean(bootstrap.smsNumber);
     whatsappAvailable = config.channels.whatsapp && Boolean(bootstrap.whatsappNumber);
-    const configuredGames = new Set(Object.entries(config.station.games)
-      .filter(([, settings]) => settings.enabled)
+    const configuredGames = new Set<PlayableArcadeGame>(Object.entries(config.station.games)
+      .filter((entry): entry is [PlayableArcadeGame, { enabled: boolean }] => (
+        isPlayableArcadeGame(entry[0]) && entry[1].enabled
+      ))
       .map(([game]) => game));
-    comingSoon={trivia:config.station.comingSoon.trivia.enabled,karaoke:config.station.comingSoon.karaoke.enabled};
+    comingSoon={trivia:config.station.comingSoon.trivia.enabled};
+    standaloneGameOrder=[...config.station.automaticSelection.order];
     const localStandalonePreview = standaloneMode && ['localhost', '127.0.0.1', '::1'].includes(location.hostname);
     enabledGames = localStandalonePreview || (config.channels.voice && Boolean(bootstrap.voiceNumbers?.[locale]))
       ? configuredGames
-      : new Set();
+      : new Set<PlayableArcadeGame>();
     stationId = config.arcade.cabinetId;
     qrRailMode=config.station.qrRail;
     renderEntryPolicyCopy();
@@ -505,8 +571,8 @@ async function refreshConfiguration(): Promise<void> {
       if(qr){(document.getElementById('joinQr') as HTMLImageElement).src=qr;(document.getElementById('persistentJoinQr') as HTMLImageElement).src=qr;}
     }
   } catch {
-    enabledGames = new Set();
-    comingSoon={trivia:false,karaoke:false};
+    enabledGames = new Set<PlayableArcadeGame>();
+    comingSoon={trivia:false};
     selectionLineup = '';
     if (standaloneMode) renderStandaloneLauncher();
     if (current) renderGameCards(current);
@@ -520,6 +586,7 @@ async function refreshConfiguration(): Promise<void> {
 async function initialize(): Promise<void> {
   localizeStaticPage();
   wireTheme();
+  wireStandalonePagination();
   injectMusicToggle('header-controls');
   injectLanguagePicker('header-controls');
   injectMagicHat();

@@ -69,8 +69,7 @@
   <!-- Edge tabs: collapse/expand each side panel independently. -->
   <button id="treeTab" class="edge-tab" title="Collapse / expand the scene tree">⟨</button>
   <button id="panelTab" class="edge-tab" title="Collapse / expand the inspector">⟩</button>
-  <!-- The HUB routes: no ?game → picker; ?game=racer → the level editor (loads ../level.ts against
-       the chrome above); ?game=battler → the arena editor. -->
+  <!-- The HUB routes: no ?game → picker; game-specific query values load each dedicated editor. -->
   <script type="module" src="./hub.ts"></script>
 </body>
 </html>

@@ -9,6 +9,45 @@ textures, resized to 1024px) of the original Sketchfab downloads. Raw originals 
 locally in `assets/_raw/` (gitignored). Per CC-BY, derivatives are permitted; attribution to
 the original authors is preserved below.
 
+## Voice Karaoke 3D models (CC-BY 4.0)
+
+These runtime assets are Draco/WebP optimized derivatives. Raw originals are local-only under
+gitignored `assets/karaoke/_raw/`. The attribution below is preserved in each release GLB's asset
+metadata and has been verified against the linked Sketchfab source page.
+
+| Runtime file | Model | Author | Sketchfab | License |
+|---|---|---|---|---|
+| `karaoke/stage.glb` | Stage | [MEC CAD](https://sketchfab.com/meccad) | https://sketchfab.com/3d-models/stage-75918ce264ca4362adb3aa7d87a88f37 | [CC-BY 4.0](https://creativecommons.org/licenses/by/4.0/) |
+| `karaoke/lead-singer.glb` | Freddie Mercury | [Gerwerni](https://sketchfab.com/gerwerni) | https://sketchfab.com/3d-models/freddie-mercury-965ebf37fb364b73abb91f6d63e49e08 | [CC-BY 4.0](https://creativecommons.org/licenses/by/4.0/) |
+| `karaoke/backup-singer.glb` | Animated Model Singing with Microphone in Hand | [LasquetiSpice](https://sketchfab.com/LasquetiSpice) | https://sketchfab.com/3d-models/animated-model-singing-with-microphone-in-hand-dade090dddcb4d1b8614972b2133d22e | [CC-BY 4.0](https://creativecommons.org/licenses/by/4.0/) |
+| `karaoke/drummer.glb` | Playing Drums | [kodexar](https://sketchfab.com/kodexar) | https://sketchfab.com/3d-models/playing-drums-22c1e9e36d6a4bb6b122cb95dc06d025 | [CC-BY 4.0](https://creativecommons.org/licenses/by/4.0/) |
+| `karaoke/guitarist.glb` | Animated Musical Trem Playing Guitar Loop | [LasquetiSpice](https://sketchfab.com/LasquetiSpice) | https://sketchfab.com/3d-models/animated-musical-trem-playing-guitar-loop-7dde986b68834de6b5a9deff6819d3f1 | [CC-BY 4.0](https://creativecommons.org/licenses/by/4.0/) |
+
+## Voice Karaoke licensed recording
+
+| Runtime file | Recording | Artist | Rights provenance |
+|---|---|---|---|
+| `client/public/audio/karaoke/classic-instrumental-45s.mp3` | Never Gonna Give You Up (instrumental) | Rick Astley | User confirmed all required rights |
+| `client/public/audio/karaoke/thousand-miles-45s.mp3` | A Thousand Miles | Vanessa Carlton | User confirmed all required rights |
+
+The local vocal timing source is `assets/karaoke/_raw/audio/classic.MP3`; the local backing source is
+`assets/karaoke/_raw/audio/classic-instrumental.mp4`. Chroma/DTW alignment found that the two
+recordings use different masters but the same arrangement. The runtime file uses instrumental seconds
+74.199 through 119.319, tempo-corrected by `1.002227`, and trimmed to exactly 45 seconds. Validation
+leaves approximately 38 ms of offset and less than 0.005% residual tempo drift. The user confirmed that the required
+recording, synchronization, display, public-performance, telephony, and distribution rights are
+in place for this use. The current target-note contour is provisional and requires final pitch
+calibration before scoring is treated as production-calibrated.
+
+The local full-length `assets/karaoke/_raw/audio/thousand-miles.mp3` source is 237.494 seconds. The
+runtime excerpt uses source seconds 18.000 through 63.000, covering the first verse pickup,
+pre-chorus, and complete first chorus. The user confirmed the same recording, lyric synchronization,
+display, public-performance, telephony, and distribution rights for this use. Waveform alignment to
+the exact-duration official vocal reference measured a fixed 424 ms instrumental delay, which is
+applied to the chart. Vocal-preview forced alignment supplies individual opening and chorus word
+boundaries. Its target-note contour
+is provisional pending isolated-vocal calibration.
+
 ## Voice Monsters — battle arena (CC-BY 4.0)
 
 | Model file | Title | Author | Sketchfab |

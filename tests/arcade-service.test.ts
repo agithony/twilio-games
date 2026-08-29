@@ -64,6 +64,7 @@ function arcadeConfig(
     maxClaimsPerPlayer?: number;
     chargePolicy?: 'per_player' | 'per_match' | 'host_sponsors' | 'free';
     refundOnLobbyTimeout?: boolean;
+    karaokeEnabled?: boolean;
   } = {},
 ): ArcadeConfigSnapshot {
   const input = JSON.parse(JSON.stringify(DEFAULT_ARCADE_CONFIG)) as Record<string, any>;
@@ -76,6 +77,7 @@ function arcadeConfig(
     ? 'per_player'
     : chargePolicy;
   input.coins.refundOnLobbyTimeout = overrides.refundOnLobbyTimeout ?? true;
+  input.station.games.karaoke.enabled = overrides.karaokeEnabled ?? false;
   input.earning.challenges = [{
     id: 'voice-docs',
     title: 'Read the Voice docs',
@@ -165,22 +167,106 @@ function registration(playerId: string, idempotencyKey = `register:${playerId}`)
   };
 }
 
-async function moveToLobby(h: Harness, playerId: string, prefix: string): Promise<string> {
+async function moveToLobby(
+  h: Harness,
+  playerId: string,
+  prefix: string,
+  game: 'racer' | 'karaoke' = 'racer',
+): Promise<string> {
   const joined = await h.service.joinQueue({
-    playerId, preferredGame: 'racer', idempotencyKey: `${prefix}:join`,
+    playerId, preferredGame: game, idempotencyKey: `${prefix}:join`,
   });
   const queueEntryId = joined.entry.id;
   await h.service.markApproaching({ playerId, queueEntryId, idempotencyKey: `${prefix}:approach`, ...OPERATOR });
   await h.service.confirmPresence({ playerId, queueEntryId, idempotencyKey: `${prefix}:confirm` });
   await h.service.callQueueEntry({ playerId, queueEntryId, idempotencyKey: `${prefix}:call`, ...OPERATOR });
   await h.service.checkInQueueEntry({
-    playerId, queueEntryId, game: 'racer', idempotencyKey: `${prefix}:check-in`,
+    playerId, queueEntryId, game, idempotencyKey: `${prefix}:check-in`,
   });
   await h.service.activateLobby({ playerId, queueEntryId, idempotencyKey: `${prefix}:lobby`, ...OPERATOR });
   return queueEntryId;
 }
 
 describe('ArcadeService durable journey', () => {
+  it('persists Karaoke queue preferences and assignments', async () => {
+    const h = await harness(arcadeConfig('lead_capture', { karaokeEnabled: true }));
+    await h.service.registerPlayer(registration('p1'));
+    const joined = await h.service.joinQueue({
+      playerId: 'p1', preferredGame: 'karaoke', idempotencyKey: 'karaoke:join',
+    });
+    await h.service.markApproaching({
+      playerId: 'p1', queueEntryId: joined.entry.id, idempotencyKey: 'karaoke:approach', ...OPERATOR,
+    });
+    await h.service.confirmPresence({
+      playerId: 'p1', queueEntryId: joined.entry.id, idempotencyKey: 'karaoke:confirm',
+    });
+    await h.service.callQueueEntry({
+      playerId: 'p1', queueEntryId: joined.entry.id, idempotencyKey: 'karaoke:call', ...OPERATOR,
+    });
+    await h.service.checkInQueueEntry({
+      playerId: 'p1', queueEntryId: joined.entry.id, game: 'karaoke', idempotencyKey: 'karaoke:check-in',
+    });
+
+    const restarted = await ArcadeStateStore.open(h.file);
+    expect(restarted.snapshot().queueEntries[joined.entry.id]?.preferredGame).toBe('karaoke');
+    expect(restarted.snapshot().queueEntryConfigs[joined.entry.id]?.assignedGame).toBe('karaoke');
+  });
+
+  it('rejects disabled and nonplayable games at every legacy queue assignment boundary', async () => {
+    const h = await harness();
+    await h.service.registerPlayer(registration('p1'));
+    await expect(h.service.joinQueue({
+      playerId: 'p1', preferredGame: 'karaoke', idempotencyKey: 'disabled:join-karaoke',
+    })).rejects.toMatchObject({ code: 'GAME_DISABLED' });
+    await expect(h.service.joinQueue({
+      playerId: 'p1', preferredGame: 'trivia', idempotencyKey: 'disabled:join-trivia',
+    })).rejects.toMatchObject({ code: 'INVALID_GAME' });
+
+    const joined = await h.service.joinQueue({
+      playerId: 'p1', preferredGame: 'racer', flexibleGame: true, idempotencyKey: 'disabled:join-racer',
+    });
+    await h.service.markApproaching({
+      playerId: 'p1', queueEntryId: joined.entry.id, idempotencyKey: 'disabled:approach', ...OPERATOR,
+    });
+    await h.service.confirmPresence({
+      playerId: 'p1', queueEntryId: joined.entry.id, idempotencyKey: 'disabled:confirm',
+    });
+    await h.service.callQueueEntry({
+      playerId: 'p1', queueEntryId: joined.entry.id, idempotencyKey: 'disabled:call', ...OPERATOR,
+    });
+    await expect(h.service.checkInQueueEntry({
+      playerId: 'p1', queueEntryId: joined.entry.id, game: 'karaoke', idempotencyKey: 'disabled:check-karaoke',
+    })).rejects.toMatchObject({ code: 'GAME_DISABLED' });
+    await expect(h.service.checkInQueueEntry({
+      playerId: 'p1', queueEntryId: joined.entry.id, game: 'trivia', idempotencyKey: 'disabled:check-trivia',
+    })).rejects.toMatchObject({ code: 'INVALID_GAME' });
+
+    const enabled = await harness(arcadeConfig('lead_capture', { karaokeEnabled: true }));
+    await enabled.service.registerPlayer(registration('p2'));
+    const ready = await moveToLobby(enabled, 'p2', 'disabled-start', 'karaoke');
+    enabled.setConfig(arcadeConfig('lead_capture', { version: 2 }));
+    await expect(enabled.service.startMatch({
+      queueEntryIds: [ready], game: 'karaoke', idempotencyKey: 'disabled:start', ...OPERATOR,
+    })).rejects.toMatchObject({ code: 'GAME_DISABLED' });
+  });
+
+  it('rejects two legacy queue entries for capacity-one Karaoke', async () => {
+    const h = await harness(arcadeConfig('lead_capture', { startingBalance: 1, karaokeEnabled: true }));
+    await h.service.registerPlayer(registration('p1'));
+    await h.service.registerPlayer(registration('p2'));
+    const entries = await Promise.all([
+      moveToLobby(h, 'p1', 'karaoke-capacity-p1', 'karaoke'),
+      moveToLobby(h, 'p2', 'karaoke-capacity-p2', 'karaoke'),
+    ]);
+
+    await expect(h.service.startMatch({
+      queueEntryIds: entries, game: 'karaoke', idempotencyKey: 'karaoke:capacity-start', ...OPERATOR,
+    })).rejects.toMatchObject({ code: 'MATCH_NOT_READY' });
+    expect(entries.map(id => h.store.snapshot().queueEntries[id]?.status)).toEqual(['ACTIVE_LOBBY', 'ACTIVE_LOBBY']);
+    expect(Object.values(h.store.snapshot().wallets).flatMap(wallet => wallet.reservations)
+      .filter(reservation => reservation.status === 'ACTIVE')).toHaveLength(2);
+  });
+
   it('returns narrow player and wallet projections without lead or ledger history', async () => {
     const h = await harness();
     expect(await h.service.getPlayerStatus('p1')).toBeNull();

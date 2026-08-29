@@ -56,6 +56,7 @@ export function twimlConnectRelay(opts: {
   matchId?: string;
   launchGeneration?: number;
   relayToken?: string;
+  karaokeMode?: 'setup' | 'result';
   // ASR biasing hints — the game's key spoken words (commands / move names) for better recognition.
   hints?: string;
   locale?: SupportedLocale;
@@ -74,6 +75,9 @@ export function twimlConnectRelay(opts: {
     ? `\n      <Parameter name="matchId" value="${esc(opts.matchId)}" />\n      <Parameter name="launchGeneration" value="${opts.launchGeneration}" />`
     : '';
   const relayTokenParam = opts.relayToken ? `\n      <Parameter name="relayToken" value="${esc(opts.relayToken)}" />` : '';
+  const karaokeModeParam = opts.karaokeMode
+    ? `\n      <Parameter name="karaokeMode" value="${esc(opts.karaokeMode)}" />`
+    : '';
   const localeParams = `\n      <Parameter name="locale" value="${esc(locale)}" />\n      <Parameter name="commandLocale" value="${esc(locale)}" />`;
   // Interruption (barge-in) is a headline Conversation Relay feature and central to this app:
   //  - interruptible="any": speech or keypad input cuts the TTS immediately.
@@ -86,8 +90,38 @@ export function twimlConnectRelay(opts: {
 <Response>
   <Connect action="${esc(opts.sessionEndedUrl)}">
     <ConversationRelay url="${esc(opts.wsUrl)}"${ttsAttrs} transcriptionProvider="Deepgram" speechModel="flux" partialPrompts="true" transcriptionLanguage="${esc(profile.transcriptionLanguage)}" ttsLanguage="${esc(profile.ttsLanguage)}" interruptible="any" reportInputDuringAgentSpeech="any" interruptSensitivity="medium" ignoreBackchannel="true" dtmfDetection="true" hints="${hints}" speechTimeout="600" eotThreshold="0.6" events="tokens-played" welcomeGreeting="${greeting}">
-      <Parameter name="roomCode" value="${esc(opts.roomCode)}" />${gameParam}${readyEntryParam}${matchParams}${relayTokenParam}${localeParams}
+      <Parameter name="roomCode" value="${esc(opts.roomCode)}" />${gameParam}${readyEntryParam}${matchParams}${relayTokenParam}${karaokeModeParam}${localeParams}
     </ConversationRelay>
   </Connect>
+</Response>`;
+}
+
+export function twimlKaraokeMedia(opts: {
+  streamName: string;
+  wsUrl: string;
+  statusCallbackUrl: string;
+  completeUrl: string;
+  customParameters: Readonly<Record<string, string>>;
+  pauseLengthSeconds: number;
+}): string {
+  const streamUrl = new URL(opts.wsUrl);
+  if (streamUrl.protocol !== 'wss:' || streamUrl.search || streamUrl.hash
+    || streamUrl.username || streamUrl.password) throw new TypeError('Karaoke Media Stream URL must be a query-free WSS URL');
+  if (!Number.isSafeInteger(opts.pauseLengthSeconds)
+    || opts.pauseLengthSeconds < 1 || opts.pauseLengthSeconds > 60) {
+    throw new RangeError('Karaoke media pause must be from 1 to 60 seconds');
+  }
+  const parameters = Object.entries(opts.customParameters)
+    .map(([name, value]) => `\n      <Parameter name="${esc(name)}" value="${esc(value)}" />`)
+    .join('');
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Start>
+    <Stream name="${esc(opts.streamName)}" url="${esc(opts.wsUrl)}" track="inbound_track" statusCallback="${esc(opts.statusCallbackUrl)}" statusCallbackMethod="POST">${parameters}
+    </Stream>
+  </Start>
+  <Pause length="${opts.pauseLengthSeconds}" />
+  <Stop><Stream name="${esc(opts.streamName)}" /></Stop>
+  <Redirect method="POST">${esc(opts.completeUrl)}</Redirect>
 </Response>`;
 }

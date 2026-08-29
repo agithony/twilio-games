@@ -32,7 +32,13 @@ import {
   type QueueReduction,
   type QueueStatus,
 } from '../shared/arcade-queue';
-import { isPlayableArcadeGame, type PlayableArcadeGame } from '../shared/arcade-games';
+import {
+  arcadeGameDefinition,
+  isArcadeGame,
+  isPlayableArcadeGame,
+  PLAYABLE_ARCADE_GAMES,
+  type PlayableArcadeGame,
+} from '../shared/arcade-games';
 import { parseTypedFirstName } from '../shared/spoken-name';
 import {
   advanceStationResults as reduceAdvanceStationResults,
@@ -84,6 +90,7 @@ import {
 export type ArcadeClockValue = Date | string | number;
 export type ArcadeClock = () => ArcadeClockValue;
 export type ArcadeIdGenerator = (kind: string) => string;
+type RoutedStationGame = PlayableArcadeGame;
 
 export interface ArcadeServiceOptions {
   readonly store: ArcadeStateStore;
@@ -362,7 +369,7 @@ export interface ResetInactivePlayerResult {
   readonly reset: true;
   readonly resetNameHashes: readonly string[];
   readonly racers: readonly Readonly<{
-    game: 'racer' | 'monsters' | 'fighter';
+    game: RoutedStationGame;
     roomCode: string;
     enginePlayerId: string;
     completedAt: string | null;
@@ -467,7 +474,6 @@ export class ArcadeServiceError extends Error {
 const LEAD_KEYS = [
   'firstName', 'lastName', 'workEmail', 'companyName', 'phoneNumber', 'countryCode',
 ] as const;
-const GAMES = new Set<ArcadeGame>(['racer', 'monsters', 'fighter', 'trivia']);
 const FORBIDDEN_RECORD_KEYS = new Set([
   ...Object.getOwnPropertyNames(Object.prototype),
   '__proto__',
@@ -759,6 +765,20 @@ function queueResult(state: ArcadeState, entry: QueueEntry): QueueEntryResult {
   };
 }
 
+function requireEnabledPlayableGame(
+  config: ArcadeConfigSnapshot,
+  game: ArcadeGame,
+  field: string,
+): PlayableArcadeGame {
+  if (!isPlayableArcadeGame(game)) {
+    throw new ArcadeServiceError('INVALID_GAME', `${field} is not a playable Twilio Games game`);
+  }
+  if (!config.station.games[game].enabled) {
+    throw new ArcadeServiceError('GAME_DISABLED', `${game} is disabled for this station`);
+  }
+  return game;
+}
+
 function stationResult(aggregate: ArcadeStationAggregate): StationMutationResult {
   return {
     station: aggregate.station,
@@ -920,6 +940,7 @@ function parseMessagingGameChoice(value: string): PlayableArcadeGame | null {
   if (value === '1' || value === 'RACER' || value === 'VOICE RACER' || value === 'CORRIDA' || value === 'CORRIDA POR VOZ') return 'racer';
   if (value === '2' || value === 'MONSTERS' || value === 'VOICE MONSTERS' || value === 'MONSTROS' || value === 'MONSTROS POR VOZ') return 'monsters';
   if (value === '3' || value === 'FIGHTER' || value === 'VOICE FIGHTER' || value === 'LUTA' || value === 'LUTA POR VOZ') return 'fighter';
+  if (value === '4' || value === 'KARAOKE' || value === 'VOICE KARAOKE' || value === 'KARAOKE POR VOZ') return 'karaoke';
   return null;
 }
 
@@ -927,6 +948,11 @@ const MESSAGING_GAME_CHOICE_ALIASES: Readonly<Record<PlayableArcadeGame, readonl
   racer: ['RACER','VOICE RACER','CORRIDA','CORRIDA POR VOZ'],
   monsters: ['MONSTERS','VOICE MONSTERS','MONSTROS','MONSTROS POR VOZ'],
   fighter: ['FIGHTER','VOICE FIGHTER','LUTA','LUTA POR VOZ'],
+  karaoke: ['KARAOKE','VOICE KARAOKE','KARAOKE POR VOZ'],
+};
+
+const MESSAGING_GAME_BY_NUMBER: Readonly<Record<string, PlayableArcadeGame>> = {
+  '1': 'racer', '2': 'monsters', '3': 'fighter', '4': 'karaoke',
 };
 
 function parseTolerantMessagingGameChoice(value:string):PlayableArcadeGame|null {
@@ -935,8 +961,8 @@ function parseTolerantMessagingGameChoice(value:string):PlayableArcadeGame|null 
   const tokens=cleaned.split(' ');
   if(tokens.length>4)return null;
   const numbers=tokens.filter(token=>/^\d+$/.test(token));
-  if(numbers.some(token=>!['1','2','3'].includes(token))||new Set(numbers).size>1)return null;
-  const numberGame=numbers[0]==='1'?'racer':numbers[0]==='2'?'monsters':numbers[0]==='3'?'fighter':null;
+  if(numbers.some(token=>!Object.prototype.hasOwnProperty.call(MESSAGING_GAME_BY_NUMBER,token))||new Set(numbers).size>1)return null;
+  const numberGame=numbers[0]?MESSAGING_GAME_BY_NUMBER[numbers[0]]??null:null;
   const text=tokens.filter(token=>!/^\d+$/.test(token)).join(' ');
   let textGame:PlayableArcadeGame|null=null;
   if(text){
@@ -970,16 +996,16 @@ function oneEditOrTranspositionAway(left:string,right:string):boolean {
 }
 
 const MESSAGING_GAME_CHOICE_NAMES: Record<'en-US' | 'pt-BR', Record<PlayableArcadeGame, string>> = {
-  'en-US': { racer: 'Voice Racer', monsters: 'Voice Monsters', fighter: 'Voice Fighter' },
-  'pt-BR': { racer: 'Corrida por Voz', monsters: 'Monstros por Voz', fighter: 'Luta por Voz' },
+  'en-US': { racer: 'Voice Racer', monsters: 'Voice Monsters', fighter: 'Voice Fighter', karaoke: 'Voice Karaoke' },
+  'pt-BR': { racer: 'Corrida por Voz', monsters: 'Monstros por Voz', fighter: 'Luta por Voz', karaoke: 'Karaokê por Voz' },
 };
 const MESSAGING_GAME_CHOICE_NUMBERS: Record<PlayableArcadeGame, string> = {
-  racer: '1', monsters: '2', fighter: '3',
+  racer: '1', monsters: '2', fighter: '3', karaoke: '4',
 };
 
 function messagingGameChoiceOptions(config: ArcadeConfigSnapshot, locale: string): string {
   const names = MESSAGING_GAME_CHOICE_NAMES[normalizeMessagingLocale(locale)];
-  return (['racer', 'monsters', 'fighter'] as const)
+  return PLAYABLE_ARCADE_GAMES.map(game => game.id)
     .filter(game => config.station.games[game].enabled)
     .map(game => `${MESSAGING_GAME_CHOICE_NUMBERS[game]} ${names[game]}`)
     .join(', ');
@@ -1252,8 +1278,8 @@ const STATION_NOTIFICATION_TTL_MS: Record<ArcadeStationNotificationKind, number>
 };
 
 const STATION_GAME_NAMES: Record<'en-US' | 'pt-BR', Record<PlayableArcadeGame, string>> = {
-  'en-US': { racer: 'Voice Racer', monsters: 'Voice Monsters', fighter: 'Voice Fighter' },
-  'pt-BR': { racer: 'Corrida por Voz', monsters: 'Monstros por Voz', fighter: 'Luta por Voz' },
+  'en-US': { racer: 'Voice Racer', monsters: 'Voice Monsters', fighter: 'Voice Fighter', karaoke: 'Voice Karaoke' },
+  'pt-BR': { racer: 'Corrida por Voz', monsters: 'Monstros por Voz', fighter: 'Luta por Voz', karaoke: 'Karaokê por Voz' },
 };
 
 function stationNotificationId(
@@ -1277,6 +1303,7 @@ function stationNotificationContent(input: {
   rank: number | null;
   won: boolean | null;
   durationSeconds: number | null;
+  score: number | null;
   freePlay: boolean;
 }): { body: string; templateVariables: Readonly<Record<string, string>> } {
   const game = STATION_GAME_NAMES[input.locale][input.game];
@@ -1306,8 +1333,10 @@ function stationNotificationContent(input: {
         : input.freePlay ? '\n\nResponda PRONTO para entrar na próxima partida.'
           : input.remainingBalance===0 ? '\n\nMostre esta mensagem à equipe para receber ajuda e jogar novamente.'
             : '\n\nResponda MOEDA ou 🪙 para entrar na próxima partida.';
-      const result = input.rank === null ? '\n\nConfira o placar na tela.'
-        : input.won ? `\n\nVOCÊ VENCEU! Você terminou em ${input.rank}º lugar.` : `\n\nVocê terminou em ${input.rank}º lugar.`;
+      const result = input.game === 'karaoke'
+        ? input.score === null ? '\n\nConfira sua pontuação na tela.' : `\n\nSua pontuação: ${Math.round(input.score)}.`
+        : input.rank === null ? '\n\nConfira o placar na tela.'
+          : input.won ? `\n\nVOCÊ VENCEU! Você terminou em ${input.rank}º lugar.` : `\n\nVocê terminou em ${input.rank}º lugar.`;
       return {
         body: `FIM DE JOGO: ${game}!${result}${duration}${balance}${replay}`,
         templateVariables: { '1': game, ...(input.balance === null ? {} : { '2': String(input.balance) }) },
@@ -1338,8 +1367,10 @@ function stationNotificationContent(input: {
       : input.freePlay ? '\n\nReply READY to line up again.'
         : input.remainingBalance===0 ? '\n\nShow this message to booth staff for help getting another play.'
           : '\n\nReply COIN or 🪙 to line up again.';
-    const result = input.rank === null ? '\n\nCheck the scoreboard on the display.'
-      : input.won ? `\n\nYOU WON! You finished #${input.rank}.` : `\n\nYou finished #${input.rank}.`;
+    const result = input.game === 'karaoke'
+      ? input.score === null ? '\n\nCheck your score on the display.' : `\n\nYour score: ${Math.round(input.score)}.`
+      : input.rank === null ? '\n\nCheck the scoreboard on the display.'
+        : input.won ? `\n\nYOU WON! You finished #${input.rank}.` : `\n\nYou finished #${input.rank}.`;
     return {
       body: `${game} complete!${result}${duration}${balance}${replay}`,
       templateVariables: { '1': game, ...(input.balance === null ? {} : { '2': String(input.balance) }) },
@@ -2094,7 +2125,7 @@ export class ArcadeService {
 
   async joinQueue(input: JoinArcadeQueueInput): Promise<QueueEntryResult> {
     const playerId = requireIdentifier(input.playerId, 'playerId');
-    if (!GAMES.has(input.preferredGame)) {
+    if (!isArcadeGame(input.preferredGame)) {
       throw new ArcadeServiceError('INVALID_GAME', 'preferredGame is not a Twilio Games game');
     }
     return this.execute('JOIN_QUEUE', input.idempotencyKey, playerId, {
@@ -2104,6 +2135,7 @@ export class ArcadeService {
     }, (state, config, at) => {
       this.requireQueueOn(config);
       this.requireSupportedChargePolicy(config);
+      const preferredGame = requireEnabledPlayableGame(config, input.preferredGame, 'preferredGame');
       this.requirePlayer(state, playerId);
       const liveEntries = Object.values(state.queueEntries).filter(entry => (
         entry.cabinetId === config.arcade.cabinetId && !isTerminalQueueStatus(entry.status)
@@ -2116,7 +2148,7 @@ export class ArcadeService {
         eventId: this.id('queue-event'),
         cabinetId: config.arcade.cabinetId,
         playerId,
-        preferredGame: input.preferredGame,
+        preferredGame,
         flexibleGame: input.flexibleGame ?? false,
         joinedAt: at,
         configVersion: config.version,
@@ -2199,22 +2231,23 @@ export class ArcadeService {
   checkInQueueEntry(input: CheckInArcadeQueueInput): Promise<QueueEntryResult> {
     const playerId = requireIdentifier(input.playerId, 'playerId');
     const queueEntryId = requireIdentifier(input.queueEntryId, 'queueEntryId');
-    if (!GAMES.has(input.game)) throw new ArcadeServiceError('INVALID_GAME', 'check-in game is not a Twilio Games game');
+    if (!isArcadeGame(input.game)) throw new ArcadeServiceError('INVALID_GAME', 'check-in game is not a Twilio Games game');
     return this.execute('CHECK_IN_QUEUE_ENTRY', input.idempotencyKey, playerId, {
       playerId, queueEntryId, game: input.game, reason: input.reason ?? null,
     }, (state, config, at) => {
       this.requireQueueOn(config);
+      const game = requireEnabledPlayableGame(config, input.game, 'check-in game');
       const entry = this.requireOwnedEntry(state, playerId, queueEntryId);
       this.requireCurrentCabinet(entry, config);
-      if (entry.preferredGame !== input.game && !entry.flexibleGame) {
-        throw new ArcadeServiceError('GAME_NOT_ELIGIBLE', `queue entry ${entry.id} is not eligible for ${input.game}`);
+      if (entry.preferredGame !== game && !entry.flexibleGame) {
+        throw new ArcadeServiceError('GAME_NOT_ELIGIBLE', `queue entry ${entry.id} is not eligible for ${game}`);
       }
       const reduction = reduceQueueEntry(entry, {
         type: 'CHECK_IN', eventId: this.id('queue-event'), at, reason: input.reason,
       });
       const amount = config.coins.chargePolicy === 'free'
         ? 0
-        : config.coins.gameCosts[input.game] ?? config.coins.defaultGameCost;
+        : config.coins.gameCosts[game];
       if (amount > 0) {
         state.wallets[playerId] = reserveCoins(this.requireWallet(state, playerId), {
           reservationId: this.id('wallet-reservation'),
@@ -2234,7 +2267,7 @@ export class ArcadeService {
         gameCost: amount,
         refundOnLobbyTimeout: config.coins.refundOnLobbyTimeout,
         capturedAt: at,
-        assignedGame: input.game,
+        assignedGame: game,
         matchId: null,
       };
       state.queueEntryConfigs[queueEntryId] = entryConfig;
@@ -2251,14 +2284,19 @@ export class ArcadeService {
 
   async startMatch(input: StartArcadeMatchInput): Promise<StartArcadeMatchResult> {
     const queueEntryIds = this.requireEntryIds(input.queueEntryIds);
-    if (!GAMES.has(input.game)) throw new ArcadeServiceError('INVALID_GAME', 'match game is not a Twilio Games game');
+    if (!isArcadeGame(input.game)) throw new ArcadeServiceError('INVALID_GAME', 'match game is not a Twilio Games game');
     const principal = this.authorizeOperator(input.authorization, 'MATCH_UNAUTHORIZED');
     const reason = operatorAuditReason(principal, input.reason);
     return this.execute('START_MATCH', input.idempotencyKey, null, {
       queueEntryIds, game: input.game, reason, authorizedBy: principal,
     }, (state, config, at) => {
       this.requireQueueOn(config);
+      const game = requireEnabledPlayableGame(config, input.game, 'match game');
       const entries = queueEntryIds.map(id => this.requireEntry(state, id));
+      const capacity = arcadeGameDefinition(game).humanCapacity;
+      if (capacity === null || entries.length > capacity) {
+        throw new ArcadeServiceError('MATCH_NOT_READY', `${game} accepts at most ${capacity ?? 0} queue entries`);
+      }
       for (const entry of entries) {
         if (entry.status !== 'ACTIVE_LOBBY') {
           throw new ArcadeServiceError('MATCH_NOT_READY', `queue entry ${entry.id} is not in the active lobby`);
@@ -2275,8 +2313,8 @@ export class ArcadeService {
       if (new Set(snapshots.map(snapshot => snapshot.cabinetId)).size !== 1) {
         throw new ArcadeServiceError('MATCH_NOT_READY', 'all match entries must belong to one cabinet');
       }
-      if (snapshots.some(snapshot => snapshot.assignedGame !== input.game)) {
-        throw new ArcadeServiceError('MATCH_NOT_READY', `all match entries must be checked in for ${input.game}`);
+      if (snapshots.some(snapshot => snapshot.assignedGame !== game)) {
+        throw new ArcadeServiceError('MATCH_NOT_READY', `all match entries must be checked in for ${game}`);
       }
       for (const entry of entries) {
         const snapshot = own(state.queueEntryConfigs, entry.id)!;
@@ -4345,6 +4383,7 @@ export class ArcadeService {
       rank: participantResult?.rank ?? null,
       won: participantResult?.won ?? null,
       durationSeconds: participantResult?.durationSeconds ?? null,
+      score: participantResult?.score ?? null,
       freePlay: config.coins.chargePolicy === 'free',
     });
     const notificationScope = kind === 'STATION_ADMITTED'
