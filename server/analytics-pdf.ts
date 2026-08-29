@@ -8,13 +8,15 @@ export function analyticsPdf(report: AnalyticsReport): Buffer {
     `Participants: ${report.summary.participants}`,
     `Sessions: ${report.summary.sessions}`,
     `Completed: ${report.summary.completed}`,
+    `Abandoned: ${report.summary.abandoned}`,
     `Completion rate: ${Math.round(report.summary.completionRate * 100)}%`,
     `Active play time: ${formatDuration(report.summary.playSeconds)}`,
     `Voice commands: ${report.summary.voiceCommands}`,
     '', 'GAME PERFORMANCE',
-    ...Object.entries(report.games).map(([game, value]) => `${game.toUpperCase()}: ${value.participants} participants | ${value.sessions} sessions | ${Math.round(value.completionRate * 100)}% complete | ${formatDuration(value.playSeconds)}`),
+    ...Object.entries(report.games).map(([game, value]) => `${game.toUpperCase()}: ${value.participants} participants | ${value.sessions} sessions | ${value.completed} completed | ${value.abandoned} abandoned | ${formatDuration(value.playSeconds)} active`),
     '', 'TOP SELECTIONS',
     `Maps: ${list(report.selections.maps)}`,
+    `Songs: ${list(report.selections.songs)}`,
     `Characters: ${list(report.selections.characters)}`,
     `Vehicles: ${list(report.selections.vehicles)}`,
     '', 'KEY TAKEAWAYS', ...report.insights.map(text => `- ${text}`),
@@ -66,4 +68,10 @@ function wrap(value: string, width: number): string[] {
   if (line) lines.push(line); return lines;
 }
 function list(items: { name: string; count: number }[]): string { return items.slice(0, 5).map(item => `${item.name} (${item.count})`).join(', ') || 'None'; }
-function formatDuration(seconds: number): string { const hours = Math.floor(seconds / 3600), minutes = Math.floor(seconds % 3600 / 60); return hours ? `${hours}h ${minutes}m` : `${minutes}m`; }
+function formatDuration(seconds: number): string {
+  const total = Math.max(0, Math.round(seconds));
+  const hours = Math.floor(total / 3600), minutes = Math.floor(total % 3600 / 60), remainder = total % 60;
+  if (hours) return `${hours}h ${minutes}m`;
+  if (minutes) return `${minutes}m${remainder ? ` ${remainder}s` : ''}`;
+  return `${total}s`;
+}

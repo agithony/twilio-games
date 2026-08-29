@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "models": [
+    { "id": "stage", "role": "stage", "file": "stage.glb", "transform": { "position": [0, 0, -3], "rotation": [0, 180, 0], "scale": [1, 1, 1] } },
+    { "id": "lead-singer", "role": "lead-singer", "file": "lead-singer.glb", "transform": { "position": [-1.35, 0.58, -0.25], "rotation": [0, 0, 0], "scale": [1, 1, 1] } },
+    { "id": "backup-singer", "role": "backup-singer", "file": "backup-singer.glb", "transform": { "position": [1.35, 0.58, -0.25], "rotation": [0, 0, 0], "scale": [1, 1, 1] } },
+    { "id": "drummer", "role": "drummer", "file": "drummer.glb", "transform": { "position": [0, 0, 0], "rotation": [0, 0, 0], "scale": [1, 1, 1] } },
+    { "id": "guitarist", "role": "guitarist", "file": "guitarist.glb", "transform": { "position": [3.45, 0.58, -1.2], "rotation": [0, -6.875, 0], "scale": [1, 1, 1] } }
+  ],
+  "cameras": {
+    "landscape": { "position": [0, 5.05, 13.4], "lookAt": [0, 1.18, 0.3], "fov": 39 },
+    "compact": { "position": [0, 5.05, 13.4], "lookAt": [0, 1.18, 0.3], "fov": 45 },
+    "portrait": { "position": [0, 7.2, 18.4], "lookAt": [0, 1.65, 0.65], "fov": 46 }
+  },
+  "highway": {
+    "landscape": { "position": [0, 0, 0], "rotation": [0, 0, 0], "scale": [1, 1, 1] },
+    "portrait": { "position": [0, 0, 1.4], "rotation": [0, 0, 0], "scale": [0.56, 1, 1] }
+  },
+  "drumAnchor": {
+    "mode": "stage-node",
+    "nodeName": "batteria",
+    "manualPosition": [0, 0.58, -2.55],
+    "fallbackPosition": [0, 0.58, -2.55],
+    "nodeTransform": { "position": [0, 0, 0], "rotation": [0, 0, 0], "scale": [1, 1, 1] }
+  },
+  "lighting": {
+    "ambient": { "skyColor": "#a5ebff", "groundColor": "#080c18", "intensity": 1.2 },
+    "directional": { "color": "#ffffff", "intensity": 1.4, "position": [0, 7, 6] },
+    "spotlights": [
+      { "id": "spot-left", "color": "#ef223a", "intensity": 42, "distance": 18, "angleDeg": 19.48, "penumbra": 0.72, "decay": 1.35, "position": [-5.6, 7, -1.5], "target": [-1.232, 0.4, -1.7], "beamOpacity": 0.026 },
+      { "id": "spot-right", "color": "#2188ef", "intensity": 42, "distance": 18, "angleDeg": 19.48, "penumbra": 0.72, "decay": 1.35, "position": [5.6, 7, -1.5], "target": [1.232, 0.4, -1.7], "beamOpacity": 0.026 },
+      { "id": "spot-center", "color": "#ffffff", "intensity": 42, "distance": 18, "angleDeg": 19.48, "penumbra": 0.72, "decay": 1.35, "position": [0, 8.2, -4.1], "target": [0, 0.4, -1.7], "beamOpacity": 0.026 },
+      { "id": "spot-pink", "color": "#fd7685", "intensity": 42, "distance": 18, "angleDeg": 19.48, "penumbra": 0.72, "decay": 1.35, "position": [-2.7, 6.8, -3.7], "target": [-0.594, 0.4, -1.7], "beamOpacity": 0.026 },
+      { "id": "spot-blue", "color": "#3acefa", "intensity": 42, "distance": 18, "angleDeg": 19.48, "penumbra": 0.72, "decay": 1.35, "position": [2.7, 6.8, -3.7], "target": [0.594, 0.4, -1.7], "beamOpacity": 0.026 }
+    ]
+  }
+}

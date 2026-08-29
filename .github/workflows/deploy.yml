@@ -60,6 +60,8 @@ jobs:
           ARCADE_SIGNING_SECRET: ${{ secrets.ARCADE_SIGNING_SECRET }}
           ARCADE_DISPLAY_TOKEN: ${{ secrets.ARCADE_DISPLAY_TOKEN }}
           VOICE_RELAY_TOKEN: ${{ secrets.VOICE_RELAY_TOKEN }}
+          EDITOR_TOKEN: ${{ secrets.EDITOR_TOKEN }}
+          DEEPGRAM_API_KEY: ${{ secrets.DEEPGRAM_API_KEY }}
           ARCADE_OUTBOUND_MESSAGING_ENABLED: ${{ vars.ARCADE_OUTBOUND_MESSAGING_ENABLED }}
           GAME_PHONE_NUMBER: ${{ vars.GAME_PHONE_NUMBER }}
           TWILIO_SMS_NUMBER: ${{ vars.TWILIO_SMS_NUMBER }}
@@ -124,6 +126,14 @@ jobs:
           fi
           if [ "$VOICE_RELAY_TOKEN" = "$TWILIO_AUTH_TOKEN" ]; then
             echo "VOICE_RELAY_TOKEN must be independent from TWILIO_AUTH_TOKEN." >&2
+            exit 1
+          fi
+          if [ "${#EDITOR_TOKEN}" -lt 16 ]; then
+            echo "EDITOR_TOKEN must contain at least 16 characters for production editor writes." >&2
+            exit 1
+          fi
+          if [ -z "$DEEPGRAM_API_KEY" ] || [ "$DEEPGRAM_API_KEY" = "disabled" ]; then
+            echo "DEEPGRAM_API_KEY is required while Voice Karaoke is enabled by default." >&2
             exit 1
           fi
           if [[ ! "$TWILIO_ACCOUNT_SID" =~ ^AC[0-9A-Fa-f]{32}$ ]] \
@@ -346,6 +356,8 @@ jobs:
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
           ANALYTICS_ADMIN_PIN: ${{ secrets.ANALYTICS_ADMIN_PIN }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          DEEPGRAM_API_KEY: ${{ secrets.DEEPGRAM_API_KEY }}
+          KARAOKE_CALIBRATION_OFFSET_MS: ${{ vars.KARAOKE_CALIBRATION_OFFSET_MS }}
           DUB_API_KEY: ${{ secrets.DUB_API_KEY }}
           DUB_FOLDER_ID: ${{ secrets.DUB_FOLDER_ID }}
         run: |
@@ -367,6 +379,7 @@ jobs:
                 "google-oauth-client-secret=$GOOGLE_OAUTH_CLIENT_SECRET" \
                 "analytics-admin-pin=${ANALYTICS_ADMIN_PIN:-disabled}" \
                 "openai-api-key=${OPENAI_API_KEY:-disabled}" \
+                "deepgram-api-key=${DEEPGRAM_API_KEY:-disabled}" \
                 "dub-api-key=${DUB_API_KEY:-disabled}" \
                 "dub-folder-id=${DUB_FOLDER_ID:-disabled}" \
               --output none
@@ -392,6 +405,7 @@ jobs:
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
           ANALYTICS_ADMIN_PIN: ${{ secrets.ANALYTICS_ADMIN_PIN }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          DEEPGRAM_API_KEY: ${{ secrets.DEEPGRAM_API_KEY }}
           DUB_API_KEY: ${{ secrets.DUB_API_KEY }}
           DUB_FOLDER_ID: ${{ secrets.DUB_FOLDER_ID }}
           ACR_SERVER: ${{ steps.acr-creds.outputs.server }}
@@ -401,6 +415,7 @@ jobs:
           CR_TTS_VOICE_PT_BR: ${{ vars.CR_TTS_VOICE_PT_BR }}
           DEFAULT_LOCALE: ${{ vars.DEFAULT_LOCALE }}
           OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
+          KARAOKE_CALIBRATION_OFFSET_MS: ${{ vars.KARAOKE_CALIBRATION_OFFSET_MS }}
           DUB_SHORT_DOMAIN: ${{ vars.DUB_SHORT_DOMAIN }}
           GAME_PHONE_NUMBER: ${{ vars.GAME_PHONE_NUMBER }}
           TWILIO_SMS_NUMBER: ${{ vars.TWILIO_SMS_NUMBER }}
@@ -691,7 +706,7 @@ jobs:
           # block, so it must redeclare the registry + its password secret).
           # Restrict substitution to our known vars so no other ${...} in the template is touched.
           # shellcheck disable=SC2016 # envsubst needs these names literally, not expanded here.
-          SUBST='${APP_NAME} ${CONTAINER_IMAGE} ${REVISION_SUFFIX} ${BASE_URL} ${ACR_SERVER} ${ACR_USERNAME} ${ACR_PASSWORD} ${CR_TTS_VOICE} ${CR_TTS_VOICE_PT_BR} ${DEFAULT_LOCALE} ${OPENAI_MODEL} ${DUB_SHORT_DOMAIN} ${GAME_PHONE_NUMBER} ${TWILIO_SMS_NUMBER} ${TWILIO_WHATSAPP_NUMBER} ${TWILIO_MESSAGING_SERVICE_SID} ${ARCADE_OUTBOUND_MESSAGING_ENABLED} ${TWILIO_WHATSAPP_CONTENT_SID_STATION_ADMITTED_EN_US} ${TWILIO_WHATSAPP_CONTENT_SID_STATION_ADMITTED_PT_BR} ${TWILIO_WHATSAPP_CONTENT_SID_STATION_OVERFLOW_EN_US} ${TWILIO_WHATSAPP_CONTENT_SID_STATION_OVERFLOW_PT_BR} ${TWILIO_WHATSAPP_CONTENT_SID_STATION_CALL_NOW_EN_US} ${TWILIO_WHATSAPP_CONTENT_SID_STATION_CALL_NOW_PT_BR} ${TWILIO_WHATSAPP_CONTENT_SID_STATION_RESULTS_EN_US} ${TWILIO_WHATSAPP_CONTENT_SID_STATION_RESULTS_PT_BR} ${TWILIO_WHATSAPP_CONTENT_SID_STATION_NEXT_GAME_EN_US} ${TWILIO_WHATSAPP_CONTENT_SID_STATION_NEXT_GAME_PT_BR} ${ANALYTICS_ALLOWED_EMAIL} ${TWILIO_CONVERSATION_CONFIGURATION_ID}'
+          SUBST='${APP_NAME} ${CONTAINER_IMAGE} ${REVISION_SUFFIX} ${BASE_URL} ${ACR_SERVER} ${ACR_USERNAME} ${ACR_PASSWORD} ${CR_TTS_VOICE} ${CR_TTS_VOICE_PT_BR} ${DEFAULT_LOCALE} ${OPENAI_MODEL} ${KARAOKE_CALIBRATION_OFFSET_MS} ${DUB_SHORT_DOMAIN} ${GAME_PHONE_NUMBER} ${TWILIO_SMS_NUMBER} ${TWILIO_WHATSAPP_NUMBER} ${TWILIO_MESSAGING_SERVICE_SID} ${ARCADE_OUTBOUND_MESSAGING_ENABLED} ${TWILIO_WHATSAPP_CONTENT_SID_STATION_ADMITTED_EN_US} ${TWILIO_WHATSAPP_CONTENT_SID_STATION_ADMITTED_PT_BR} ${TWILIO_WHATSAPP_CONTENT_SID_STATION_OVERFLOW_EN_US} ${TWILIO_WHATSAPP_CONTENT_SID_STATION_OVERFLOW_PT_BR} ${TWILIO_WHATSAPP_CONTENT_SID_STATION_CALL_NOW_EN_US} ${TWILIO_WHATSAPP_CONTENT_SID_STATION_CALL_NOW_PT_BR} ${TWILIO_WHATSAPP_CONTENT_SID_STATION_RESULTS_EN_US} ${TWILIO_WHATSAPP_CONTENT_SID_STATION_RESULTS_PT_BR} ${TWILIO_WHATSAPP_CONTENT_SID_STATION_NEXT_GAME_EN_US} ${TWILIO_WHATSAPP_CONTENT_SID_STATION_NEXT_GAME_PT_BR} ${ANALYTICS_ALLOWED_EMAIL} ${TWILIO_CONVERSATION_CONFIGURATION_ID}'
           envsubst "$SUBST" < .github/containerapp.yaml > /tmp/containerapp.yaml
 
           if az containerapp show --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" \
@@ -814,6 +829,7 @@ jobs:
                 "google-oauth-client-secret=${GOOGLE_OAUTH_CLIENT_SECRET:-}" \
                 "analytics-admin-pin=${ANALYTICS_ADMIN_PIN:-disabled}" \
                 "openai-api-key=${OPENAI_API_KEY:-disabled}" \
+                "deepgram-api-key=${DEEPGRAM_API_KEY:-disabled}" \
                 "dub-api-key=${DUB_API_KEY:-disabled}" \
                 "dub-folder-id=${DUB_FOLDER_ID:-disabled}" \
               --output none
@@ -913,7 +929,7 @@ jobs:
           SMOKE_OK=false
           for attempt in $(seq 1 30); do
             FAILED_ROUTES=()
-            for route in /livez /healthz / /instructions /join /player /analytics /operator; do
+            for route in /livez /healthz / /instructions /join /player /karaoke.html /analytics /operator; do
               RESULT=$(curl --silent --show-error --output /dev/null --write-out '%{http_code} %{redirect_url}' \
                 --connect-timeout 5 --max-time 20 "https://${REVISION_FQDN}${route}" || true)
               CODE=${RESULT%% *}
@@ -1001,6 +1017,7 @@ jobs:
           echo "  Deployment complete!"
           echo "  App:            https://${FQDN}"
           echo "  Racer display:  https://${FQDN}/play.html?display=1&room=4821"
+          echo "  Voice Karaoke:  https://${FQDN}/karaoke.html"
           echo "  Editor:         https://${FQDN}/editor"
           echo "  Garage:         https://${FQDN}/garage"
           echo "  Voice webhook:  https://${FQDN}/voice/incoming"

@@ -9,8 +9,17 @@ import twilio from 'twilio';
 import { GameServer } from './game-server';
 import { BattleServer } from './battle-server';
 import { FighterServer } from './fighter-server';
+import { KaraokeServer } from './karaoke-server';
+import {
+  KaraokeMediaRuntime,
+  type KaraokeMediaAttempt,
+  type KaraokeMediaFinalResult,
+} from './karaoke-media-runtime';
+import { DirectDeepgramLyricRecognizerFactory } from './karaoke-deepgram-recognizer';
+import type { KaraokeLyricRecognizerFactory } from './karaoke-lyric-recognizer';
+import { KaraokeVoiceSession, type KaraokeVoiceEndHandoff, type KaraokeVoiceSnapshot } from './karaoke-voice';
 import { ConversationRelayAdapter } from './conversation-relay';
-import { twimlConnectRelay, twimlHangup, twimlMessage, twimlEmpty, twimlSayAndHangup } from './twiml';
+import { twimlConnectRelay, twimlHangup, twimlKaraokeMedia, twimlMessage, twimlEmpty, twimlSayAndHangup } from './twiml';
 import { validateTwilioSignature } from './twilio-signature';
 import { ManifestStore } from './manifest-store';
 import { parseManifest } from '../shared/asset-manifest';
@@ -18,6 +27,13 @@ import { mergeMapConfig } from '../shared/maps-store';
 import { seedMapsPlan } from './maps-seed';
 import { DEFAULT_ROOM } from '../shared/constants';
 import { appendResults, MAX_LEADERBOARD_HISTORY, parseLeaderboard, parseLeaderboardStrict, topEntries, type LeaderboardEntry } from '../shared/leaderboard-store';
+import {
+  appendKaraokeResult,
+  parseKaraokeLeaderboard,
+  parseKaraokeLeaderboardStrict,
+  topKaraokeEntries,
+  type KaraokeLeaderboardEntry,
+} from '../shared/karaoke-leaderboard-store';
 import { speechSafeText } from '../shared/speech-text';
 import { SmsConcierge, type ConciergeRoom } from './sms-concierge';
 import { OpenAiClient, NullLlmClient, type LlmClient, type LlmTurn } from './llm';
@@ -38,6 +54,23 @@ import { GoogleAnalyticsAuth } from './google-analytics-auth';
 import type { ArcadeApi, PlayerResetCleanupContext } from './arcade-api';
 import type { ArcadeTacGateway } from './arcade-tac-gateway';
 import { DEFAULT_LOCALE, SUPPORTED_LOCALES, resolveLocale, type SupportedLocale } from '../shared/i18n/locales';
+import { KARAOKE_COUNTDOWN_MS, type KaraokeResult } from '../shared/karaoke-protocol';
+import { isSafeKaraokeId, KARAOKE_SONG_DURATION_MS } from '../shared/karaoke';
+import { KARAOKE_DEVELOPMENT_SONGS } from '../shared/karaoke-songs';
+import {
+  EMPTY_KARAOKE_TIMING_CONFIG,
+  applyKaraokeTimingConfig,
+  parseKaraokeTimingConfig,
+  type KaraokeTimingConfig,
+} from '../shared/karaoke-timings';
+import {
+  DEFAULT_KARAOKE_VENUE,
+  cloneKaraokeVenueConfig,
+  isSafeKaraokeGlbBasename,
+  parseKaraokeVenueConfig,
+  type KaraokeVenueConfig,
+} from '../shared/karaoke-venue';
+import type { PlayableArcadeGame } from '../shared/arcade-games';
 import { RACER_MESSAGES } from '../shared/i18n/racer';
 import { MONSTERS_MESSAGES } from '../shared/i18n/monsters';
 import { createTranslator, normalizeForMatching } from '../shared/i18n/translate';
@@ -59,6 +92,15 @@ import {
 const BATTLE_VOICE_RECONNECT_GRACE_MS = 30_000;
 const FIGHTER_VOICE_RECONNECT_GRACE_MS = 30_000;
 const RACER_VOICE_RECONNECT_GRACE_MS = 30_000;
+const KARAOKE_VOICE_RECONNECT_GRACE_MS = 30_000;
+const KARAOKE_MEDIA_GRACE_SECONDS = 5;
+const KARAOKE_FAILURE_LOCALE_RETENTION_MS = 5 * 60_000;
+const KARAOKE_HANDOFF_RESPONSE_RETENTION_MS = 5 * 60_000;
+const KARAOKE_MAX_HANDOFF_RESPONSES = 256;
+const KARAOKE_COMPLETION_RETRY_SECONDS = 1;
+const KARAOKE_MAX_COMPLETION_RETRIES = 3;
+const KARAOKE_MEDIA_PAUSE_SECONDS = (KARAOKE_COUNTDOWN_MS + KARAOKE_SONG_DURATION_MS) / 1_000
+  + KARAOKE_MEDIA_GRACE_SECONDS;
 const VOICE_XML_HEADERS = { 'Content-Type': 'text/xml; charset=utf-8' } as const;
 const VOICE_UNAVAILABLE_MESSAGES: Record<SupportedLocale, string> = {
   'en-US': 'Twilio Games voice play is unavailable right now. Please ask booth staff for help. Goodbye.',
@@ -113,12 +155,42 @@ interface RacerVoiceCallBinding {
   activeAdapter: ConversationRelayAdapter | null;
   leaveTimer: ReturnType<typeof setTimeout> | null;
 }
+interface KaraokeHandoffIntent {
+  handoffData: string;
+  roomCode: string;
+  playerId: string;
+  songId: string;
+  loadingGeneration: number;
+  locale: SupportedLocale;
+}
+interface KaraokeVoiceCallBinding {
+  code: string;
+  playerId: string;
+  locale: SupportedLocale;
+  accountSid: string;
+  activeSession: KaraokeVoiceSession | null;
+  leaveTimer: ReturnType<typeof setTimeout> | null;
+  pendingHandoff: KaraokeHandoffIntent | null;
+  attemptId: string | null;
+  streamName: string | null;
+  streamSid: string | null;
+  lifecycle: 'setup' | 'handoff-pending' | 'media-issued' | 'media-started' | 'media-finalized' | 'completed' | 'failed';
+  mediaStarted: boolean;
+  mediaFinalized: boolean;
+  scoreAccepted: boolean;
+  completed: boolean;
+  completionRetries: number;
+}
+type MountedVoiceGame = 'racer' | 'battle' | 'fighter' | 'karaoke';
 
 export class HttpServer {
   private server: http.Server;
   private game: GameServer;
   private battle: BattleServer;
   private fighter: FighterServer;
+  private karaoke: KaraokeServer;
+  private karaokeMedia: KaraokeMediaRuntime;
+  private karaokeMediaWss: WebSocketServer;
   private voiceWss: WebSocketServer;
   private readonly port: number;
   private readonly authToken?: string;
@@ -133,7 +205,15 @@ export class HttpServer {
   /** LIVE Voice Monsters arena config (transform/camera/spin); persistent-mount default. */
   private readonly arenaPath: string;
   private readonly bundledArenaPath?: string;
+  /** LIVE Voice Karaoke venue config and its immutable image seed. */
+  private readonly karaokeVenuePath: string;
+  private readonly bundledKaraokeVenuePath?: string;
+  private readonly karaokeTimingsPath: string;
+  private karaokeTimingConfig: KaraokeTimingConfig = EMPTY_KARAOKE_TIMING_CONFIG;
+  private karaokeTimingWrite: Promise<void> = Promise.resolve();
+  private readonly karaokeAssetDirectory: string;
   private readonly leaderboardPath: string;
+  private readonly karaokeLeaderboardPath: string;
   private readonly editorToken?: string;
   private readonly analytics: AnalyticsStore;
   private readonly analyticsObserver: AnalyticsObserver;
@@ -152,6 +232,8 @@ export class HttpServer {
    *  CR_TTS_VOICE env; empty uses Relay's calmer default voice. */
   private readonly crVoice: string;
   private readonly voiceRelayToken: string;
+  private readonly karaokeCalibrationOffsetMs: number;
+  private readonly deepgramConfigured: boolean;
   private readonly defaultLocale: SupportedLocale;
   private readonly standaloneVoiceEnabled: boolean;
   /** Cached selectable cars/maps for the lobby (refreshed from manifest + maps.json periodically). */
@@ -161,7 +243,7 @@ export class HttpServer {
    *  with the same track-specific board shown on screen instead of a stale/global record. */
   private leaderboardEntriesCache: LeaderboardEntry[] = [];
   private leaderboardLoaded = false;
-  /** Serializes leaderboard writes so two near-simultaneous race finishes can't clobber each other. */
+  /** Serializes both leaderboard files so appends, resets, and composite ETags remain ordered. */
   private leaderboardWrite: Promise<void> = Promise.resolve();
   /** SMS concierge (per-phone onboarding + car/map selection). */
   private concierge: SmsConcierge;
@@ -183,18 +265,23 @@ export class HttpServer {
   private racerVoiceCallBindings = new Map<string, RacerVoiceCallBinding>();
   private fighterVoice = new Map<string, Set<FighterVoiceSession>>();
   private fighterVoiceCallBindings = new Map<string, FighterVoiceCallBinding>();
+  private karaokeVoice = new Map<string, Set<KaraokeVoiceSession>>();
+  private karaokeVoiceCallBindings = new Map<string, KaraokeVoiceCallBinding>();
+  private karaokeFailureLocales = new Map<string, { locale: SupportedLocale; timer: ReturnType<typeof setTimeout> }>();
+  private karaokeHandoffResponses = new Map<string, { xml: string; expiresAtMs: number }>();
+  private voiceAccountSids = new Map<string, string>();
   private stationVoiceReconnectRoutes = new Map<string, {
-    game: 'racer'|'monsters'|'fighter'; roomCode: string; readyEntryId: string;
+    game: PlayableArcadeGame; roomCode: string; readyEntryId: string;
     matchId: string; launchGeneration: number; locale: SupportedLocale;
   }>();
   private voiceReconnectAttempts = new Map<string, number>();
-  private standaloneDisplays = new Map<'racer'|'battle'|'fighter',Map<WebSocket,number>>();
+  private standaloneDisplays = new Map<MountedVoiceGame,Map<WebSocket,number>>();
   private fighterMaps: FighterMapEntry[] = FIGHTER_MAPS;
   private readonly fighterMapsPath: string;
   private readonly bundledFighterMapsPath: string;
   private readonly fighterPreviewDir: string;
   private readonly activeStationEngines = new Set<string>();
-  private readonly voiceSockets = new Map<WebSocket, () => { game: 'racer'|'monsters'|'fighter'; roomCode: string } | null>();
+  private readonly voiceSockets = new Map<WebSocket, () => { game: PlayableArcadeGame; roomCode: string } | null>();
   /** The conversational AI host (OpenAI, or a null no-op when OPENAI_API_KEY is unset → scripted
    *  fallback). Turns a caller's natural-language menu utterances into spoken replies + game actions. */
   private llm: LlmClient;
@@ -211,7 +298,12 @@ export class HttpServer {
     bundledMapsPath?: string;// image-bundled default levels; seeded into mapsPath once on first boot
     arenaPath?: string;      // injectable; LIVE Voice Monsters arena config (default data/arena.json)
     bundledArenaPath?: string;// image-bundled default arena config; seeds arenaPath on first boot
+    karaokeVenuePath?: string;// injectable; LIVE Voice Karaoke venue config (default data/karaoke-venue.json)
+    bundledKaraokeVenuePath?: string;// image-bundled venue seed copied on first boot
+    karaokeTimingsPath?: string;// injectable; persistent sparse per-word timing overrides
+    karaokeAssetDirectory?: string;// direct release GLB directory (default assets/karaoke)
     leaderboardPath?: string;// injectable; persistent global leaderboard JSON (default data/leaderboard.json)
+    karaokeLeaderboardPath?: string;// injectable; persistent Karaoke score history (default data/karaoke-leaderboard.json)
     editorToken?: string;    // when set, /api writes require ?token= or x-editor-token; open if unset
     clientDir?: string;      // the Vite-built client to serve (prod single-process); default client/dist
     gamePhoneNumber?: string;// the number players CALL to join (shown + QR-encoded in the lobby)
@@ -221,6 +313,7 @@ export class HttpServer {
     bundledFighterMapsPath?: string;
     fighterPreviewDir?: string;
     fighterDisplayToken?: string;
+    karaokeDisplayToken?: string;
     analyticsPath?: string;
     googleOAuthClientId?: string;
     googleOAuthClientSecret?: string;
@@ -231,6 +324,10 @@ export class HttpServer {
     arcadeApi?: ArcadeApi;
     arcadeTacGateway?: ArcadeTacGateway;
     standaloneVoiceEnabled?: boolean;
+    voiceRelayToken?: string;
+    deepgramApiKey?: string;
+    karaokeCalibrationOffsetMs?: number;
+    karaokeLyricRecognizerFactory?: KaraokeLyricRecognizerFactory;
   }) {
     this.port = opts.port;
     this.authToken = opts.authToken;
@@ -247,7 +344,12 @@ export class HttpServer {
     this.bundledMapsPath = opts.bundledMapsPath;
     this.arenaPath = opts.arenaPath ?? 'data/arena.json';
     this.bundledArenaPath = opts.bundledArenaPath;
+    this.karaokeVenuePath = opts.karaokeVenuePath ?? 'data/karaoke-venue.json';
+    this.bundledKaraokeVenuePath = opts.bundledKaraokeVenuePath;
+    this.karaokeTimingsPath = opts.karaokeTimingsPath ?? 'data/karaoke-timings.json';
+    this.karaokeAssetDirectory = opts.karaokeAssetDirectory ?? 'assets/karaoke';
     this.leaderboardPath = opts.leaderboardPath ?? 'data/leaderboard.json';
+    this.karaokeLeaderboardPath = opts.karaokeLeaderboardPath ?? 'data/karaoke-leaderboard.json';
     this.editorToken = opts.editorToken;
     this.analyticsAuth = opts.analyticsAuth ?? new GoogleAnalyticsAuth({
       clientId: opts.googleOAuthClientId, clientSecret: opts.googleOAuthClientSecret,
@@ -260,7 +362,9 @@ export class HttpServer {
     this.arcadeTacGateway = opts.arcadeTacGateway;
     this.analytics = new AnalyticsStore(opts.analyticsPath ?? 'data/analytics.json', opts.googleOAuthClientSecret?.trim() || 'twilio-games-analytics');
     this.analyticsObserver = new AnalyticsObserver(this.analytics);
-    if (process.env.NODE_ENV === 'production' && !this.editorToken) console.warn('[security] EDITOR_TOKEN is unset; editor writes remain open');
+    if (process.env.NODE_ENV === 'production' && !this.editorToken) {
+      throw new Error('EDITOR_TOKEN is required in production');
+    }
     if (process.env.NODE_ENV === 'production' && !this.analyticsAuth.configured) console.warn('[security] Analytics authentication is unset; analytics access is disabled');
     this.clientDir = opts.clientDir ?? 'client/dist';
     this.gamePhoneNumber = (opts.gamePhoneNumber ?? '').trim();
@@ -270,7 +374,12 @@ export class HttpServer {
     this.bundledFighterMapsPath = opts.bundledFighterMapsPath ?? 'assets/fighters/maps/maps.json';
     this.fighterPreviewDir = opts.fighterPreviewDir ?? 'data/fighter-previews';
     this.crVoice = (process.env.CR_TTS_VOICE ?? '').trim();
-    this.voiceRelayToken = (process.env.VOICE_RELAY_TOKEN ?? this.authToken ?? '').trim();
+    this.voiceRelayToken = resolveVoiceRelayToken(
+      this.publicBaseUrl,
+      opts.voiceRelayToken ?? process.env.VOICE_RELAY_TOKEN,
+      this.authToken,
+      process.env.NODE_ENV,
+    );
     this.defaultLocale = resolveLocale(process.env.DEFAULT_LOCALE, DEFAULT_LOCALE);
     this.standaloneVoiceEnabled = opts.standaloneVoiceEnabled ?? process.env.NODE_ENV !== 'production';
     // Conversational AI host: OpenAI when OPENAI_API_KEY is set (model via OPENAI_MODEL), else a
@@ -295,6 +404,43 @@ export class HttpServer {
     // racer's continuous-sim GameServer). Mounted on the same HTTP host so one number serves both.
     this.battle = new BattleServer({ server: this.server, displayToken: opts.fighterDisplayToken });
     this.fighter = new FighterServer({ server: this.server, displayToken: opts.fighterDisplayToken ?? process.env.FIGHTER_DISPLAY_TOKEN });
+    this.karaoke = new KaraokeServer({ displayToken: opts.karaokeDisplayToken ?? opts.fighterDisplayToken });
+    this.karaokeMediaWss = new WebSocketServer({
+      noServer: true,
+      maxPayload: 16 * 1024,
+      perMessageDeflate: false,
+    });
+    const deepgramApiKey = (opts.deepgramApiKey ?? '').trim();
+    this.deepgramConfigured = Boolean(deepgramApiKey && deepgramApiKey !== 'disabled');
+    this.karaokeCalibrationOffsetMs = opts.karaokeCalibrationOffsetMs ?? 0;
+    if (!Number.isInteger(this.karaokeCalibrationOffsetMs)
+      || this.karaokeCalibrationOffsetMs < -5_000 || this.karaokeCalibrationOffsetMs > 5_000) {
+      throw new TypeError('karaokeCalibrationOffsetMs must be an integer from -5000 to 5000');
+    }
+    const karaokeLyricRecognizerFactory = opts.karaokeLyricRecognizerFactory
+      ?? (deepgramApiKey && deepgramApiKey !== 'disabled'
+        ? new DirectDeepgramLyricRecognizerFactory({ apiKey: deepgramApiKey })
+        : undefined);
+    this.karaokeMedia = new KaraokeMediaRuntime({
+      karaokeServer: this.karaoke,
+      lyricRecognizerFactory: karaokeLyricRecognizerFactory,
+      isSecureRequest: request => isSecureKaraokeMediaRequest(request, this.publicBaseUrl),
+      validateUpgradeSignature: request => {
+        if (!this.validateSignatures) return true;
+        const header = request.headers['x-twilio-signature'];
+        const signature = Array.isArray(header) ? header.length === 1 ? header[0] : undefined : header;
+        const exactUrl = `${this.publicBaseUrl.replace(/^https?/, 'wss')}/karaoke-media`;
+        return this.authTokens.some(authToken => validateTwilioSignature({
+          authToken, signature, url: exactUrl, params: {},
+        }));
+      },
+      upgrade: (request, socket, head, accepted) => {
+        this.karaokeMediaWss.handleUpgrade(request, socket, head, ws => accepted(ws));
+      },
+      onSessionStarted: (attempt, streamSid) => this.onKaraokeMediaStarted(attempt, streamSid),
+      onSessionFinalized: (result, attempt) => this.onKaraokeMediaFinalized(result, attempt),
+      onSessionAborted: attempt => this.onKaraokeMediaAborted(attempt),
+    });
     this.arcadeApi?.setStationAbortHandler?.((game, roomCode, removal) => {
       if (removal === 'retire') this.retireStationEngine(game, roomCode);
       else this.abortStationEngine(game, roomCode);
@@ -319,7 +465,7 @@ export class HttpServer {
           this.battleVoiceCallBindings.delete(callSid);this.stationVoiceReconnectRoutes.delete(callSid);this.voiceReconnectAttempts.delete(callSid);
         }
         this.battle.voiceExpectHumanPlayers(roomCode,count,activeEnginePlayerIds);
-      } else {
+      } else if (game === 'fighter') {
         const retained=new Set(activeEnginePlayerIds);
         for(const[callSid,binding]of this.fighterVoiceCallBindings){
           if(binding.code!==roomCode||retained.has(binding.playerId))continue;
@@ -327,16 +473,31 @@ export class HttpServer {
           this.fighterVoiceCallBindings.delete(callSid);this.stationVoiceReconnectRoutes.delete(callSid);this.voiceReconnectAttempts.delete(callSid);
         }
         this.fighter.voiceExpectHumanPlayers(roomCode,count,activeEnginePlayerIds);
-      }
+      } else if (game === 'karaoke') {
+        const retained=new Set(activeEnginePlayerIds);
+        for(const[callSid,binding]of this.karaokeVoiceCallBindings){
+          if(binding.code!==roomCode||retained.has(binding.playerId))continue;
+          this.clearKaraokeVoiceBinding(callSid, false);
+          this.stationVoiceReconnectRoutes.delete(callSid);this.voiceReconnectAttempts.delete(callSid);
+        }
+        this.karaoke.voiceExpectHumanPlayers(roomCode,count,activeEnginePlayerIds);
+      } else assertNever(game);
     });
     this.arcadeApi?.setPlayerResetCleanupHandler?.(context => this.cleanupResetPlayerHistory(context));
     const allowBrowserPlayer = (roomCode: string) => !this.arcadeApi?.isStationEngineRoom(roomCode);
+    const localKaraokeBrowserTesting = karaokeBrowserTestingAllowed(process.env.NODE_ENV, this.publicBaseUrl);
     this.game.setBrowserPlayerAdmission(allowBrowserPlayer);
     this.battle.setBrowserPlayerAdmission(allowBrowserPlayer);
     this.fighter.setBrowserPlayerAdmission(allowBrowserPlayer);
+    this.karaoke.setBrowserPlayerAdmission(roomCode => localKaraokeBrowserTesting
+      && allowBrowserPlayer(roomCode)
+      && this.standaloneVoiceEnabled
+      && this.arcadeApi?.standaloneVoiceAvailable?.() !== false
+      && this.arcadeApi?.standaloneGameEnabled?.('karaoke') !== false);
     this.game.setOnDisplayAuthenticated(ws => this.registerStandaloneDisplay('racer', ws));
     this.battle.setOnDisplayAuthenticated(ws => this.registerStandaloneDisplay('battle', ws));
     this.fighter.setOnDisplayAuthenticated(ws => this.registerStandaloneDisplay('fighter', ws));
+    this.karaoke.setOnDisplayAuthenticated(ws => this.registerStandaloneDisplay('karaoke', ws));
     // Feed newly-created rooms the selectable cars (manifest) + maps (maps.json). Reads are async
     // and the provider is sync, so keep a cache refreshed at startup + on an interval; rooms read
     // the cache. Empty until the first refresh resolves (rooms then reconfigure on next create).
@@ -411,6 +572,33 @@ export class HttpServer {
       const set = this.fighterVoice.get(roomCode); if (!set) return;
       for (const session of set) session.onStateChanged();
     });
+    this.karaoke.setOnRoomEvents((roomCode, events) => {
+      for (const event of events) {
+        if (event.type === 'result') this.persistKaraokeResult(roomCode, event.result);
+        else if (event.type === 'loading_timeout') this.handleKaraokeLoadingTimeout(roomCode);
+      }
+      this.notifyKaraokeVoiceState(roomCode);
+    });
+    this.karaoke.setOnRoomState(roomCode => {
+      const room = this.karaoke.findRoom(roomCode);
+      if (room) this.analyticsObserver.karaokeState(room);
+      const state = room?.state();
+      const result = state?.result;
+      this.updateStationEngineLifecycle(
+        'karaoke', roomCode, state?.phase, ['countdown', 'performing'], ['results'],
+        result ? [{
+          enginePlayerId: result.playerId,
+          rank: 1,
+          completed: true,
+          won: null,
+          score: Math.max(0, Math.min(100_000, Math.round(result.score))),
+          durationSeconds: KARAOKE_SONG_DURATION_MS / 1_000,
+        }] : [],
+        ['loading', 'finalizing'],
+      );
+      this.resetCompletedKaraokeAttempt(roomCode, state?.phase);
+      this.notifyKaraokeVoiceState(roomCode);
+    });
     // SMS concierge: resolves a room code to a live Room wrapped as a ConciergeRoom (adds car names).
     this.concierge = new SmsConcierge({ findRoom: (code) => this.conciergeRoom(code) });
     this.smsSweepTimer = setInterval(() => this.concierge.sweep(), 5 * 60 * 1000);
@@ -420,6 +608,11 @@ export class HttpServer {
       const standaloneDisplay = this.standaloneVoiceEnabled
         && new URL(req.url ?? '/', 'http://localhost').searchParams.get('display') === '1'
         && !(this.arcadeApi?.requiresStationVoiceAssignment() ?? false);
+      if (path === '/karaoke' && req.headers.origin !== new URL(this.publicBaseUrl).origin) {
+        socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
+        socket.destroy();
+        return;
+      }
       if (path === '/voice') {
         if (this.validateSignatures) {
           const header = req.headers['x-twilio-signature'];
@@ -447,6 +640,10 @@ export class HttpServer {
         this.fighter.handleUpgrade(req, socket, head, ws => {
           if (standaloneDisplay) this.registerStandaloneDisplay('fighter', ws);
         });
+      } else if (path === '/karaoke') {
+        this.karaoke.handleUpgrade(req, socket, head);
+      } else if (path === '/karaoke-media') {
+        this.karaokeMedia.handleUpgrade(req, socket, head);
       } else {
         socket.destroy();
       }
@@ -454,7 +651,7 @@ export class HttpServer {
   }
 
   private updateStationEngineLifecycle(
-    game: 'monsters' | 'fighter',
+    game: Exclude<PlayableArcadeGame, 'racer'>,
     roomCode: string,
     phase: string | undefined,
     startedPhases: readonly string[],
@@ -480,7 +677,7 @@ export class HttpServer {
     }
   }
 
-  private abortStationEngine(game: 'racer' | 'monsters' | 'fighter', roomCode: string): void {
+  private abortStationEngine(game: PlayableArcadeGame, roomCode: string): void {
     for (const [socket, binding] of this.voiceSockets) {
       const bound = binding();
       if (bound?.game === game && bound.roomCode === roomCode) socket.close(4002, 'station recovery');
@@ -503,7 +700,7 @@ export class HttpServer {
         this.battleVoiceCallBindings.delete(callSid);
       }
       this.battle.abortRoom(roomCode);
-    } else {
+    } else if (game === 'fighter') {
       for (const session of [...(this.fighterVoice.get(roomCode) ?? [])]) session.handleReplaced();
       this.fighterVoice.delete(roomCode);
       for (const [callSid, binding] of this.fighterVoiceCallBindings) {
@@ -512,7 +709,19 @@ export class HttpServer {
         this.fighterVoiceCallBindings.delete(callSid);
       }
       this.fighter.abortRoom(roomCode);
-    }
+    } else if (game === 'karaoke') {
+      for (const session of [...(this.karaokeVoice.get(roomCode) ?? [])]) session.handleReplaced();
+      this.karaokeVoice.delete(roomCode);
+      for (const [callSid, binding] of this.karaokeVoiceCallBindings) {
+        if (binding.code !== roomCode) continue;
+        if (binding.attemptId) this.karaokeMedia.abortAttempt(binding.attemptId);
+        if (binding.leaveTimer) clearTimeout(binding.leaveTimer);
+        this.karaokeVoiceCallBindings.delete(callSid);
+        this.voiceAccountSids.delete(callSid);
+      }
+      this.analyticsObserver.karaokeAborted(roomCode);
+      this.karaoke.abortRoom(roomCode);
+    } else assertNever(game);
     for(const [callSid,route] of this.stationVoiceReconnectRoutes){
       if(route.game!==game||route.roomCode!==roomCode)continue;
       this.stationVoiceReconnectRoutes.delete(callSid);
@@ -521,7 +730,7 @@ export class HttpServer {
     this.activeStationEngines.delete(`${game}:${roomCode}`);
   }
 
-  private retireStationEngine(game: 'racer' | 'monsters' | 'fighter', roomCode: string): void {
+  private retireStationEngine(game: PlayableArcadeGame, roomCode: string): void {
     const endCalls = () => {
       for (const [socket, binding] of this.voiceSockets) {
         const bound = binding();
@@ -557,7 +766,7 @@ export class HttpServer {
           this.stationVoiceReconnectRoutes.delete(callSid);this.voiceReconnectAttempts.delete(callSid);
         }
         this.battle.abortRoom(roomCode);
-      } else {
+      } else if (game === 'fighter') {
         for(const session of [...(this.fighterVoice.get(roomCode)??[])])session.handleReplaced();
         this.fighterVoice.delete(roomCode);
         for(const[callSid,binding]of this.fighterVoiceCallBindings){
@@ -570,7 +779,22 @@ export class HttpServer {
           this.stationVoiceReconnectRoutes.delete(callSid);this.voiceReconnectAttempts.delete(callSid);
         }
         this.fighter.abortRoom(roomCode);
-      }
+      } else if (game === 'karaoke') {
+        for(const session of [...(this.karaokeVoice.get(roomCode)??[])])session.handleReplaced();
+        this.karaokeVoice.delete(roomCode);
+        for(const[callSid,binding]of this.karaokeVoiceCallBindings){
+          if(binding.code!==roomCode)continue;
+          if(binding.attemptId)this.karaokeMedia.abortAttempt(binding.attemptId);
+          if(binding.leaveTimer)clearTimeout(binding.leaveTimer);
+          this.karaokeVoiceCallBindings.delete(callSid);this.voiceAccountSids.delete(callSid);
+        }
+        for(const[callSid,route]of this.stationVoiceReconnectRoutes){
+          if(route.game!=='karaoke'||route.roomCode!==roomCode)continue;
+          this.stationVoiceReconnectRoutes.delete(callSid);this.voiceReconnectAttempts.delete(callSid);
+        }
+        this.analyticsObserver.karaokeAborted(roomCode);
+        this.karaoke.abortRoom(roomCode);
+      } else assertNever(game);
       this.activeStationEngines.delete(`${game}:${roomCode}`);
     };
     if (game === 'racer') {
@@ -581,9 +805,9 @@ export class HttpServer {
       const settled = Promise.all([...this.battleVoice.get(roomCode) ?? []]
         .map(session => session.whenSpeechSettled()));
       void Promise.race([settled, sleep(RELAY_SPEECH_SETTLE_TIMEOUT_MS)]).then(finalize);
-    } else {
+    } else if (game === 'fighter' || game === 'karaoke') {
       finalize();
-    }
+    } else assertNever(game);
   }
 
   /** Refresh the cached lobby choices: car count + names from the manifest, map keys from maps.json. */
@@ -670,41 +894,102 @@ export class HttpServer {
     }).catch((e) => console.error('leaderboard persist error:', e));
   }
 
-  private async leaderboardAdminSummary(): Promise<{ maps:Array<{map:string;records:number}>; etag:string }> {
+  private persistKaraokeResult(roomCode: string, result: KaraokeResult): void {
+    this.leaderboardWrite = this.leaderboardWrite.then(async () => {
+      let existing = '';
+      try { existing = await readFile(this.karaokeLeaderboardPath, 'utf8'); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+      const appended = appendKaraokeResult(existing, result, roomCode);
+      if (!appended.ok) {
+        console.error('Karaoke leaderboard append refused:', appended.error);
+        return;
+      }
+      await this.writeFileAtomic(this.karaokeLeaderboardPath, JSON.stringify(appended.entries));
+    }).catch(error => console.error('Karaoke leaderboard persist error:', (error as Error).message));
+  }
+
+  private async leaderboardAdminSummary(): Promise<{
+    games: Array<{ game: 'racer' | 'karaoke'; resettable: true; maps: Array<{ map: string; label?: string; records: number }> }>;
+    etag: string;
+  }> {
     await this.leaderboardWrite;
-    let entries:LeaderboardEntry[]=[];
-    try{
-      const parsed=parseLeaderboardStrict(await readFile(this.leaderboardPath,'utf8'));
-      if(!parsed)throw new Error('leaderboard storage is corrupt');entries=parsed;
-    }catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
-    const names=new Set([...this.roomConfigCache.maps,...entries.map(entry=>entry.map)]);
+    const [racerEntries, karaokeEntries] = await Promise.all([
+      this.readLeaderboardStrict(),
+      this.readKaraokeLeaderboardStrict(),
+    ]);
+    const mapNames = new Set([...this.roomConfigCache.maps, ...racerEntries.map(entry => entry.map)]);
+    const songTitles = new Map(KARAOKE_DEVELOPMENT_SONGS.map(song => [song.id, song.title]));
+    const songIds = new Set([...songTitles.keys(), ...karaokeEntries.map(entry => entry.songId)]);
     return{
-      maps:[...names].sort().map(map=>({map,records:entries.filter(entry=>entry.map===map).length})),
-      etag:this.leaderboardEtag(entries),
+      games: [
+        { game: 'racer', resettable: true, maps: [...mapNames].sort().map(map => ({
+          map, records: racerEntries.filter(entry => entry.map === map).length,
+        })) },
+        { game: 'karaoke', resettable: true, maps: [...songIds].sort().map(songId => ({
+          map: songId,
+          ...(songTitles.get(songId) ? { label: songTitles.get(songId) } : {}),
+          records: karaokeEntries.filter(entry => entry.songId === songId).length,
+        })) },
+      ],
+      etag:this.leaderboardEtag(racerEntries, karaokeEntries),
     };
   }
 
-  private leaderboardEtag(entries:readonly LeaderboardEntry[]):string {
-    return `"leaderboard-${createHash('sha256').update(JSON.stringify(entries)).digest('hex').slice(0,16)}"`;
+  private leaderboardEtag(
+    racerEntries: readonly LeaderboardEntry[],
+    karaokeEntries: readonly KaraokeLeaderboardEntry[] = [],
+  ): string {
+    return `"leaderboard-${createHash('sha256').update(JSON.stringify({ racerEntries, karaokeEntries })).digest('hex').slice(0,16)}"`;
   }
 
-  private resetLeaderboardMap(map:string,expectedEtag:string):Promise<{deleted:number;remaining:number;etag:string}> {
+  private resetLeaderboardScores(
+    game: 'racer' | 'karaoke',
+    map: string,
+    expectedEtag: string,
+  ): Promise<{deleted:number;remaining:number;etag:string}> {
     const task=this.leaderboardWrite.then(async()=>{
-      let entries:LeaderboardEntry[]=[];
-      try{
-        const parsed=parseLeaderboardStrict(await readFile(this.leaderboardPath,'utf8'));
-        if(!parsed)throw new Error('leaderboard storage is corrupt');entries=parsed;
-      }catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
-      const currentEtag=this.leaderboardEtag(entries);
+      const [racerEntries, karaokeEntries] = await Promise.all([
+        this.readLeaderboardStrict(),
+        this.readKaraokeLeaderboardStrict(),
+      ]);
+      const currentEtag=this.leaderboardEtag(racerEntries, karaokeEntries);
       if(expectedEtag!==currentEtag)throw Object.assign(new Error('leaderboard changed; refresh and confirm again'),{code:'PRECONDITION_FAILED',etag:currentEtag});
-      if(!new Set([...this.roomConfigCache.maps,...entries.map(entry=>entry.map)]).has(map))throw Object.assign(new Error('unknown map'),{code:'UNKNOWN_MAP'});
-      const remaining=entries.filter(entry=>entry.map!==map),deleted=entries.length-remaining.length;
-      await this.writeFileAtomic(this.leaderboardPath,JSON.stringify(remaining));
-      this.leaderboardEntriesCache=remaining;this.leaderboardLoaded=true;
-      return{deleted,remaining:remaining.length,etag:this.leaderboardEtag(remaining)};
+      if (game === 'racer') {
+        if(!new Set([...this.roomConfigCache.maps,...racerEntries.map(entry=>entry.map)]).has(map))throw Object.assign(new Error('unknown map'),{code:'UNKNOWN_MAP'});
+        const remaining=racerEntries.filter(entry=>entry.map!==map),deleted=racerEntries.length-remaining.length;
+        await this.writeFileAtomic(this.leaderboardPath,JSON.stringify(remaining));
+        this.leaderboardEntriesCache=remaining;this.leaderboardLoaded=true;
+        return{deleted,remaining:remaining.length,etag:this.leaderboardEtag(remaining,karaokeEntries)};
+      }
+      if(!new Set([...KARAOKE_DEVELOPMENT_SONGS.map(song=>song.id),...karaokeEntries.map(entry=>entry.songId)]).has(map))throw Object.assign(new Error('unknown song'),{code:'UNKNOWN_MAP'});
+      const remaining=karaokeEntries.filter(entry=>entry.songId!==map),deleted=karaokeEntries.length-remaining.length;
+      await this.writeFileAtomic(this.karaokeLeaderboardPath,JSON.stringify(remaining));
+      return{deleted,remaining:remaining.length,etag:this.leaderboardEtag(racerEntries,remaining)};
     });
     this.leaderboardWrite=task.then(()=>undefined,()=>undefined);
     return task;
+  }
+
+  private async readLeaderboardStrict(): Promise<LeaderboardEntry[]> {
+    try {
+      const entries = parseLeaderboardStrict(await readFile(this.leaderboardPath, 'utf8'));
+      if (entries === null) throw new Error('leaderboard storage is corrupt');
+      return entries;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+      throw error;
+    }
+  }
+
+  private async readKaraokeLeaderboardStrict(): Promise<KaraokeLeaderboardEntry[]> {
+    try {
+      const entries = parseKaraokeLeaderboardStrict(await readFile(this.karaokeLeaderboardPath, 'utf8'));
+      if (entries === null) throw new Error('Karaoke leaderboard storage is corrupt');
+      return entries;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+      throw error;
+    }
   }
 
   private cleanupResetPlayerHistory(context: PlayerResetCleanupContext): Promise<void> {
@@ -712,12 +997,17 @@ export class HttpServer {
     const enginePlayerIds = new Set(context.racers
       .filter(racer => racer.game === 'racer')
       .map(racer => `${racer.roomCode}:${racer.enginePlayerId}`));
+    const karaokeEnginePlayerIds = new Set(context.racers
+      .filter(racer => racer.game === 'karaoke')
+      .map(racer => `${racer.roomCode}:${racer.enginePlayerId}`));
     for (const racer of context.racers) {
       if (racer.game === 'racer') this.game.anonymizePlayer(racer.roomCode,racer.enginePlayerId);
       else if (racer.game === 'monsters') this.battle.anonymizePlayer(racer.roomCode,racer.enginePlayerId);
-      else this.fighter.anonymizePlayer(racer.roomCode,racer.enginePlayerId);
+      else if (racer.game === 'fighter') this.fighter.anonymizePlayer(racer.roomCode,racer.enginePlayerId);
+      else if (racer.game === 'karaoke') this.karaoke.anonymizePlayer(racer.roomCode,racer.enginePlayerId);
+      else assertNever(racer.game);
     }
-    if (!targets.size && !enginePlayerIds.size) return Promise.resolve();
+    if (!targets.size && !enginePlayerIds.size && !karaokeEnginePlayerIds.size) return Promise.resolve();
     const cleanup = this.leaderboardWrite.then(async () => {
       let entries: LeaderboardEntry[] = [];
       try {
@@ -726,8 +1016,7 @@ export class HttpServer {
         entries = parsed;
       }
       catch (error) {
-        if ((error as { code?: unknown }).code === 'ENOENT') return;
-        throw error;
+        if ((error as { code?: unknown }).code !== 'ENOENT') throw error;
       }
       let changed = false;
       const anonymized = entries.map(entry => {
@@ -744,6 +1033,28 @@ export class HttpServer {
       if(changed)await this.writeFileAtomic(this.leaderboardPath, JSON.stringify(anonymized));
       this.leaderboardEntriesCache = anonymized;
       this.leaderboardLoaded = true;
+
+      let karaokeEntries: KaraokeLeaderboardEntry[];
+      try {
+        const parsed = parseKaraokeLeaderboardStrict(await readFile(this.karaokeLeaderboardPath, 'utf8'));
+        if (parsed === null) throw new Error('Karaoke leaderboard storage is corrupt');
+        karaokeEntries = parsed;
+      } catch (error) {
+        if ((error as { code?: unknown }).code === 'ENOENT') return;
+        throw error;
+      }
+      let karaokeChanged = false;
+      const anonymizedKaraoke = karaokeEntries.map(entry => {
+        const exactEngine = entry.enginePlayerId !== undefined && karaokeEnginePlayerIds.has(entry.enginePlayerId);
+        const legacyRun = entry.enginePlayerId === undefined
+          && targets.has(createHash('sha256').update(`reset-name:${entry.name.trim().toLocaleLowerCase()}`).digest('hex'))
+          && context.racers.some(racer => racer.game === 'karaoke' && racer.completedAt !== null
+            && Math.abs(entry.at - Date.parse(racer.completedAt)) <= 60_000);
+        if (!exactEngine && !legacyRun) return entry;
+        karaokeChanged = true;
+        return { ...entry, name: 'PLAYER' };
+      });
+      if (karaokeChanged) await this.writeFileAtomic(this.karaokeLeaderboardPath, JSON.stringify(anonymizedKaraoke));
     });
     this.leaderboardWrite = cleanup.catch(error => console.error('leaderboard reset cleanup failed:', error));
     return cleanup;
@@ -834,9 +1145,10 @@ export class HttpServer {
     // `game=monsters` Relay parameter, or — with none — auto-detect the battler as the game with a live
     // display and the racer idle). Otherwise the racer adapter (default, unchanged). Decided once, on
     // the first message; thereafter all frames go to the chosen handler.
-    let route: 'racer' | 'battle' | 'fighter' | null = null;
+    let route: MountedVoiceGame | null = null;
     let battle: BattleVoiceSession | null = null;
     let fighter: FighterVoiceSession | null = null;
+    let karaoke: KaraokeVoiceSession | null = null;
     let relayCallSid = '';
     let stationCallSid = '';
     let stationReadyEntryId = '';
@@ -846,11 +1158,14 @@ export class HttpServer {
     let stationParticipantCount = 1;
     const stationConnectionId = randomUUID();
     let socketClosed = false;
-    this.voiceSockets.set(ws, () => route === 'battle'
-      ? (battle?.boundRoom ? { game: 'monsters', roomCode: battle.boundRoom } : null)
-      : route === 'fighter'
-        ? (fighter?.boundRoomCode ? { game: 'fighter', roomCode: fighter.boundRoomCode } : null)
-        : (adapter.boundRoomCode ? { game: 'racer', roomCode: adapter.boundRoomCode } : null));
+    this.voiceSockets.set(ws, () => {
+      if (route === null) return null;
+      if (route === 'battle') return battle?.boundRoom ? { game: 'monsters', roomCode: battle.boundRoom } : null;
+      if (route === 'fighter') return fighter?.boundRoomCode ? { game: 'fighter', roomCode: fighter.boundRoomCode } : null;
+      if (route === 'karaoke') return karaoke?.boundRoomCode ? { game: 'karaoke', roomCode: karaoke.boundRoomCode } : null;
+      if (route === 'racer') return adapter.boundRoomCode ? { game: 'racer', roomCode: adapter.boundRoomCode } : null;
+      return assertNever(route);
+    });
     const say = (text: string, isCurrent?: () => boolean) => sendRelayText(ws, text, relayLocale, isCurrent,route==='battle');
     const processFrame = (raw: string) => {
       if (route === null) {
@@ -867,6 +1182,7 @@ export class HttpServer {
       try {
         const frame = JSON.parse(raw);
         const type = frame?.type;
+        if (type === 'setup') relayCallSid = String(frame.callSid ?? '').trim();
         if (type === 'error') {
           const description = String(frame?.description ?? 'unknown error').slice(0, 300);
           console.error(`[CR] relay error: ${description}`);
@@ -899,19 +1215,29 @@ export class HttpServer {
         fighter.setStationManaged(stationManaged);
         if(stationManaged)fighter.setStationAssignment(stationParticipantIndex,stationParticipantCount);
         fighter.handleMessage(raw);
-      } else {
+      } else if (route === 'karaoke') {
+        if (!karaoke) karaoke = this.makeKaraokeSession(
+          say,
+          handoff => this.requestKaraokeMediaHandoff(relayCallSid, karaoke!, ws, handoff),
+        );
+        karaoke.setAuthoritativeName(stationFirstName);
+        karaoke.setStationManaged(stationManaged);
+        karaoke.handleMessage(raw);
+      } else if (route === 'racer') {
         adapter.setAuthoritativeName(stationFirstName);
         adapter.setStationManaged(stationManaged);
         if(stationManaged)adapter.setStationAssignment(stationParticipantIndex,stationParticipantCount);
         adapter.handleMessage(raw);
-      }
+      } else assertNever(route);
       try {
         const setup = JSON.parse(raw);
         if (setup?.type === 'setup') {
           relayCallSid = String(setup.callSid ?? '');
           const readyEntryId = String(setup.customParameters?.readyEntryId ?? '');
           const bound = route === 'battle' ? battle?.boundPlayerId
-            : route === 'fighter' ? fighter?.boundPlayerId : adapter.boundPlayerId;
+            : route === 'fighter' ? fighter?.boundPlayerId
+              : route === 'karaoke' ? karaoke?.boundPlayerId
+                : route === 'racer' ? adapter.boundPlayerId : null;
           if (bound && readyEntryId) {
             this.arcadeApi?.stationVoiceParticipantConnected(String(setup.callSid ?? ''), readyEntryId, bound, stationConnectionId);
           }
@@ -972,7 +1298,9 @@ export class HttpServer {
             ? this.hasResumableBattleVoiceCall(stationCallSid, assignedRoom)
             : assignedGame === 'fighter'
               ? this.hasResumableFighterVoiceCall(stationCallSid, assignedRoom)
-              : this.hasResumableRacerVoiceCall(stationCallSid, assignedRoom);
+              : assignedGame === 'karaoke'
+                ? this.hasResumableKaraokeVoiceCall(stationCallSid, assignedRoom)
+                : this.hasResumableRacerVoiceCall(stationCallSid, assignedRoom);
           if ((identity.terminal || racerPhase === 'finished' || racerPhase === 'results') && !resumable) {
             ws.close(1008, 'finished station assignment');
             return;
@@ -993,11 +1321,35 @@ export class HttpServer {
       this.voiceSockets.delete(ws);
       const detail = reason.toString().trim().slice(0, 160);
       console.log(`[CR] voice WebSocket closed code=${code}${detail ? ` reason=${detail}` : ''}`);
-      if (stationCallSid && stationReadyEntryId) {
+      const karaokeBinding = stationCallSid ? this.karaokeVoiceCallBindings.get(stationCallSid) : undefined;
+      const preserveStationConnection = route === 'karaoke' && Boolean(karaokeBinding
+        && (karaokeBinding.pendingHandoff || karaokeBinding.attemptId)
+        && ['loading', 'countdown', 'performing', 'finalizing'].includes(
+          this.karaoke.findRoom(karaokeBinding.code)?.state().phase ?? '',
+        ));
+      if (stationCallSid && stationReadyEntryId && !preserveStationConnection) {
         this.arcadeApi?.stationVoiceParticipantDisconnected(stationCallSid, stationReadyEntryId, stationConnectionId);
       }
       if (battle) battle.handleClose();
       else if (fighter) fighter.handleClose();
+      else if (karaoke) {
+        const binding = relayCallSid ? this.karaokeVoiceCallBindings.get(relayCallSid) : undefined;
+        const phase = karaoke.boundRoomCode
+          ? this.karaoke.findRoom(karaoke.boundRoomCode)?.state().phase
+          : undefined;
+        const activeMediaHandoff = Boolean(binding?.pendingHandoff || binding?.attemptId);
+        const activePhase = phase === 'loading' || phase === 'countdown'
+          || phase === 'performing' || phase === 'finalizing';
+        const preserve = (activePhase && activeMediaHandoff) || (stationManaged && phase === 'results');
+        this.unregisterKaraokeVoiceSession(karaoke);
+        if (preserve) {
+          if (binding?.activeSession === karaoke) binding.activeSession = null;
+          karaoke.handleReplaced();
+        } else if (activePhase) {
+          karaoke.handleReplaced();
+          if (relayCallSid) this.clearKaraokeVoiceBinding(relayCallSid, true);
+        } else karaoke.handleClose();
+      }
       else if (adapter.boundRoomCode && adapter.boundPlayerId && relayCallSid) {
         const preserve=stationManaged&&['results','finished'].includes(this.game.findRoom(adapter.boundRoomCode)?.phase??'');
         if(!preserve)this.scheduleRacerVoiceLeave(
@@ -1012,12 +1364,13 @@ export class HttpServer {
   /** Decide which game a voice call joins, from its first frame. Explicit `game=monsters|racer` Relay
    *  parameter wins; otherwise auto-detect: the battler if ITS display is open and the racer's isn't
    *  (so whichever game is on the shared screen is the one the caller joins). Default: the racer. */
-  private pickVoiceGame(firstFrame: string): 'racer' | 'battle' | 'fighter' {
+  private pickVoiceGame(firstFrame: string): MountedVoiceGame {
     try {
       const o = JSON.parse(firstFrame);
       const g = String(o?.customParameters?.game ?? '').toLowerCase();
       if (g === 'monsters' || g === 'battle') return 'battle';
       if (g === 'fighter' || g === 'fight') return 'fighter';
+      if (g === 'karaoke' || g === 'sing') return 'karaoke';
       if (g === 'racer' || g === 'race') return 'racer';
     } catch { /* fall through to auto-detect */ }
     // Auto-detect: route to the game whose screen most recently opened. This avoids a stale tab for one
@@ -1025,8 +1378,8 @@ export class HttpServer {
     return this.recentVoiceGame()??'racer';
   }
 
-  private recentVoiceGame(): 'racer' | 'battle' | 'fighter'|null {
-    const live: { game: 'racer' | 'battle' | 'fighter'; at: number }[] = [];
+  private recentVoiceGame(): MountedVoiceGame|null {
+    const live: { game: MountedVoiceGame; at: number }[] = [];
     for(const [game,connections] of this.standaloneDisplays){
       const configuredGame=game==='battle'?'monsters':game;
       if(!connections.size||this.arcadeApi?.standaloneGameEnabled?.(configuredGame)===false)continue;
@@ -1036,21 +1389,23 @@ export class HttpServer {
     return live[0]?.game ?? null;
   }
 
-  private registerStandaloneDisplay(game:'racer'|'battle'|'fighter',ws:WebSocket):void{
+  private registerStandaloneDisplay(game:MountedVoiceGame,ws:WebSocket):void{
     let connections=this.standaloneDisplays.get(game);
     if(!connections){connections=new Map();this.standaloneDisplays.set(game,connections);}
+    const firstRegistration = !connections.has(ws);
     connections.set(ws,Date.now());
-    ws.once('close',()=>{connections!.delete(ws);if(!connections!.size)this.standaloneDisplays.delete(game);});
+    if (firstRegistration) ws.once('close',()=>{connections!.delete(ws);if(!connections!.size)this.standaloneDisplays.delete(game);});
   }
 
-  private recentVoiceLocale(game: 'racer' | 'battle' | 'fighter', roomCode: string): SupportedLocale {
+  private recentVoiceLocale(game: MountedVoiceGame, roomCode: string): SupportedLocale {
     if (game === 'battle' && this.battle.connectionCount > 0) return this.battle.preferredLocale(roomCode, this.defaultLocale);
     if (game === 'fighter' && this.fighter.connectionCount > 0) return this.fighter.preferredLocale(roomCode, this.defaultLocale);
     if (game === 'racer' && this.game.connectionCount > 0) return this.game.preferredLocale(roomCode, this.defaultLocale);
+    if (game === 'karaoke' && this.karaoke.connectionCount > 0) return this.karaoke.preferredLocale(roomCode, this.defaultLocale);
     return this.defaultLocale;
   }
 
-  private voiceHints(game: 'racer' | 'battle' | 'fighter', locale: SupportedLocale): string {
+  private voiceHints(game: MountedVoiceGame, locale: SupportedLocale): string {
     const numbers = selectionNumberHints(locale);
     if (game === 'battle') {
       const commands = locale === 'pt-BR'
@@ -1075,6 +1430,14 @@ export class HttpServer {
           ? ['Inakaya', 'Inakaya Restaurant', 'Ina Kaya', 'In a Kaya', 'In Akaya', 'Innakaya', 'Inikaya', 'Izakaya']
           : [])]);
       return voiceHintList(commands, numbers, fighters, maps);
+    }
+    if (game === 'karaoke') {
+      const commands = locale === 'pt-BR'
+        ? ['cantar', 'música', 'começar', 'iniciar', 'pronto', 'ajuda']
+        : ['sing', 'song', 'start', 'begin', 'ready', 'help'];
+      const localized = KARAOKE_DEVELOPMENT_SONGS.filter(song => song.locale === locale);
+      const titles = (localized.length ? localized : KARAOKE_DEVELOPMENT_SONGS).map(song => song.title);
+      return voiceHintList(commands, numbers, titles);
     }
     const commands = locale === 'pt-BR'
       ? ['esquerda', 'direita', 'acelerar', 'acelere', 'acelera', 'vai', 'frear', 'freie', 'freia', 'devagar', 'reduzir', 'reduza', 'desacelerar', 'desacelere', 'parar', 'nitro', 'turbo', 'poder', 'começar', 'iniciar', 'próximo', 'próxima', 'corrida', 'correr', 'revanche', 'sim']
@@ -1109,6 +1472,306 @@ export class HttpServer {
       snapshot: (code, id, locale) => this.fighterVoiceSnapshot(code, id, locale),
     });
     return session;
+  }
+
+  private makeKaraokeSession(
+    say: (text: string, isCurrent?: () => boolean) => void | Promise<boolean>,
+    requestMediaHandoff: (handoff: KaraokeVoiceEndHandoff) => void,
+  ): KaraokeVoiceSession {
+    let session: KaraokeVoiceSession;
+    session = new KaraokeVoiceSession({
+      bind: (code, name, callSid, locale, nameConfirmed) => {
+        code = code.trim().toUpperCase();
+        const sid = callSid.trim();
+        const registeredAccountSid = this.voiceAccountSids.get(sid);
+        if (!validProviderIdentity(sid) || !registeredAccountSid) return null;
+        const resumed = this.resumeKaraokeVoiceCall(code, callSid, session);
+        if (resumed) return { playerId: resumed, resumed: true };
+        const playerId = this.karaoke.voiceJoin(code, name, 1, nameConfirmed, locale);
+        if (!playerId) return null;
+        this.rememberKaraokeVoiceCall(callSid, code, playerId, locale, session);
+        this.registerKaraokeVoiceSession(code, session);
+        return { playerId, resumed: false };
+      },
+      leave: (code, playerId, callSid) => {
+        this.unregisterKaraokeVoiceSession(session);
+        this.scheduleKaraokeVoiceLeave(code, playerId, callSid, session);
+      },
+      setName: (code, playerId, name) => this.karaoke.voiceSetName(code, playerId, name),
+      selectSong: (code, playerId, songId) => this.karaoke.voiceSelectSong(code, playerId, songId),
+      advance: (code, playerId) => this.karaoke.voiceAdvance(code, playerId),
+      snapshot: (code, playerId, locale) => this.karaokeVoiceSnapshot(code, playerId, locale),
+      say,
+      requestMediaHandoff,
+      onSetupAction: action => this.analyticsObserver.karaokeSetupAction(action),
+    });
+    return session;
+  }
+
+  private karaokeVoiceSnapshot(
+    code: string,
+    playerId: string,
+    locale: SupportedLocale = DEFAULT_LOCALE,
+  ): KaraokeVoiceSnapshot | null {
+    const room = this.karaoke.findRoom(code);
+    const state = room?.state();
+    if (!room || !state || state.singer?.playerId !== playerId) return null;
+    const catalog = state.catalog.filter(song => song.locale === locale);
+    return {
+      phase: state.phase,
+      myName: state.singer.name,
+      nameConfirmed: state.singer.nameConfirmed,
+      catalog: catalog.length ? catalog : state.catalog,
+      selectedSong: state.selectedSong,
+      selectedByPlayerId: state.selectedByPlayerId,
+      loadingGeneration: state.loadingGeneration,
+      displayReady: state.displayReady === true,
+      score: state.score,
+      bestCombo: state.bestCombo,
+      result: state.result,
+    };
+  }
+
+  private notifyKaraokeVoiceState(roomCode: string): void {
+    for (const session of this.karaokeVoice.get(roomCode) ?? []) session.onStateChanged();
+  }
+
+  private resetCompletedKaraokeAttempt(roomCode: string, phase: string | undefined): void {
+    if (phase !== 'song_select') return;
+    for (const binding of this.karaokeVoiceCallBindings.values()) {
+      if (binding.code !== roomCode || !binding.completed || !binding.scoreAccepted || !binding.mediaFinalized) continue;
+      binding.pendingHandoff = null;
+      binding.attemptId = null;
+      binding.streamName = null;
+      binding.streamSid = null;
+      binding.mediaStarted = false;
+      binding.mediaFinalized = false;
+      binding.scoreAccepted = false;
+      binding.completed = false;
+      binding.completionRetries = 0;
+      binding.lifecycle = 'setup';
+    }
+  }
+
+  private registerKaraokeVoiceSession(code: string, session: KaraokeVoiceSession): void {
+    let sessions = this.karaokeVoice.get(code);
+    if (!sessions) {
+      sessions = new Set();
+      this.karaokeVoice.set(code, sessions);
+    }
+    sessions.add(session);
+  }
+
+  private unregisterKaraokeVoiceSession(session: KaraokeVoiceSession): void {
+    for (const [code, sessions] of this.karaokeVoice) {
+      if (sessions.delete(session) && sessions.size === 0) this.karaokeVoice.delete(code);
+    }
+  }
+
+  private rememberKaraokeVoiceCall(
+    callSid: string,
+    code: string,
+    playerId: string,
+    locale: SupportedLocale,
+    session: KaraokeVoiceSession,
+  ): void {
+    const sid = callSid.trim();
+    if (!sid) return;
+    const previous = this.karaokeVoiceCallBindings.get(sid);
+    if (previous?.leaveTimer) clearTimeout(previous.leaveTimer);
+    if (previous?.activeSession && previous.activeSession !== session) {
+      this.unregisterKaraokeVoiceSession(previous.activeSession);
+      previous.activeSession.handleReplaced();
+    }
+    const samePlayer = previous?.code === code && previous.playerId === playerId;
+    if (previous && !samePlayer) {
+      if (previous.attemptId) this.karaokeMedia.abortAttempt(previous.attemptId);
+      this.karaoke.voiceLeave(previous.code, previous.playerId);
+    }
+    this.karaokeVoiceCallBindings.set(sid, {
+      code,
+      playerId,
+      locale,
+      accountSid: this.voiceAccountSids.get(sid) ?? '',
+      activeSession: session,
+      leaveTimer: null,
+      pendingHandoff: samePlayer ? previous?.pendingHandoff ?? null : null,
+      attemptId: samePlayer ? previous?.attemptId ?? null : null,
+      streamName: samePlayer ? previous?.streamName ?? null : null,
+      streamSid: samePlayer ? previous?.streamSid ?? null : null,
+      lifecycle: samePlayer ? previous?.lifecycle ?? 'setup' : 'setup',
+      mediaStarted: samePlayer ? previous?.mediaStarted ?? false : false,
+      mediaFinalized: samePlayer ? previous?.mediaFinalized ?? false : false,
+      scoreAccepted: samePlayer ? previous?.scoreAccepted ?? false : false,
+      completed: samePlayer ? previous?.completed ?? false : false,
+      completionRetries: samePlayer ? previous?.completionRetries ?? 0 : 0,
+    });
+  }
+
+  private resumeKaraokeVoiceCall(code: string, callSid: string, session: KaraokeVoiceSession): string | null {
+    const sid = callSid.trim();
+    const binding = this.karaokeVoiceCallBindings.get(sid);
+    if (!binding || binding.code !== code || !this.karaoke.findRoom(code)?.hasPlayer(binding.playerId)) return null;
+    if (binding.leaveTimer) clearTimeout(binding.leaveTimer);
+    if (binding.activeSession && binding.activeSession !== session) {
+      this.unregisterKaraokeVoiceSession(binding.activeSession);
+      binding.activeSession.handleReplaced();
+    }
+    binding.activeSession = session;
+    binding.leaveTimer = null;
+    this.registerKaraokeVoiceSession(code, session);
+    return binding.playerId;
+  }
+
+  private hasResumableKaraokeVoiceCall(callSid: string, code: string): boolean {
+    const binding = this.karaokeVoiceCallBindings.get(callSid.trim());
+    return Boolean(binding && binding.code === code && this.karaoke.findRoom(code)?.hasPlayer(binding.playerId));
+  }
+
+  private scheduleKaraokeVoiceLeave(
+    code: string,
+    playerId: string,
+    callSid: string,
+    session: KaraokeVoiceSession,
+  ): void {
+    const sid = callSid.trim();
+    if (!sid) {
+      this.karaoke.voiceLeave(code, playerId);
+      return;
+    }
+    const binding = this.karaokeVoiceCallBindings.get(sid);
+    if (!binding) {
+      this.karaoke.voiceLeave(code, playerId);
+      return;
+    }
+    if (binding?.activeSession && binding.activeSession !== session) return;
+    if (binding?.leaveTimer) clearTimeout(binding.leaveTimer);
+    const leaveTimer = setTimeout(() => {
+      const current = this.karaokeVoiceCallBindings.get(sid);
+      if (!current || current.code !== code || current.playerId !== playerId) return;
+      this.clearKaraokeVoiceBinding(sid, true);
+    }, KARAOKE_VOICE_RECONNECT_GRACE_MS);
+    leaveTimer.unref?.();
+    if (binding) {
+      binding.activeSession = null;
+      binding.leaveTimer = leaveTimer;
+    }
+  }
+
+  private endKaraokeVoiceCall(callSid: string): void {
+    const sid = callSid.trim();
+    const binding = this.karaokeVoiceCallBindings.get(sid);
+    if (!binding) return;
+    const preserve = this.arcadeApi?.isStationEngineRoom(binding.code)
+      && this.karaoke.findRoom(binding.code)?.state().phase === 'results';
+    this.clearKaraokeVoiceBinding(sid, !preserve);
+  }
+
+  private clearKaraokeVoiceBinding(callSid: string, removePlayer: boolean): void {
+    const binding = this.karaokeVoiceCallBindings.get(callSid);
+    if (!binding) return;
+    if (binding.leaveTimer) clearTimeout(binding.leaveTimer);
+    if (binding.activeSession) {
+      this.unregisterKaraokeVoiceSession(binding.activeSession);
+      binding.activeSession.handleReplaced();
+    }
+    if (binding.attemptId && !binding.mediaFinalized) this.karaokeMedia.abortAttempt(binding.attemptId);
+    this.karaokeVoiceCallBindings.delete(callSid);
+    this.voiceAccountSids.delete(callSid);
+    if (removePlayer) this.karaoke.voiceLeave(binding.code, binding.playerId);
+  }
+
+  private requestKaraokeMediaHandoff(
+    callSid: string,
+    session: KaraokeVoiceSession,
+    ws: WebSocket,
+    handoff: KaraokeVoiceEndHandoff,
+  ): void {
+    const sid = callSid.trim();
+    const binding = this.karaokeVoiceCallBindings.get(sid);
+    const intent = parseKaraokeHandoffData(handoff.handoffData);
+    const state = binding ? this.karaoke.findRoom(binding.code)?.state() : undefined;
+    if (!binding || binding.activeSession !== session || binding.lifecycle !== 'setup'
+      || binding.pendingHandoff || binding.attemptId
+      || !intent || intent.roomCode !== binding.code || intent.playerId !== binding.playerId
+      || intent.locale !== binding.locale || state?.phase !== 'loading'
+      || state.selectedSong?.id !== intent.songId
+      || state.loadingGeneration !== intent.loadingGeneration) return;
+    binding.pendingHandoff = { ...intent, handoffData: handoff.handoffData };
+    if (!sendRelayHandoff(ws, handoff)) {
+      binding.pendingHandoff = null;
+    } else transitionKaraokeLifecycle(binding, 'handoff-pending');
+  }
+
+  private onKaraokeMediaStarted(attempt: KaraokeMediaAttempt, streamSid: string): void {
+    const binding = this.karaokeVoiceCallBindings.get(attempt.callSid);
+    if (!this.karaokeAttemptMatchesBinding(attempt, binding)) return;
+    if (binding!.lifecycle !== 'media-issued' || !validProviderIdentity(streamSid)
+      || (binding!.streamSid !== null && binding!.streamSid !== streamSid)) {
+      this.failKaraokeCall(attempt.callSid);
+      return;
+    }
+    binding!.streamSid = streamSid;
+    binding!.mediaStarted = true;
+    transitionKaraokeLifecycle(binding!, 'media-started');
+  }
+
+  private onKaraokeMediaFinalized(result: KaraokeMediaFinalResult, attempt: KaraokeMediaAttempt): void {
+    const binding = this.karaokeVoiceCallBindings.get(attempt.callSid);
+    if (!this.karaokeAttemptMatchesBinding(attempt, binding) || binding!.attemptId !== result.attemptId) return;
+    binding!.mediaFinalized = true;
+    binding!.scoreAccepted = result.scoreAccepted;
+    transitionKaraokeLifecycle(binding!, 'media-finalized');
+    if (!result.scoreAccepted) {
+      queueMicrotask(() => {
+        const current = this.karaokeVoiceCallBindings.get(attempt.callSid);
+        if (this.karaokeAttemptMatchesBinding(attempt, current) && !current!.completed) {
+          this.failKaraokeCall(attempt.callSid);
+        }
+      });
+      return;
+    }
+    this.scheduleKaraokeCompletedCallCleanup(attempt.callSid, attempt.attemptId);
+  }
+
+  private onKaraokeMediaAborted(attempt: KaraokeMediaAttempt): void {
+    const binding = this.karaokeVoiceCallBindings.get(attempt.callSid);
+    if (!this.karaokeAttemptMatchesBinding(attempt, binding)) return;
+    binding!.mediaFinalized = true;
+    binding!.scoreAccepted = false;
+    transitionKaraokeLifecycle(binding!, 'failed');
+    queueMicrotask(() => {
+      const current = this.karaokeVoiceCallBindings.get(attempt.callSid);
+      if (this.karaokeAttemptMatchesBinding(attempt, current) && !current!.completed) {
+        this.failKaraokeCall(attempt.callSid);
+      }
+    });
+  }
+
+  private scheduleKaraokeCompletedCallCleanup(callSid: string, attemptId: string): void {
+    const binding = this.karaokeVoiceCallBindings.get(callSid);
+    if (!binding || binding.attemptId !== attemptId || binding.completed) return;
+    if (binding.leaveTimer) clearTimeout(binding.leaveTimer);
+    binding.leaveTimer = setTimeout(() => {
+      const current = this.karaokeVoiceCallBindings.get(callSid);
+      if (!current || current.attemptId !== attemptId || current.completed) return;
+      if (this.karaoke.findRoom(current.code)?.state().phase === 'results') {
+        this.clearKaraokeVoiceBinding(callSid, !this.arcadeApi?.isStationEngineRoom(current.code));
+        this.arcadeApi?.stationVoiceCallEnded(callSid);
+      } else this.failKaraokeCall(callSid);
+    }, KARAOKE_VOICE_RECONNECT_GRACE_MS);
+    binding.leaveTimer.unref?.();
+  }
+
+  private karaokeAttemptMatchesBinding(
+    attempt: KaraokeMediaAttempt,
+    binding: KaraokeVoiceCallBinding | undefined,
+  ): boolean {
+    return Boolean(binding
+      && binding.accountSid === attempt.accountSid
+      && binding.code === attempt.roomCode
+      && binding.playerId === attempt.playerId
+      && binding.attemptId === attempt.attemptId);
   }
 
   private fighterVoiceSnapshot(code: string, playerId: string, locale: SupportedLocale = DEFAULT_LOCALE): FighterVoiceSnapshot | null {
@@ -1812,6 +2475,224 @@ export class HttpServer {
     return twilio.validateRequest(this.authToken, signature, url, payload);
   }
 
+  private karaokeHandoffTwiML(params: Record<string, string>): string | null {
+    const handoffData = params['HandoffData'] ?? params['handoffData'] ?? '';
+    if (!isKaraokeHandoffData(handoffData)) return null;
+    const intent = parseKaraokeHandoffData(handoffData);
+    const callSid = (params['CallSid'] ?? params['callSid'] ?? '').trim();
+    const accountSid = (params['AccountSid'] ?? params['accountSid'] ?? '').trim();
+    const responseKey = karaokeHandoffResponseKey(params);
+    this.reapKaraokeHandoffResponses();
+    const cachedResponse = this.karaokeHandoffResponses.get(responseKey);
+    if (cachedResponse && params['CallStatus']?.trim().toLowerCase() === 'in-progress') {
+      return cachedResponse.xml;
+    }
+    const binding = this.karaokeVoiceCallBindings.get(callSid);
+    const locale = binding?.locale ?? intent?.locale ?? this.defaultLocale;
+    const pending = binding?.pendingHandoff;
+    const state = binding ? this.karaoke.findRoom(binding.code)?.state() : undefined;
+    const valid = params['CallStatus']?.trim().toLowerCase() === 'in-progress'
+      && validProviderIdentity(accountSid)
+      && Boolean(intent && binding && pending)
+      && binding?.accountSid === accountSid
+      && binding?.lifecycle === 'handoff-pending'
+      && pending?.handoffData === handoffData
+      && intent?.roomCode === binding?.code
+      && intent?.playerId === binding?.playerId
+      && intent?.songId === pending?.songId
+      && intent?.loadingGeneration === pending?.loadingGeneration
+      && intent?.locale === binding?.locale
+      && state?.phase === 'loading'
+      && state.singer?.playerId === intent?.playerId
+      && state.selectedSong?.id === intent?.songId
+      && state.loadingGeneration === intent?.loadingGeneration
+      && !binding?.attemptId;
+    if (!valid || !intent || !binding) {
+      if (binding && pending?.handoffData === handoffData && !binding.attemptId) this.failKaraokeCall(callSid);
+      return this.karaokeFailureTwiML(locale);
+    }
+
+    try {
+      const attempt = this.karaokeMedia.issueAttempt({
+        accountSid,
+        callSid,
+        roomCode: intent.roomCode,
+        playerId: intent.playerId,
+        songId: intent.songId,
+        loadingGeneration: intent.loadingGeneration,
+        songStartTimestampMs: KARAOKE_COUNTDOWN_MS,
+        calibrationOffsetMs: this.karaokeCalibrationOffsetMs,
+      });
+      const streamName = `karaoke-${attempt.attemptId}`;
+      const xml = twimlKaraokeMedia({
+        streamName,
+        wsUrl: `${this.publicBaseUrl.replace(/^https?/, 'wss')}/karaoke-media`,
+        statusCallbackUrl: `${this.publicBaseUrl}/voice/karaoke/stream-status`,
+        completeUrl: `${this.publicBaseUrl}/voice/karaoke/complete`,
+        customParameters: attempt.customParameters,
+        pauseLengthSeconds: KARAOKE_MEDIA_PAUSE_SECONDS,
+      });
+      binding.pendingHandoff = null;
+      binding.attemptId = attempt.attemptId;
+      binding.streamName = streamName;
+      binding.streamSid = null;
+      binding.mediaStarted = false;
+      binding.mediaFinalized = false;
+      binding.scoreAccepted = false;
+      binding.completed = false;
+      binding.completionRetries = 0;
+      transitionKaraokeLifecycle(binding, 'media-issued');
+      this.karaokeHandoffResponses.set(responseKey, {
+        xml,
+        expiresAtMs: Date.now() + KARAOKE_HANDOFF_RESPONSE_RETENTION_MS,
+      });
+      while (this.karaokeHandoffResponses.size > KARAOKE_MAX_HANDOFF_RESPONSES) {
+        const oldest = this.karaokeHandoffResponses.keys().next().value as string | undefined;
+        if (oldest === undefined) break;
+        this.karaokeHandoffResponses.delete(oldest);
+      }
+      return xml;
+    } catch {
+      this.failKaraokeCall(callSid);
+      return this.karaokeFailureTwiML(locale);
+    }
+  }
+
+  private completeKaraokeTwiML(params: Record<string, string>): string {
+    const callSid = (params['CallSid'] ?? params['callSid'] ?? '').trim();
+    const accountSid = (params['AccountSid'] ?? params['accountSid'] ?? '').trim();
+    const binding = this.karaokeVoiceCallBindings.get(callSid);
+    const locale = binding?.locale ?? this.karaokeFailureLocales.get(callSid)?.locale ?? this.defaultLocale;
+    if (!binding || !binding.attemptId || !validProviderIdentity(accountSid)
+      || binding.accountSid !== accountSid) {
+      if (binding) this.failKaraokeCall(callSid);
+      return this.karaokeFailureTwiML(locale);
+    }
+    const existingState = this.karaoke.findRoom(binding.code)?.state();
+    if (binding.completed && existingState?.result?.playerId === binding.playerId) {
+      return this.karaokeResultRelayTwiML(callSid, binding);
+    }
+    if (binding.leaveTimer) {
+      clearTimeout(binding.leaveTimer);
+      binding.leaveTimer = null;
+    }
+    const mediaResult = this.karaokeMedia.finalizedResult(binding.attemptId);
+    if (!mediaResult) {
+      const attemptState = this.karaokeMedia.attemptState(binding.attemptId);
+      if ((attemptState === 'pending' || attemptState === 'finalizing')
+        && binding.completionRetries < KARAOKE_MAX_COMPLETION_RETRIES) {
+        binding.completionRetries += 1;
+        return this.karaokeCompletionRetryTwiML();
+      }
+      this.failKaraokeCall(callSid);
+      return this.karaokeFailureTwiML(locale);
+    }
+    const state = this.karaoke.findRoom(binding.code)?.state();
+    if (!mediaResult?.scoreAccepted || !binding.scoreAccepted || state?.phase !== 'results'
+      || state.result?.playerId !== binding.playerId
+      || state.result.generation !== state.loadingGeneration) {
+      this.failKaraokeCall(callSid);
+      return this.karaokeFailureTwiML(locale);
+    }
+    binding.mediaFinalized = true;
+    binding.scoreAccepted = true;
+    binding.completed = true;
+    transitionKaraokeLifecycle(binding, 'completed');
+    if (binding.leaveTimer) {
+      clearTimeout(binding.leaveTimer);
+      binding.leaveTimer = null;
+    }
+    this.voiceReconnectAttempts.set(callSid, 0);
+    return this.karaokeResultRelayTwiML(callSid, binding);
+  }
+
+  private karaokeCompletionRetryTwiML(): string {
+    const completeUrl = `${this.publicBaseUrl}/voice/karaoke/complete`
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&apos;');
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Pause length="${KARAOKE_COMPLETION_RETRY_SECONDS}" />
+  <Redirect method="POST">${completeUrl}</Redirect>
+</Response>`;
+  }
+
+  private reapKaraokeHandoffResponses(): void {
+    const now = Date.now();
+    for (const [key, response] of this.karaokeHandoffResponses) {
+      if (now >= response.expiresAtMs) this.karaokeHandoffResponses.delete(key);
+    }
+  }
+
+  private karaokeResultRelayTwiML(callSid: string, binding: KaraokeVoiceCallBinding): string {
+    const station = this.stationVoiceReconnectRoutes.get(callSid);
+    return twimlConnectRelay({
+      wsUrl: `${this.publicBaseUrl.replace(/^http/, 'ws')}/voice`,
+      sessionEndedUrl: `${this.publicBaseUrl}/voice/session-ended`,
+      roomCode: binding.code,
+      ttsProvider: 'ElevenLabs',
+      voice: binding.locale === 'pt-BR' ? (process.env.CR_TTS_VOICE_PT_BR ?? '').trim() : this.crVoice,
+      game: 'karaoke',
+      karaokeMode: 'result',
+      readyEntryId: station?.readyEntryId,
+      matchId: station?.matchId,
+      launchGeneration: station?.launchGeneration,
+      relayToken: this.voiceRelayToken || undefined,
+      locale: binding.locale,
+      hints: this.voiceHints('karaoke', binding.locale),
+      welcomeGreeting: '',
+    });
+  }
+
+  private karaokeFailureTwiML(locale: SupportedLocale): string {
+    return twimlSayAndHangup(locale === 'pt-BR'
+      ? 'Não foi possível iniciar o áudio do Karaokê por Voz. Tente novamente ou peça ajuda à equipe.'
+      : 'Voice Karaoke could not start the audio stream. Please try again or ask booth staff for help.', locale);
+  }
+
+  private failKaraokeCall(callSid: string): void {
+    const binding = this.karaokeVoiceCallBindings.get(callSid);
+    if (!binding) return;
+    transitionKaraokeLifecycle(binding, 'failed');
+    const previousFailure = this.karaokeFailureLocales.get(callSid);
+    if (previousFailure) clearTimeout(previousFailure.timer);
+    const failureTimer = setTimeout(() => this.karaokeFailureLocales.delete(callSid), KARAOKE_FAILURE_LOCALE_RETENTION_MS);
+    failureTimer.unref?.();
+    this.karaokeFailureLocales.set(callSid, { locale: binding.locale, timer: failureTimer });
+    if (binding.attemptId) this.karaokeMedia.abortAttempt(binding.attemptId);
+    if (binding.leaveTimer) clearTimeout(binding.leaveTimer);
+    if (binding.activeSession) {
+      this.unregisterKaraokeVoiceSession(binding.activeSession);
+      binding.activeSession.handleReplaced();
+    }
+    const state = this.karaoke.findRoom(binding.code)?.state();
+    if (state?.phase !== 'results' && this.arcadeApi?.isStationEngineRoom(binding.code)) {
+      this.arcadeApi.stationEngineAbandoned('karaoke', binding.code);
+    }
+    this.activeStationEngines.delete(`karaoke:${binding.code}`);
+    this.karaokeVoiceCallBindings.delete(callSid);
+    this.voiceAccountSids.delete(callSid);
+    this.stationVoiceReconnectRoutes.delete(callSid);
+    this.voiceReconnectAttempts.delete(callSid);
+    this.arcadeApi?.stationVoiceCallEnded(callSid);
+    this.analyticsObserver.karaokeAborted(binding.code);
+    this.karaoke.abortRoom(binding.code);
+  }
+
+  private handleKaraokeLoadingTimeout(roomCode: string): void {
+    for (const [callSid, binding] of this.karaokeVoiceCallBindings) {
+      if (binding.code !== roomCode || binding.completed) continue;
+      if (binding.lifecycle === 'setup' && binding.activeSession) {
+        binding.activeSession.announceLoadingTimeout();
+      } else {
+        this.failKaraokeCall(callSid);
+      }
+    }
+  }
+
   private async onRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     const path = (req.url ?? '').split('?')[0] ?? '';
     // Process liveness stays independent from repairable Twilio/configuration dependencies.
@@ -1829,7 +2710,14 @@ export class HttpServer {
       res.writeHead(degraded ? 503 : 200, {
         'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*',
       });
-      res.end(JSON.stringify({ status: degraded ? 'degraded' : 'ok', rooms: this.game.roomCount }));
+      res.end(JSON.stringify({
+        status: degraded ? 'degraded' : 'ok',
+        rooms: this.game.roomCount,
+        karaokeRooms: this.karaoke.roomCount,
+        karaokeMediaSessions: this.karaokeMedia.activeSessionCount,
+        karaokeLyricRecognition: this.deepgramConfigured ? 'configured' : 'unavailable',
+        karaokeCalibrationOffsetMs: this.karaokeCalibrationOffsetMs,
+      }));
       return;
     }
     if (req.method === 'GET' && path === '/auth/google') { this.analyticsAuth.begin(req, res); return; }
@@ -1869,7 +2757,7 @@ export class HttpServer {
       try{
         const summary=await this.leaderboardAdminSummary();
         res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store','ETag':summary.etag});
-        res.end(JSON.stringify({games:[{game:'racer',resettable:true,maps:summary.maps},{game:'monsters',resettable:false,maps:[]},{game:'fighter',resettable:false,maps:[]}]}));
+        res.end(JSON.stringify({games:[summary.games[0],{game:'monsters',resettable:false,maps:[]},{game:'fighter',resettable:false,maps:[]},summary.games[1]]}));
       }catch(error){res.writeHead(503,{'Content-Type':'application/json'}).end(JSON.stringify({error:(error as Error).message}));}
       return;
     }
@@ -1879,13 +2767,13 @@ export class HttpServer {
       if(req.headers.origin!==new URL(this.publicBaseUrl).origin){res.writeHead(403,{'Content-Type':'application/json'}).end(JSON.stringify({error:'same-origin request required'}));return;}
       let body:unknown;try{body=JSON.parse(await readBody(req));}catch{res.writeHead(400,{'Content-Type':'application/json'}).end(JSON.stringify({error:'invalid JSON'}));return;}
       const input=body as {game?:unknown;map?:unknown;reason?:unknown};
-      if(input.game!=='racer'||typeof input.map!=='string'||!input.map.trim()||typeof input.reason!=='string'||!input.reason.trim()||input.reason.trim().length>200){
-        res.writeHead(400,{'Content-Type':'application/json'}).end(JSON.stringify({error:'game racer, map, and reason are required'}));return;
+      if((input.game!=='racer'&&input.game!=='karaoke')||typeof input.map!=='string'||!input.map.trim()||typeof input.reason!=='string'||!input.reason.trim()||input.reason.trim().length>200){
+        res.writeHead(400,{'Content-Type':'application/json'}).end(JSON.stringify({error:'game, leaderboard selection, and reason are required'}));return;
       }
       try{
-        const result=await this.resetLeaderboardMap(input.map,String(req.headers['if-match']??''));
-        console.info(`[leaderboard] reset game=racer map=${input.map} deleted=${result.deleted} operator=${principal.email} reason=${input.reason.trim()}`);
-        res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store','ETag':result.etag}).end(JSON.stringify({game:'racer',map:input.map,deleted:result.deleted,remaining:result.remaining}));
+        const result=await this.resetLeaderboardScores(input.game,input.map,String(req.headers['if-match']??''));
+        console.info(`[leaderboard] reset game=${input.game} map=${input.map} deleted=${result.deleted} operator=${principal.email} reason=${input.reason.trim()}`);
+        res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store','ETag':result.etag}).end(JSON.stringify({game:input.game,map:input.map,deleted:result.deleted,remaining:result.remaining}));
       }catch(error){
         const failure=error as Error&{code?:string;etag?:string};
         if(failure.code==='PRECONDITION_FAILED'){res.writeHead(412,{'Content-Type':'application/json',...(failure.etag?{'ETag':failure.etag}:{})}).end(JSON.stringify({error:failure.message}));}
@@ -2012,6 +2900,11 @@ export class HttpServer {
       if(!voiceGame){res.writeHead(200,VOICE_XML_HEADERS).end(unavailableXml);return;}
       const voiceLocale = dialedLocale ?? this.recentVoiceLocale(voiceGame, roomCode);
       const callSid = (params['CallSid'] ?? '').trim();
+      const accountSid = (params['AccountSid'] ?? '').trim();
+      if (validProviderIdentity(callSid) && validProviderIdentity(accountSid)) {
+        const registered = this.voiceAccountSids.get(callSid);
+        if (!registered || registered === accountSid) this.voiceAccountSids.set(callSid, accountSid);
+      }
       if (callSid) this.voiceReconnectAttempts.set(callSid, 0);
       if (callSid && stationRoute?.admitted && stationRoute.readyEntryId) {
         this.stationVoiceReconnectRoutes.set(callSid, {
@@ -2029,6 +2922,7 @@ export class HttpServer {
           ? (process.env.CR_TTS_VOICE_PT_BR ?? '').trim()
           : this.crVoice,
         game: voiceGame === 'battle' ? 'monsters' : voiceGame,
+        karaokeMode: voiceGame === 'karaoke' ? 'setup' : undefined,
         readyEntryId: stationRoute?.readyEntryId ?? undefined,
         matchId: stationRoute?.matchId,
         launchGeneration: stationRoute?.launchGeneration,
@@ -2041,6 +2935,80 @@ export class HttpServer {
         welcomeGreeting: '',
       });
       res.writeHead(200, VOICE_XML_HEADERS).end(xml);
+      return;
+    }
+    if (req.method === 'POST' && path === '/voice/karaoke/stream-status') {
+      const body = await readBody(req);
+      const params = Object.fromEntries(new URLSearchParams(body));
+      if (this.validateSignatures) {
+        if (!this.authTokens.length) {
+          res.writeHead(500).end('signature validation enabled but TWILIO_AUTH_TOKEN not configured');
+          return;
+        }
+        const signature = req.headers['x-twilio-signature'];
+        if (!this.validateTwilioVoiceForm(
+          Array.isArray(signature) ? signature[0] : signature,
+          `${this.publicBaseUrl}${path}`,
+          params,
+        )) {
+          res.writeHead(403).end('invalid signature');
+          return;
+        }
+      }
+      const callSid = (params['CallSid'] ?? '').trim();
+      const accountSid = (params['AccountSid'] ?? '').trim();
+      const binding = this.karaokeVoiceCallBindings.get(callSid);
+      if (!binding) {
+        res.writeHead(204).end();
+        return;
+      }
+      const streamSid = (params['StreamSid'] ?? '').trim();
+      const streamName = (params['StreamName'] ?? '').trim();
+      const event = (params['StreamEvent'] ?? '').trim().toLowerCase();
+      const recognizedEvent = event === 'stream-started' || event === 'stream-stopped' || event === 'stream-error';
+      const mayBindEarlyStream = binding.streamSid === null && binding.lifecycle === 'media-issued'
+        && (event === 'stream-started' || event === 'stream-error');
+      if (!validProviderIdentity(callSid) || !validProviderIdentity(accountSid) || !validProviderIdentity(streamSid)
+        || binding.accountSid !== accountSid || !binding.attemptId || binding.streamName !== streamName
+        || !recognizedEvent
+        || (binding.streamSid === null ? !mayBindEarlyStream : binding.streamSid !== streamSid)) {
+        res.writeHead(403).end('invalid stream identity');
+        return;
+      }
+      if (binding.streamSid === null) binding.streamSid = streamSid;
+      const completedResult = binding.scoreAccepted
+        && this.karaoke.findRoom(binding.code)?.state().result?.playerId === binding.playerId;
+      if (event === 'stream-error' && !binding.completed && !completedResult) this.failKaraokeCall(callSid);
+      else if (event === 'stream-stopped') {
+        const result = this.karaokeMedia.finalizedResult(binding.attemptId);
+        if (result?.scoreAccepted) {
+          binding.mediaFinalized = true;
+          binding.scoreAccepted = true;
+          transitionKaraokeLifecycle(binding, 'media-finalized');
+        }
+      }
+      res.writeHead(204).end();
+      return;
+    }
+    if (req.method === 'POST' && path === '/voice/karaoke/complete') {
+      const body = await readBody(req);
+      const params = Object.fromEntries(new URLSearchParams(body));
+      if (this.validateSignatures) {
+        if (!this.authTokens.length) {
+          res.writeHead(500).end('signature validation enabled but TWILIO_AUTH_TOKEN not configured');
+          return;
+        }
+        const signature = req.headers['x-twilio-signature'];
+        if (!this.validateTwilioVoiceForm(
+          Array.isArray(signature) ? signature[0] : signature,
+          `${this.publicBaseUrl}${path}`,
+          params,
+        )) {
+          res.writeHead(403).end('invalid signature');
+          return;
+        }
+      }
+      res.writeHead(200, VOICE_XML_HEADERS).end(this.completeKaraokeTwiML(params));
       return;
     }
     if (req.method === 'POST' && path === '/voice/session-ended') {
@@ -2066,6 +3034,11 @@ export class HttpServer {
       const errorMessage = (params['ErrorMessage'] ?? '').trim().replace(/\s+/g, ' ').slice(0, 300);
       console.log(`[CR] session ended call=${callSid.slice(0, 8) || 'unknown'} status=${sessionStatus}${errorCode ? ` error=${errorCode}` : ''}${errorMessage ? ` message=${errorMessage}` : ''}`);
       const callStatus = (params['CallStatus'] ?? '').trim().toLowerCase();
+      const karaokeHandoffXml = this.karaokeHandoffTwiML(params);
+      if (karaokeHandoffXml !== null) {
+        res.writeHead(200, VOICE_XML_HEADERS).end(karaokeHandoffXml);
+        return;
+      }
       const attempts = this.voiceReconnectAttempts.get(callSid) ?? 0;
       const recoverableError = !errorCode || ['39001','64103','64105','64111','64112'].includes(errorCode);
       if (callSid && sessionStatus.toLowerCase() === 'failed' && callStatus === 'in-progress'
@@ -2085,7 +3058,9 @@ export class HttpServer {
                 ?this.hasResumableRacerVoiceCall(callSid,station.roomCode)
                 :station.game==='monsters'
                   ?this.hasResumableBattleVoiceCall(callSid,station.roomCode)
-                  :this.hasResumableFighterVoiceCall(callSid,station.roomCode);
+                  :station.game==='fighter'
+                    ?this.hasResumableFighterVoiceCall(callSid,station.roomCode)
+                    :this.hasResumableKaraokeVoiceCall(callSid,station.roomCode);
               if(!terminalBinding){this.stationVoiceReconnectRoutes.delete(callSid);station=undefined;}
             }
           } catch { /* fall back to the last validated route; setup validation still fails closed */ }
@@ -2093,9 +3068,10 @@ export class HttpServer {
         const racer = this.racerVoiceCallBindings.get(callSid);
         const battle = this.battleVoiceCallBindings.get(callSid);
         const fighter = this.fighterVoiceCallBindings.get(callSid);
-        const game = station?.game ?? (battle ? 'monsters' : fighter ? 'fighter' : racer ? 'racer' : null);
-        const roomCode = station?.roomCode ?? battle?.code ?? fighter?.code ?? racer?.code;
-        const locale = station?.locale ?? battle?.locale ?? fighter?.locale ?? racer?.locale ?? this.defaultLocale;
+        const karaoke = this.karaokeVoiceCallBindings.get(callSid);
+        const game = station?.game ?? (battle ? 'monsters' : fighter ? 'fighter' : karaoke ? 'karaoke' : racer ? 'racer' : null);
+        const roomCode = station?.roomCode ?? battle?.code ?? fighter?.code ?? karaoke?.code ?? racer?.code;
+        const locale = station?.locale ?? battle?.locale ?? fighter?.locale ?? karaoke?.locale ?? racer?.locale ?? this.defaultLocale;
         if (game && roomCode) {
           this.voiceReconnectAttempts.set(callSid, attempts + 1);
           const xml = twimlConnectRelay({
@@ -2105,6 +3081,7 @@ export class HttpServer {
             voice: locale === 'pt-BR' ? (process.env.CR_TTS_VOICE_PT_BR ?? '').trim() : this.crVoice,
             game, readyEntryId: station?.readyEntryId, matchId: station?.matchId,
             launchGeneration: station?.launchGeneration, locale,
+            karaokeMode: game === 'karaoke' && karaoke?.completed ? 'result' : game === 'karaoke' ? 'setup' : undefined,
             relayToken: this.voiceRelayToken || undefined,
             hints: this.voiceHints(game === 'monsters' ? 'battle' : game, locale), welcomeGreeting: '',
           });
@@ -2116,6 +3093,14 @@ export class HttpServer {
       this.stationVoiceReconnectRoutes.delete(callSid);
       this.arcadeApi?.stationVoiceCallEnded(callSid);
       this.endRacerVoiceCall(callSid); this.endBattleVoiceCall(callSid); this.endFighterVoiceCall(callSid);
+      const karaokeBinding = this.karaokeVoiceCallBindings.get(callSid);
+      if (karaokeBinding && this.karaoke.findRoom(karaokeBinding.code)?.state().phase !== 'results') {
+        this.failKaraokeCall(callSid);
+      } else this.endKaraokeVoiceCall(callSid);
+      this.voiceAccountSids.delete(callSid);
+      const karaokeFailure = this.karaokeFailureLocales.get(callSid);
+      if (karaokeFailure) clearTimeout(karaokeFailure.timer);
+      this.karaokeFailureLocales.delete(callSid);
       res.writeHead(200, VOICE_XML_HEADERS).end(twimlHangup());
       return;
     }
@@ -2290,6 +3275,105 @@ export class HttpServer {
       res.end(JSON.stringify(cfg));
       return;
     }
+    // ---- Voice Karaoke venue config + direct release GLB picker ----
+    if (path === '/api/karaoke-venue' && req.method === 'GET') {
+      const venue = await this.readKaraokeVenue();
+      res.writeHead(200, {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-store',
+      });
+      res.end(JSON.stringify(venue));
+      return;
+    }
+    if (path === '/api/karaoke-venue' && req.method === 'POST') {
+      if (!this.authorizeWrite(req, res)) return;
+      let input: unknown;
+      try { input = JSON.parse(await readBody(req)) as unknown; }
+      catch { res.writeHead(400, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' }).end('invalid JSON'); return; }
+      let venue: KaraokeVenueConfig;
+      try { venue = parseKaraokeVenueConfig(input); }
+      catch (error) {
+        res.writeHead(400, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' })
+          .end((error as Error).message);
+        return;
+      }
+      await this.writeFileAtomic(this.karaokeVenuePath, `${JSON.stringify(venue, null, 2)}\n`);
+      res.writeHead(200, {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-store',
+      });
+      res.end(JSON.stringify(venue));
+      return;
+    }
+    if (path === '/api/karaoke-timings' && req.method === 'GET') {
+      res.writeHead(200, {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-store',
+        ETag: this.karaokeTimingEtag(),
+      });
+      res.end(JSON.stringify(this.karaokeTimingConfig));
+      return;
+    }
+    if (path === '/api/karaoke-timings' && req.method === 'POST') {
+      if (!this.authorizeWrite(req, res)) return;
+      const expectedEtag = Array.isArray(req.headers['if-match']) ? '' : (req.headers['if-match'] ?? '');
+      if (!expectedEtag) {
+        res.writeHead(428, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' })
+          .end('a current Karaoke timing ETag is required');
+        return;
+      }
+      let input: unknown;
+      try { input = JSON.parse(await readBody(req)) as unknown; }
+      catch { res.writeHead(400, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' }).end('invalid JSON'); return; }
+      let timings: KaraokeTimingConfig;
+      try { timings = parseKaraokeTimingConfig(input, KARAOKE_DEVELOPMENT_SONGS); }
+      catch (error) {
+        res.writeHead(400, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' })
+          .end((error as Error).message);
+        return;
+      }
+      try {
+        const saved = await this.saveKaraokeTimings(timings, expectedEtag);
+        res.writeHead(200, {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'no-store',
+          ETag: saved.etag,
+        });
+        res.end(JSON.stringify(saved.config));
+      } catch (error) {
+        const failure = error as Error & { code?: string; etag?: string };
+        if (failure.code === 'PRECONDITION_FAILED') {
+          res.writeHead(412, {
+            'Content-Type': 'text/plain', 'Cache-Control': 'no-store',
+            ...(failure.etag ? { ETag: failure.etag } : {}),
+          }).end(failure.message);
+          return;
+        }
+        throw error;
+      }
+      return;
+    }
+    if (path === '/api/karaoke-asset-files' && req.method === 'GET') {
+      let files: string[] = [];
+      try {
+        const entries = await readdir(this.karaokeAssetDirectory, { withFileTypes: true });
+        files = entries
+          .filter(entry => entry.isFile() && isSafeKaraokeGlbBasename(entry.name))
+          .map(entry => entry.name)
+          .sort((a, b) => a.localeCompare(b));
+      } catch { /* An empty release directory produces an empty picker. */ }
+      res.writeHead(200, {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-store',
+      });
+      res.end(JSON.stringify(files));
+      return;
+    }
     // ---- Voice Fighter map catalog + GLB picker (authored in the unified editor) ----
     if (path === '/api/fighter-maps' && req.method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
@@ -2347,6 +3431,25 @@ export class HttpServer {
       try { entries = parseLeaderboard(await readFile(this.leaderboardPath, 'utf8')); } catch { entries = []; }
       const top = topEntries(entries, { map, limit });
       res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify({ entries: top.map(({ enginePlayerId: _enginePlayerId, ...entry }) => entry) }));
+      return;
+    }
+    if (path === '/api/karaoke/leaderboard' && req.method === 'GET') {
+      const url = new URL(req.url ?? '', 'http://localhost');
+      const songId = url.searchParams.get('song');
+      const rawLimit = url.searchParams.get('limit') ?? '10';
+      if (!songId || !isSafeKaraokeId(songId) || !/^\d{1,3}$/.test(rawLimit)
+        || Number(rawLimit) < 1 || Number(rawLimit) > 100) {
+        res.writeHead(400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify({ error: 'valid song and limit from 1 to 100 are required' }));
+        return;
+      }
+      const limit = Number(rawLimit);
+      await this.leaderboardWrite;
+      let entries: KaraokeLeaderboardEntry[] = [];
+      try { entries = parseKaraokeLeaderboard(await readFile(this.karaokeLeaderboardPath, 'utf8')); } catch { entries = []; }
+      const top = topKaraokeEntries(entries, { songId, limit });
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' });
       res.end(JSON.stringify({ entries: top.map(({ enginePlayerId: _enginePlayerId, ...entry }) => entry) }));
       return;
     }
@@ -2444,7 +3547,7 @@ export class HttpServer {
   private async writeFileAtomic(file: string, contents: string | Buffer): Promise<void> {
     const dir = path.dirname(file);
     if (dir && dir !== '.') await mkdir(dir, { recursive: true });
-    const tmp = `${file}.tmp-${process.pid}`;
+    const tmp = `${file}.tmp-${process.pid}-${randomUUID()}`;
     await writeFile(tmp, contents);
     await rename(tmp, file);   // rename is atomic on the same filesystem
   }
@@ -2461,6 +3564,9 @@ export class HttpServer {
     try { rel = decodeURIComponent(urlPath.replace(/^\/assets\//, '')); }
     catch { res.writeHead(400).end('bad request'); return; }   // malformed %-escape
     if (rel.includes('..') || rel.startsWith('/')) { res.writeHead(403).end('forbidden'); return; }
+    if (rel.split(/[\\/]+/).some(segment => segment.toLowerCase() === '_raw')) {
+      res.writeHead(403).end('forbidden'); return;
+    }
     const builtAssets = path.join(this.clientDir, 'assets');
     for (const base of [builtAssets, 'assets']) {
       const full = path.join(base, rel);
@@ -2547,6 +3653,8 @@ export class HttpServer {
     await this.arcadeApi?.start();
     await this.arcadeTacGateway?.start();
     await this.seedMapsFile();
+    await this.seedKaraokeVenueFile();
+    await this.loadKaraokeTimings();
     await this.refreshFighterMaps();
     // Re-read the (possibly just-seeded) maps into the lobby cache so map choices are correct on the
     // very first connection — the constructor's initial refresh may have run before the seed wrote.
@@ -2580,6 +3688,80 @@ export class HttpServer {
     }
   }
 
+  private async readKaraokeVenue(): Promise<KaraokeVenueConfig> {
+    for (const file of [this.karaokeVenuePath, this.bundledKaraokeVenuePath]) {
+      if (!file) continue;
+      try { return parseKaraokeVenueConfig(JSON.parse(await readFile(file, 'utf8')) as unknown); }
+      catch { /* Try the immutable seed, then the compiled fallback. */ }
+    }
+    return cloneKaraokeVenueConfig(DEFAULT_KARAOKE_VENUE);
+  }
+
+  /** Seed only when an image seed was configured, so injected test/dev paths remain isolated. */
+  private async seedKaraokeVenueFile(): Promise<void> {
+    if (!this.bundledKaraokeVenuePath) return;
+    try {
+      parseKaraokeVenueConfig(JSON.parse(await readFile(this.karaokeVenuePath, 'utf8')) as unknown);
+      return;
+    } catch { /* A missing or malformed live copy is repaired from a strict seed below. */ }
+    let venue = cloneKaraokeVenueConfig(DEFAULT_KARAOKE_VENUE);
+    try {
+      venue = parseKaraokeVenueConfig(JSON.parse(await readFile(this.bundledKaraokeVenuePath, 'utf8')) as unknown);
+    } catch (error) {
+      console.error('[karaoke-venue] bundled seed invalid; using compiled default:', (error as Error).message);
+    }
+    try {
+      await this.writeFileAtomic(this.karaokeVenuePath, `${JSON.stringify(venue, null, 2)}\n`);
+      console.log(`[karaoke-venue] seeded ${this.karaokeVenuePath} from ${this.bundledKaraokeVenuePath}`);
+    } catch (error) {
+      console.error('[karaoke-venue] seed write failed:', (error as Error).message);
+    }
+  }
+
+  private karaokeTimingEtag(config: KaraokeTimingConfig = this.karaokeTimingConfig): string {
+    return `"karaoke-timings-${createHash('sha256').update(JSON.stringify(config)).digest('hex').slice(0, 16)}"`;
+  }
+
+  private async loadKaraokeTimings(): Promise<void> {
+    let config = EMPTY_KARAOKE_TIMING_CONFIG;
+    try {
+      config = parseKaraokeTimingConfig(
+        JSON.parse(await readFile(this.karaokeTimingsPath, 'utf8')) as unknown,
+        KARAOKE_DEVELOPMENT_SONGS,
+      );
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT') console.error('[karaoke-timings] invalid live config; using compiled timings:', (error as Error).message);
+    }
+    this.applyKaraokeTimings(config);
+  }
+
+  private applyKaraokeTimings(config: KaraokeTimingConfig): void {
+    const songs = applyKaraokeTimingConfig(KARAOKE_DEVELOPMENT_SONGS, config);
+    this.karaokeTimingConfig = config;
+    this.karaoke.setSongs(songs);
+    this.karaokeMedia.setSongs(songs);
+  }
+
+  private async saveKaraokeTimings(
+    config: KaraokeTimingConfig,
+    expectedEtag: string,
+  ): Promise<{ config: KaraokeTimingConfig; etag: string }> {
+    const operation = this.karaokeTimingWrite.then(async () => {
+      const currentEtag = this.karaokeTimingEtag();
+      if (expectedEtag !== currentEtag) {
+        throw Object.assign(new Error('Karaoke timings changed; reload before saving'), {
+          code: 'PRECONDITION_FAILED', etag: currentEtag,
+        });
+      }
+      await this.writeFileAtomic(this.karaokeTimingsPath, `${JSON.stringify(config, null, 2)}\n`);
+      this.applyKaraokeTimings(config);
+      return { config, etag: this.karaokeTimingEtag(config) };
+    });
+    this.karaokeTimingWrite = operation.then(() => undefined, () => undefined);
+    return operation;
+  }
+
   stop(): Promise<void> {
     return new Promise((resolve, reject) => {
       if (this.roomConfigTimer) { clearInterval(this.roomConfigTimer); this.roomConfigTimer = null; }
@@ -2595,14 +3777,21 @@ export class HttpServer {
       this.battleVoiceCallBindings.clear();
       for (const binding of this.fighterVoiceCallBindings.values()) if (binding.leaveTimer) clearTimeout(binding.leaveTimer);
       this.fighterVoiceCallBindings.clear(); this.fighterVoice.clear();
+      for (const binding of this.karaokeVoiceCallBindings.values()) if (binding.leaveTimer) clearTimeout(binding.leaveTimer);
+      this.karaokeVoiceCallBindings.clear(); this.karaokeVoice.clear(); this.voiceAccountSids.clear();
+      this.karaokeHandoffResponses.clear();
+      for (const failure of this.karaokeFailureLocales.values()) clearTimeout(failure.timer);
+      this.karaokeFailureLocales.clear();
       this.activeStationEngines.clear();
       this.game.stopLoopOnly();
       this.battle.stopLoopOnly();
       this.fighter.stopLoopOnly();
+      this.karaokeMedia.close();
+      this.karaoke.stopLoopOnly();
       const arcadeStop = this.arcadeApi?.stop() ?? Promise.resolve();
       const arcadeTacStop = this.arcadeTacGateway?.stop() ?? Promise.resolve();
       this.server.close(() => {
-        void Promise.all([this.analytics.flush(), arcadeStop, arcadeTacStop]).then(() => resolve(), reject);
+        void Promise.all([this.analytics.flush(), this.leaderboardWrite, arcadeStop, arcadeTacStop]).then(() => resolve(), reject);
       });
     });
   }
@@ -2616,7 +3805,7 @@ const RELAY_PLAYBACK_TIMEOUT_MS = 20_000;
 type RelayPlayback = {
   token: string;
   generation: number;
-  settle: () => void;
+  settle: (played?: boolean) => void;
   timer: ReturnType<typeof setTimeout>;
 };
 type RelayQueue = {
@@ -2632,6 +3821,21 @@ type RelayQueue = {
 };
 const relayQueues = new WeakMap<WebSocket, RelayQueue>();
 
+function sendRelayHandoff(ws: WebSocket, handoff: KaraokeVoiceEndHandoff): boolean {
+  if (ws.readyState !== ws.OPEN) return false;
+  const queue = relayQueue(ws);
+  if (queue.ending || queue.ended) return false;
+  queue.ended = true;
+  queue.generation += 1;
+  queue.tail = Promise.resolve();
+  queue.pendingPlayback?.settle();
+  queue.pendingPlayback = null;
+  if (queue.endTimer) clearTimeout(queue.endTimer);
+  queue.endTimer = null;
+  ws.send(JSON.stringify({ type: 'end', handoffData: handoff.handoffData }));
+  return true;
+}
+
 function relayQueue(ws: WebSocket): RelayQueue {
   let queue = relayQueues.get(ws);
   if (!queue) {
@@ -2642,20 +3846,20 @@ function relayQueue(ws: WebSocket): RelayQueue {
 }
 
 function sendRelayText(ws: WebSocket, text: string, locale: SupportedLocale = DEFAULT_LOCALE,
-  isCurrent?: () => boolean,preemptible=false): void {
+  isCurrent?: () => boolean,preemptible=false): Promise<boolean> {
   const chunks = relayTextChunks(text, locale);
-  if (!chunks.length || ws.readyState !== ws.OPEN || (isCurrent && !isCurrent())) return;
+  if (!chunks.length || ws.readyState !== ws.OPEN || (isCurrent && !isCurrent())) return Promise.resolve(false);
   const queue = relayQueue(ws);
-  if(queue.ending||queue.ended)return;
+  if(queue.ending||queue.ended)return Promise.resolve(false);
   const generation = queue.generation;
-  queue.tail = queue.tail.then(async () => {
+  const delivery = queue.tail.then(async (): Promise<boolean> => {
     for (const token of chunks) {
-      if (isCurrent && !isCurrent()) return;
-      if (generation !== queue.generation) return;
+      if (isCurrent && !isCurrent()) return false;
+      if (generation !== queue.generation) return false;
       const elapsed = queue.lastAt > 0 ? Date.now() - queue.lastAt : RELAY_CHUNK_GAP_MS;
       if (elapsed < RELAY_CHUNK_GAP_MS) await sleep(RELAY_CHUNK_GAP_MS - elapsed);
-      if (generation !== queue.generation) return;
-      if (ws.readyState !== ws.OPEN) return;
+      if (generation !== queue.generation) return false;
+      if (ws.readyState !== ws.OPEN) return false;
       const speechToken = relaySpeechMarkup(token, locale);
       // A silent word-joiner sequence makes playback acknowledgements unique without changing speech.
       const marker = (++queue.tokenSequence).toString(2)
@@ -2665,11 +3869,12 @@ function sendRelayText(ws: WebSocket, text: string, locale: SupportedLocale = DE
       ws.send(JSON.stringify({ type: 'text', token: wireToken, last: true, lang: locale,
         ...(preemptible?{interruptible:true,preemptible:true}:{}) }));
       queue.lastAt = Date.now();
-      await played;
+      if (!await played) return false;
     }
-  }).catch(() => {
-    // TTS pacing must never break the game loop.
+    return true;
   });
+  queue.tail = delivery.then(() => undefined, () => undefined);
+  return delivery.catch(() => false);
 }
 
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
@@ -2692,20 +3897,20 @@ function handleRelayPlaybackEvent(ws: WebSocket, raw: string): boolean {
   if (info.type !== 'info' || info.name !== 'tokensPlayed') return false;
   const queue = relayQueues.get(ws);
   if (!queue) return true;
-  if (queue.pendingPlayback?.token === String(info.value ?? '')) queue.pendingPlayback.settle();
+  if (queue.pendingPlayback?.token === String(info.value ?? '')) queue.pendingPlayback.settle(true);
   maybeEndRelay(ws, queue);
   return true;
 }
 
-function waitForRelayPlayback(queue: RelayQueue, token: string, generation: number): Promise<void> {
+function waitForRelayPlayback(queue: RelayQueue, token: string, generation: number): Promise<boolean> {
   return new Promise(resolve => {
     let settled = false;
-    const settle = () => {
+    const settle = (played = false) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       if (queue.pendingPlayback?.settle === settle) queue.pendingPlayback = null;
-      resolve();
+      resolve(played);
     };
     const timer = setTimeout(settle, RELAY_PLAYBACK_TIMEOUT_MS);
     timer.unref?.();
@@ -2890,6 +4095,91 @@ function readBody(req: http.IncomingMessage): Promise<string> {
 function isLoopbackUrl(value: string): boolean {
   try { return ['localhost', '127.0.0.1', '::1'].includes(new URL(value).hostname); }
   catch { return false; }
+}
+
+export function karaokeBrowserTestingAllowed(nodeEnv: string | undefined, publicBaseUrl: string): boolean {
+  return nodeEnv !== 'production' && isLoopbackUrl(publicBaseUrl);
+}
+
+export function resolveVoiceRelayToken(
+  publicBaseUrl: string,
+  dedicatedToken?: string,
+  twilioAuthToken?: string,
+  nodeEnv = process.env.NODE_ENV,
+): string {
+  const dedicated = dedicatedToken?.trim() ?? '';
+  if (dedicated) return dedicated;
+  return nodeEnv !== 'production' && isLoopbackUrl(publicBaseUrl) ? twilioAuthToken?.trim() ?? '' : '';
+}
+
+export function isSecureKaraokeMediaRequest(
+  request: http.IncomingMessage,
+  publicBaseUrl: string,
+): boolean {
+  if ((request.socket as typeof request.socket & { encrypted?: boolean }).encrypted === true) return true;
+  let publicProtocol: string;
+  try { publicProtocol = new URL(publicBaseUrl).protocol; }
+  catch { return false; }
+  const forwarded = request.headers['x-forwarded-proto'];
+  const value = Array.isArray(forwarded) ? forwarded.length === 1 ? forwarded[0] : undefined : forwarded;
+  return publicProtocol === 'https:' && value?.trim().toLowerCase() === 'https';
+}
+
+function validProviderIdentity(value: string): boolean {
+  return value.length > 0 && value.length <= 128 && /^[A-Za-z0-9_-]+$/.test(value);
+}
+
+function karaokeHandoffResponseKey(params: Record<string, string>): string {
+  const canonical = Object.keys(params).sort().map(key => `${key}\u0000${params[key]}`).join('\u0001');
+  return createHash('sha256').update(canonical).digest('base64url');
+}
+
+const KARAOKE_LIFECYCLE_ORDER: Record<KaraokeVoiceCallBinding['lifecycle'], number> = {
+  setup: 0,
+  'handoff-pending': 1,
+  'media-issued': 2,
+  'media-started': 3,
+  'media-finalized': 4,
+  completed: 5,
+  failed: 6,
+};
+
+function transitionKaraokeLifecycle(
+  binding: KaraokeVoiceCallBinding,
+  next: KaraokeVoiceCallBinding['lifecycle'],
+): boolean {
+  if (KARAOKE_LIFECYCLE_ORDER[next] < KARAOKE_LIFECYCLE_ORDER[binding.lifecycle]) return false;
+  binding.lifecycle = next;
+  return true;
+}
+
+function assertNever(value: never): never {
+  throw new Error(`Unhandled game: ${String(value)}`);
+}
+
+function isKaraokeHandoffData(raw: string): boolean {
+  if (!raw || raw.length > 2_048) return false;
+  try { return JSON.parse(raw)?.reasonCode === 'karaoke-media'; }
+  catch { return false; }
+}
+
+function parseKaraokeHandoffData(raw: string): Omit<KaraokeHandoffIntent, 'handoffData'> | null {
+  if (!isKaraokeHandoffData(raw)) return null;
+  let value: Record<string, unknown>;
+  try { value = JSON.parse(raw) as Record<string, unknown>; }
+  catch { return null; }
+  const expected = ['loadingGeneration', 'locale', 'playerId', 'reasonCode', 'roomCode', 'songId'];
+  if (Object.keys(value).sort().join('\u0000') !== expected.sort().join('\u0000')
+    || typeof value.roomCode !== 'string' || typeof value.playerId !== 'string'
+    || typeof value.songId !== 'string' || !Number.isSafeInteger(value.loadingGeneration)
+    || (value.locale !== 'en-US' && value.locale !== 'pt-BR')) return null;
+  return {
+    roomCode: value.roomCode,
+    playerId: value.playerId,
+    songId: value.songId,
+    loadingGeneration: value.loadingGeneration as number,
+    locale: value.locale,
+  };
 }
 
 function readBinaryBody(req: http.IncomingMessage, max: number): Promise<Buffer> {

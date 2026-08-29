@@ -15,6 +15,33 @@ export interface PlayParams {
   name?: string;
 }
 
+export const STANDALONE_GAMES_PER_PAGE = 3;
+
+export function orderByConfiguredIds<T extends { readonly id: string }>(
+  items: readonly T[],
+  order: readonly string[],
+): T[] {
+  const byId = new Map(items.map(item => [item.id, item]));
+  const ordered = order.flatMap(id => {
+    const item = byId.get(id);
+    if (!item) return [];
+    byId.delete(id);
+    return [item];
+  });
+  return [...ordered, ...items.filter(item => byId.has(item.id))];
+}
+
+export function calculatePageCount(itemCount: number, pageSize = STANDALONE_GAMES_PER_PAGE): number {
+  const count = Math.max(0, Math.floor(itemCount));
+  const size = Math.max(1, Math.floor(pageSize));
+  return Math.ceil(count / size);
+}
+
+export function clampPageIndex(pageIndex: number, itemCount: number, pageSize = STANDALONE_GAMES_PER_PAGE): number {
+  const lastPage = Math.max(0, calculatePageCount(itemCount, pageSize) - 1);
+  return Math.min(Math.max(0, Math.floor(pageIndex)), lastPage);
+}
+
 /** A room code is exactly 4 digits. Sanitize arbitrary input to that, or default. */
 export function sanitizeRoomCode(raw: string): string {
   const digits = (raw ?? '').replace(/\D/g, '').slice(0, 4);

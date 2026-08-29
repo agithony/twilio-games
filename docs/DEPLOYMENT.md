@@ -1,6 +1,6 @@
 # Deployment
 
-Twilio Games deploys Voice Racer, Voice Monsters, and Voice Fighter to one Azure Container App. The Node process serves the built browser clients, APIs, static assets, Twilio webhooks, and all WebSocket endpoints.
+Twilio Games deploys Voice Racer, Voice Monsters, Voice Fighter, and Voice Karaoke to one Azure Container App. The Node process serves the built browser clients, APIs, static assets, Twilio webhooks, game WebSockets, and Karaoke Media Streams.
 
 For project setup and local development, see the [README](../README.md). For the one-time Azure and GitHub setup, see [Infrastructure setup](./INFRA_SETUP.md).
 
@@ -33,14 +33,14 @@ flowchart LR
 8. The workflow renders `.github/containerapp.yaml` with a unique `sha-<short-sha>-r<run-id>-a<attempt>` revision suffix. An existing app may be in `Single` or `Multiple` mode, but it must have exactly one active revision. The workflow switches to `Multiple` when needed, pins traffic to the old revision, deactivates it, and waits for zero replicas before updating. It also accepts a stopped, zero-running-replica first-deployment retry; every other topology fails closed.
 9. A first deployment creates the minimal Azure-resource-tagged app required by tenant policy with external ingress and `minReplicas=0`, records its temporary revision, immediately switches to Multiple mode, deactivates it, and waits for zero replicas before setting secrets or applying the full specification. Because external ingress exists before deactivation, do not treat the temporary shell as a traffic-isolation boundary.
 10. Before committing the rollout, the workflow requires the exact uniquely named revision to use `twilio-games:<commit-sha>`, be active with one replica, be `Provisioned` and `Healthy`, equal `latestReadyRevisionName`, include the `appdata` Azure Files mount, and include all three health probes. It also asserts that no other revision has a running replica.
-11. Before public cutover, the candidate revision FQDN must return HTTP 200 for `/livez`, `/healthz`, `/`, `/instructions`, `/join`, and `/player`, plus the expected HTTP 302 authentication redirect for `/operator`. The route set is retried for up to five minutes. The workflow then assigns 100% public traffic and requires exact `Single` mode around the verified revision.
+11. Before public cutover, the candidate revision FQDN must return HTTP 200 for `/livez`, `/healthz`, `/`, `/instructions`, `/join`, `/player`, `/karaoke.html`, and `/analytics`, plus the expected HTTP 302 authentication redirect for `/operator`. The route set is retried for up to five minutes. The workflow then assigns 100% public traffic and requires exact `Single` mode around the verified revision.
 12. Before the candidate can produce external or public durable side effects, a failed rollout may stop it, restore the byte-verified pre-rollout Azure Files snapshot, reactivate the prior revision, pin 100% traffic to it, and deliberately leave recovery in `Multiple` mode. If outbound delivery is enabled, restore becomes unsafe before the candidate update because its worker may call Twilio immediately. Once restore is unsafe, automatic rollback is disabled and the workflow leaves data and revision state intact for manual recovery rather than erasing accepted registrations/webhooks or duplicating messages. A failed first deployment has no prior revision to restore and remains stopped.
 
 The Container App specification uses process-only `/livez` for Azure startup, readiness, and liveness probes. The workflow separately calls dependency-aware `/healthz` on the candidate revision before public cutover.
 
 The deployment does not perform a writable persistent-store smoke. The current public write APIs change real editor, Arcade, or messaging state, and there is no existing authenticated, idempotent endpoint for a disposable write-and-delete check. Using one of those mutations as a probe would be less safe than omitting the check.
 
-Container App secrets are application-scoped, not revision-scoped. A revision rollback does not restore previous Twilio, Google, editor, signing, display, Relay, OpenAI, or Dub secret values. Rotate secrets in a separate controlled change, retain the prior values securely, and restore them explicitly before reactivating an older revision when a credential change caused the failure.
+Container App secrets are application-scoped, not revision-scoped. A revision rollback does not restore previous Twilio, Google, editor, signing, display, Relay, OpenAI, Deepgram, or Dub secret values. Rotate secrets in a separate controlled change, retain the prior values securely, and restore them explicitly before reactivating an older revision when a credential change caused the failure.
 
 ## Image and process model
 
@@ -88,11 +88,14 @@ These default paths persist:
 | Path | Contents | Initialization |
 |---|---|---|
 | `data/leaderboard.json` | Racer leaderboard | Created on the first completed race |
+| `data/karaoke-leaderboard.json` | Per-song Voice Karaoke leaderboard | Created on the first completed Karaoke performance |
 | `data/analytics.json` | Anonymous daily activation rollups for all games | Created when the first match or accepted voice command is recorded; the 730-day age cutoff can retain 731 inclusive UTC date buckets |
 | `data/maps.json` | Live Racer level catalog | Seeded from `assets/maps/maps.json` when missing, blank, or corrupt; a valid live file is not overwritten |
 | `data/arena.json` | Live Voice Monsters arena configuration | Read from the bundled `assets/arena/arena.json` fallback until the editor first saves a live copy |
 | `data/fighter-maps.json` | Live Fighter map catalog | Seeded from `assets/fighters/maps/maps.json` when the live catalog cannot be parsed |
 | `data/fighter-previews/*.png` | Fighter map previews captured in the editor | Created by editor uploads |
+| `data/karaoke-venue.json` | Live Voice Karaoke stage and camera configuration | Seeded from `assets/karaoke/venue.json` when missing, blank, or corrupt |
+| `data/karaoke-timings.json` | Sparse per-word Karaoke timing overrides | Created by authenticated timing-editor saves; compiled chart timings remain the fallback |
 | `data/arcade-config.json` | Current versioned Arcade runtime configuration | Defaults to mode `off`; created on the first admin update |
 | `data/arcade-config-audit.jsonl` | Hash-chained Arcade configuration audit | Appended on every admin update |
 | `data/arcade-state.json` | Arcade players, leads, wallets, station state, messaging identities, and the outbound notification outbox | Opened when Arcade is enabled and for mode-off webhook replay/status cleanup |
@@ -108,7 +111,7 @@ The deployed specification currently sets these variables:
 | Variable | Current source | Runtime behavior |
 |---|---|---|
 | `PORT` | Literal `8080` | HTTP and WebSocket listener |
-| `NODE_ENV` | Literal `production` | Production mode and missing-editor-token warning |
+| `NODE_ENV` | Literal `production` | Production mode and fail-closed credential checks |
 | `PUBLIC_BASE_URL` | Resolved Container App FQDN | Absolute Twilio callback URLs and the Conversation Relay `wss://` URL |
 | `DATA_MOUNT` | Literal `/app/appdata` | Persistent mount used by `scripts/start.sh` |
 | `TWILIO_AUTH_TOKEN` | Container App secret `twilio-token` | Enables fail-closed Twilio webhook signature validation |
@@ -118,7 +121,7 @@ The deployed specification currently sets these variables:
 | `TWILIO_PHONE_NUMBER`, `TWILIO_SMS_NUMBER` | GitHub `TWILIO_SMS_NUMBER` variable | SMS-capable sender for joining and outbound notices; never falls back to a voice-only number |
 | `TWILIO_CONVERSATION_CONFIGURATION_ID` | Matching GitHub repository variable | Active Conversation Orchestrator configuration linked to the Memory store; TAC enriches messaging identities while the signed `/sms` webhook owns commands and replies |
 | `ARCADE_TAC_ENABLED` | Literal `true` | Starts TAC/Orchestrator and Conversation Memory integration when event mode is active; an active-mode connection failure degrades `/healthz` |
-| `EDITOR_TOKEN` | Container App secret `editor-token` | Requires `x-editor-token` or `?token=` on disk-writing editor and garage APIs when non-empty |
+| `EDITOR_TOKEN` | Required Container App secret `editor-token` | Requires `x-editor-token` or `?token=` on disk-writing editor and garage APIs; production fails closed when missing |
 | `GOOGLE_OAUTH_CLIENT_ID` | Container App secret `google-oauth-client-id` | Identifies the Google OAuth web client used by `/analytics` and `/operator` |
 | `GOOGLE_OAUTH_CLIENT_SECRET` | Container App secret `google-oauth-client-secret` | Server-side Google authorization-code exchange |
 | `ANALYTICS_ADMIN_PIN` | Container App secret `analytics-admin-pin` | Alternative 6-64 character login for `/analytics` and `/operator`; five failures from one client lock that client out for 15 minutes |
@@ -138,6 +141,8 @@ The deployed specification currently sets these variables:
 | `DEFAULT_LOCALE` | GitHub repository variable | Fallback when the dialed number and selected display do not identify a locale; empty defaults to `en-US` |
 | `OPENAI_API_KEY` | Container App secret populated from the matching GitHub secret | Enables English free-form Racer and Monsters help; missing uses deterministic behavior, and Portuguese free-form OpenAI remains disabled |
 | `OPENAI_MODEL` | GitHub repository variable | OpenAI model; empty defaults to `gpt-4o-mini` |
+| `DEEPGRAM_API_KEY` | Required Container App secret `deepgram-api-key` populated from the matching GitHub secret | Enables direct streaming lyric verification for Voice Karaoke; production startup and deploy validation fail closed when missing |
+| `KARAOKE_CALIBRATION_OFFSET_MS` | Optional repository variable, default `0` | Applies the measured handset/carrier offset to authoritative Karaoke scoring; accepted range is `-5000..5000` ms |
 | `DUB_API_KEY` | Container App secret `dub-api-key` | Enables challenge-link shortening only when `DUB_SHORT_DOMAIN` is also valid; missing preserves the original long URL |
 | `DUB_FOLDER_ID` | Container App secret `dub-folder-id` | Optional folder assigned to links created by the enabled Dub shortener |
 | `DUB_SHORT_DOMAIN` | GitHub repository variable | Valid custom Dub hostname paired with `DUB_API_KEY`; the workflow rejects a key/domain partial configuration |
@@ -146,7 +151,7 @@ The primary account owns the English Voice number, dedicated SMS number, optiona
 
 Provision the booth display from that tab: open `https://<app-fqdn>/operator`, authenticate with Google or the admin PIN, and select **Pair this tab as the big screen**. The same-origin action installs display access in `sessionStorage` and returns the tab to `/`. Staff never need to know the display capability, and it is never placed in a URL, page, notice, or visitor QR. Repeat the action for independent browser sessions because they do not inherit the paired tab's session storage.
 
-The server also supports `TWILIO_VALIDATE_SIGNATURES`, `VOICE_RELAY_TOKEN`, `FIGHTER_DISPLAY_TOKEN`, `MAPS_PATH`, `BUNDLED_MAPS_PATH`, `ARENA_PATH`, `BUNDLED_ARENA_PATH`, `FIGHTER_MAPS_PATH`, `BUNDLED_FIGHTER_MAPS_PATH`, and `FIGHTER_PREVIEW_DIR`. See [Infrastructure setup](./INFRA_SETUP.md#configuration-gaps-and-security-notes) before relying on additional overrides in Azure.
+The server also supports `TWILIO_VALIDATE_SIGNATURES`, `VOICE_RELAY_TOKEN`, `FIGHTER_DISPLAY_TOKEN`, `MAPS_PATH`, `BUNDLED_MAPS_PATH`, `ARENA_PATH`, `BUNDLED_ARENA_PATH`, `FIGHTER_MAPS_PATH`, `BUNDLED_FIGHTER_MAPS_PATH`, `FIGHTER_PREVIEW_DIR`, `KARAOKE_VENUE_PATH`, `BUNDLED_KARAOKE_VENUE_PATH`, `KARAOKE_TIMINGS_PATH`, `KARAOKE_ASSET_DIRECTORY`, and `KARAOKE_LEADERBOARD_PATH`. See [Infrastructure setup](./INFRA_SETUP.md#configuration-gaps-and-security-notes) before relying on additional overrides in Azure.
 
 ## Public URLs
 
@@ -161,6 +166,8 @@ Replace `<base>` with `https://<app-fqdn>`.
 | Standalone Voice Racer shared display | `<base>/play.html?display=1&room=4821` |
 | Standalone Voice Monsters shared display | `<base>/monsters.html?display=1&room=4821` |
 | Standalone Voice Fighter shared display | `<base>/fighter.html?display=1&room=4821` |
+| Standalone Voice Karaoke shared display | `<base>/karaoke.html?display=1&room=4821` after operator enablement |
+| Voice Karaoke local keyboard acceptance | Open `http://localhost:5173/karaoke.html`, press hidden `P`, then use mouse/keyboard controls; public and production origins reject browser singers |
 | Standalone Voice Racer browser player | `<base>/play.html?room=4821&name=Ada` |
 | Challenge portal | `<base>/challenge/` with the signed 15-minute token in the URL fragment; messaging supplies the complete link |
 | Unified editor hub | `<base>/editor` |
@@ -180,9 +187,17 @@ Replace `<base>` with `https://<app-fqdn>`.
 
 Room `4821` belongs only to standalone play. Station launches use the selected game's route with a generated 12-character room code, match ID, and launch generation from the authenticated display projection; operators should not construct station launch URLs manually.
 
-The Fighter browser page is `/fighter.html`; `/fighter` is the Fighter WebSocket upgrade endpoint and is not an HTTP page. Browser URLs do not accept `hostToken` or display credentials. Station launches inherit the booth access installed from `/operator`; `FIGHTER_DISPLAY_TOKEN` remains only a server-side override for custom standalone integrations.
+The Fighter browser page is `/fighter.html`; `/fighter` is the Fighter WebSocket upgrade endpoint and is not an HTTP page. Voice Karaoke follows the same split with `/karaoke.html` and `/karaoke`. Browser URLs do not accept `hostToken` or display credentials. Station launches inherit the booth access installed from `/operator`; `FIGHTER_DISPLAY_TOKEN` remains only a server-side override for custom standalone integrations.
 
-WebSocket endpoints are `/game`, `/battle`, `/fighter`, and `/voice`. The same Node server also serves `/api/*`, `/assets/*`, `/fighter-previews/*`, `/brand/*`, and `/fonts/*`.
+WebSocket endpoints are `/game`, `/battle`, `/fighter`, `/karaoke`, `/karaoke-media`, and `/voice`. `/karaoke-media` accepts only signed, query-free Twilio upgrades and one-use call-bound attempt tokens. The same Node server also serves `/api/*`, `/assets/*`, `/fighter-previews/*`, `/brand/*`, and `/fonts/*`.
+
+### Karaoke lyric verification and privacy
+
+Voice Karaoke scores caller input as exactly 50% timing, 30% recognized lyrics, and 20% pitch. Voice activity and matching lyric evidence gate timing and pitch when recognition is configured; silence scores zero and weights are never renormalized. Karaoke is enabled in the default Arcade configuration, and production fails closed without its required lyric provider.
+
+When `DEEPGRAM_API_KEY` is configured, the server opens a direct Deepgram streaming WebSocket for each authenticated Karaoke Media Stream. It sends only live inbound caller mu-law audio at 8 kHz. The browser backing track, instrumental URL, and any outbound audio are never sent. Audio and recognized provider words remain bounded in process memory; the application does not log or persist raw audio or recognized transcripts. Deepgram source timestamps and confidences are reduced to per-chart-word scalar scoring evidence. At Twilio stop, the server asks Deepgram to finalize and waits at most about 1.5 seconds; timeout or provider failure rejects the score instead of accepting interim evidence.
+
+Deepgram is a third-party audio processor. Before operating Karaoke, confirm participant notice/consent, the Deepgram account's region, retention and model-improvement settings, contractual data-processing terms, and applicable voice/biometric and child-privacy requirements. Application non-persistence does not control Deepgram's own service-side handling. The deployment and production startup fail closed without the configured key.
 
 Outbound station notices use a schema-versioned transactional outbox in `arcade-state.json`. The single-replica worker persists an attempt before calling Twilio, makes at most five total delivery attempts with bounded transient backoff, expires stale notices, and retains terminal delivery records for 30 days. Before every attempt it revalidates admitted, overflow, call-now, results, and next-game notices against current station state so leave, reset, launch failure, promotion, and completion transitions cannot send obsolete instructions.
 
@@ -192,17 +207,17 @@ Results always supply template variable `{{1}}` for the localized game name and 
 
 The operator console distinguishes inbound SMS/WhatsApp onboarding from proactive notifications and reports the effective outbound state, worker error, status counts, storage capacity, cleanup eligibility, and recent failures from `/api/admin/arcade/status`. Signed inbound messages are limited per address and across the single process before a new messaging identity can be created; durable provider-SID replays are resolved before those limits. New identities stop at a guarded count/file watermark rather than reaching the state-store hard maximum.
 
-Inactive anonymous messaging players and incomplete drafts become cleanup candidates after 30 days. Each inbound transaction prunes at most 100 oldest candidates. Cleanup is fail-closed: it retains completed lead profiles, CRM/conversation profiles, marketing consent, any wallet balance or economic history, queue or station history, ready/match state, non-messaging idempotency dependencies, and outbound notifications. Inbound receipts tied only to a deleted anonymous identity are deleted with it. Effective outbound delivery requires the literal kill switch, valid REST credentials, an enabled runtime channel, and its configured sender; mode `off` or a false kill switch enqueue and send nothing. An operator can explicitly retry a still-current `FAILED`/undelivered notice only while it is unexpired and has an attempt remaining. Retry requests require same-origin POST, a reason, and an idempotency key; the transition and actor/reason are committed atomically to the bounded schema-v9 messaging audit. Provider-terminal failures never auto-retry, and ambiguous provider acceptance is never eligible for operator retry.
+Inactive anonymous messaging players and incomplete drafts become cleanup candidates after 30 days. Each inbound transaction prunes at most 100 oldest candidates. Cleanup is fail-closed: it retains completed lead profiles, CRM/conversation profiles, marketing consent, any wallet balance or economic history, queue or station history, ready/match state, non-messaging idempotency dependencies, and outbound notifications. Inbound receipts tied only to a deleted anonymous identity are deleted with it. Effective outbound delivery requires the literal kill switch, valid REST credentials, an enabled runtime channel, and its configured sender; mode `off` or a false kill switch enqueue and send nothing. An operator can explicitly retry a still-current `FAILED`/undelivered notice only while it is unexpired and has an attempt remaining. Retry requests require same-origin POST, a reason, and an idempotency key; the transition and actor/reason are committed atomically to the bounded schema-v10 messaging audit. Provider-terminal failures never auto-retry, and ambiguous provider acceptance is never eligible for operator retry.
 
-### Arcade State Schema V9
+### Arcade State Schema V10
 
-Schema v9 gives each outbound call-now notice a dedicated `callNumber`. This lets delivery revalidate the routed locale number without overloading WhatsApp template variable `{{1}}`, which now carries the game name for the Phone CTA. On load, the store migrates schema v8 by copying a valid E.164 call-now value from legacy template variable `1`. An invalid or absent legacy value becomes `null`, then fails schema-v9 validation because every call-now notice requires a valid number. The store supports ordered migrations from schemas 1 through 8 in memory and writes v9 on the next transaction after a valid load.
+Schema v9 gave each outbound call-now notice a dedicated `callNumber`. Schema v10 extends validated station assignments and round choices to Voice Karaoke without changing stored player economics. The store supports ordered migrations through v10 and writes v10 on the next transaction after a valid load.
 
-Older application revisions reject v9. Before starting schema-older code, stop the only writer and either prove compatibility or restore the pre-upgrade Azure Files snapshot. Never edit the version number by hand, run old code against v9 data, or restore a snapshot after the candidate may have accepted public interactions or produced Twilio side effects.
+Older application revisions reject v10. Activate v6 configuration/v10 state writers only after the rollback release can read them, or retain the pre-rollout Azure Files snapshot for a stop-the-writer rollback. Never edit the version number by hand or restore a snapshot after the candidate may have accepted public interactions or produced Twilio side effects.
 
 ## Editor writes
 
-`/editor` is a hub for Racer levels, the Monsters arena, and Fighter maps. `EDITOR_TOKEN` protects write operations for the asset manifest, Racer maps, Monsters arena, Fighter map catalog, and Fighter preview uploads. Reads remain public. The browser accepts the token through its prompt or an initial `?token=` query and stores it in local storage.
+`/editor` is a hub for Racer levels, the Monsters arena, Fighter maps, and Karaoke venue/timing authoring. `EDITOR_TOKEN` protects all write operations. Reads remain public. The browser accepts the token through its prompt or an initial `?token=` query and stores it in local storage.
 
 The editor can change persistent JSON and generated Fighter previews, but it cannot upload required GLB or FBX runtime assets. Add those files to the repository, ensure LFS tracks the applicable Fighter paths, and deploy a new image.
 
@@ -221,17 +236,24 @@ The editor can change persistent JSON and generated Fighter previews, but it can
 | `npm run optimize-assets` | Optimize assets |
 | `npm run smoke` | Run the browser render smoke script |
 | `npm run smoke:editor` | Run the editor smoke script |
+| `npm run smoke:karaoke-editor` | Run the Karaoke venue/timing editor browser smoke script |
 
-CI runs `typecheck`, `test`, and `build`; it does not run either browser smoke script.
+CI runs `typecheck`, `test`, and `build`; it does not run the browser smoke scripts.
 
 ## Local production-mode check
 
 ```bash
 npm ci
 npm run build
+ARCADE_SIGNING_SECRET="$(openssl rand -hex 32)" \
+EDITOR_TOKEN="$(openssl rand -hex 32)" \
+DEEPGRAM_API_KEY=local-production-check \
+TWILIO_VALIDATE_SIGNATURES=false \
 PORT=8099 NODE_ENV=production npx tsx server/index.ts
 curl --fail http://localhost:8099/healthz
 ```
+
+The synthetic Deepgram value is only for startup validation. Do not place a Karaoke call during this local check.
 
 In production, Twilio signature validation defaults on and the deployment requires `TWILIO_AUTH_TOKEN`. Outside production it defaults off unless a Twilio token is present or `TWILIO_VALIDATE_SIGNATURES=true`. Without the primary token, SMS, WhatsApp, TAC, and messaging-status webhooks fail with status 500; Voice requests can still validate with `TWILIO_PT_AUTH_TOKEN`. The deployed `ARCADE_STANDALONE_VOICE_ENABLED=true` setting permits routing to the most recently registered eligible open display; no eligible display returns unavailable TwiML and never defaults to Racer.
 
@@ -261,11 +283,11 @@ az containerapp revision list \
 Use the same zero-overlap invariants as the workflow:
 
 1. Confirm exactly one current writer and verify that the target revision references `twiliogames.azurecr.io/twilio-games:<full-old-commit-sha>`. A commit tag is conventional, not registry-enforced immutability.
-2. Verify schema and secret compatibility. Container App secrets are application-scoped, so reactivating an old revision does not restore its former Twilio, Google, Relay, editor, signing, display, OpenAI, or Dub values.
+2. Verify schema and secret compatibility. Container App secrets are application-scoped, so reactivating an old revision does not restore its former Twilio, Google, Relay, editor, signing, display, OpenAI, Deepgram, or Dub values.
 3. Switch to `Multiple`, explicitly pin 100% traffic to the current revision, deactivate it, and wait until it is inactive with zero replicas. This creates a planned outage and preserves the single-writer guarantee.
 4. Take and retain an Azure Files share snapshot after the current writer stops.
 5. Activate only the target revision. Wait for `Provisioned`, `Healthy`, and one replica, then use its revision-specific FQDN for read-only `/livez`, `/healthz`, `/`, `/instructions`, `/join`, and `/player` checks plus the `/operator` authentication redirect check.
 6. Pin 100% public traffic to the verified target and keep `Multiple` mode. Do not switch to `Single`, because Azure can select the newer revision that the rollback is replacing.
 7. If target validation fails, stop it and wait for zero replicas before considering the previous writer. Restore the snapshot only when no public request, webhook, worker, or external Twilio side effect could have occurred. Otherwise retain current data and perform a compatibility-aware forward recovery.
 
-Never run `az containerapp update --image` while a writer is active, start schema-older code against schema v9, overlap revisions on the mounted JSON stores, or restore a snapshot after accepted external activity.
+Never run `az containerapp update --image` while a writer is active, start schema-older code against schema v10, overlap revisions on the mounted JSON stores, or restore a snapshot after accepted external activity.

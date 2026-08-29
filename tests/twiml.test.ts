@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { twimlGatherRoomCode, twimlConnectRelay, twimlMessage, twimlSayAndHangup } from '../server/twiml';
+import { twimlGatherRoomCode, twimlConnectRelay, twimlKaraokeMedia, twimlMessage, twimlSayAndHangup } from '../server/twiml';
 
 describe('twimlMessage',()=>{
   it('preserves plain-text line breaks while escaping XML',()=>{
@@ -135,5 +135,41 @@ describe('twimlConnectRelay', () => {
     expect(x).toContain('wss://x.test/voice?a=1&amp;b=2');
     expect(x).toContain('https://x.test/end?x=1&amp;y=2');
     expect(x).not.toContain('&b=2');   // raw unescaped ampersand must not appear
+  });
+});
+
+describe('twimlKaraokeMedia', () => {
+  it('orders Start, bounded Pause, Stop, and Redirect with a query-free inbound stream', () => {
+    const xml = twimlKaraokeMedia({
+      streamName: 'karaoke-a&b',
+      wsUrl: 'wss://games.example/karaoke-media',
+      statusCallbackUrl: 'https://games.example/voice/karaoke/stream-status?a=1&b=2',
+      completeUrl: 'https://games.example/voice/karaoke/complete?a=1&b=2',
+      customParameters: { roomCode: 'A&B', attemptToken: 'token<secret>' },
+      pauseLengthSeconds: 53,
+    });
+    const start = xml.indexOf('<Start>');
+    const pause = xml.indexOf('<Pause');
+    const stop = xml.indexOf('<Stop>');
+    const redirect = xml.indexOf('<Redirect');
+    expect(start).toBeLessThan(pause);
+    expect(pause).toBeLessThan(stop);
+    expect(stop).toBeLessThan(redirect);
+    expect(xml).toContain('url="wss://games.example/karaoke-media" track="inbound_track"');
+    expect(xml).toContain('<Pause length="53" />');
+    expect(xml).toContain('name="roomCode" value="A&amp;B"');
+    expect(xml).toContain('value="token&lt;secret&gt;"');
+    expect(xml).not.toContain('wss://games.example/karaoke-media?');
+    expect(xml).not.toContain('A&B');
+  });
+
+  it('rejects query-bearing, insecure, or unbounded stream plans', () => {
+    const input = {
+      streamName: 'karaoke-test', statusCallbackUrl: 'https://games.example/status',
+      completeUrl: 'https://games.example/complete', customParameters: {}, pauseLengthSeconds: 53,
+    };
+    expect(() => twimlKaraokeMedia({ ...input, wsUrl: 'wss://games.example/karaoke-media?token=x' })).toThrow(/query-free/);
+    expect(() => twimlKaraokeMedia({ ...input, wsUrl: 'ws://games.example/karaoke-media' })).toThrow(/WSS/);
+    expect(() => twimlKaraokeMedia({ ...input, wsUrl: 'wss://games.example/karaoke-media', pauseLengthSeconds: 61 })).toThrow(/1 to 60/);
   });
 });

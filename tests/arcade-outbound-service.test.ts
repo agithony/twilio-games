@@ -51,6 +51,11 @@ async function harness() {
       value.channels.voiceNumbers = numbers;
       config = parseArcadeConfig(value);
     },
+    enableKaraoke: () => {
+      const value = JSON.parse(JSON.stringify(config)) as Record<string, any>;
+      value.station.games.karaoke.enabled = true;
+      config = parseArcadeConfig(value);
+    },
   };
 }
 
@@ -298,6 +303,65 @@ describe('Arcade station outbound outbox', () => {
     const portugueseResult = resultNotices.find(item => item.locale === 'pt-BR' && item.body.includes('2º lugar'))!;
     expect(portugueseResult.body).toContain('Tempo da corrida: 16,67 segundos.');
     expect(resultNotices).toHaveLength(2);
+  });
+
+  it.each([
+    {
+      locale: 'en-US', from: '+14155550801', language: 'en-US', name: 'Ada', terms: 'YES', coin: 'COIN',
+      expected: 'Your score: 54321.', forbidden: 'finished #1', gameName: 'Voice Karaoke',
+    },
+    {
+      locale: 'pt-BR', from: '+551155555801', language: 'pt-BR', name: 'Bia', terms: 'SIM', coin: 'MOEDA',
+      expected: 'Sua pontuação: 54321.', forbidden: '1º lugar', gameName: 'Karaokê por Voz',
+    },
+  ])('sends a Karaoke score instead of solo placement copy in $locale', async row => {
+    const h = await harness();
+    h.enableKaraoke();
+    await inbound(h.service, `KARAOKE-${row.locale}-JOIN`, `JOIN ARCADE-01 LANG ${row.language}`, row.from, 'whatsapp');
+    await inbound(h.service, `KARAOKE-${row.locale}-NAME`, row.name, row.from, 'whatsapp');
+    await inbound(h.service, `KARAOKE-${row.locale}-TERMS`, row.terms, row.from, 'whatsapp');
+    await inbound(h.service, `KARAOKE-${row.locale}-COIN`, row.coin, row.from, 'whatsapp');
+    const recruiting = await h.service.getStation('ARCADE-01');
+    const selecting = await h.service.closeStationRecruiting({
+      stationId: 'ARCADE-01', expectedRevision: recruiting!.station.revision,
+      idempotencyKey: `karaoke-${row.locale}-close`, authorization: AUTHORIZATION,
+    });
+    const locked = await h.service.selectStationGame({
+      stationId: 'ARCADE-01', expectedRevision: selecting.station.revision,
+      game: 'karaoke', engineRoomCode: `SING-${row.locale}`, idempotencyKey: `karaoke-${row.locale}-select`,
+      authorization: AUTHORIZATION,
+    });
+    const launching = await h.service.requestStationLaunch({
+      stationId: 'ARCADE-01', expectedRevision: locked.station.revision,
+      idempotencyKey: `karaoke-${row.locale}-launch`, authorization: AUTHORIZATION,
+    });
+    const displayReady = await h.service.markStationDisplayReady({
+      stationId: 'ARCADE-01', expectedRevision: launching.station.revision,
+      matchId: launching.match!.id, launchGeneration: launching.match!.launchGeneration,
+      idempotencyKey: `karaoke-${row.locale}-display`, authorization: AUTHORIZATION,
+    });
+    const readyEntryId = displayReady.match!.participantReadyEntryIds[0]!;
+    const enginePlayerId = `singer-${row.locale}`;
+    const playing = await h.service.startStationMatch({
+      stationId: 'ARCADE-01', expectedRevision: displayReady.station.revision,
+      idempotencyKey: `karaoke-${row.locale}-start`, authorization: AUTHORIZATION,
+      enginePlayerIdsByReadyEntryId: { [readyEntryId]: enginePlayerId },
+    });
+    await h.service.completeStationMatch({
+      stationId: 'ARCADE-01', expectedRevision: playing.station.revision,
+      idempotencyKey: `karaoke-${row.locale}-complete`, authorization: AUTHORIZATION,
+      resultSource: 'ENGINE',
+      engineResults: [{
+        enginePlayerId, rank: 1, completed: true, won: null, score: 54_321, durationSeconds: 45,
+      }],
+    });
+
+    const result = Object.values(h.store.snapshot().outboundNotifications)
+      .find(item => item.kind === 'STATION_RESULTS')!;
+    expect(result.locale).toBe(row.locale);
+    expect(result.body).toContain(row.expected);
+    expect(result.body).not.toContain(row.forbidden);
+    expect(result.templateVariables).toEqual({ '1': row.gameName });
   });
 
   it('does not bind or notify a browser-created ready entry', async () => {

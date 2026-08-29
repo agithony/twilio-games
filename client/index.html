@@ -35,7 +35,16 @@
         <p id="standaloneDescription">Powered by Twilio Conversation Relay. Your voice is the controller.</p>
       </div>
       <div class="standalone-catalog">
-        <div id="standaloneGames" class="standalone-games"></div>
+        <div id="standaloneGameRegion" class="standalone-game-region">
+          <button id="standalonePreviousPage" class="standalone-page-button standalone-page-button-previous" type="button" aria-label="Previous page" aria-controls="standaloneGames" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"></path></svg>
+          </button>
+          <div id="standaloneGames" class="standalone-games"></div>
+          <button id="standaloneNextPage" class="standalone-page-button standalone-page-button-next" type="button" aria-label="Next page" aria-controls="standaloneGames" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"></path></svg>
+          </button>
+          <output id="standalonePageStatus" class="standalone-page-status" aria-live="polite" aria-atomic="true" hidden>Page 1 of 1</output>
+        </div>
         <div class="standalone-quick-start" aria-label="How to play">
           <div><b>01</b><span id="standaloneQuickStartOne">Tap the game</span></div>
           <div><b>02</b><span id="standaloneQuickStartTwo">Scan the QR code</span></div>
@@ -46,9 +55,6 @@
           <div class="standalone-future-cards">
             <article id="futureTrivia" class="standalone-future-game" hidden>
               <div><h2 id="voiceTriviaTitle">Voice Trivia</h2><p id="voiceTriviaDescription">Quick questions, spoken answers, and rounds built for everyone.</p></div>
-            </article>
-            <article id="futureKaraoke" class="standalone-future-game" hidden>
-              <div><h2 id="voiceKaraokeTitle">Voice Karaoke</h2><p id="voiceKaraokeDescription">Pick a song, take the mic, and sing through your phone.</p></div>
             </article>
           </div>
         </section>

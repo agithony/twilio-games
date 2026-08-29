@@ -31,8 +31,12 @@ import {
   type StationMatch,
   type StationReadyEntry,
 } from '../shared/arcade-station';
+import type { ArcadeGame } from '../shared/arcade-config';
+import { isArcadeGame, isPlayableArcadeGame } from '../shared/arcade-games';
 
-export const ARCADE_STATE_SCHEMA_VERSION = 9 as const;
+// Activate v10 writes only after every rollback target can read v10. The staged deployment owns that
+// compatibility gate; this store deliberately does not invent a lossy v10-to-v9 downmigration.
+export const ARCADE_STATE_SCHEMA_VERSION = 10 as const;
 export const ARCADE_STATE_MAX_FILE_BYTES = 64 * 1024 * 1024;
 export const ARCADE_STATE_MAX_PLAYERS = 100_000;
 export const ARCADE_STATE_MAX_QUEUE_ENTRIES = 100_000;
@@ -213,7 +217,7 @@ export interface ArcadeQueueEntryConfigSnapshot {
   readonly gameCost: number;
   readonly refundOnLobbyTimeout: boolean;
   readonly capturedAt: ArcadeTimestamp;
-  readonly assignedGame: 'racer' | 'monsters' | 'fighter' | 'trivia' | null;
+  readonly assignedGame: ArcadeGame | null;
   readonly matchId: string | null;
 }
 
@@ -284,7 +288,6 @@ const QUEUE_EVENT_TYPES = new Set([
   'ENTERED_ACTIVE_LOBBY', 'STARTED_PLAYING', 'COMPLETED', 'DEFERRED', 'RETURNED_TO_WAITING',
   'MARKED_NO_SHOW', 'LEFT_QUEUE', 'RELEASED',
 ]);
-const ARCADE_GAMES = new Set(['racer', 'monsters', 'fighter', 'trivia']);
 const SERVICE_OPERATIONS = new Set([
   'IDENTIFY_COIN_ONLY', 'REGISTER_PLAYER', 'CLAIM_CHALLENGE', 'JOIN_QUEUE', 'MARK_APPROACHING',
   'CONFIRM_PRESENCE', 'CALL_QUEUE_ENTRY', 'SNOOZE_QUEUE_ENTRY', 'EXPIRE_QUEUE_ENTRY',
@@ -612,7 +615,7 @@ function assertQueueEntryShape(entry: QueueEntry, key: string): void {
   requireString(entry.cabinetId, `queueEntries.${key}.cabinetId`);
   requireString(entry.playerId, `queueEntries.${key}.playerId`);
   requireString(entry.preferredGame, `queueEntries.${key}.preferredGame`);
-  if (!ARCADE_GAMES.has(entry.preferredGame)) {
+  if (!isArcadeGame(entry.preferredGame)) {
     throw new ArcadeStateStoreError('INVALID_STATE', `queueEntries.${key}.preferredGame is invalid`);
   }
   requireBoolean(entry.flexibleGame, `queueEntries.${key}.flexibleGame`);
@@ -647,7 +650,7 @@ function assertQueueConfigShape(value: ArcadeQueueEntryConfigSnapshot, key: stri
   requireInteger(value.gameCost, `queueEntryConfigs.${key}.gameCost`);
   requireBoolean(value.refundOnLobbyTimeout, `queueEntryConfigs.${key}.refundOnLobbyTimeout`);
   requireTimestamp(value.capturedAt, `queueEntryConfigs.${key}.capturedAt`);
-  if (value.assignedGame !== null && !ARCADE_GAMES.has(value.assignedGame)) {
+  if (value.assignedGame !== null && !isArcadeGame(value.assignedGame)) {
     throw new ArcadeStateStoreError('INVALID_STATE', `queueEntryConfigs.${key}.assignedGame is invalid`);
   }
   requireNullableString(value.matchId, `queueEntryConfigs.${key}.matchId`);
@@ -695,7 +698,7 @@ function assertStationRoundShape(value: RecruitingRound, key: string): void {
   requireCollectionSize(choices, 64, `stationRounds.${key}.gameChoicesByReadyEntryId`);
   for (const [readyEntryId, game] of Object.entries(choices)) {
     requireSafeKey(readyEntryId, `stationRounds.${key}.gameChoicesByReadyEntryId key`);
-    if (!['racer', 'monsters', 'fighter'].includes(String(game))) {
+    if (!isPlayableArcadeGame(game)) {
       throw new ArcadeStateStoreError(
         'INVALID_STATE',
         `stationRounds.${key}.gameChoicesByReadyEntryId.${readyEntryId} is invalid`,
@@ -1448,6 +1451,18 @@ export function assertArcadeState(state: unknown): asserts state is ArcadeState 
   }
 }
 
+function schemaSevenHumanCapacity(game: unknown, phase: unknown, field: string): 2 | 4 {
+  switch (game) {
+    case 'racer':
+      return ['PREPARING', 'LAUNCHING'].includes(String(phase)) ? 2 : 4;
+    case 'monsters':
+    case 'fighter':
+      return 2;
+    default:
+      throw new ArcadeStateStoreError('INVALID_STATE', `${field} is not a schema-v7 game`);
+  }
+}
+
 function migrateArcadeState(state: unknown): unknown {
   let current = state;
   if (isRecord(current) && current.schemaVersion === 1) {
@@ -1608,6 +1623,7 @@ function migrateArcadeState(state: unknown): unknown {
           && value.overflowReadyEntryIds.every(entryId => typeof entryId === 'string');
         const participants = participantsValid ? value.participantReadyEntryIds as string[] : [];
         const existingOverflow = overflowValid ? value.overflowReadyEntryIds as string[] : [];
+        const humanCapacity = schemaSevenHumanCapacity(value.game, value.phase, `stationMatches.${id}.game`);
         const shrinkPendingRacer = value.game === 'racer'
           && ['PREPARING', 'LAUNCHING'].includes(String(value.phase))
           && participantsValid && overflowValid;
@@ -1625,7 +1641,7 @@ function migrateArcadeState(state: unknown): unknown {
         }
         return [id, {
           ...value,
-          humanCapacity: shrinkPendingRacer ? 2 : value.game === 'racer' ? 4 : 2,
+          humanCapacity,
           participantReadyEntryIds: shrinkPendingRacer ? admitted : value.participantReadyEntryIds,
           overflowReadyEntryIds: shrinkPendingRacer ? overflow : value.overflowReadyEntryIds,
         }];
@@ -1644,10 +1660,14 @@ function migrateArcadeState(state: unknown): unknown {
         const overflowValid = Array.isArray(match.overflowReadyEntryIds)
           && match.overflowReadyEntryIds.every(entryId => typeof entryId === 'string');
         const persistedMatch = stationMatches[String(match.id)] as Record<string, unknown> | undefined;
+        const legacyCapacity = schemaSevenHumanCapacity(
+          match.game,
+          match.phase,
+          `idempotencyRecords.${key}.result.match.game`,
+        );
         const migratedCapacity = persistedMatch?.humanCapacity === 2 ? 2
           : persistedMatch?.humanCapacity === 4 ? 4
-            : match.game === 'racer' && ['PREPARING', 'LAUNCHING'].includes(String(match.phase)) ? 2
-              : match.game === 'racer' ? 4 : 2;
+            : legacyCapacity;
         const shrinkPendingRacer = match.game === 'racer' && migratedCapacity === 2
           && participantsValid && overflowValid;
         const participants = participantsValid ? match.participantReadyEntryIds as string[] : [];
@@ -1676,32 +1696,37 @@ function migrateArcadeState(state: unknown): unknown {
       idempotencyRecords,
     };
   }
-  if (!isRecord(current) || current.schemaVersion !== 8) return current;
-  const schemaEight = requireExactRecord(current, [
+  if (isRecord(current) && current.schemaVersion === 8) {
+    const schemaEight = requireExactRecord(current, [
+      'schemaVersion', 'players', 'wallets', 'queueEntries', 'queueEntryConfigs',
+      'queueEvents', 'idempotencyRecords', 'stations', 'stationRounds', 'stationReadyEntries',
+      'stationMatches', 'channelAddresses', 'messagingDrafts', 'inboundMessages',
+      'stationReadyChannels', 'outboundNotifications', 'messagingAuditEvents', 'stationControlEvents',
+    ], '$');
+    const outboundNotifications = Object.fromEntries(
+      Object.entries(requireRecord(schemaEight.outboundNotifications, 'outboundNotifications'))
+        .map(([id, notification]) => {
+          const value = requireRecord(notification, `outboundNotifications.${id}`);
+          const variables = requireRecord(value.templateVariables, `outboundNotifications.${id}.templateVariables`);
+          const legacyCallNumber = value.kind === 'STATION_CALL_NOW' ? variables['1'] : null;
+          return [id, {
+            ...value,
+            callNumber: typeof legacyCallNumber === 'string' && /^\+[1-9][0-9]{7,14}$/.test(legacyCallNumber)
+              ? legacyCallNumber
+              : null,
+          }];
+        }),
+    );
+    current = { ...schemaEight, schemaVersion: 9, outboundNotifications };
+  }
+  if (!isRecord(current) || current.schemaVersion !== 9) return current;
+  const schemaNine = requireExactRecord(current, [
     'schemaVersion', 'players', 'wallets', 'queueEntries', 'queueEntryConfigs',
     'queueEvents', 'idempotencyRecords', 'stations', 'stationRounds', 'stationReadyEntries',
     'stationMatches', 'channelAddresses', 'messagingDrafts', 'inboundMessages',
     'stationReadyChannels', 'outboundNotifications', 'messagingAuditEvents', 'stationControlEvents',
   ], '$');
-  const outboundNotifications = Object.fromEntries(
-    Object.entries(requireRecord(schemaEight.outboundNotifications, 'outboundNotifications'))
-      .map(([id, notification]) => {
-        const value = requireRecord(notification, `outboundNotifications.${id}`);
-        const variables = requireRecord(value.templateVariables, `outboundNotifications.${id}.templateVariables`);
-        const legacyCallNumber = value.kind === 'STATION_CALL_NOW' ? variables['1'] : null;
-        return [id, {
-          ...value,
-          callNumber: typeof legacyCallNumber === 'string' && /^\+[1-9][0-9]{7,14}$/.test(legacyCallNumber)
-            ? legacyCallNumber
-            : null,
-        }];
-      }),
-  );
-  return {
-    ...schemaEight,
-    schemaVersion: ARCADE_STATE_SCHEMA_VERSION,
-    outboundNotifications,
-  };
+  return { ...schemaNine, schemaVersion: ARCADE_STATE_SCHEMA_VERSION };
 }
 
 function cloneJson<T>(value: T): T {

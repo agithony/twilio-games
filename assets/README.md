@@ -39,13 +39,13 @@ The browser also consumes these asset trees outside this directory:
 | `client/public/assets/monsters/` | 16 GIFs | `/assets/monsters/` |
 | `client/public/audio/` | 25 MP3/M4A files | `/audio/` |
 | `client/public/fonts/` | 5 OTF files | `/fonts/` |
-| `client/public/video/` | 3 MP4 files | `/video/` |
+| `client/public/video/` | 4 MP4 files | `/video/` |
 | `client/public/brand/` | 2 SVG logos and 3 PNG QR images | `/brand/` |
 | `client/public/draco/` | JavaScript and WASM decoders | `/draco/` |
 
 The font inventory is `TwilioSansDisplay-Regular.otf`, `TwilioSansDisplay-Extrabold.otf`, `TwilioSansText-Regular.otf`, `TwilioSansText-Bold.otf`, and `TwilioSansMono-Regular.otf`. CSS loads them directly with `@font-face`; the production server maps `.otf` to `font/otf`.
 
-The home-page previews use `vr-demo.mp4`, `vm-demo.mp4`, and `vf-demo.mp4` for Voice Racer, Voice Monsters, and Voice Fighter. The brand inventory is `twilio_logo_1color_white.svg`, `Twilio_Logo_Bug_White.svg`, the standalone fallback `join-qr.png`, and the locale-specific station QR images `arcade-en.png` and `arcade-pt.png`.
+The home-page previews use `vr-demo.mp4`, `vm-demo.mp4`, `vf-demo.mp4`, and `vk-demo.mp4` for Voice Racer, Voice Monsters, Voice Fighter, and Voice Karaoke. The Karaoke preview is a silent H.264 1280x692 24fps runtime derivative; its raw source stays in ignored `client/public/video/_raw/`. The brand inventory is `twilio_logo_1color_white.svg`, `Twilio_Logo_Bug_White.svg`, the standalone fallback `join-qr.png`, and the locale-specific station QR images `arcade-en.png` and `arcade-pt.png`.
 
 Vite serves the public tree directly. In development it proxies other `/assets/*` requests to the Node server; in production the Node server resolves built client assets first and then repository-root `assets/` files.
 
@@ -65,7 +65,7 @@ npm run inspect-assets
 
 This command is destructive to hand-tuned role assignments, names, and transforms. Review the generated manifest before saving further edits.
 
-Use `/garage` to inspect and tune Racer model roles and transforms. Use `/editor` for Racer maps, the Voice Monsters arena, and Fighter maps. Editor writes use the API and require `EDITOR_TOKEN` when the server is configured with one; local writes are open when it is unset. Deployed Racer map and editor data may use persistent runtime files rather than modifying the committed seed files.
+Use `/garage` to inspect and tune Racer model roles and transforms. Use `/editor` for Racer maps, the Voice Monsters arena, Fighter maps, and Voice Karaoke venue/timing authoring. Editor writes use the API; local writes are open when `EDITOR_TOKEN` is unset, while production startup requires it. Deployed editor data may use persistent runtime files rather than modifying the committed seed files.
 
 ### Racer Optimization
 

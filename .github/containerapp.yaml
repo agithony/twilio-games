@@ -34,6 +34,7 @@ properties:
       - name: google-oauth-client-secret
       - name: analytics-admin-pin
       - name: openai-api-key
+      - name: deepgram-api-key
       - name: dub-api-key
       - name: dub-folder-id
       - name: acr-password
@@ -150,7 +151,7 @@ properties:
             value: "${TWILIO_WHATSAPP_CONTENT_SID_STATION_NEXT_GAME_PT_BR}"
           - name: TWILIO_CONVERSATION_CONFIGURATION_ID
             value: "${TWILIO_CONVERSATION_CONFIGURATION_ID}"
-          # Gate the editor's /api writes on a public deploy. Empty = writes open (not recommended public).
+          # Required in production so disk-writing editor routes cannot fail open.
           - name: EDITOR_TOKEN
             secretRef: editor-token
           # Private activation dashboard: verified @twilio.com Google accounts plus one exception.
@@ -188,6 +189,11 @@ properties:
             secretRef: openai-api-key
           - name: OPENAI_MODEL
             value: "${OPENAI_MODEL}"
+          # Required direct lyric verification while Voice Karaoke is enabled by default.
+          - name: DEEPGRAM_API_KEY
+            secretRef: deepgram-api-key
+          - name: KARAOKE_CALIBRATION_OFFSET_MS
+            value: "${KARAOKE_CALIBRATION_OFFSET_MS}"
           - name: DUB_API_KEY
             secretRef: dub-api-key
           - name: DUB_FOLDER_ID

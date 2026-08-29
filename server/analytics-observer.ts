@@ -1,20 +1,31 @@
 import type { Room } from './room';
 import type { BattleRoom } from './battle-room';
 import type { FighterRoom } from './fighter-room';
+import type { KaraokeRoom } from './karaoke-room';
 import { AnalyticsStore } from './analytics-store';
+import type { AnalyticsGame } from '../shared/analytics';
 
 interface ActiveMatch {
   key: string;
   startedAt: number;
   participants: string[];
   map?: string | null;
+  song?: string | null;
   characters: string[];
 }
+
+export type KaraokeAnalyticsSetupAction =
+  | 'confirm_name'
+  | 'open_song_selection'
+  | 'select_song'
+  | 'start_song'
+  | 'sing_again';
 
 export class AnalyticsObserver {
   private racerActive = new Map<string, ActiveMatch>();
   private battleActive = new Map<string, ActiveMatch>();
   private fighterActive = new Map<string, ActiveMatch>();
+  private karaokeActive = new Map<string, ActiveMatch>();
 
   constructor(private readonly store: AnalyticsStore, private readonly now: () => number = Date.now) {}
 
@@ -71,11 +82,66 @@ export class AnalyticsObserver {
     this.finish('fighter', room.code, active, state.phase === 'victory' || state.phase === 'results');
   }
 
-  voiceCommand(game: 'racer' | 'monsters' | 'fighter'): void { this.store.recordVoiceCommand(game, this.now()); }
+  karaokeState(room: KaraokeRoom): void {
+    const state = room.state();
+    const active = this.karaokeActive.get(room.code);
+    const generation = String(state.loadingGeneration);
+    const live = state.loadingGeneration > 0
+      && (state.phase === 'performing' || state.phase === 'finalizing')
+      && state.performanceStartedAtMs !== null
+      && state.singer !== null
+      && state.selectedSong !== null;
+    if (live && (!active || active.key !== generation)) {
+      if (active) this.finish('karaoke', room.code, active, false);
+      this.karaokeActive.set(room.code, {
+        key: generation,
+        startedAt: state.performanceStartedAtMs!,
+        participants: [`karaoke:${room.code}:${state.singer!.playerId}`],
+        song: state.selectedSong!.id,
+        characters: [],
+      });
+      return;
+    }
+    if (!active || live) return;
+    const completed = state.phase === 'results' && state.result?.generation === Number(active.key);
+    this.finish('karaoke', room.code, active, completed, completed ? state.result!.completedAtMs : this.now());
+  }
 
-  private finish(game: 'monsters' | 'fighter', roomCode: string, match: ActiveMatch, completed: boolean): void {
-    this.store.recordMatch({ game, participantIds: match.participants, durationSeconds: (this.now() - match.startedAt) / 1000,
-      completed, map: match.map, characters: match.characters, at: this.now() });
-    (game === 'monsters' ? this.battleActive : this.fighterActive).delete(roomCode);
+  /** Finalizes an in-progress performance before its room is removed without another state callback. */
+  karaokeAborted(roomCode: string): void {
+    const active = this.karaokeActive.get(roomCode);
+    if (active) this.finish('karaoke', roomCode, active, false);
+  }
+
+  voiceCommand(game: Exclude<AnalyticsGame, 'karaoke'>): void {
+    this.store.recordVoiceCommand(game, this.now());
+  }
+
+  /** Counts accepted setup intents; raw singing audio, lyrics, and transcripts have no analytics seam. */
+  karaokeSetupAction(action: KaraokeAnalyticsSetupAction): void {
+    switch (action) {
+      case 'confirm_name':
+      case 'open_song_selection':
+      case 'select_song':
+      case 'start_song':
+      case 'sing_again':
+        this.store.recordVoiceCommand('karaoke', this.now());
+    }
+  }
+
+  private finish(
+    game: 'monsters' | 'fighter' | 'karaoke',
+    roomCode: string,
+    match: ActiveMatch,
+    completed: boolean,
+    finishedAt = this.now(),
+  ): void {
+    this.store.recordMatch({ game, participantIds: match.participants, durationSeconds: (finishedAt - match.startedAt) / 1000,
+      completed, map: match.map, song: match.song, characters: match.characters, at: finishedAt });
+    switch (game) {
+      case 'monsters': this.battleActive.delete(roomCode); break;
+      case 'fighter': this.fighterActive.delete(roomCode); break;
+      case 'karaoke': this.karaokeActive.delete(roomCode); break;
+    }
   }
 }

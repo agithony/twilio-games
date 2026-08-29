@@ -5,11 +5,16 @@ import {
   parseArcadeConfigSettings,
   projectPublicArcadeConfig,
   replaceArcadeConfigSettings,
+  type ArcadeGame,
   type ArcadeConfigSnapshot,
 } from '../shared/arcade-config';
 import { ArcadeDomainError, type LeadInput } from '../shared/arcade-domain';
 import { ArcadeQueueError } from '../shared/arcade-queue';
-import { isPlayableArcadeGame } from '../shared/arcade-games';
+import {
+  isPlayableArcadeGame,
+  PLAYABLE_ARCADE_GAMES,
+  type PlayableArcadeGame,
+} from '../shared/arcade-games';
 import { ArcadeStationError } from '../shared/arcade-station';
 import type { StationEngineParticipantResult } from '../shared/arcade-station';
 import {
@@ -75,6 +80,7 @@ const DEFAULT_MESSAGING_ADDRESS_WINDOW_MS = 10 * 60_000;
 const DEFAULT_MESSAGING_PROCESS_LIMIT = 600;
 const DEFAULT_MESSAGING_PROCESS_WINDOW_MS = 60_000;
 const STANDALONE_MESSAGING_MAX_RECORDS = 5_000;
+type RoutedStationGame = PlayableArcadeGame;
 
 export interface ArcadeAdminPrincipal {
   readonly email: string;
@@ -83,7 +89,7 @@ export interface ArcadeAdminPrincipal {
 export interface PlayerResetCleanupContext {
   readonly nameHashes: readonly string[];
   readonly racers: readonly Readonly<{
-    game: 'racer' | 'monsters' | 'fighter';
+    game: RoutedStationGame;
     roomCode: string;
     enginePlayerId: string;
     completedAt: string | null;
@@ -165,9 +171,9 @@ export class ArcadeApi {
   private unsubscribeStationCache: (() => void) | null = null;
   private readonly stationVoiceCalls = new Map<string, { callSid: string; readyEntryId: string }>();
   private readonly stationVoiceConnections = new Map<string, string>();
-  private abortStationEngine: ((game: 'racer' | 'monsters' | 'fighter', roomCode: string, removal: StationMatchRemoval) => void) | null = null;
+  private abortStationEngine: ((game: RoutedStationGame, roomCode: string, removal: StationMatchRemoval) => void) | null = null;
   private updateStationEngineParticipants: ((
-    game:'racer'|'monsters'|'fighter',roomCode:string,count:number,activeEnginePlayerIds:readonly string[],
+    game:RoutedStationGame,roomCode:string,count:number,activeEnginePlayerIds:readonly string[],
   )=>void)|null=null;
   private playerResetCleanup: ((context: PlayerResetCleanupContext) => Promise<void>) | null = null;
   private started = false;
@@ -262,7 +268,7 @@ export class ArcadeApi {
       && Object.values(config.station.games).some(game => game.enabled)
       && Object.values(this.effectiveVoiceNumbers(config)).some(number => number !== null);
   }
-  standaloneGameEnabled(game: 'racer' | 'monsters' | 'fighter'): boolean {
+  standaloneGameEnabled(game: PlayableArcadeGame): boolean {
     return this.configStore.getSnapshot().station.games[game].enabled;
   }
 
@@ -300,7 +306,7 @@ export class ArcadeApi {
   }
 
   setStationAbortHandler(
-    handler: (game: 'racer' | 'monsters' | 'fighter', roomCode: string, removal: StationMatchRemoval) => void,
+    handler: (game: RoutedStationGame, roomCode: string, removal: StationMatchRemoval) => void,
   ): void {
     this.abortStationEngine = handler;
     this.playerRuntime?.setStationMatchRemovedHandler((game, roomCode, removal) => {
@@ -311,7 +317,7 @@ export class ArcadeApi {
   }
 
   setStationParticipantCountHandler(
-    handler:(game:'racer'|'monsters'|'fighter',roomCode:string,count:number,activeEnginePlayerIds:readonly string[])=>void,
+    handler:(game:RoutedStationGame,roomCode:string,count:number,activeEnginePlayerIds:readonly string[])=>void,
   ): void {
     this.updateStationEngineParticipants = handler;
     const resources = this.playerRuntime?.getInitializedResources();
@@ -640,7 +646,7 @@ export class ArcadeApi {
   }
 
   async stationVoiceRoute(from: string, callSid = ''): Promise<{
-    game: 'racer' | 'monsters' | 'fighter';
+    game: RoutedStationGame;
     roomCode: string;
     matchId: string;
     launchGeneration: number;
@@ -816,14 +822,14 @@ export class ArcadeApi {
       || this.stationRoomCodes.has(roomCode.trim());
   }
 
-  stationEngineStarted(game: 'racer' | 'monsters' | 'fighter', roomCode: string): void {
+  stationEngineStarted(game: RoutedStationGame, roomCode: string): void {
     void this.playerRuntime?.getForCleanup().then(resources => {
       resources.station.markEngineStarted(game, roomCode);
     }).catch(() => undefined);
   }
 
   stationEngineCompleted(
-    game: 'racer' | 'monsters' | 'fighter',
+    game: RoutedStationGame,
     roomCode: string,
     results: readonly StationEngineParticipantResult[] = [],
   ): void {
@@ -832,7 +838,7 @@ export class ArcadeApi {
     )).catch(() => undefined);
   }
 
-  stationEngineAbandoned(game: 'racer' | 'monsters' | 'fighter', roomCode: string): void {
+  stationEngineAbandoned(game: RoutedStationGame, roomCode: string): void {
     void this.playerRuntime?.getForCleanup().then(resources => (
       resources.station.markEngineAbandoned(game, roomCode)
     )).catch(() => undefined);
@@ -1527,7 +1533,7 @@ export class ArcadeApi {
     this.enforceProcessRate('mutation-process', 600, 60_000);
     const result = await resources.service.joinQueue({
       playerId,
-      preferredGame: body.preferredGame as 'racer' | 'monsters' | 'fighter' | 'trivia',
+      preferredGame: body.preferredGame as ArcadeGame,
       flexibleGame: body.flexibleGame as boolean | undefined,
       idempotencyKey: playerServiceKey(playerId, 'queue-join', idempotencyKey),
     });
@@ -1576,7 +1582,7 @@ export class ArcadeApi {
           ? await resources.service.leaveQueue(common)
           : await resources.service.checkInQueueEntry({
             ...common,
-            game: body.game as 'racer' | 'monsters' | 'fighter' | 'trivia',
+            game: body.game as ArcadeGame,
           });
     const queue = await resources.service.getQueueStatus(playerId);
     sendJson(response, 200, {
@@ -2264,7 +2270,7 @@ export class ArcadeApi {
     const resources = await this.getActivePlayerResources();
     const result = await resources.service.startMatch({
       queueEntryIds: body.queueEntryIds as string[],
-      game: body.game as 'racer' | 'monsters' | 'fighter' | 'trivia',
+      game: body.game as ArcadeGame,
       reason: operatorReason(body.reason),
       idempotencyKey: playerServiceKey(`operator:${principal.email}`, 'match-start', idempotencyKey),
       authorization: resources.operatorAuthorization(principal.email),
@@ -2431,14 +2437,14 @@ export class ArcadeApi {
   }
 
   private abortLiveStationEngine(
-    game: 'racer' | 'monsters' | 'fighter',
+    game: PlayableArcadeGame,
     roomCode: string,
   ): void {
     this.removeLiveStationEngine(game, roomCode, 'abort');
   }
 
   private removeLiveStationEngine(
-    game: 'racer' | 'monsters' | 'fighter',
+    game: PlayableArcadeGame,
     roomCode: string,
     removal: StationMatchRemoval,
   ): void {
@@ -2725,8 +2731,9 @@ function playerStationAggregate(state: ArcadeState, playerId: string, defaultSta
 
 function enabledStationGames(
   config: ArcadeConfigSnapshot,
-): ReadonlySet<'racer' | 'monsters' | 'fighter'> {
-  return new Set((['racer', 'monsters', 'fighter'] as const)
+): ReadonlySet<PlayableArcadeGame> {
+  return new Set(PLAYABLE_ARCADE_GAMES
+    .map(game => game.id)
     .filter(game => config.station.games[game].enabled));
 }
 

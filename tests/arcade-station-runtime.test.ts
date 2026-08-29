@@ -649,7 +649,7 @@ describe('ArcadeStationRuntime', () => {
       input.station.timings.postGameRecruitingSeconds = 20;
       input.station.games.racer.enabled = false;
       input.station.automaticSelection.policy = 'fixed_priority';
-      input.station.automaticSelection.order = ['fighter', 'monsters', 'racer'];
+      input.station.automaticSelection.order = ['fighter', 'monsters', 'racer', 'karaoke'];
     });
     await h.service.identifyCoinOnly({ playerId: 'p1', idempotencyKey: 'identify:p1' });
     await h.service.insertStationCoin({ stationId: 'expo', playerId: 'p1', idempotencyKey: 'coin:p1' });
@@ -686,7 +686,7 @@ describe('ArcadeStationRuntime', () => {
     });
     const fixed = JSON.parse(JSON.stringify(DEFAULT_ARCADE_CONFIG)) as Record<string, any>;
     fixed.station.automaticSelection.policy = 'fixed_priority';
-    fixed.station.automaticSelection.order = ['fighter', 'monsters', 'racer'];
+    fixed.station.automaticSelection.order = ['fighter', 'monsters', 'racer', 'karaoke'];
     const fixedConfig = parseArcadeConfig(fixed);
     expect(chooseStationGame((await h.service.getStation('expo'))!, fixedConfig.station)).toBe('racer');
 
@@ -709,7 +709,7 @@ describe('ArcadeStationRuntime', () => {
         historical: { game: 'monsters' },
       },
     } as unknown as typeof tied;
-    fixed.station.automaticSelection.order = ['racer', 'monsters', 'fighter'];
+    fixed.station.automaticSelection.order = ['racer', 'monsters', 'fighter', 'karaoke'];
     fixed.station.automaticSelection.policy = 'round_robin';
     const roundRobin = parseArcadeConfig(fixed);
     expect(chooseStationGame(withPreviousMonsters, roundRobin.station)).toBe('fighter');

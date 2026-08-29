@@ -11,6 +11,8 @@ assets/maps/_raw/
 assets/racer/cars/_raw/
 assets/racer/track/_raw/
 assets/fighters/maps/_raw/
+assets/karaoke/_raw/
+client/public/video/_raw/
 
 # headless render smoke screenshots
 tools/.smoke/

@@ -1,6 +1,35 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { buildPlayUrl, sanitizeRoomCode, sanitizeName } from '../client/home-nav';
+import {
+  buildPlayUrl,
+  calculatePageCount,
+  clampPageIndex,
+  orderByConfiguredIds,
+  sanitizeRoomCode,
+  sanitizeName,
+} from '../client/home-nav';
+
+describe('standalone game pagination', () => {
+  it('uses the configured order and appends any newly introduced game safely', () => {
+    const games = [{ id: 'racer' }, { id: 'monsters' }, { id: 'fighter' }, { id: 'karaoke' }];
+    expect(orderByConfiguredIds(games, ['karaoke', 'fighter', 'racer', 'monsters']).map(game => game.id))
+      .toEqual(['karaoke', 'fighter', 'racer', 'monsters']);
+    expect(orderByConfiguredIds(games, ['fighter']).map(game => game.id))
+      .toEqual(['fighter', 'racer', 'monsters', 'karaoke']);
+  });
+
+  it('calculates pages in groups of three', () => {
+    expect([0, 1, 3, 4, 6, 7].map(count => calculatePageCount(count))).toEqual([0, 1, 1, 2, 2, 3]);
+  });
+
+  it('clamps both navigation boundaries and a page after the catalog shrinks', () => {
+    expect(clampPageIndex(-1, 4)).toBe(0);
+    expect(clampPageIndex(1, 4)).toBe(1);
+    expect(clampPageIndex(2, 4)).toBe(1);
+    expect(clampPageIndex(1, 3)).toBe(0);
+    expect(clampPageIndex(4, 0)).toBe(0);
+  });
+});
 
 describe('sanitizeRoomCode', () => {
   it('keeps a valid 4-digit code', () => {
@@ -50,7 +79,7 @@ describe('buildPlayUrl', () => {
 });
 
 describe('in-game home navigation', () => {
-  for (const page of ['play.html', 'monsters.html', 'fighter.html']) {
+  for (const page of ['play.html', 'monsters.html', 'fighter.html', 'karaoke.html']) {
     it(`${page} keeps an accessible persistent Home link`, () => {
       const html = readFileSync(new URL(`../client/${page}`, import.meta.url), 'utf8');
       expect(html).toContain('class="game-home"');
@@ -73,5 +102,11 @@ describe('in-game home navigation', () => {
     for (const file of ['main.ts', 'battle/monsters.ts', 'fighter/fighter.ts']) {
       expect(readFileSync(new URL(`../client/${file}`, import.meta.url), 'utf8')).not.toContain('injectMagicHat');
     }
+  });
+
+  it('orders standalone cards from the persisted station game order', () => {
+    const home = readFileSync(new URL('../client/home.ts', import.meta.url), 'utf8');
+    expect(home).toContain('standaloneGameOrder=[...config.station.automaticSelection.order]');
+    expect(home).toContain('orderByConfiguredIds(PLAYABLE_ARCADE_GAMES,standaloneGameOrder)');
   });
 });

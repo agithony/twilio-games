@@ -1,35 +1,60 @@
-import { NodeIO } from '@gltf-transform/core';
+import { createRequire } from 'node:module';
+import { NodeIO, getBounds } from '@gltf-transform/core';
 import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
 
-/** Read GLB structure headlessly (no GL context): node names + bbox size + animation clip names.
- *  Registers ALL_EXTENSIONS so real-world models (e.g. KHR_materials_specular, EXT_texture_webp)
- *  don't fail the read. Compressed (Draco) files additionally need a decoder; the inspector runs
- *  on PRE-compression originals, so plain ALL_EXTENSIONS registration is sufficient here. */
-export async function readGlb(path: string): Promise<{ nodeNames: string[]; size: [number, number, number]; animationNames: string[] }> {
-  const io = new NodeIO().registerExtensions(ALL_EXTENSIONS);
+const draco3d = createRequire(import.meta.url)('draco3dgltf') as {
+  createDecoderModule: () => Promise<unknown>;
+};
+
+export interface GlbBounds {
+  min: [number, number, number];
+  max: [number, number, number];
+  size: [number, number, number];
+}
+
+export interface GlbReadResult {
+  nodeNames: string[];
+  size: [number, number, number];
+  animationNames: string[];
+  extensionNames: string[];
+  primitiveCount: number;
+  nodeBounds: Record<string, GlbBounds>;
+}
+
+function finiteBounds(value: { min: number[]; max: number[] }): GlbBounds | null {
+  const values = [...value.min, ...value.max];
+  if (values.length !== 6 || !values.every(Number.isFinite)) return null;
+  const min = value.min as [number, number, number];
+  const max = value.max as [number, number, number];
+  return { min, max, size: [max[0] - min[0], max[1] - min[1], max[2] - min[2]] };
+}
+
+/** Reads plain or Draco-compressed GLBs headlessly, including transformed world-space bounds. */
+export async function readGlb(path: string): Promise<GlbReadResult> {
+  const io = new NodeIO()
+    .registerExtensions(ALL_EXTENSIONS)
+    .registerDependencies({ 'draco3d.decoder': await draco3d.createDecoderModule() });
   const doc = await io.read(path);
   const root = doc.getRoot();
-  const nodeNames = root.listNodes().map(n => n.getName()).filter(Boolean);
-  const animationNames = root.listAnimations().map(a => a.getName()).filter(Boolean);
-  // accumulate world-space bounds across every mesh primitive POSITION accessor
-  const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
+  const nodeNames = root.listNodes().map(node => node.getName()).filter(Boolean);
+  const animationNames = root.listAnimations().map(animation => animation.getName()).filter(Boolean);
+  const extensionNames = root.listExtensionsUsed().map(extension => extension.extensionName);
+  const sceneBounds = finiteBounds(getBounds(root.listScenes()[0]!));
+  const nodeBounds: Record<string, GlbBounds> = {};
   for (const node of root.listNodes()) {
-    const mesh = node.getMesh(); if (!mesh) continue;
-    const t = node.getWorldTranslation();
-    for (const prim of mesh.listPrimitives()) {
-      const pos = prim.getAttribute('POSITION'); if (!pos) continue;
-      const a = pos.getMin([] as number[]) ?? [0, 0, 0];
-      const b = pos.getMax([] as number[]) ?? [0, 0, 0];
-      for (let i = 0; i < 3; i++) {
-        min[i] = Math.min(min[i]!, (a[i] ?? 0) + (t[i] ?? 0));
-        max[i] = Math.max(max[i]!, (b[i] ?? 0) + (t[i] ?? 0));
-      }
-    }
+    const name = node.getName();
+    if (!name) continue;
+    const bounds = finiteBounds(getBounds(node));
+    if (bounds) nodeBounds[name] = bounds;
   }
-  const size: [number, number, number] = [
-    Number.isFinite(max[0]! - min[0]!) ? max[0]! - min[0]! : 0,
-    Number.isFinite(max[1]! - min[1]!) ? max[1]! - min[1]! : 0,
-    Number.isFinite(max[2]! - min[2]!) ? max[2]! - min[2]! : 0,
-  ];
-  return { nodeNames, size, animationNames };
+  const primitiveCount = root.listMeshes().reduce((total, mesh) => total
+    + mesh.listPrimitives().filter(primitive => primitive.getAttribute('POSITION')).length, 0);
+  return {
+    nodeNames,
+    size: sceneBounds?.size ?? [0, 0, 0],
+    animationNames,
+    extensionNames,
+    primitiveCount,
+    nodeBounds,
+  };
 }

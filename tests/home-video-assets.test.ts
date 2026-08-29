@@ -6,6 +6,64 @@ const home = readClient('home.ts');
 const html = readClient('index.html');
 const css = readClient('home.css');
 
+type Mp4Box = { type: string; start: number; dataStart: number; end: number };
+
+function mp4Boxes(bytes: Buffer, start = 0, end = bytes.length): Mp4Box[] {
+  const boxes: Mp4Box[] = [];
+  let offset = start;
+  while (offset + 8 <= end) {
+    const shortSize = bytes.readUInt32BE(offset);
+    const headerSize = shortSize === 1 ? 16 : 8;
+    const size = shortSize === 1 ? Number(bytes.readBigUInt64BE(offset + 8)) : shortSize || end - offset;
+    if (size < headerSize || offset + size > end) break;
+    boxes.push({ type: bytes.toString('ascii', offset + 4, offset + 8), start: offset,
+      dataStart: offset + headerSize, end: offset + size });
+    offset += size;
+  }
+  return boxes;
+}
+
+function childBox(bytes: Buffer, parent: Mp4Box, type: string, prefix = 0): Mp4Box {
+  const box = mp4Boxes(bytes, parent.dataStart + prefix, parent.end).find(candidate => candidate.type === type);
+  if (!box) throw new Error(`Missing ${type} box in ${parent.type}`);
+  return box;
+}
+
+function mp4VideoMetadata(bytes: Buffer) {
+  const moov = mp4Boxes(bytes).find(box => box.type === 'moov');
+  if (!moov) throw new Error('Missing moov box');
+  const tracks = mp4Boxes(bytes, moov.dataStart, moov.end).filter(box => box.type === 'trak');
+  const handlers = tracks.map(track => {
+    const mdia = childBox(bytes, track, 'mdia');
+    const handler = bytes.toString('ascii', childBox(bytes, mdia, 'hdlr').dataStart + 8,
+      childBox(bytes, mdia, 'hdlr').dataStart + 12);
+    return { handler, mdia };
+  });
+  const video = handlers.find(track => track.handler === 'vide');
+  if (!video) throw new Error('Missing video track');
+  const mdhd = childBox(bytes, video.mdia, 'mdhd');
+  const version = bytes.readUInt8(mdhd.dataStart);
+  const timescale = bytes.readUInt32BE(mdhd.dataStart + (version === 1 ? 20 : 12));
+  const duration = version === 1
+    ? Number(bytes.readBigUInt64BE(mdhd.dataStart + 24))
+    : bytes.readUInt32BE(mdhd.dataStart + 16);
+  const minf = childBox(bytes, video.mdia, 'minf');
+  const stbl = childBox(bytes, minf, 'stbl');
+  const sample = mp4Boxes(bytes, childBox(bytes, stbl, 'stsd').dataStart + 8,
+    childBox(bytes, stbl, 'stsd').end)[0]!;
+  const stts = childBox(bytes, stbl, 'stts');
+  const entryCount = bytes.readUInt32BE(stts.dataStart + 4);
+  let sampleCount = 0;
+  for (let index = 0; index < entryCount; index += 1) sampleCount += bytes.readUInt32BE(stts.dataStart + 8 + index * 8);
+  return {
+    codec: sample.type,
+    width: bytes.readUInt16BE(sample.start + 32),
+    height: bytes.readUInt16BE(sample.start + 34),
+    framesPerSecond: sampleCount * timescale / duration,
+    handlers: handlers.map(track => track.handler),
+  };
+}
+
 function mp4TopLevelBoxes(bytes: Buffer): string[] {
   const boxes: string[] = [];
   let offset = 0;
@@ -30,6 +88,26 @@ describe('home preview media and standalone catalog', () => {
     expect(boxes.indexOf('moov')).toBeLessThan(boxes.indexOf('mdat'));
   });
 
+  it('keeps the Karaoke runtime preview optimized, fast-start, and silent', () => {
+    const asset = new URL('../client/public/video/vk-demo.mp4', import.meta.url);
+    const bytes = readFileSync(asset);
+    expect(statSync(asset).size).toBeGreaterThan(2_000_000);
+    expect(statSync(asset).size).toBeLessThan(2_200_000);
+    const boxes = mp4TopLevelBoxes(bytes);
+    expect(boxes.indexOf('moov')).toBeLessThan(boxes.indexOf('mdat'));
+    const metadata = mp4VideoMetadata(bytes);
+    expect(metadata).toMatchObject({ codec: 'avc1', width: 1280, height: 692 });
+    expect(metadata.framesPerSecond).toBeCloseTo(24, 3);
+    expect(metadata.handlers).not.toContain('soun');
+  });
+
+  it('wires the Karaoke preview only through runtime-enabled game cards', () => {
+    expect(home).toContain("karaoke: '/video/vk-demo.mp4'");
+    expect(html).not.toContain('/video/vk-demo.mp4');
+    expect(home).toContain('orderByConfiguredIds(PLAYABLE_ARCADE_GAMES,standaloneGameOrder)');
+    expect(home.match(/\/video\/vk-demo\.mp4/g)).toHaveLength(1);
+  });
+
   it('uses exact Conversation Relay product copy in fallback and both locales', () => {
     const english = 'Powered by Twilio Conversation Relay. Your voice is the controller.';
     const portuguese = 'Com tecnologia Twilio ConversationRelay. Sua voz é o controle.';
@@ -41,24 +119,22 @@ describe('home preview media and standalone catalog', () => {
 
   it('keeps future concepts outside the playable catalog and entirely noninteractive', () => {
     const future = /<section id="standaloneFuture" class="standalone-future"[\s\S]*?<\/section>/.exec(html)?.[0] ?? '';
-    expect(future.match(/<article\b/g)).toHaveLength(2);
-    expect(future.match(/<h2 id="voice(?:Trivia|Karaoke)Title">Voice (?:Trivia|Karaoke)<\/h2>/g)).toEqual([
-      '<h2 id="voiceTriviaTitle">Voice Trivia</h2>',
-      '<h2 id="voiceKaraokeTitle">Voice Karaoke</h2>',
-    ]);
+    expect(future.match(/<article\b/g)).toHaveLength(1);
+    expect(future).toContain('<h2 id="voiceTriviaTitle">Voice Trivia</h2>');
     expect(future).toContain('Coming soon');
     expect(future).not.toMatch(/future-game-number|>0[12]</);
     expect(future).not.toMatch(/<(?:a|button|input|select|textarea)\b|\bhref=|\btabindex=|\bdata-game=/i);
     expect(html.indexOf('id="standaloneGames"')).toBeLessThan(html.indexOf('class="standalone-future"'));
     expect(future).toContain('id="futureTrivia"');
-    expect(future).toContain('id="futureKaraoke"');
-    expect(home).toContain("document.getElementById('standaloneFuture')!.hidden=!comingSoon.trivia&&!comingSoon.karaoke");
+    expect(future).not.toContain('Voice Karaoke');
+    expect(home).toContain("document.getElementById('standaloneFuture')!.hidden=!comingSoon.trivia");
+    expect(home).toContain('racer: 1, monsters: 2, fighter: 3, karaoke: 4');
     expect(css).toContain('[hidden] { display:none !important; }');
   });
 
   it('rebuilds standalone videos only when enabled games change and never requests autoplay', () => {
     const launcher = /function renderStandaloneLauncher\(\): void \{[\s\S]*?\n\}/.exec(home)?.[0] ?? '';
-    expect(launcher).toContain("[...enabledGames].sort().join(',')");
+    expect(launcher).toContain("games.map(game=>game.id).join(',')");
     expect(launcher).toContain('comingSoon.trivia?1:0');
     expect(launcher).toContain('if(key===standaloneGamesKey)return;');
     expect(launcher).toContain('standaloneGames.replaceChildren();');
@@ -66,9 +142,27 @@ describe('home preview media and standalone catalog', () => {
     expect(`${html}\n${home}`).not.toMatch(/\bautoplay\b/i);
   });
 
+  it('ships complete localized pagination controls', () => {
+    const previous = /<button id="standalonePreviousPage"[\s\S]*?<\/button>/.exec(html)?.[0] ?? '';
+    const next = /<button id="standaloneNextPage"[\s\S]*?<\/button>/.exec(html)?.[0] ?? '';
+    expect(previous).toContain('aria-label="Previous page"');
+    expect(previous).toContain('aria-controls="standaloneGames"');
+    expect(previous).toContain('hidden');
+    expect(next).toContain('aria-label="Next page"');
+    expect(next).toContain('aria-controls="standaloneGames"');
+    expect(html).toContain('id="standalonePageStatus"');
+    expect(html).toContain('aria-live="polite"');
+    for (const localized of ['Previous page', 'Next page', 'Page {page} of {pages}',
+      'Página anterior', 'Próxima página', 'Página {page} de {pages}']) expect(home).toContain(localized);
+    expect(css).toContain('.standalone-page-button-previous { grid-column:1;grid-row:1');
+    expect(css).toContain('.standalone-page-button-next { grid-column:3;grid-row:1');
+    expect(css).toContain('.standalone-page-placeholder { visibility:hidden;pointer-events:none; }');
+    expect(css).toContain('@media (max-width:900px), (orientation:portrait)');
+  });
+
   it('fails closed on missing game settings and keeps portrait previews landscape', () => {
-    expect(home).toContain('let enabledGames = new Set<string>()');
-    expect(home).toMatch(/catch \{[\s\S]*?enabledGames = new Set\(\)/);
+    expect(home).toContain('let enabledGames = new Set<PlayableArcadeGame>()');
+    expect(home).toMatch(/catch \{[\s\S]*?enabledGames = new Set<PlayableArcadeGame>\(\)/);
     expect(css).toMatch(/@media \(orientation:portrait\) and \(min-width:601px\)/);
     expect(css).toContain('.standalone-view::-webkit-scrollbar { display:none; }');
     expect(css).toMatch(/\.standalone-game \{ aspect-ratio:16\/9/);
@@ -94,6 +188,8 @@ describe('home preview media and standalone catalog', () => {
     expect(playback).toContain("['slow-2g', '2g']");
     expect(playback).toContain("document.visibilityState !== 'hidden'");
     expect(playback).toContain('activeView.contains(video)');
+    expect(playback).toContain('hiddenStandaloneCard');
+    expect(playback).toContain("video.removeAttribute('src')");
     expect(playback).toContain("if(source&&!video.getAttribute('src'))video.src=source");
     expect(playback).toContain('video.pause()');
     expect(playback).toContain('if (video.paused)');

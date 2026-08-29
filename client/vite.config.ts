@@ -1,4 +1,6 @@
 import { defineConfig, loadEnv } from 'vite';
+import { createReadStream, existsSync } from 'node:fs';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import { resolve } from 'path';
 
 // In dev the client is served by Vite while APIs, GLBs, and WebSockets come from the node game server.
@@ -34,30 +36,42 @@ const cleanIndexRoutes = () => ({
   },
 });
 
+const karaokeAuthoringAudio = () => ({
+  name: 'karaoke-authoring-audio',
+  configureServer(server: { middlewares: { use: (fn: (
+    req: IncomingMessage,
+    res: ServerResponse,
+    next: () => void,
+  ) => void) => void } }) {
+    server.middlewares.use((req, res, next) => {
+      if ((req.url ?? '').split('?')[0] !== '/audio/karaoke/classic-45s.mp3') { next(); return; }
+      const file = resolve(__dirname, '../assets/karaoke/_raw/audio/classic-45s.mp3');
+      if (!existsSync(file)) { next(); return; }
+      res.writeHead(200, { 'Content-Type': 'audio/mpeg', 'Cache-Control': 'no-store' });
+      createReadStream(file).pipe(res);
+    });
+  },
+});
+
 export default defineConfig(({ mode }) => {
-  const gameServer = loadEnv(mode, __dirname, '').GAME_SERVER_URL || 'http://localhost:8080';
+  const env = loadEnv(mode, __dirname, '');
+  const gameServer = env.GAME_SERVER_URL || 'http://localhost:8080';
+  const expectedGameServerOrigin = configuredGameServerOrigin(gameServer, env.GAME_SERVER_EXPECTED_ORIGIN);
   return {
     root: __dirname,
-    plugins: [cleanIndexRoutes()],
+    plugins: [cleanIndexRoutes(), karaokeAuthoringAudio()],
     server: {
       proxy: {
         '/api': {
           target: gameServer,
           changeOrigin: true,
           configure(proxy) {
-            const backendOrigin = new URL(gameServer).origin;
             proxy.on('proxyReq', (proxyRequest, request) => {
               const origin = request.headers.origin;
-              try {
-                const originUrl = origin ? new URL(origin) : null;
-                const loopback = new Set(['localhost', '127.0.0.1', '::1']);
-                const sameOriginBrowserRequest = request.headers['sec-fetch-site'] === 'same-origin';
-                const sameLoopbackHost = originUrl && loopback.has(originUrl.hostname)
-                  && loopback.has(new URL(backendOrigin).hostname);
-                if (originUrl && (sameOriginBrowserRequest || originUrl.host === request.headers.host || sameLoopbackHost)) {
-                  proxyRequest.setHeader('origin', backendOrigin);
-                }
-              } catch {/* Leave malformed and cross-origin values for the API to reject. */}
+              const forwardedOrigin = forwardedGameServerOrigin(origin, request.headers.host, expectedGameServerOrigin);
+              if (forwardedOrigin !== undefined && forwardedOrigin !== origin) {
+                proxyRequest.setHeader('origin', forwardedOrigin);
+              }
             });
           },
         },
@@ -65,6 +79,7 @@ export default defineConfig(({ mode }) => {
         '/game': { target: gameServer, ws: true, bypass: bypassNonWebSocket },
         '/battle': { target: gameServer, ws: true, bypass: bypassNonWebSocket },
         '/fighter': { target: gameServer, ws: true, bypass: bypassNonWebSocket },
+        '/karaoke': { target: gameServer, ws: true, bypass: bypassNonWebSocket },
         '/voice': { target: gameServer, ws: true, bypass: bypassNonWebSocket },
         // GLB models live in the repo-root assets/ served by the node server, so /assets is proxied.
         // EXCEPT monster sprites, which live in client/public/assets/monsters/ and are served by Vite.
@@ -84,6 +99,7 @@ export default defineConfig(({ mode }) => {
           play: resolve(__dirname, 'play.html'),                    // the racer
           monsters: resolve(__dirname, 'monsters.html'),           // Voice Monsters (the battler)
           fighter: resolve(__dirname, 'fighter.html'),              // Voice Fighter gameplay prototype
+          karaoke: resolve(__dirname, 'karaoke.html'),              // Voice Karaoke
           editor: resolve(__dirname, 'editor/index.html'),          // unified Level Editor (/editor)
           garage: resolve(__dirname, 'garage/index.html'),          // model viewer + configurator (/garage)
           analytics: resolve(__dirname, 'analytics/index.html'),    // private activation analytics (/analytics)
@@ -99,4 +115,33 @@ export default defineConfig(({ mode }) => {
 
 function bypassNonWebSocket(req: { url?: string; headers: { upgrade?: string } }): string | undefined {
   return req.headers.upgrade?.toLowerCase() === 'websocket' ? undefined : req.url;
+}
+
+export function configuredGameServerOrigin(gameServer: string, configuredOrigin?: string): string {
+  return new URL(configuredOrigin || gameServer).origin;
+}
+
+export function forwardedGameServerOrigin(
+  requestOrigin: string | undefined,
+  requestHost: string | undefined,
+  expectedOrigin: string,
+): string | undefined {
+  if (!requestOrigin || !requestHost) return requestOrigin;
+  try {
+    const origin = new URL(requestOrigin);
+    const host = new URL(`${origin.protocol}//${requestHost}`);
+    const validHttpOrigin = (origin.protocol === 'http:' || origin.protocol === 'https:')
+      && requestOrigin === origin.origin;
+    const sameHost = origin.host === host.host;
+    const sameLoopback = loopbackHostname(origin.hostname) && loopbackHostname(host.hostname)
+      && origin.port === host.port;
+    return validHttpOrigin && (sameHost || sameLoopback) ? expectedOrigin : requestOrigin;
+  } catch {
+    return requestOrigin;
+  }
+}
+
+function loopbackHostname(hostname: string): boolean {
+  const normalized = hostname.toLowerCase().replace(/^\[(.*)\]$/, '$1');
+  return normalized === 'localhost' || normalized === '127.0.0.1' || normalized === '::1';
 }

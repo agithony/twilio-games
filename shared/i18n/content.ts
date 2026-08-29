@@ -1,6 +1,7 @@
 import type { SupportedLocale } from './locales';
+import type { ArcadeGame } from '../arcade-config';
 
-export type GameId = 'racer' | 'monsters' | 'fighter' | 'trivia' | 'karaoke';
+export type GameId = ArcadeGame;
 
 const GAME_TITLES: Record<GameId, Record<SupportedLocale, string>> = {
   racer: { 'en-US': 'Voice Racer', 'pt-BR': 'Corrida por Voz' },

@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 const readClient=(path:string)=>readFileSync(new URL(`../client/${path}`,import.meta.url),'utf8');
 
 describe('shared theme contract', () => {
-  const pages=['index.html','play.html','monsters.html','fighter.html','join/index.html','arcade/index.html','instructions/index.html'];
+  const pages=['index.html','play.html','monsters.html','fighter.html','karaoke.html','join/index.html','arcade/index.html','instructions/index.html'];
 
   it.each(pages)('%s applies the theme before page styles', page => {
     const html=readClient(page);
@@ -25,6 +25,7 @@ describe('shared theme contract', () => {
     expect(readClient('racer.css')).toContain('html[data-theme="light"] #screens');
     expect(readClient('monsters.css')).toContain('html[data-theme="light"] #overlay');
     expect(readClient('fighter/fighter.css')).toContain('html[data-theme="light"]');
+    expect(readClient('karaoke/karaoke.css')).toContain('html[data-theme="light"]');
     expect(readClient('station-display.css')).toContain('background:var(--theme-bg)');
   });
 });

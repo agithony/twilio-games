@@ -32,9 +32,19 @@ const validateSignatures = process.env.TWILIO_VALIDATE_SIGNATURES
 const standaloneVoiceEnabled = process.env.ARCADE_STANDALONE_VOICE_ENABLED === undefined
   ? process.env.NODE_ENV !== 'production'
   : process.env.ARCADE_STANDALONE_VOICE_ENABLED === 'true';
+const configuredDeepgramKey = (process.env.DEEPGRAM_API_KEY ?? '').trim();
+const deepgramApiKey = configuredDeepgramKey === 'disabled' ? '' : configuredDeepgramKey;
+const karaokeCalibrationOffsetMs = Number(process.env.KARAOKE_CALIBRATION_OFFSET_MS || 0);
+if (!Number.isInteger(karaokeCalibrationOffsetMs)
+  || karaokeCalibrationOffsetMs < -5_000 || karaokeCalibrationOffsetMs > 5_000) {
+  throw new Error('KARAOKE_CALIBRATION_OFFSET_MS must be an integer from -5000 to 5000');
+}
 
 if (validateSignatures && !authToken) {
   console.warn('[security] signature validation is ON but TWILIO_AUTH_TOKEN is unset — webhooks will 500 until it is configured.');
+}
+if (process.env.NODE_ENV === 'production' && !deepgramApiKey) {
+  throw new Error('DEEPGRAM_API_KEY is required in production while Voice Karaoke is enabled');
 }
 
 // When EDITOR_TOKEN is set, /api writes (manifest + maps) require it — gate the editor on a public
@@ -137,6 +147,7 @@ arcadeTacGateway?.setMessageHandler(async input => {
 // SEED copied in on first boot when the persistent file doesn't exist yet.
 const srv = new HttpServer({
   port, publicBaseUrl, authToken, additionalAuthTokens, validateSignatures, editorToken,
+  voiceRelayToken: process.env.VOICE_RELAY_TOKEN,
   analyticsAuth, arcadeApi, arcadeTacGateway, standaloneVoiceEnabled, operatorAuthRequired,
   analyticsPath: process.env.ANALYTICS_PATH ?? 'data/analytics.json',
   googleOAuthClientSecret: process.env.GOOGLE_OAUTH_CLIENT_SECRET,
@@ -145,18 +156,27 @@ const srv = new HttpServer({
   // Voice Monsters arena config — live on the persistent mount, seeded from the committed default.
   arenaPath: process.env.ARENA_PATH ?? 'data/arena.json',
   bundledArenaPath: process.env.BUNDLED_ARENA_PATH ?? 'assets/arena/arena.json',
+  karaokeVenuePath: process.env.KARAOKE_VENUE_PATH ?? 'data/karaoke-venue.json',
+  bundledKaraokeVenuePath: process.env.BUNDLED_KARAOKE_VENUE_PATH ?? 'assets/karaoke/venue.json',
+  karaokeTimingsPath: process.env.KARAOKE_TIMINGS_PATH ?? 'data/karaoke-timings.json',
+  karaokeAssetDirectory: process.env.KARAOKE_ASSET_DIRECTORY ?? 'assets/karaoke',
+  karaokeLeaderboardPath: process.env.KARAOKE_LEADERBOARD_PATH ?? 'data/karaoke-leaderboard.json',
   fighterMapsPath: process.env.FIGHTER_MAPS_PATH ?? 'data/fighter-maps.json',
   bundledFighterMapsPath: process.env.BUNDLED_FIGHTER_MAPS_PATH ?? 'assets/fighters/maps/maps.json',
   fighterPreviewDir: process.env.FIGHTER_PREVIEW_DIR ?? 'data/fighter-previews',
   fighterDisplayToken: process.env.ARCADE_DISPLAY_TOKEN ?? process.env.FIGHTER_DISPLAY_TOKEN,
+  karaokeDisplayToken: process.env.ARCADE_DISPLAY_TOKEN ?? process.env.FIGHTER_DISPLAY_TOKEN,
   // The number players call to join (shown + QR-encoded on the lobby screen). Unset → placeholder.
   gamePhoneNumber: process.env.GAME_PHONE_NUMBER,
   smsNumber: smsNumber ?? undefined,
   whatsappNumber: whatsappNumber ?? undefined,
+  deepgramApiKey,
+  karaokeCalibrationOffsetMs,
 });
 srv.start().then((p) => {
   console.log(`Voice Racer listening on http://localhost:${p}`);
   console.log(`  game WS: ws://localhost:${p}/game   voice WS: ws://localhost:${p}/voice`);
+  console.log(`  karaoke WS: ws://localhost:${p}/karaoke   media WS: wss://${new URL(publicBaseUrl).host}/karaoke-media`);
   console.log(`  webhooks: POST ${publicBaseUrl}/voice/incoming , /voice/join`);
   console.log(`  twilio signature validation: ${validateSignatures ? 'ON' : 'OFF'}`);
 });

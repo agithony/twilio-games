@@ -1,6 +1,6 @@
 # Activation Analytics
 
-The private `/analytics` dashboard reports engagement for Voice Racer, Voice Monsters, and Voice Fighter. It provides summary metrics, UTC daily trends, per-game performance, popular selections, generated takeaways, and downloadable PDF reports.
+The private `/analytics` dashboard reports engagement for Voice Racer, Voice Monsters, Voice Fighter, and Voice Karaoke. It provides summary metrics, UTC daily trends, per-game performance, popular selections, generated takeaways, and downloadable PDF reports.
 
 ## Authentication Setup
 
@@ -64,12 +64,12 @@ Collection occurs at authoritative game-state transitions. Spectator connections
 | Metric | Definition |
 |---|---|
 | Engaged participants | Distinct pseudonymous participant-slot keys in the selected UTC buckets and games; this is not identity resolution across people or devices |
-| Sessions | Active races, battles, or fights that were later recorded as completed or abandoned |
-| Completed | Racer result with at least one finisher, Monsters result, or Fighter victory/results transition |
+| Sessions | Active races, battles, fights, or Karaoke performances that were later recorded as completed or abandoned |
+| Completed | Racer result with at least one finisher, Monsters result, Fighter victory/results transition, or finalized Karaoke result |
 | Abandoned | A tracked active match that left gameplay without its completed terminal transition |
 | Active play time | Rounded elapsed seconds from the tracked gameplay start until completion or abandonment |
 | Voice commands | Accepted semantic commands; raw speech and transcripts are never recorded |
-| Selections | Aggregate map, monster/fighter, and Racer vehicle values stored with recorded sessions |
+| Selections | Aggregate map, song, monster/fighter, and Racer vehicle values stored with recorded sessions |
 
 For every recorded match, `sessions` increases once and exactly one of `completed` or `abandoned` increases. Completion rate is `completed / sessions`; average session time is `playSeconds / sessions`. A session is assigned to the UTC date on which it is recorded, usually its completion or abandonment date. Voice commands use the UTC date on which the command is accepted.
 
@@ -97,4 +97,4 @@ Dates use strict `YYYY-MM-DD` UTC labels and include both endpoints. Omitting `f
 
 The range validator limits the elapsed gap between `from` and `to` to 366 days. Because the endpoints are inclusive, the largest accepted request contains 367 UTC date buckets. A reversed range or a gap greater than 366 days returns `400`.
 
-Valid game filters are `all`, `racer`, `monsters`, and `fighter`. The filter controls summary metrics, trends, selections, and insights. The `games` object still reports each game's metrics for the requested date range so the dashboard can show the full per-title comparison.
+Valid game filters are `all`, `racer`, `monsters`, `fighter`, and `karaoke`. The filter controls summary metrics, trends, selections, and insights. The `games` object still reports each game's metrics for the requested date range so the dashboard can show the full per-title comparison.

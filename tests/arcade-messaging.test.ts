@@ -526,7 +526,7 @@ describe('Arcade messaging commands', () => {
       idempotencyKey: 'message-choice-close', authorization: h.operatorAuthorization,
     });
     const votePrompt = await message(h.service, 'SM-CHOICE-004B', 'COIN');
-    expect(votePrompt.reply).toContain('VOTING IS OPEN! Reply 1 Voice Racer, 2 Voice Monsters, 3 Voice Fighter');
+    expect(votePrompt.reply).toContain('VOTING IS OPEN! Reply 1 Voice Racer, 2 Voice Monsters, 3 Voice Fighter, 4 Voice Karaoke');
     const first = await message(h.service, 'SM-CHOICE-005', '1');
     expect(first.reply).toContain('VOTE LOCKED: Voice Racer');
     for(const [index,input] of ['1 Voice Racer','1 racer','voce racer','voice rcaer','Voice Racer!'].entries()){
@@ -536,11 +536,33 @@ describe('Arcade messaging commands', () => {
     expect(changed.reply).toContain('VOTE LOCKED: Voice Monsters');
     expect((await message(h.service,'SM-CHOICE-CONFLICT','1 Voice Fighter')).reply)
       .toContain("That option isn't on the display");
-    expect((await message(h.service, 'SM-CHOICE-007', '4')).reply)
-      .toContain("That option isn't on the display. Reply 1 Voice Racer, 2 Voice Monsters, 3 Voice Fighter");
+    expect((await message(h.service, 'SM-CHOICE-007', '5')).reply)
+      .toContain("That option isn't on the display. Reply 1 Voice Racer, 2 Voice Monsters, 3 Voice Fighter, 4 Voice Karaoke");
     const state = h.store.snapshot();
     const entry = Object.values(state.stationReadyEntries).find(candidate => candidate.playerId === joined.playerId)!;
     expect(state.stationRounds[entry.roundId]?.gameChoicesByReadyEntryId).toEqual({ [entry.id]: 'monsters' });
+  });
+
+  it('keeps default selection number 4 and localized Karaoke names stable', async () => {
+    const h = await harness('coin_only');
+    const joined = await message(h.service, 'SM-KARAOKE-JOIN', 'JOIN');
+    await message(h.service, 'SM-KARAOKE-NAME', 'Ada');
+    await message(h.service, 'SM-KARAOKE-TERMS', 'YES');
+    await message(h.service, 'SM-KARAOKE-COIN', 'COIN');
+    const recruiting = await h.service.getStation('ARCADE-01');
+    await h.service.closeStationRecruiting({
+      stationId: 'ARCADE-01', expectedRevision: recruiting!.station.revision,
+      idempotencyKey: 'karaoke-choice-close', authorization: h.operatorAuthorization,
+    });
+
+    const prompt = await message(h.service, 'SM-KARAOKE-PROMPT', 'COIN');
+    expect(prompt.reply).toContain('4 Voice Karaoke');
+    expect((await message(h.service, 'SM-KARAOKE-NUMBER', '4')).reply).toContain('VOTE LOCKED: Voice Karaoke');
+    expect((await message(h.service, 'SM-KARAOKE-PT-NAME', 'Karaokê por voz')).reply)
+      .toContain('VOTE LOCKED: Voice Karaoke');
+    const state = h.store.snapshot();
+    const entry = Object.values(state.stationReadyEntries).find(candidate => candidate.playerId === joined.playerId)!;
+    expect(state.stationRounds[entry.roundId]?.gameChoicesByReadyEntryId).toEqual({ [entry.id]: 'karaoke' });
   });
 
   it('durably replies that selection closed for choices at and after the deadline', async () => {

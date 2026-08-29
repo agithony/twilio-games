@@ -16,6 +16,9 @@ const homeCss = readFileSync(new URL('../client/home.css', import.meta.url), 'ut
 const stationClient = readFileSync(new URL('../client/station-client.ts', import.meta.url), 'utf8');
 const stationDisplay = readFileSync(new URL('../client/station-display.ts', import.meta.url), 'utf8');
 const stationDisplayCss = readFileSync(new URL('../client/station-display.css', import.meta.url), 'utf8');
+const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as {
+  scripts: Record<string, string>;
+};
 const monsters = readFileSync(new URL('../client/battle/monsters.ts', import.meta.url), 'utf8');
 const fighter = readFileSync(new URL('../client/fighter/fighter.ts', import.meta.url), 'utf8');
 const musicToggle = readFileSync(new URL('../client/music-toggle.ts', import.meta.url), 'utf8');
@@ -56,7 +59,7 @@ describe('Arcade browser UI', () => {
     expect(home).toContain('id="standaloneView"');
     expect(homeScript).toContain("show('standalone')");
     expect(homeScript).toContain("if(standaloneMode){renderStandaloneLauncher();show('standalone');}");
-    expect(homeScript).toContain('PLAYABLE_ARCADE_GAMES.filter(game=>enabledGames.has(game.id))');
+    expect(homeScript).toContain('orderByConfiguredIds(PLAYABLE_ARCADE_GAMES,standaloneGameOrder)');
     for (const video of ['vr-demo.mp4','vm-demo.mp4','vf-demo.mp4']) expect(homeScript).toContain(video);
     expect(homeScript).not.toContain('Arcade station mode is off');
     expect(homeScript).not.toContain('Joining unavailable');
@@ -66,7 +69,7 @@ describe('Arcade browser UI', () => {
 
   it('renders selection as a stable video-backed vote display with automatic fallback copy', () => {
     expect(stationClient).toContain('choices: number');
-    expect(homeScript).toContain("{ racer: 1, monsters: 2, fighter: 3 }");
+    expect(homeScript).toContain('racer: 1, monsters: 2, fighter: 3, karaoke: 4');
     expect(homeScript).toContain('impact.choices');
     expect(homeScript).toContain('Ready players: text the number shown or the game name.');
     expect(homeScript).not.toContain('In a browser, choose on your player page.');
@@ -85,10 +88,10 @@ describe('Arcade browser UI', () => {
     expect(homeScript).toContain('gameCards.querySelector<HTMLElement>');
     const cardUpdater = /function renderGameCards\(station: PublicStation\)[\s\S]*?\n}/.exec(homeScript)?.[0] ?? '';
     expect(cardUpdater.match(/replaceChildren/g)).toHaveLength(1);
-    expect(homeScript).toContain('data-src="${selectionVideos[impact.id]}"');
+    expect(homeScript).toContain('data-src="${preview}"');
     expect(homeScript).toContain('preload="none"');
     expect(homeScript).toContain('game-media-fallback');
-    expect(homeScript).toContain("addEventListener('error'");
+    expect(homeScript).toContain("?.addEventListener(\n    'error'");
     expect(homeCss).toContain('.game-command strong');
     expect(homeCss).toMatch(/@media \(max-width:600px\)[\s\S]*?\.game-card \{/);
   });
@@ -111,6 +114,7 @@ describe('Arcade browser UI', () => {
     expect(stationGameSelect).toContain('value="racer"');
     expect(stationGameSelect).toContain('value="monsters"');
     expect(stationGameSelect).toContain('value="fighter"');
+    expect(stationGameSelect).toContain('value="karaoke"');
     expect(stationGameSelect).not.toContain('value="trivia"');
     expect(script).toContain("show('recruiting-control',!paused&&phase==='RECRUITING')");
     expect(script).toContain("show('selection-control',!paused&&phase==='GAME_SELECTION')");
@@ -164,11 +168,13 @@ describe('Arcade browser UI', () => {
 
   it('keeps local browser traffic same-origin through Vite', () => {
     expect(vite).toContain("'/api':");
-    expect(vite).toContain("originUrl.host === request.headers.host");
-    expect(vite).toContain("request.headers['sec-fetch-site'] === 'same-origin'");
-    expect(vite).toContain("loopback.has(originUrl.hostname)");
-    expect(vite).toContain("proxyRequest.setHeader('origin', backendOrigin)");
+    expect(vite).toContain('GAME_SERVER_EXPECTED_ORIGIN');
+    expect(vite).toContain('forwardedGameServerOrigin(origin, request.headers.host, expectedGameServerOrigin)');
+    expect(vite).toContain("proxyRequest.setHeader('origin', forwardedOrigin)");
+    expect(packageJson.scripts['dev:arcade:client']).toContain('GAME_SERVER_EXPECTED_ORIGIN=http://localhost:5173');
     expect(vite).toContain("'/auth':");
+    expect(vite).toContain("'/karaoke':");
+    expect(vite).toContain("karaoke: resolve(__dirname, 'karaoke.html')");
     expect(vite).toContain("arcade: resolve(__dirname, 'arcade/index.html')");
     expect(vite).toContain("url === '/arcade'");
     expect(vite).toContain("url === '/operator'");
@@ -308,18 +314,29 @@ describe('Arcade browser UI', () => {
     expect(css).toContain('.operator-page .challenge-form{grid-template-columns:repeat(2');
   });
 
-  it('lets operators control future voice game visibility without making them playable', () => {
+  it('keeps Trivia conceptual while exposing Karaoke as a playable game', () => {
     const concepts = /<fieldset class="choice-grid coming-soon-concepts"[\s\S]*?<\/fieldset>/.exec(html)?.[0] ?? '';
     expect(concepts).toContain('<b>Voice Trivia</b>');
-    expect(concepts).toContain('<b>Voice Karaoke</b>');
     expect(concepts).toContain('Coming soon cards shown on the home screen');
     expect(concepts).toContain('id="admin-coming-soon-trivia"');
-    expect(concepts).toContain('id="admin-coming-soon-karaoke"');
+    expect(concepts).not.toContain('Voice Karaoke');
+    expect(html).toContain('id="admin-game-karaoke"');
+    expect(html).toMatch(/data-game-choice="karaoke"><span>4<\/span><b>Voice Karaoke<\/b>/);
     expect(concepts).not.toMatch(/<(?:button|a|option)\b|\btabindex=|\bdata-game-choice=/);
-    expect(stationGameSelect).not.toMatch(/Trivia|Karaoke/i);
-    expect(script).toContain("for(const concept of ['trivia','karaoke'] as const)el<HTMLInputElement>(`admin-coming-soon-${concept}`).checked=state.adminConfig.station.comingSoon[concept].enabled");
-    expect(script).toContain("for(const concept of ['trivia','karaoke'] as const)station.comingSoon[concept].enabled=el<HTMLInputElement>(`admin-coming-soon-${concept}`).checked");
+    expect(stationGameSelect).not.toMatch(/Trivia/i);
+    expect(stationGameSelect).toContain('Voice Karaoke · 1 player');
+    expect(script).toContain("const HOME_CONCEPTS: readonly HomeConcept[] = ['trivia']");
+    expect(script).not.toContain('admin-coming-soon-karaoke');
     expect(html).toContain('id="admin-console"');
+    expect(homeScript).toContain('isPlayableArcadeGame(entry[0]) && entry[1].enabled');
+    expect(homeScript).toContain('station.games.filter(impact => enabledGames.has(impact.id))');
+  });
+
+  it('renders aggregate vote counts and allows a capacity-one no-show replacement', () => {
+    expect(script).toContain('voteCounts:Array<{game:PlayableGame;count:number}>');
+    expect(script).toContain("['Votes',formatVoteCounts(view.voteCounts)]");
+    expect(script).toContain('(view?.match?.overflowReadyEntryIds.length??0)>0');
+    expect(script).not.toContain("gameName(game??'racer')");
   });
 
   it('manages configured challenges through the staff-only versioned config editor', () => {
@@ -610,13 +627,24 @@ describe('Arcade browser UI', () => {
     expect(joinCss).toContain('.channel-fallback-label');
   });
 
-  it('provides a guarded operator control for persistent Racer scores', () => {
+  it('provides a guarded operator control for persistent Racer and Karaoke scores', () => {
     expect(html).toContain('id="leaderboard-reset-panel"');
-    expect(html).toContain('Only Voice Racer currently stores persistent scores.');
+    expect(html).toContain('Voice Racer and Voice Karaoke store persistent scores.');
     expect(script).toContain("request<LeaderboardAdminSummary>('/api/admin/arcade/leaderboards')");
     expect(script).toContain("'If-Match':state.leaderboardEtag");
     expect(script).toContain('does not store persistent scores, so there is nothing to reset');
     expect(script).toContain('This cannot be undone.');
+    expect(html).toContain('<option value="karaoke">Voice Karaoke</option>');
+    expect(script).toContain('payload.games.find(item=>item.game===game)??{game,resettable:false,maps:[]}');
+  });
+
+  it('exposes the persisted game order as the standalone display order', () => {
+    expect(html).toContain('id="selection-policy-field"');
+    expect(html).toContain('id="game-order-label"');
+    expect(html).toContain('id="game-order-help"');
+    expect(script).toContain("standalone?'Standalone display order':'Priority order'");
+    expect(script).toContain("selectedMode==='off'||selectionPolicy==='fixed_priority'");
+    expect(script).toContain('swapPriorityOrder');
   });
 
   it('advertises the coin emoji and plays selection cues for committed choices', () => {

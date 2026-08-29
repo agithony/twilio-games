@@ -1,5 +1,9 @@
-export const ANALYTICS_GAMES = ['racer', 'monsters', 'fighter'] as const;
-export type AnalyticsGame = typeof ANALYTICS_GAMES[number];
+import { PLAYABLE_ARCADE_GAMES, type PlayableArcadeGame } from './arcade-games';
+
+export const ANALYTICS_GAMES: readonly PlayableArcadeGame[] = Object.freeze(
+  PLAYABLE_ARCADE_GAMES.map(game => game.id),
+);
+export type AnalyticsGame = PlayableArcadeGame;
 
 export interface AnalyticsGameMetrics {
   participants: number;
@@ -30,6 +34,7 @@ export interface AnalyticsReport {
   trend: AnalyticsTrendPoint[];
   selections: {
     maps: { name: string; count: number }[];
+    songs: { name: string; count: number }[];
     characters: { name: string; count: number }[];
     vehicles: { name: string; count: number }[];
   };
