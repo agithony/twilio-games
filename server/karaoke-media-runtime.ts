@@ -39,8 +39,8 @@ const DEFAULT_AUTHENTICATION_TIMEOUT_MS = 5_000;
 const DEFAULT_CLEAN_STOP_GRACE_MS = 8_000;
 const DEFAULT_FINALIZED_RETENTION_MS = 5 * 60_000;
 const DEFAULT_LATE_TOLERANCE_MS = 180;
-const DEFAULT_LYRIC_JUDGMENT_GRACE_MS = 1_500;
-export const KARAOKE_LYRIC_FINALIZATION_TIMEOUT_MS = 1_500;
+const DEFAULT_LYRIC_JUDGMENT_GRACE_MS = 1_000;
+export const KARAOKE_LYRIC_FINALIZATION_TIMEOUT_MS = 2_500;
 const DUMMY_TOKEN_DIGEST = Buffer.alloc(32);
 const ACTIVE_ATTEMPT_PHASES: readonly KaraokePhase[] = ['loading', 'countdown', 'performing'];
 
@@ -444,6 +444,7 @@ export class KaraokeMediaSession {
       try {
         lyricRecognizer = options.lyricRecognizerFactory.create({
           locale: options.song.locale,
+          expectedWords: options.song.chart.words.map(word => word.text),
           onResult: result => this.acceptLyricResult(result),
           onError: () => this.markLyricProviderFailed(),
         });
@@ -913,7 +914,7 @@ export class KaraokeMediaRuntime {
       options.lyricFinalizationTimeoutMs ?? KARAOKE_LYRIC_FINALIZATION_TIMEOUT_MS,
       'lyricFinalizationTimeoutMs',
     );
-    this.goodThreshold = finiteThreshold(options.goodThreshold ?? 0.35, 'goodThreshold');
+    this.goodThreshold = finiteThreshold(options.goodThreshold ?? 0.3, 'goodThreshold');
     this.perfectThreshold = finiteThreshold(options.perfectThreshold ?? 0.8, 'perfectThreshold');
     if (this.perfectThreshold <= this.goodThreshold) {
       throw new RangeError('perfectThreshold must be greater than goodThreshold');

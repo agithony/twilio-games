@@ -3,7 +3,7 @@ import type { AudioFrameObservation } from './frame-analyzer';
 export const KARAOKE_TIMING_SCORE_WEIGHT = 0.5;
 export const KARAOKE_LYRIC_SCORE_WEIGHT = 0.3;
 export const KARAOKE_PITCH_SCORE_WEIGHT = 0.2;
-export const KARAOKE_MINIMUM_MATCHING_LYRIC_CONFIDENCE = 0.5;
+export const KARAOKE_UNVERIFIED_ACOUSTIC_SCALE = 0.7;
 
 export interface ExpectedChartWord {
   readonly id: string;
@@ -108,10 +108,10 @@ interface LyricResult {
 }
 
 const DEFAULT_OPTIONS = {
-  earlyToleranceMs: 120,
-  lateToleranceMs: 180,
+  earlyToleranceMs: 200,
+  lateToleranceMs: 250,
   maximumPitchErrorCents: 200,
-  lyricAlignmentToleranceMs: 500,
+  lyricAlignmentToleranceMs: 650,
   locale: 'en-US',
   lyricRecognitionAvailable: false,
 } as const;
@@ -351,6 +351,7 @@ export class KaraokeScoreAccumulator {
     const matches: AlignedLyricEvidence[] = [];
     let nextWordIndex = 0;
     for (const { word: recognized } of ordered) {
+      const normalizedRecognized = normalizeKaraokeLyricWord(recognized.text, this.options.locale);
       const recognizedMidpoint = (recognized.songStartMs + recognized.songEndMs) / 2;
       let bestIndex = -1;
       let bestDistance = Number.POSITIVE_INFINITY;
@@ -358,6 +359,7 @@ export class KaraokeScoreAccumulator {
         const expected = this.words[index]!;
         if (expected.startMs - this.options.lyricAlignmentToleranceMs > recognized.songEndMs) break;
         if (expected.endMs + this.options.lyricAlignmentToleranceMs < recognized.songStartMs) continue;
+        if (normalizeKaraokeLyricWord(expected.text, this.options.locale) !== normalizedRecognized) continue;
         const distance = Math.abs(recognizedMidpoint - (expected.startMs + expected.endMs) / 2);
         if (distance < bestDistance) {
           bestIndex = index;
@@ -365,12 +367,9 @@ export class KaraokeScoreAccumulator {
         }
       }
       if (bestIndex < 0) continue;
-      const expected = this.words[bestIndex]!;
-      const correct = normalizeKaraokeLyricWord(recognized.text, this.options.locale)
-        === normalizeKaraokeLyricWord(expected.text, this.options.locale);
       matches.push(Object.freeze({
         wordIndex: bestIndex,
-        score: correct ? recognized.confidence : 0,
+        score: recognized.confidence,
         source: recognized.source,
         sourceStartMs: recognized.sourceStartMs,
         sourceEndMs: recognized.sourceEndMs,
@@ -398,19 +397,21 @@ export class KaraokeScoreAccumulator {
       const lyricEvidence = lyricByWord.get(index) ?? null;
       // Provider output cannot create a score without locally detected caller voice for this word.
       const lyrics = aggregate.voicedMs === 0 ? 0 : lyricEvidence?.score ?? 0;
-      const acousticCreditAllowed = !this.lyricRecognitionAvailable
-        || (lyricEvidence?.score ?? 0) >= KARAOKE_MINIMUM_MATCHING_LYRIC_CONFIDENCE;
-      const timing = acousticCreditAllowed ? Math.min(1, aggregate.timingEarnedMs / duration) : 0;
-      const pitch = acousticCreditAllowed && word.pitchHz !== undefined
-        ? Math.min(1, aggregate.pitchEarnedMs / duration)
+      const acousticScale = this.lyricRecognitionAvailable
+        ? KARAOKE_UNVERIFIED_ACOUSTIC_SCALE
+          + (1 - KARAOKE_UNVERIFIED_ACOUSTIC_SCALE) * (lyricEvidence?.score ?? 0)
+        : 1;
+      const timing = acousticScale * Math.min(1, aggregate.timingEarnedMs / duration);
+      const pitch = word.pitchHz !== undefined
+        ? acousticScale * Math.min(1, aggregate.pitchEarnedMs / duration)
         : 0;
       const components = Object.freeze({ timing, lyrics, pitch });
       const score = weightedComponentScore(components);
       const audioMaximum = aggregate.voicedMs * (KARAOKE_TIMING_SCORE_WEIGHT + KARAOKE_PITCH_SCORE_WEIGHT);
-      const audioEarned = acousticCreditAllowed
-        ? KARAOKE_TIMING_SCORE_WEIGHT * aggregate.timingEarnedMs
+      const audioEarned = acousticScale * (
+        KARAOKE_TIMING_SCORE_WEIGHT * aggregate.timingEarnedMs
           + KARAOKE_PITCH_SCORE_WEIGHT * aggregate.pitchEarnedMs
-        : 0;
+      );
       weightedTiming += timing * duration;
       weightedLyrics += lyrics * duration;
       weightedPitch += pitch * duration;

@@ -20,7 +20,7 @@ export interface AudioFrameObservation {
 }
 
 const DEFAULT_OPTIONS = {
-  voiceActivityRms: 0.02,
+  voiceActivityRms: 0.015,
   minimumPitchHz: 80,
   maximumPitchHz: 1_000,
   yinThreshold: 0.15,

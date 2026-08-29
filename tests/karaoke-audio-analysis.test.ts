@@ -68,4 +68,16 @@ describe('mu-law decoding and frame analysis', () => {
     expect(observation.pitchHz!).toBeCloseTo(440, -0.5);
     expect(observation.pitchClarity).toBeGreaterThan(0.9);
   });
+
+  it('detects quiet handset-level voice without classifying near-silence as active', () => {
+    const tone = (amplitude: number) => {
+      const payload = new Uint8Array(800);
+      for (let index = 0; index < payload.length; index += 1) {
+        payload[index] = encodeMuLaw(amplitude * Math.sin(2 * Math.PI * 220 * index / 8_000));
+      }
+      return analyzeMediaFrame(parsedMedia(payload, 0));
+    };
+    expect(tone(800).voiceActive).toBe(true);
+    expect(tone(300).voiceActive).toBe(false);
+  });
 });
