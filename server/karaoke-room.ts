@@ -196,11 +196,13 @@ export class KaraokeRoom {
     let changed = false;
     if (this.phase === 'loading' && this.loadingDeadlineAt !== null && now >= this.loadingDeadlineAt) {
       const generation = this.loadingGenerationValue;
+      const displayReady = this.displayReadyValue;
+      const mediaReady = this.mediaReadyValue;
       this.phase = 'song_select';
       this.loadingGenerationValue += 1;
       this.loadingDeadlineAt = null;
       this.resetReadiness();
-      this.events.push({ type: 'loading_timeout', generation, atMs: now });
+      this.events.push({ type: 'loading_timeout', generation, displayReady, mediaReady, atMs: now });
       changed = true;
     }
     if (this.phase === 'countdown' && this.countdownEndsAt !== null) {

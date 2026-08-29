@@ -148,11 +148,11 @@ export class KaraokeAudioTransport {
 
   /** Retries autoplay and seeks to the current absolute song position after a user gesture. */
   async recover(serverNowMs: number): Promise<boolean> {
-    if (!this.context) return true;
-    const wasRunning = this.context.state === 'running';
-    try { await this.context.resume(); }
+    const context = this.ensureContext();
+    const wasRunning = context.state === 'running';
+    try { await context.resume(); }
     catch { this.setBlocked(true); return false; }
-    if (this.context.state !== 'running') { this.setBlocked(true); return false; }
+    if (context.state !== 'running') { this.setBlocked(true); return false; }
     if (!wasRunning && this.activeSong && this.activeStartedAtMs !== null) {
       this.startSource(this.activeSong, this.activeStartedAtMs, serverNowMs);
     }

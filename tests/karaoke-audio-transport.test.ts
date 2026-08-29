@@ -113,6 +113,13 @@ describe('KaraokeAudioTransport browser state', () => {
     transport.dispose();
   });
 
+  it('creates and unlocks the audio context when recovery happens before preload', async () => {
+    const transport = new KaraokeAudioTransport();
+    await expect(transport.recover(0)).resolves.toBe(true);
+    expect(transport.isRunning()).toBe(true);
+    transport.dispose();
+  });
+
   it('fetches and decodes the licensed excerpt from its root-relative catalog URL', async () => {
     const transport = new KaraokeAudioTransport();
     await transport.preload(NEVER_GONNA_GIVE_YOU_UP);

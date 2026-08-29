@@ -19,6 +19,7 @@ import {
   KaraokeCountdownAnnouncer,
   KaraokeServerClock,
   clampKaraokeVisualOffsetMs,
+  karaokeAudioPreflightRequired,
   karaokeClientAudioUrl,
   karaokeCountdownSongTimeMs,
   karaokeCountdownCount,
@@ -123,9 +124,9 @@ const stopVoiceNumber = watchVoiceNumber(locale, number => {
   }).then(value => { phoneQr = value; renderFlow(true); }).catch(() => { phoneQr = ''; renderFlow(true); });
 });
 
-audio.onAutoplayBlocked(blocked => { audioRecovery.hidden = !blocked; });
-audio.onRunningStateChange(() => maybeSignalReady());
-audioRecovery.addEventListener('click', () => void recoverAudio());
+audio.onAutoplayBlocked(blocked => { audioRecovery.hidden = !blocked; renderFlow(true); });
+audio.onRunningStateChange(() => { maybeSignalReady(); renderFlow(true); });
+audioRecovery.addEventListener('click', () => void enableConcertAudio());
 document.addEventListener('pointerdown', () => {
   unlockInteraction();
   void recoverAudio();
@@ -142,6 +143,8 @@ element('music-toggle')?.addEventListener('click', () => {
 addEventListener('storage', event => {
   if (event.key === 'twilio-games-music-muted') audio.setMuted(event.newValue === 'true');
 });
+
+if (!localTestingAllowed) void recoverAudio();
 
 addEventListener('resize', () => stage.resize());
 addEventListener('keydown', event => {
@@ -395,8 +398,26 @@ async function syncAudio(song: KaraokeSong, startedAtMs: number, serverNowMs: nu
 
 async function recoverAudio(): Promise<void> {
   audio.setMuted(musicManager.getIsMuted());
-  await audio.recover(currentServerNow());
-  maybeSignalReady();
+  try {
+    await audio.recover(currentServerNow());
+    maybeSignalReady();
+  } catch (error) {
+    console.error('Karaoke audio recovery failed.', error);
+    preparationError = copy.audioError;
+  } finally {
+    renderFlow(true);
+  }
+}
+
+async function enableConcertAudio(): Promise<void> {
+  musicManager.unmute();
+  audio.setMuted(false);
+  unlockInteraction();
+  await recoverAudio();
+}
+
+function concertAudioReady(): boolean {
+  return audio.isRunning() && !musicManager.getIsMuted();
 }
 
 function updateMusicForPhase(phase: KaraokeState['phase']): void {
@@ -415,11 +436,19 @@ function renderFlow(force = false): void {
     state?.phase, state?.singer, state?.selectedSong?.id, state?.loadingGeneration, state?.result,
     catalog.map(song => song.id), playerId, localTester, isHost, connectionState, flowMessage, phoneNumber, phoneQr, preparationError,
     displayPairingRequired,
+    concertAudioReady(),
   ]);
   if (!force && flowKey === lastFlowKey) return;
   lastFlowKey = flowKey;
   if (displayPairingRequired) {
     flowOverlay.innerHTML = `<section class="flow-panel compact loading-card">${kicker()}<h1>${escapeHtml(copy.displayAuthTitle)}</h1><p>${escapeHtml(copy.displayAuthBody)}</p><div class="flow-actions"><a class="primary-action" href="/operator">${escapeHtml(copy.displayAuthAction)}</a></div></section>`;
+    return;
+  }
+  if (karaokeAudioPreflightRequired(
+    localTestingAllowed, audio.isRunning(), musicManager.getIsMuted(), state?.phase,
+  )) {
+    flowOverlay.innerHTML = `<section class="flow-panel compact loading-card">${kicker()}<h1>${escapeHtml(copy.audioRecover)}</h1><p>${escapeHtml(copy.audioRecoverBody)}</p><div class="flow-actions"><button id="enable-concert-audio" class="primary-action" type="button">${escapeHtml(copy.audioRecover)}</button></div></section>`;
+    element('enable-concert-audio').addEventListener('click', () => void enableConcertAudio());
     return;
   }
   if (!state) {

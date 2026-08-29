@@ -17,6 +17,7 @@ import {
   estimateKaraokeClockOffset,
   karaokeAnimatedTransform,
   karaokeAudioSchedule,
+  karaokeAudioPreflightRequired,
   karaokeCameraShot,
   karaokeClientAudioUrl,
   karaokeCountdownCount,
@@ -245,6 +246,11 @@ describe('Voice Karaoke client timeline utilities', () => {
     expect(karaokeDisplayPairingRequired('games.example', true, 'paired-token')).toBe(false);
     expect(karaokeDisplayPairingRequired('games.example', false, null)).toBe(false);
     expect(karaokeDisplayPairingRequired('localhost', true, null)).toBe(false);
+    expect(karaokeAudioPreflightRequired(false, false, false, 'lobby')).toBe(true);
+    expect(karaokeAudioPreflightRequired(false, true, true, 'loading')).toBe(true);
+    expect(karaokeAudioPreflightRequired(false, true, false, 'lobby')).toBe(false);
+    expect(karaokeAudioPreflightRequired(true, false, false, 'lobby')).toBe(false);
+    expect(karaokeAudioPreflightRequired(false, false, false, 'performing')).toBe(false);
   });
 
   it('clamps visual calibration to 20ms steps without depending on browser storage', () => {
