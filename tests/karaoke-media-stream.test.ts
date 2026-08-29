@@ -71,6 +71,16 @@ describe('TwilioMediaStreamParser', () => {
     expect(parser.parse(stop(3))).toMatchObject({ event: 'stop', sequenceNumber: 3, streamSid: STREAM_SID });
   });
 
+  it('accepts deployed Twilio Call protocol version forms while rejecting other majors', () => {
+    for (const version of ['1.0', '1.0.0', '1.1.0']) {
+      expect(new TwilioMediaStreamParser().parse(JSON.stringify({ event: 'connected', protocol: 'Call', version })))
+        .toEqual({ event: 'connected', protocol: 'Call', version: '1.0.0' });
+    }
+    expectCode(() => new TwilioMediaStreamParser().parse(JSON.stringify({
+      event: 'connected', protocol: 'Call', version: '2.0.0',
+    })), 'INVALID_FRAME');
+  });
+
   it('rejects malformed JSON, unsupported events, bad formats, and non-canonical payloads', () => {
     expectCode(() => new TwilioMediaStreamParser().parse('{bad json'), 'INVALID_JSON');
     expectCode(
