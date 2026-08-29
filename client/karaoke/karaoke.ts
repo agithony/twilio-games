@@ -4,7 +4,7 @@ import type { KaraokeEvent, KaraokeState } from '../../shared/karaoke-protocol';
 import { KARAOKE_MAX_SCORE } from '../../shared/karaoke-protocol';
 import { DEFAULT_ROOM } from '../../shared/constants';
 import { createStationDisplay } from '../station-display';
-import { watchVoiceNumber } from '../station-client';
+import { rejectDisplayToken, watchVoiceNumber } from '../station-client';
 import { injectMusicToggle } from '../music-toggle';
 import { getMusicManager } from '../music-manager';
 import { getSoundEffectsManager } from '../sound-effects';
@@ -23,6 +23,8 @@ import {
   karaokeCountdownSongTimeMs,
   karaokeCountdownCount,
   karaokeGuideModeAllowed,
+  karaokeDisplayMode,
+  karaokeDisplayPairingRequired,
   karaokeLocalTestingAllowed,
   karaokeVisualTimeMs,
   resolveKaraokeWebSocketUrl,
@@ -52,7 +54,10 @@ if (pageUrl.searchParams.has('hostToken')) {
 const params = pageUrl.searchParams;
 const roomCode = params.get('room') || DEFAULT_ROOM;
 const stationDisplay = createStationDisplay();
-const isDisplay = params.get('display') === '1' || stationDisplay.active;
+let displayPairingRequired = karaokeDisplayPairingRequired(location.hostname, stationDisplay.displayToken);
+const isDisplay = karaokeDisplayMode(
+  location.hostname, params.get('display') === '1', stationDisplay.active, stationDisplay.displayToken,
+);
 document.body.classList.toggle('event-display', isDisplay);
 const guideMode = karaokeGuideModeAllowed(
   params.get('guide') === '1', locale, location.hostname, isDisplay,
@@ -105,7 +110,7 @@ interface KaraokeLeaderboardEntry {
   at: number;
 }
 
-connect();
+if (!displayPairingRequired) connect();
 
 const stopVoiceNumber = watchVoiceNumber(locale, number => {
   phoneNumber = number || copy.phoneFallback;
@@ -225,7 +230,12 @@ function connect(): void {
       localTester = false;
       playerId = null;
     }
-    flowMessage = localizedError(code);
+    if (code === 'bad_display_auth' && !localTestingAllowed) {
+      rejectDisplayToken(stationDisplay.displayToken);
+      displayPairingRequired = true;
+      flowMessage = '';
+      connection?.leaveAndClose(roomCode);
+    } else flowMessage = localizedError(code);
     renderFlow(true);
   });
   connection.onState(applyState);
@@ -401,9 +411,14 @@ function renderFlow(force = false): void {
   const flowKey = JSON.stringify([
     state?.phase, state?.singer, state?.selectedSong?.id, state?.loadingGeneration, state?.result,
     catalog.map(song => song.id), playerId, localTester, isHost, connectionState, flowMessage, phoneNumber, phoneQr, preparationError,
+    displayPairingRequired,
   ]);
   if (!force && flowKey === lastFlowKey) return;
   lastFlowKey = flowKey;
+  if (displayPairingRequired) {
+    flowOverlay.innerHTML = `<section class="flow-panel compact loading-card">${kicker()}<h1>${escapeHtml(copy.displayAuthTitle)}</h1><p>${escapeHtml(copy.displayAuthBody)}</p><div class="flow-actions"><a class="primary-action" href="/operator">${escapeHtml(copy.displayAuthAction)}</a></div></section>`;
+    return;
+  }
   if (!state) {
     flowOverlay.innerHTML = `<section class="flow-panel compact loading-card">${kicker()}<h1>${escapeHtml(copy.connecting)}</h1><p>${escapeHtml(copy.tagline)}</p></section>`;
     appendFlowError();
