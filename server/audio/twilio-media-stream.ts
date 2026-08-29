@@ -217,8 +217,9 @@ export class TwilioMediaStreamParser {
     if (this.phase !== 'awaiting-connected') {
       fail('UNEXPECTED_EVENT', `connected event is not valid while parser is ${this.phase}`);
     }
-    if (frame.protocol !== 'Call' || frame.version !== '1.0.0') {
-      fail('INVALID_FRAME', 'connected event must use Call protocol version 1.0.0');
+    const version = nonEmptyString(frame.version, 'version');
+    if (frame.protocol !== 'Call' || !/^1\.\d+(?:\.\d+)?$/.test(version)) {
+      fail('INVALID_FRAME', 'connected event must use Call protocol major version 1');
     }
     this.phase = 'connected';
     return { event: 'connected', protocol: 'Call', version: '1.0.0' };
