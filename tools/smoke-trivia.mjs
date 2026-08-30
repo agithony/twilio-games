@@ -63,14 +63,14 @@ await page.evaluateOnNewDocument(() => {
       category: phase === 'lobby' ? null : 'technology', categoryVoteCounts,
       players: [scoredPlayer], serverNowMs: now,
       loadingGeneration: 1, displayReady: true,
-      questionIndex: ['question_prompt', 'answer_cue', 'question', 'reveal'].includes(phase) ? 0 : null,
+      questionIndex: ['question', 'reveal'].includes(phase) ? 0 : null,
       countdownEndsAtMs: phase === 'countdown' ? now + 3000 : null,
       questionPromptEndsAtMs: null,
-      answerCueEndsAtMs: phase === 'answer_cue' ? now + 25000 : null,
-      answeringStartsAtMs: phase === 'question' ? now + 3000 : null,
-      questionEndsAtMs: phase === 'question' ? now + 13000 : null,
+      answerCueEndsAtMs: null,
+      answeringStartsAtMs: phase === 'question' ? now : null,
+      questionEndsAtMs: phase === 'question' ? now + 10000 : null,
       revealEndsAtMs: phase === 'reveal' ? now + 4000 : null,
-      question: ['question_prompt', 'answer_cue', 'question', 'reveal'].includes(phase) ? question : null,
+      question: ['question', 'reveal'].includes(phase) ? question : null,
       reveal: phase === 'reveal' ? {
         questionId: question.id,
         correctChoiceId: 'b',
@@ -154,24 +154,13 @@ try {
     player: document.querySelector('.roster-player strong')?.textContent,
   }));
 
-  await page.evaluate(() => window.__triviaSmokePhase('answer_cue'));
-  await page.waitForSelector('[data-view="answer_cue"]', { timeout: 5_000 });
-  const cue = await page.evaluate(() => ({
-    phase: document.body.dataset.phase,
-    status: document.querySelector('.prompt-status strong')?.textContent,
-    timer: document.getElementById('question-seconds')?.textContent,
-  }));
-
   await page.evaluate(() => window.__triviaSmokePhase('question'));
   await page.waitForSelector('[data-view="question"]', { timeout: 5_000 });
-  const preStart = await page.evaluate(() => ({
-    status: document.querySelector('.question-prestart strong')?.textContent,
-    timer: document.getElementById('question-seconds')?.textContent,
-  }));
   await page.waitForSelector('#question-seconds', { timeout: 5_000 });
   const question = await page.evaluate(() => ({
     phase: document.body.dataset.phase,
     prompt: document.querySelector('.question-board h1')?.textContent,
+    choiceNumbers: [...document.querySelectorAll('.choice-grid li span')].map(node => node.textContent),
     choices: [...document.querySelectorAll('.choice-grid li strong')].map(node => node.textContent),
     seconds: document.getElementById('question-seconds')?.textContent,
     interactiveControls: document.querySelectorAll('#trivia-stage button, #trivia-stage input, #trivia-stage form').length,
@@ -202,9 +191,8 @@ try {
   }));
 
   const ok = lobby.phase === 'lobby' && lobby.connection === 'Live' && lobby.player === 'Ada'
-    && cue.phase === 'answer_cue' && cue.status === 'Phones are synchronizing the answer cue.' && !cue.timer
-    && preStart.status?.includes('Answers open in') && !preStart.timer
     && question.phase === 'question' && question.prompt?.startsWith('Which protocol')
+    && question.choiceNumbers.join(',') === '1,2,3,4'
     && question.choices.join(',') === 'SMTP,WebSocket,FTP,POP3'
     && Number(question.seconds) >= 9 && question.interactiveControls === 0
     && question.busy === 'false'
@@ -215,7 +203,7 @@ try {
     && !results.horizontalOverflow && mobile.view === 'results' && !mobile.horizontalOverflow
     && consoleErrors.length === 0 && pageErrors.length === 0 && httpErrors.length === 0;
   console.log(JSON.stringify({
-    result: ok ? 'PASS' : 'FAIL', lobby, cue, preStart, question, reveal, results, mobile,
+    result: ok ? 'PASS' : 'FAIL', lobby, question, reveal, results, mobile,
     consoleErrors, pageErrors, httpErrors,
   }, null, 2));
   process.exitCode = ok ? 0 : 1;

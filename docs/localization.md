@@ -98,9 +98,11 @@ AI-assisted source and editorial audit only. It does not claim human editorial, 
 native Brazilian Portuguese review. A later human review must preserve the AI-assisted provenance and
 identify the actual reviewer rather than relabeling the existing audit.
 
-Runtime uses the selected localized prompt and choices in `question_prompt`. That phase waits for
-active caller prompts to settle or a 60-second recovery deadline. The localized `answer_cue` then
-waits for active cues to settle or a separate 25-second recovery deadline before answers are enabled.
+Runtime publishes the selected localized prompt and choices directly in `question`, starts the shared
+10-second answer window immediately, and speaks localized numbered choices without waiting for Relay
+playback. English uses One through Four; Brazilian Portuguese uses Um through Quatro. Reconnecting
+unanswered callers hear the current numbered question plus remaining-time guidance without changing
+the shared timestamps.
 
 Use `/editor?game=trivia` to edit the complete bilingual bank, answer key, private voice aliases,
 sources, and review metadata. The API is `no-store`, requires `EDITOR_TOKEN` when configured, and uses

@@ -104,8 +104,14 @@ describe('activation analytics', () => {
     observer.triviaState(room);
     observer.triviaState(room);
     expect(room.ready(room.state().loadingGeneration)).toBe(true);
-    now += 200_000;
+    now = room.state().countdownEndsAtMs!;
     room.tick();
+    for (let questionIndex = 0; questionIndex < 8; questionIndex++) {
+      now = room.state().questionEndsAtMs!;
+      room.tick();
+      now = room.state().revealEndsAtMs!;
+      room.tick();
+    }
     observer.triviaState(room);
     observer.triviaState(room);
 

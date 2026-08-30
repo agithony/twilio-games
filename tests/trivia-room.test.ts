@@ -1,11 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
-  TRIVIA_ANSWER_CUE_TIMEOUT_MS,
-  TRIVIA_ANSWER_START_DELAY_MS,
   TRIVIA_COUNTDOWN_MS,
   TRIVIA_FINAL_ANSWER_GRACE_MS,
-  TRIVIA_QUESTION_PROMPT_TIMEOUT_MS,
   TRIVIA_REVEAL_MS,
   TriviaRoom,
 } from '../server/trivia-room';
@@ -34,28 +31,12 @@ function startQuestion(room: TriviaRoom, playerId: string, now: { value: number 
   expect(room.ready(generation)).toBe(true);
   now.value += TRIVIA_COUNTDOWN_MS;
   expect(room.tick()).toBe(true);
-  expect(room.phase).toBe('question_prompt');
-  settlePrompt(room, now);
   expect(room.phase).toBe('question');
 }
 
 function settlePrompt(room: TriviaRoom, now?: { value: number }): void {
-  const state = room.state();
-  const questionId = state.question!.id;
-  for (const player of state.players) {
-    if (player.connected) expect(room.questionPromptReady(player.playerId, questionId)).toBe(true);
-  }
-  expect(room.phase).toBe('answer_cue');
-  settleAnswerCue(room);
+  expect(room.phase).toBe('question');
   if (now) now.value = room.state().answeringStartsAtMs!;
-}
-
-function settleAnswerCue(room: TriviaRoom): void {
-  const state = room.state();
-  const questionId = state.question!.id;
-  for (const player of state.players) {
-    if (player.connected) expect(room.questionAnswerCueReady(player.playerId, questionId)).toBe(true);
-  }
 }
 
 function correctChoice(room: TriviaRoom): string {
@@ -410,7 +391,7 @@ describe('authoritative trivia room', () => {
     });
   });
 
-  it('anchors countdown, prompt, and answer windows to absolute time', () => {
+  it('publishes the redacted question with an immediate ten-second answer window', () => {
     const now = { value: 10_000 };
     const room = new TriviaRoom('CLOCK', { bank, now: () => now.value });
     const player = joined(room);
@@ -421,62 +402,27 @@ describe('authoritative trivia room', () => {
     now.value = endsAt + 500;
     room.tick();
     expect(room.state()).toMatchObject({
-      phase: 'question_prompt',
+      phase: 'question',
       countdownEndsAtMs: null,
-      questionPromptEndsAtMs: endsAt + TRIVIA_QUESTION_PROMPT_TIMEOUT_MS,
-      answeringStartsAtMs: null,
-      questionEndsAtMs: null,
+      questionPromptEndsAtMs: null,
+      answerCueEndsAtMs: null,
+      answeringStartsAtMs: now.value,
+      questionEndsAtMs: now.value + TRIVIA_ANSWER_WINDOW_MS,
     });
     const questionId = room.state().question!.id;
-    expect(room.questionPromptReady(player, questionId)).toBe(true);
-    expect(room.state()).toMatchObject({
-      phase: 'answer_cue',
-      questionPromptEndsAtMs: null,
-      answerCueEndsAtMs: now.value + TRIVIA_ANSWER_CUE_TIMEOUT_MS,
-      answeringStartsAtMs: null,
-      questionEndsAtMs: null,
-    });
-    expect(room.answer(player, room.state().question!.choices[0]!.id)).toBe(false);
-    expect(room.questionAnswerCueReady(player, questionId)).toBe(true);
-    expect(room.state()).toMatchObject({
-      phase: 'question', answerCueEndsAtMs: null,
-      answeringStartsAtMs: now.value + TRIVIA_ANSWER_START_DELAY_MS,
-      questionEndsAtMs: now.value + TRIVIA_ANSWER_START_DELAY_MS + TRIVIA_ANSWER_WINDOW_MS,
-    });
+    expect(room.questionPromptReady(player, questionId)).toBe(false);
+    expect(room.questionAnswerCueReady(player, questionId)).toBe(false);
     expect(room.drainEvents()).toEqual(expect.arrayContaining([
       { type: 'countdown', count: 3, atMs: 10_000 },
       { type: 'countdown', count: 2, atMs: 11_000 },
       { type: 'countdown', count: 1, atMs: 12_000 },
-      { type: 'answer_cue_started', questionId, endsAtMs: now.value + TRIVIA_ANSWER_CUE_TIMEOUT_MS },
-      { type: 'answering_started', questionId, startsAtMs: now.value + TRIVIA_ANSWER_START_DELAY_MS,
-        endsAtMs: now.value + TRIVIA_ANSWER_START_DELAY_MS + 10_000 },
+      { type: 'question_started', questionId, questionIndex: 0, endsAtMs: now.value + 10_000 },
+      { type: 'answering_started', questionId, startsAtMs: now.value, endsAtMs: now.value + 10_000 },
     ]));
+    expect(JSON.stringify(room.state())).not.toMatch(/correctChoiceId|aliases|explanation/);
   });
 
-  it('uses a conservative 60-second recovery deadline for bounded Relay question playback', () => {
-    expect(TRIVIA_QUESTION_PROMPT_TIMEOUT_MS).toBe(60_000);
-  });
-
-  it('shows a redacted question but ignores answers while the phone prompt is unsettled', () => {
-    const now = { value: 0 };
-    const room = new TriviaRoom('PROMPT-ANSWER', { bank, now: () => now.value });
-    const player = joined(room);
-    room.advance();
-    room.advance();
-    room.ready(room.state().loadingGeneration);
-    now.value = TRIVIA_COUNTDOWN_MS;
-    room.tick();
-    const prompt = room.state();
-    expect(prompt).toMatchObject({
-      phase: 'question_prompt', answeringStartsAtMs: null, questionEndsAtMs: null,
-    });
-    expect(prompt.question?.choices).toHaveLength(4);
-    expect(JSON.stringify(prompt)).not.toContain('correctChoiceId');
-    expect(room.answer(player, correctChoice(room))).toBe(false);
-    expect(room.state().players[0]).toMatchObject({ answered: false, rawScore: 0 });
-  });
-
-  it('starts answering exactly once when the last of four connected players settles the answer cue', () => {
+  it('starts answering once for four callers without waiting for prompt acknowledgements', () => {
     const now = { value: 5_000 };
     const room = new TriviaRoom('PROMPT-FOUR', { bank, now: () => now.value });
     const players = [joined(room, 'One'), joined(room, 'Two'), joined(room, 'Three'), joined(room, 'Four')];
@@ -486,64 +432,23 @@ describe('authoritative trivia room', () => {
     now.value += TRIVIA_COUNTDOWN_MS;
     room.tick();
     const questionId = room.state().question!.id;
+    const startsAtMs = room.state().answeringStartsAtMs;
+    const endsAtMs = room.state().questionEndsAtMs;
+    expect(room.phase).toBe('question');
     expect(room.questionPromptReady(players[0]!, 'stale-question')).toBe(false);
-    for (const player of players.slice(0, 3)) {
-      expect(room.questionPromptReady(player, questionId)).toBe(true);
-      expect(room.phase).toBe('question_prompt');
-    }
-    expect(room.questionPromptReady(players[0]!, questionId)).toBe(true);
-    expect(room.questionPromptReady(players[3]!, questionId)).toBe(true);
-    expect(room.phase).toBe('answer_cue');
+    expect(room.questionPromptReady(players[0]!, questionId)).toBe(false);
     expect(room.questionPromptReady(players[3]!, questionId)).toBe(false);
     expect(room.questionAnswerCueReady(players[0]!, 'stale-question')).toBe(false);
-    for (const player of players.slice(0, 3)) {
-      expect(room.questionAnswerCueReady(player, questionId)).toBe(true);
-      expect(room.phase).toBe('answer_cue');
-    }
-    expect(room.questionAnswerCueReady(players[0]!, questionId)).toBe(true);
     now.value += 321;
-    expect(room.questionAnswerCueReady(players[3]!, questionId)).toBe(true);
-    expect(room.phase).toBe('question');
     expect(room.questionAnswerCueReady(players[3]!, questionId)).toBe(false);
+    expect(room.phase).toBe('question');
+    expect(room.state()).toMatchObject({ answeringStartsAtMs: startsAtMs, questionEndsAtMs: endsAtMs });
     expect(room.drainEvents().filter(event => event.type === 'answering_started')).toEqual([{
-      type: 'answering_started', questionId, startsAtMs: now.value + TRIVIA_ANSWER_START_DELAY_MS,
-      endsAtMs: now.value + TRIVIA_ANSWER_START_DELAY_MS + 10_000,
+      type: 'answering_started', questionId, startsAtMs, endsAtMs,
     }]);
   });
 
-  it('uses prompt and 25-second cue recovery deadlines and keeps disconnected players in barriers', () => {
-    const timedNow = { value: 0 };
-    const timed = new TriviaRoom('PROMPT-TIMEOUT', {
-      bank, now: () => timedNow.value, questionPromptTimeoutMs: 120,
-    });
-    const timedPlayer = joined(timed);
-    timed.advance();
-    timed.advance();
-    timed.ready(timed.state().loadingGeneration);
-    timedNow.value = TRIVIA_COUNTDOWN_MS;
-    timed.tick();
-    const deadline = timed.state().questionPromptEndsAtMs!;
-    timedNow.value = deadline - 1;
-    expect(timed.tick()).toBe(false);
-    timedNow.value = deadline;
-    expect(timed.tick()).toBe(true);
-    expect(timed.state()).toMatchObject({
-      phase: 'answer_cue', questionPromptEndsAtMs: null,
-      answerCueEndsAtMs: deadline + TRIVIA_ANSWER_CUE_TIMEOUT_MS,
-      answeringStartsAtMs: null, questionEndsAtMs: null,
-    });
-    expect(timed.answer(timedPlayer, timed.state().question!.choices[0]!.id)).toBe(false);
-    timedNow.value = deadline + TRIVIA_ANSWER_CUE_TIMEOUT_MS - 1;
-    expect(timed.tick()).toBe(false);
-    timedNow.value += 1;
-    expect(timed.tick()).toBe(true);
-    expect(timed.state()).toMatchObject({
-      phase: 'question', answerCueEndsAtMs: null,
-      answeringStartsAtMs: timedNow.value + TRIVIA_ANSWER_START_DELAY_MS,
-      questionEndsAtMs: timedNow.value + TRIVIA_ANSWER_START_DELAY_MS + 10_000,
-    });
-    expect(timed.hasPlayer(timedPlayer)).toBe(true);
-
+  it('keeps shared question timestamps stable across caller disconnects', () => {
     const disconnectedNow = { value: 10_000 };
     const disconnected = new TriviaRoom('PROMPT-DISCONNECT', { bank, now: () => disconnectedNow.value });
     const first = joined(disconnected, 'One');
@@ -553,23 +458,21 @@ describe('authoritative trivia room', () => {
     disconnected.ready(disconnected.state().loadingGeneration);
     disconnectedNow.value += TRIVIA_COUNTDOWN_MS;
     disconnected.tick();
-    const questionId = disconnected.state().question!.id;
-    disconnected.questionPromptReady(first, questionId);
-    expect(disconnected.phase).toBe('question_prompt');
+    const published = disconnected.state();
+    expect(published.phase).toBe('question');
     expect(disconnected.setPlayerConnected(second, false)).toBe(true);
     expect(disconnected.setPlayerConnected(first, false)).toBe(true);
-    expect(disconnected.phase).toBe('question_prompt');
+    expect(disconnected.phase).toBe('question');
     expect(disconnected.permanentlyRemovePlayer(second)).toBe(true);
-    expect(disconnected.phase).toBe('answer_cue');
+    expect(disconnected.phase).toBe('question');
     expect(disconnected.setPlayerConnected(first, true)).toBe(true);
     expect(disconnected.setPlayerConnected(first, false)).toBe(true);
-    expect(disconnected.phase).toBe('answer_cue');
+    expect(disconnected.phase).toBe('question');
     expect(disconnected.setPlayerConnected(first, true)).toBe(true);
-    expect(disconnected.phase).toBe('answer_cue');
-    expect(disconnected.answer(first, disconnected.state().question!.choices[0]!.id)).toBe(false);
-    expect(disconnected.questionAnswerCueReady(first, questionId)).toBe(true);
+    expect(disconnected.phase).toBe('question');
     expect(disconnected.state()).toMatchObject({
-      phase: 'question', answeringStartsAtMs: disconnectedNow.value + TRIVIA_ANSWER_START_DELAY_MS,
+      phase: 'question', answeringStartsAtMs: published.answeringStartsAtMs,
+      questionEndsAtMs: published.questionEndsAtMs,
     });
   });
 
@@ -637,7 +540,7 @@ describe('authoritative trivia room', () => {
     expect(room.state()).toEqual(before);
   });
 
-  it('freezes public aggregates throughout prompt, answer cue, and active answering', () => {
+  it('freezes public aggregates throughout active answering', () => {
     const now = { value: 0 };
     const room = new TriviaRoom('CUE-SCORE-FREEZE', { bank, now: () => now.value });
     const first = joined(room, 'One');
@@ -647,17 +550,10 @@ describe('authoritative trivia room', () => {
     room.ready(room.state().loadingGeneration);
     now.value = TRIVIA_COUNTDOWN_MS;
     room.tick();
-    const questionId = room.state().question!.id;
-    room.questionPromptReady(first, questionId);
-    room.questionPromptReady(second, questionId);
     expect(room.state()).toMatchObject({
-      phase: 'answer_cue', answeringStartsAtMs: null,
+      phase: 'question', answeringStartsAtMs: now.value,
       players: [{ answered: false, rawScore: 0 }, { answered: false, rawScore: 0 }],
     });
-    expect(room.answer(first, correctChoice(room))).toBe(false);
-    room.questionAnswerCueReady(first, questionId);
-    now.value += 400;
-    room.questionAnswerCueReady(second, questionId);
     expect(room.answer(first, correctChoice(room))).toBe(true);
     expect(room.state().players[0]).toMatchObject({ answered: true, rawScore: 0, correctCount: 0 });
     now.value = room.state().answeringStartsAtMs!;
@@ -669,7 +565,7 @@ describe('authoritative trivia room', () => {
     });
   });
 
-  it('forgivingly clamps valid pre-start speech and DTMF locks to elapsed zero', () => {
+  it('rejects pre-publication timestamps and accepts speech and DTMF immediately at publication', () => {
     const now = { value: 0 };
     const room = new TriviaRoom('PRESTART-LOCKS', { bank, now: () => now.value });
     const correctPlayer = joined(room, 'Correct');
@@ -680,21 +576,13 @@ describe('authoritative trivia room', () => {
     room.ready(room.state().loadingGeneration);
     now.value = TRIVIA_COUNTDOWN_MS;
     room.tick();
-    const questionId = room.state().question!.id;
-    for (const playerId of [correctPlayer, wrongPlayer, dtmfPlayer]) {
-      room.questionPromptReady(playerId, questionId);
-    }
-    for (const playerId of [correctPlayer, wrongPlayer, dtmfPlayer]) {
-      room.questionAnswerCueReady(playerId, questionId);
-    }
-    const transitionAt = now.value;
     const start = room.state().answeringStartsAtMs!;
     const correct = correctChoice(room);
     const wrong = room.state().question!.choices.find(choice => choice.id !== correct)!.id;
-    expect(start).toBe(transitionAt + TRIVIA_ANSWER_START_DELAY_MS);
+    expect(start).toBe(now.value);
 
-    expect(room.answerAt(correctPlayer, correct, true, transitionAt - 1)).toBe(false);
-    expect(room.answer(correctPlayer, 'unknown pre-start answer')).toBe(false);
+    expect(room.answerAt(correctPlayer, correct, true, start - 1)).toBe(false);
+    expect(room.answer(correctPlayer, 'unknown answer')).toBe(false);
     expect(room.state().players.find(player => player.playerId === correctPlayer)?.answered).toBe(false);
     expect(room.answer(correctPlayer, correct)).toBe(true);
     expect(room.answer(correctPlayer, wrong)).toBe(false);

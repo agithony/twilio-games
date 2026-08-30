@@ -28,12 +28,12 @@ import {
 
 export const TRIVIA_COUNTDOWN_MS = 3_000;
 export const TRIVIA_LOADING_TIMEOUT_MS = 30_000;
-/** Two bounded Relay prompt chunks can each take 20s; 60s leaves a conservative recovery margin. */
+/** Legacy prompt-phase timeout retained for protocol compatibility; normal flow does not use it. */
 export const TRIVIA_QUESTION_PROMPT_TIMEOUT_MS = 60_000;
-/** Relay playback is bounded at 20s; 25s gives the synchronized cue a recovery margin. */
+/** Legacy cue-phase timeout retained for protocol compatibility; normal flow does not use it. */
 export const TRIVIA_ANSWER_CUE_TIMEOUT_MS = 25_000;
-/** Gives every caller the same future onset after the synchronized preparation barrier. */
-export const TRIVIA_ANSWER_START_DELAY_MS = 3_000;
+/** Retained for protocol consumers; answering now opens when the question is published. */
+export const TRIVIA_ANSWER_START_DELAY_MS = 0;
 export const TRIVIA_FINAL_ANSWER_GRACE_MS = 1_500;
 export const TRIVIA_REVEAL_MS = 4_000;
 
@@ -403,10 +403,9 @@ export class TriviaRoom {
     if (this.phase !== 'question' || !final || this.answeringStartsAt === null
       || this.questionEndsAt === null || this.finalAnswerDeadlineAt === null
       || !Number.isSafeInteger(answeredAtMs)
-      || answeredAtMs < this.answeringStartsAt - TRIVIA_ANSWER_START_DELAY_MS
+      || answeredAtMs < this.answeringStartsAt
       || answeredAtMs > this.questionEndsAt
       || !Number.isFinite(receivedAtMs) || receivedAtMs < answeredAtMs
-      || (answeredAtMs < this.answeringStartsAt && receivedAtMs >= this.answeringStartsAt)
       || receivedAtMs > this.finalAnswerDeadlineAt) return false;
     const player = this.players.find(candidate => candidate.playerId === playerId);
     const current = this.currentQuestion();
@@ -414,7 +413,7 @@ export class TriviaRoom {
     const choiceId = this.resolveChoice(current, spokenOrChoiceId);
     if (!choiceId) return false;
 
-    const elapsedMs = Math.max(answeredAtMs, this.answeringStartsAt) - this.answeringStartsAt;
+    const elapsedMs = answeredAtMs - this.answeringStartsAt;
     const scored = scoreTriviaAnswer(choiceId === current.question.correctChoiceId, elapsedMs, player.currentStreak);
     player.submittedChoiceId = choiceId;
     player.submittedElapsedMs = elapsedMs;
@@ -446,7 +445,7 @@ export class TriviaRoom {
       if (this.phase === 'countdown' && this.countdownEndsAt !== null) {
         changed = this.emitCountdownEvents(now) || changed;
         if (now >= this.countdownEndsAt) {
-          this.startQuestion(0, this.countdownEndsAt);
+          this.startQuestion(0, now);
           changed = true;
           continue;
         }
@@ -468,7 +467,7 @@ export class TriviaRoom {
       }
       if (this.phase === 'reveal' && this.revealEndsAt !== null && now >= this.revealEndsAt) {
         const nextIndex = (this.questionIndexValue ?? -1) + 1;
-        if (nextIndex < this.round.length) this.startQuestion(nextIndex, this.revealEndsAt);
+        if (nextIndex < this.round.length) this.startQuestion(nextIndex, now);
         else this.finishRound(this.revealEndsAt);
         changed = true;
         continue;
@@ -583,18 +582,18 @@ export class TriviaRoom {
     return changed;
   }
 
-  private startQuestion(index: number, startedAtMs: number): void {
+  private startQuestion(index: number, publishedAtMs: number): void {
     const current = this.round[index];
     if (!current) throw new Error('trivia round is missing a planned question');
-    this.phase = 'question_prompt';
+    this.phase = 'question';
     this.countdownEndsAt = null;
     this.countdownValue = null;
     this.questionIndexValue = index;
-    this.questionPromptEndsAt = startedAtMs + this.questionPromptTimeoutMs;
+    this.questionPromptEndsAt = null;
     this.answerCueEndsAt = null;
-    this.answeringStartsAt = null;
-    this.questionEndsAt = null;
-    this.finalAnswerDeadlineAt = null;
+    this.answeringStartsAt = publishedAtMs;
+    this.questionEndsAt = publishedAtMs + TRIVIA_ANSWER_WINDOW_MS;
+    this.finalAnswerDeadlineAt = this.questionEndsAt + this.finalAnswerGraceMs;
     this.revealEndsAt = null;
     this.promptReadyPlayerIds.clear();
     this.answerCueReadyPlayerIds.clear();
@@ -603,9 +602,14 @@ export class TriviaRoom {
       type: 'question_started',
       questionId: current.question.id,
       questionIndex: index,
-      endsAtMs: this.questionPromptEndsAt,
+      endsAtMs: this.questionEndsAt,
     });
-    this.maybeStartAnswerCue(startedAtMs);
+    this.events.push({
+      type: 'answering_started',
+      questionId: current.question.id,
+      startsAtMs: this.answeringStartsAt,
+      endsAtMs: this.questionEndsAt,
+    });
   }
 
   private maybeStartAnswerCue(startedAtMs: number): void {

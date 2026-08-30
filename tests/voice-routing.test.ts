@@ -362,9 +362,25 @@ describe('Arcade Voice routing', () => {
     expect(xml).toContain('<ConversationRelay');
     expect(xml).toContain('<Parameter name="game" value="trivia"');
     expect(xml).toContain('<Parameter name="roomCode" value="TRIVIA-ROOM"');
-    expect(xml).toContain('quiz, trivia, category, mixed, answer, letter');
+    expect(xml).toContain('quiz, trivia, category, mixed, answer, choice, option, number, letter');
+    expect(xml).toContain('one, two, three, four');
+    expect(xml).toContain('ay, aye, alpha');
+    expect(xml).not.toMatch(/(?:^|, )(?:eh|hey)(?:,|$)/i);
     expect(xml).toContain('general knowledge');
     expect(xml).toContain('science');
+  });
+
+  it('keeps Portuguese Trivia hints useful without common letter stopwords', async () => {
+    const route: NonNullable<StationVoiceRoute> = {
+      game: 'trivia', roomCode: 'TRIVIA-PT', matchId: 'trivia-pt-match', launchGeneration: 4,
+      admitted: true, readyEntryId: 'trivia-pt-ready', participantIndex: 0, participantCount: 1,
+    };
+    const { port } = await harness({ active: true, route, locale: 'pt-BR' });
+    const xml = await (await incomingCall(port, { callSid: 'CA-trivia-pt-route' })).text();
+    const hints = /\shints="([^"]*)"/.exec(xml)?.[1]?.split(', ') ?? [];
+
+    expect(hints).toEqual(expect.arrayContaining(['um', 'dois', 'três', 'quatro', 'alfa', 'bravo', 'Delta']));
+    expect(hints).not.toEqual(expect.arrayContaining(['be', 'ce', 'se', 'de', 'bê', 'cê', 'dê']));
   });
 
   it('returns unavailable TwiML when active station routing fails', async () => {

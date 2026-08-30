@@ -2,11 +2,7 @@ import { readFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { afterEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
-import {
-  TRIVIA_ANSWER_CUE_TIMEOUT_MS,
-  TRIVIA_QUESTION_PROMPT_TIMEOUT_MS,
-  TriviaRoom,
-} from '../server/trivia-room';
+import { TriviaRoom } from '../server/trivia-room';
 import { TriviaServer, TRIVIA_RECONNECT_GRACE_MS } from '../server/trivia-server';
 import { parseTriviaQuestionBankJson, type TriviaQuestionBank } from '../shared/trivia';
 
@@ -206,7 +202,7 @@ describe('TriviaServer authority and lifecycle', () => {
     });
   });
 
-  it('runs a local host through category, automatic prompt settlement, keyboard answer, and reveal', async () => {
+  it('runs a local host through category, immediate answering, keyboard answer, and reveal', async () => {
     let now = 0;
     const port = await start({
       now: () => now, tickMs: 5,
@@ -232,14 +228,15 @@ describe('TriviaServer authority and lifecycle', () => {
     const question = await waitFor(host, message => message.phase === 'question');
     expect(JSON.stringify(question)).not.toContain('correctChoiceId');
     expect(trivia!.voiceSnapshot('LOCAL', joined.playerId as string)).toMatchObject({
-      phase: 'question', myPromptReady: true, myAnswerCueReady: true,
+      phase: 'question', myPromptReady: false, myAnswerCueReady: false,
     });
     const eventTypes = host.messages.flatMap(message => (
       Array.isArray(message.events) ? message.events as { type: string }[] : []
     )).map(event => event.type);
     expect(eventTypes).toEqual(expect.arrayContaining([
-      'question_started', 'answer_cue_started', 'answering_started',
+      'question_started', 'answering_started',
     ]));
+    expect(eventTypes).not.toContain('answer_cue_started');
 
     const questionId = (question.question as { id: string }).id;
     const correctChoiceId = bank.questions.find(item => item.id === questionId)!.correctChoiceId;
@@ -250,9 +247,7 @@ describe('TriviaServer authority and lifecycle', () => {
     expect(trivia!.findRoom('LOCAL')!.state().players[0]).toMatchObject({ answered: true, rawScore: 1_300 });
   });
 
-  it('auto-settles only the local tester while a mixed phone player gates both prompt barriers', async () => {
-    expect(TRIVIA_QUESTION_PROMPT_TIMEOUT_MS).toBe(60_000);
-    expect(TRIVIA_ANSWER_CUE_TIMEOUT_MS).toBe(25_000);
+  it('opens a mixed local and phone question without either prompt-readiness barrier', async () => {
     let now = 0;
     const port = await start({
       now: () => now, tickMs: 5,
@@ -272,17 +267,16 @@ describe('TriviaServer authority and lifecycle', () => {
     send(host, { type: 'ready', loadingGeneration: loading.loadingGeneration });
     const countdown = await waitFor(host, message => message.phase === 'countdown');
     now = countdown.countdownEndsAtMs as number;
-    const prompt = await waitFor(host, message => message.phase === 'question_prompt');
-    const questionId = (prompt.question as { id: string }).id;
-    expect(trivia!.voiceSnapshot('MIXED', local)).toMatchObject({ myPromptReady: true });
-    expect(trivia!.voiceSnapshot('MIXED', caller)).toMatchObject({ myPromptReady: false });
-
-    expect(trivia!.voiceQuestionPromptReady('MIXED', caller, questionId)).toBe(true);
-    await waitFor(host, message => message.phase === 'answer_cue');
-    expect(trivia!.voiceSnapshot('MIXED', local)).toMatchObject({ myAnswerCueReady: true });
-    expect(trivia!.voiceSnapshot('MIXED', caller)).toMatchObject({ myAnswerCueReady: false });
-    expect(trivia!.voiceQuestionAnswerCueReady('MIXED', caller, questionId)).toBe(true);
-    await waitFor(host, message => message.phase === 'question');
+    const question = await waitFor(host, message => message.phase === 'question');
+    const questionId = (question.question as { id: string }).id;
+    expect(trivia!.voiceSnapshot('MIXED', local)).toMatchObject({
+      phase: 'question', myPromptReady: false, myAnswerCueReady: false,
+    });
+    expect(trivia!.voiceSnapshot('MIXED', caller)).toMatchObject({
+      phase: 'question', myPromptReady: false, myAnswerCueReady: false,
+    });
+    expect(trivia!.voiceQuestionPromptReady('MIXED', caller, questionId)).toBe(false);
+    expect(trivia!.voiceQuestionAnswerCueReady('MIXED', caller, questionId)).toBe(false);
   });
 
   it('rejects forged and joined nonhost keyboard answers', async () => {
@@ -313,11 +307,6 @@ describe('TriviaServer authority and lifecycle', () => {
     send(host, { type: 'ready', loadingGeneration: loading.loadingGeneration });
     const countdown = await waitFor(host, message => message.phase === 'countdown');
     now = countdown.countdownEndsAtMs as number;
-    const prompt = await waitFor(host, message => message.phase === 'question_prompt');
-    const questionId = (prompt.question as { id: string }).id;
-    trivia!.voiceQuestionPromptReady('AUTHORITY', nonhostId, questionId);
-    await waitFor(host, message => message.phase === 'answer_cue');
-    trivia!.voiceQuestionAnswerCueReady('AUTHORITY', nonhostId, questionId);
     const question = await waitFor(host, message => message.phase === 'question');
     now = question.answeringStartsAtMs as number;
     const forbiddenBefore = nonhost.messages.filter(message => message.code === 'forbidden').length;
@@ -380,14 +369,6 @@ describe('TriviaServer authority and lifecycle', () => {
     send(host, { type: 'ready', loadingGeneration: loading.loadingGeneration });
     const countdown = await waitFor(host, message => message.phase === 'countdown');
     now = countdown.countdownEndsAtMs as number;
-    const prompt = await waitFor(host, message => message.phase === 'question_prompt');
-    const promptQuestionId = (prompt.question as { id: string }).id;
-    expect(trivia!.voiceQuestionPromptReady('STABLE', firstJoined.playerId as string, promptQuestionId)).toBe(true);
-    expect(trivia!.voiceQuestionPromptReady('STABLE', secondJoined.playerId as string, promptQuestionId)).toBe(true);
-    const cue = await waitFor(host, message => message.phase === 'answer_cue');
-    const cueQuestionId = (cue.question as { id: string }).id;
-    expect(trivia!.voiceQuestionAnswerCueReady('STABLE', firstJoined.playerId as string, cueQuestionId)).toBe(true);
-    expect(trivia!.voiceQuestionAnswerCueReady('STABLE', secondJoined.playerId as string, cueQuestionId)).toBe(true);
     const question = await waitFor(host, message => message.phase === 'question');
     const definition = bank.questions.find(item => item.id === (question.question as { id: string }).id)!;
     now = question.answeringStartsAtMs as number;
@@ -521,16 +502,6 @@ describe('TriviaServer authority and lifecycle', () => {
     const countdown = await waitFor(display, message => message.phase === 'countdown');
     now.value = countdown.countdownEndsAtMs as number;
     for (let index = 0; index < 8; index++) {
-      const promptState = await waitFor(display, message => message.type === 'trivia_state'
-        && message.phase === 'question_prompt' && message.questionIndex === index);
-      expect(trivia!.voiceQuestionPromptReady(
-        'RESULT', player, (promptState.question as { id: string }).id,
-      )).toBe(true);
-      const cueState = await waitFor(display, message => message.type === 'trivia_state'
-        && message.phase === 'answer_cue' && message.questionIndex === index);
-      expect(trivia!.voiceQuestionAnswerCueReady(
-        'RESULT', player, (cueState.question as { id: string }).id,
-      )).toBe(true);
       const questionState = await waitFor(display, message => message.type === 'trivia_state'
         && message.phase === 'question' && message.questionIndex === index);
       now.value = questionState.answeringStartsAtMs as number;
@@ -559,8 +530,6 @@ describe('TriviaServer authority and lifecycle', () => {
     standaloneRoom.tick();
     for (let index = 0; index < 8; index++) {
       const question = standaloneRoom.state().question!;
-      trivia!.voiceQuestionPromptReady('SOLO-REPLAY', standalone, question.id);
-      trivia!.voiceQuestionAnswerCueReady('SOLO-REPLAY', standalone, question.id);
       now.value = standaloneRoom.state().answeringStartsAtMs!;
       trivia!.voiceAnswer('SOLO-REPLAY', standalone,
         bank.questions.find(candidate => candidate.id === question.id)!.correctChoiceId);
