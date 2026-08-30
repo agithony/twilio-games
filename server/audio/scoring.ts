@@ -200,7 +200,8 @@ export function scoreObservationAgainstWord(
   const timing = rawTimingScore(observation, word, normalizedOptions) * voice;
   let pitch = 0;
   if (word.pitchHz !== undefined && observation.voiceActive && observation.pitchHz !== null) {
-    const cents = Math.abs(1_200 * Math.log2(observation.pitchHz / word.pitchHz));
+    const rawCents = 1_200 * Math.log2(observation.pitchHz / word.pitchHz);
+    const cents = Math.abs(rawCents - Math.round(rawCents / 1_200) * 1_200);
     pitch = Math.max(0, 1 - cents / normalizedOptions.maximumPitchErrorCents);
   }
   return {

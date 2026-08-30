@@ -378,13 +378,13 @@ describe('KaraokeMediaSession scoring and cleanup', () => {
     runtime.close();
   });
 
-  it('still awards the independent timing component for voiced octave-off input', async () => {
+  it('scores octave-equivalent singing fairly across vocal ranges', async () => {
     const { runtime, scoreServer } = createRuntime();
     const session = runtime.startSession(startFrame(runtime.issueAttempt(BASE_REQUEST)));
     for (const frame of toneFrames(880)) session.acceptMedia(frame);
     coverSong(session, 400);
     const result = await session.finalize();
-    expect(result.score).toBe(50_000);
+    expect(result.score).toBeGreaterThan(68_000);
     expect(scoreServer.hits[0]).toMatchObject({ judgment: 'good' });
     runtime.close();
   });

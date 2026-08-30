@@ -88,7 +88,7 @@ describe('karaoke weighted scoring', () => {
     expect(scoreObservationAgainstWord(
       observation(1_020, { voiceActive: false, pitchHz: null }), WORD,
     )).toMatchObject({ timingScore: 0, pitchScore: 0, score: 0 });
-    expect(scoreObservationAgainstWord(observation(1_020, { pitchHz: 880 }), WORD).pitchScore).toBe(0);
+    expect(scoreObservationAgainstWord(observation(1_020, { pitchHz: 880 }), WORD).pitchScore).toBe(1);
   });
 
   it('forces silence to zero even if injected provider evidence claims a correct lyric', () => {
