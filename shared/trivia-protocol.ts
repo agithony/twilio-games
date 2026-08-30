@@ -21,8 +21,8 @@ export type TriviaPhase =
   | 'category_select'
   | 'loading'
   | 'countdown'
-  | 'question_prompt'
-  | 'answer_cue'
+  | 'question_prompt' // Legacy compatibility; normal room flow publishes question directly.
+  | 'answer_cue' // Legacy compatibility; normal room flow publishes question directly.
   | 'question'
   | 'reveal'
   | 'results';

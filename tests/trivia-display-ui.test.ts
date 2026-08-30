@@ -45,7 +45,7 @@ const context = {
 };
 
 describe('Voice Trivia display DOM projection', () => {
-  it('renders A-D and locked status without active-question answer keys or browser controls', () => {
+  it('renders 1-4 and locked status without active-question answer keys or browser controls', () => {
     const activeQuestion = {
       ...question,
       choices: question.choices.map((choice, index) => ({ ...choice, aliases: [`private-alias-${index}`] })),
@@ -60,7 +60,7 @@ describe('Voice Trivia display DOM projection', () => {
 
     expect(rendered.html).toContain('data-view="question"');
     expect(rendered.html).toContain('id="question-seconds">5</strong>');
-    expect(rendered.html).toMatch(/<span>A<\/span>[\s\S]*<span>B<\/span>[\s\S]*<span>C<\/span>[\s\S]*<span>D<\/span>/);
+    expect(rendered.html).toMatch(/<span>1<\/span>[\s\S]*<span>2<\/span>[\s\S]*<span>3<\/span>[\s\S]*<span>4<\/span>/);
     expect(rendered.html).toContain('Answer locked');
     expect(rendered.html).not.toContain('correct-choice');
     expect(rendered.html).not.toContain('bravo-secret');
@@ -110,24 +110,16 @@ describe('Voice Trivia display DOM projection', () => {
     expect(portuguese.html).toContain('Os telefones estão sincronizando o aviso de resposta.');
   });
 
-  it('shows a pre-start countdown before exposing the exact ten-second timer', () => {
-    const waiting = renderTriviaView(state({
+  it('shows answering immediately without the obsolete pre-start wait UI', () => {
+    const rendered = renderTriviaView(state({
       phase: 'question', questionIndex: 0, question,
       answeringStartsAtMs: 23_000, questionEndsAtMs: 33_000,
     }), context);
-    expect(waiting.html).toContain('Answers open in');
-    expect(waiting.html).toContain('id="question-start-seconds">3</b>');
-    expect(waiting.html).toContain('<b>Get ready</b>');
-    expect(waiting.html).not.toContain('Listening');
-    expect(waiting.html).not.toContain('Answer now');
-    expect(waiting.html).not.toContain('id="question-seconds"');
-
-    const opened = renderTriviaView(state({
-      phase: 'question', questionIndex: 0, question,
-      answeringStartsAtMs: 23_000, questionEndsAtMs: 33_000,
-    }), { ...context, serverNowMs: 23_000 });
-    expect(opened.html).toContain('id="question-seconds">10</strong>');
-    expect(opened.html).not.toContain('question-start-seconds');
+    expect(rendered.html).toContain('id="question-seconds">10</strong>');
+    expect(rendered.html).toContain('Listening');
+    expect(rendered.html).toContain('Answer now');
+    expect(rendered.html).not.toContain('question-start-seconds');
+    expect(rendered.html).not.toContain('Answers open in');
   });
 
   it('renders live category totals, roster readiness, and terminal result data', () => {
@@ -186,9 +178,9 @@ describe('Voice Trivia display DOM projection', () => {
 
   it('escapes server-provided text and includes the accessibility and motion contracts', () => {
     const rendered = renderTriviaView(state({
-      phase: 'question_prompt', questionIndex: 0,
+      phase: 'question', questionIndex: 0,
       question: { ...question, prompt: '<img src=x onerror=alert(1)>' },
-      questionPromptEndsAtMs: 25_000,
+      answeringStartsAtMs: 20_000, questionEndsAtMs: 30_000,
     }), context);
     expect(rendered.html).toContain('&lt;img src=x onerror=alert(1)&gt;');
     expect(rendered.html).not.toContain('<img src=x');

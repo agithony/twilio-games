@@ -109,6 +109,8 @@ export interface TriviaVoiceDeps {
   ): string | null;
   /** Resolve true only after Relay reports successful playback of all text chunks. */
   say(text: string, isCurrent?: () => boolean): void | Promise<boolean>;
+  /** Cancels queued or in-flight speech before a newly published question is spoken. */
+  preemptSpeech(): void;
   now?: () => number;
   setTimer?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
   clearTimer?: (timer: ReturnType<typeof setTimeout>) => void;
@@ -125,19 +127,19 @@ type ExtraMessageKey =
 const EXTRA_MESSAGES: LocalizedCatalog<ExtraMessageKey> = {
   'en-US': {
     waitingPlayers: 'Waiting for all {count} players to join and confirm their names.',
-    revealCorrect: 'The answer was {letter}, {answer}; your answer was correct and gained {points} points; standings: {standings}.',
-    revealIncorrect: 'The answer was {letter}, {answer}; your answer was not correct and gained {points} points; standings: {standings}.',
+    revealCorrect: 'The answer was {choice}, {answer}; your answer was correct and gained {points} points; standings: {standings}.',
+    revealIncorrect: 'The answer was {choice}, {answer}; your answer was not correct and gained {points} points; standings: {standings}.',
     standing: '{rank}, {name}, {score} points',
-    winner: '{name} wins with {score} points.',
-    tie: 'It is a tie between {names}, with {score} points.',
+    winner: '{name} wins with a leaderboard score of {score}.',
+    tie: 'It is a tie between {names}, each with a leaderboard score of {score}.',
   },
   'pt-BR': {
     waitingPlayers: 'Aguardando os {count} jogadores entrarem e confirmarem seus nomes.',
-    revealCorrect: 'A resposta era {letter}, {answer}; você acertou e ganhou {points} pontos; classificação: {standings}.',
-    revealIncorrect: 'A resposta era {letter}, {answer}; você não acertou e ganhou {points} pontos; classificação: {standings}.',
+    revealCorrect: 'A resposta era {choice}, {answer}; você acertou e ganhou {points} pontos; classificação: {standings}.',
+    revealIncorrect: 'A resposta era {choice}, {answer}; você não acertou e ganhou {points} pontos; classificação: {standings}.',
     standing: '{rank}, {name}, {score} pontos',
-    winner: '{name} venceu com {score} pontos.',
-    tie: 'Houve empate entre {names}, com {score} pontos.',
+    winner: '{name} venceu com pontuação no ranking de {score}.',
+    tie: 'Houve empate entre {names}, cada um com pontuação no ranking de {score}.',
   },
 };
 
@@ -162,6 +164,7 @@ export class TriviaVoiceSession {
   private categoryAdvanceAttempt = '';
   private readonly preparingGenerations = new Set<number>();
   private activeQuestionKey: string | null = null;
+  private observedStateQuestionKey: string | null = null;
   private inputStreamScope: string | null = null;
   private readonly promptAttempts = new Set<string>();
   private promptAttemptToken: symbol | null = null;
@@ -225,7 +228,6 @@ export class TriviaVoiceSession {
 
     if (message.type === 'interrupt') {
       this.inputStreamScope = null;
-      this.answerOnset = null;
       this.lastFinal = null;
       return;
     }
@@ -328,6 +330,7 @@ export class TriviaVoiceSession {
     if (!snapshot) return;
     this.awaitingName = !snapshot.nameConfirmed;
     this.lastPhase = snapshot.phase;
+    this.observedStateQuestionKey = questionKey(snapshot);
     this.observeQuestion(snapshot);
 
     if (binding.resumed) {
@@ -339,8 +342,8 @@ export class TriviaVoiceSession {
         this.presentAnswerCue(snapshot);
         return;
       }
-      if (snapshot.phase === 'question' && !snapshot.myAnswered) {
-        this.presentAnswerStart(snapshot, true);
+      if (snapshot.phase === 'question') {
+        if (!snapshot.myAnswered) this.presentAnswerStart(snapshot, true);
         return;
       }
       void this.speak(snapshot.nameConfirmed && snapshot.myName
@@ -465,6 +468,7 @@ export class TriviaVoiceSession {
     const answeredAtMs = answerOnset?.scope === inputScope(snapshot) && answerOnset.choiceId === choiceId
       ? answerOnset.atMs
       : this.now();
+    if (answeredAtMs < snapshot.answeringStartsAtMs) return;
     if (answeredAtMs > snapshot.questionEndsAtMs) {
       void this.speak(this.text('voice.answerTooLate'), this.questionGuard(questionKey, ['question']));
       return;
@@ -497,6 +501,11 @@ export class TriviaVoiceSession {
   private processSnapshot(snapshot: TriviaVoiceSnapshot): void {
     const previousPhase = this.lastPhase;
     this.lastPhase = snapshot.phase;
+    const nextQuestionKey = questionKey(snapshot);
+    if (nextQuestionKey && nextQuestionKey !== this.observedStateQuestionKey) {
+      this.observedStateQuestionKey = nextQuestionKey;
+      this.deps.preemptSpeech();
+    }
     this.observeQuestion(snapshot);
     if (!snapshot.nameConfirmed) {
       this.awaitingName = true;
@@ -702,10 +711,9 @@ export class TriviaVoiceSession {
       ? 0
       : Math.max(0, Math.ceil((snapshot.questionEndsAtMs
         - Math.max(this.now(), snapshot.answeringStartsAtMs)) / 1_000));
-    const prompts = resumed
-      ? [...this.questionPrompts(snapshot), this.text('voice.answerResume', { seconds: remainingSeconds })]
-      : [this.text('voice.answerPrompt')];
-    const guard = this.questionGuard(questionKey, ['question']);
+    const prompts = [...this.questionPrompts(snapshot)];
+    if (resumed) prompts.push(this.text('voice.answerResume', { seconds: remainingSeconds }));
+    const guard = this.unansweredQuestionGuard(questionKey);
     this.answerStartAttempts.add(questionKey);
     const settlement = Promise.all(prompts.map(prompt => this.speak(prompt, guard))).then(played => {
       this.answerStartAttempts.delete(questionKey);
@@ -745,7 +753,7 @@ export class TriviaVoiceSession {
     const guard = this.questionGuard(questionKey, ['reveal']);
     this.revealAttempts.add(questionKey);
     const settlement = this.speak(this.extra(points > 0 ? 'revealCorrect' : 'revealIncorrect', {
-      letter: String.fromCharCode(65 + correctIndex),
+      choice: this.choiceNumber(correctIndex),
       answer: correctChoice.text,
       points: formatNumber(this.commandLocale, points),
       standings: standings.length ? formatList(this.commandLocale, standings) : '-',
@@ -774,7 +782,7 @@ export class TriviaVoiceSession {
     if (!result || this.announcedResults.has(result.resultId) || this.resultAttempts.has(result.resultId)
       || !this.beginRequiredSpeech(attemptKey)) return;
     const winners = result.players.filter(player => player.rank === 1);
-    const winningScore = winners[0]?.rawScore ?? 0;
+    const winningScore = winners[0]?.normalizedScore ?? 0;
     const outcome = winners.length > 1
       ? this.extra('tie', {
           names: formatList(this.commandLocale, winners.map(player => player.name)),
@@ -789,7 +797,7 @@ export class TriviaVoiceSession {
     const prompts = [outcome];
     if (mine) prompts.push(this.text('voice.result', {
       name: mine.name,
-      score: formatNumber(this.commandLocale, mine.rawScore),
+      score: formatNumber(this.commandLocale, mine.normalizedScore),
       correct: formatNumber(this.commandLocale, mine.correctCount),
     }));
     prompts.push(this.text(this.stationManaged ? 'voice.stationRequeue' : 'voice.playAgain'));
@@ -816,13 +824,19 @@ export class TriviaVoiceSession {
   private questionPrompts(snapshot: TriviaVoiceSnapshot): string[] {
     const question = snapshot.question;
     if (!question) return [];
-    const choices = question.choices.map((choice, index) => `${String.fromCharCode(65 + index)}, ${choice.text}`);
+    const choices = question.choices.map((choice, index) => `${this.choiceNumber(index)}, ${choice.text}`);
     return [this.text('voice.question', {
       number: (snapshot.questionIndex ?? 0) + 1,
       prompt: question.prompt,
     }), this.text('voice.questionChoices', {
-      choices: formatList(this.commandLocale, choices),
+      choices: choices.join('; '),
     })];
+  }
+
+  private choiceNumber(index: number): string {
+    return (this.commandLocale === 'pt-BR'
+      ? ['Um', 'Dois', 'Três', 'Quatro']
+      : ['One', 'Two', 'Three', 'Four'])[index] ?? String(index + 1);
   }
 
   private resolveAnswer(spoken: string, snapshot: TriviaVoiceSnapshot): string | null {
@@ -890,6 +904,14 @@ export class TriviaVoiceSession {
     return () => {
       const snapshot = this.currentSnapshot();
       return Boolean(snapshot && phases.includes(snapshot.phase) && questionKey(snapshot) === question);
+    };
+  }
+
+  private unansweredQuestionGuard(question: string): () => boolean {
+    return () => {
+      const snapshot = this.currentSnapshot();
+      return Boolean(snapshot && snapshot.phase === 'question' && !snapshot.myAnswered
+        && questionKey(snapshot) === question);
     };
   }
 
@@ -983,6 +1005,7 @@ export class TriviaVoiceSession {
     this.inputStreamScope = null;
     this.answerOnset = null;
     this.observedInputScope = null;
+    this.observedStateQuestionKey = null;
     this.code = null;
     this.playerId = null;
     this.callSid = null;
@@ -1024,8 +1047,7 @@ export function matchTriviaAnswer(
     for (const form of [choice.text, ...(choice.aliases ?? [])]) {
       const candidate = normalizeForMatching(form, locale);
       if (!candidate) continue;
-      const oneCharacter = Array.from(candidate).length === 1;
-      if ((oneCharacter ? normalized === candidate : containsPhrase(normalized, candidate))) matches.add(choice.id);
+      if (matchesBoundedAnswerForm(normalized, candidate, locale)) matches.add(choice.id);
     }
   }
   return matches.size === 1 ? [...matches][0]! : null;
@@ -1056,13 +1078,28 @@ function inputScope(snapshot: TriviaVoiceSnapshot): string {
 }
 
 function matchSelectionLetter(text: string, locale: SupportedLocale): number | null {
-  const exact = text.match(/^([a-d])$/);
-  if (exact) return exact[1]!.charCodeAt(0) - 97;
-  const pattern = locale === 'pt-BR'
-    ? /\b(?:resposta|opcao|letra)(?: correta)?(?: e| seria)? ([a-d])\b/
-    : /\b(?:answer|choice|option|letter)(?: is| would be)? ([a-d])\b/;
-  const match = text.match(pattern);
-  return match ? match[1]!.charCodeAt(0) - 97 : null;
+  const exactAliases = [
+    ['a', 'ay', 'aye', 'alpha', 'ah', 'alfa'],
+    ['b', 'bee', 'bravo'],
+    ['c', 'sea', 'charlie'],
+    ['d', 'dee', 'delta'],
+  ];
+  const markedAliases = [
+    [...exactAliases[0]!, 'eh', 'hey'],
+    [...exactAliases[1]!, 'be'],
+    [...exactAliases[2]!, 'see', 'ce', 'se'],
+    [...exactAliases[3]!, 'the', 'de'],
+  ];
+  const exact = exactAliases.findIndex(forms => forms.includes(text));
+  if (exact >= 0) return exact;
+  for (let index = 0; index < markedAliases.length; index++) {
+    const forms = markedAliases[index]!.map(escapePattern).join('|');
+    const marked = locale === 'pt-BR'
+      ? new RegExp(`^(?:(?:(?:minha|a) )?(?:resposta|escolha|opcao|letra)(?: correta)?(?: e| seria)?|(?:eu )?acho que (?:e|a resposta e)) (?:${forms})(?: por favor)?$`)
+      : new RegExp(`^(?:(?:my (?:final )?|the )?(?:answer|choice|option|letter)(?: is| would be)?|i think (?:it|(?:the )?answer) is) (?:${forms})(?: please)?$`);
+    if (marked.test(text)) return index;
+  }
+  return null;
 }
 
 function matchSelectionNumber(
@@ -1084,13 +1121,15 @@ function matchSelectionNumber(
     const digit = String(index + 1);
     const word = numbers[index]!;
     const ordinal = ordinals[index]!;
-    const bare = new RegExp(`^(?:${digit}|${word}|${ordinal})$`);
+    const selection = `(?:${digit}|${word}|${ordinal})`;
+    const polite = locale === 'pt-BR' ? '(?: por favor)?' : '(?: please)?';
+    const bare = new RegExp(`^${selection}${polite}$`);
     const marked = locale === 'pt-BR'
-      ? new RegExp(`\\b(?:${noun})(?: e| seria)? (?:${digit}|${word}|${ordinal})\\b|\\b(?:${ordinal}) (?:${noun})\\b`)
-      : new RegExp(`\\b(?:${noun})(?: is| would be)? (?:${digit}|${word}|${ordinal})\\b|\\b(?:${ordinal}) (?:${noun})\\b`);
-    const natural = kind === 'category' && (locale === 'pt-BR'
-      ? new RegExp(`^(?:eu )?(?:escolho|quero|prefiro) (?:a )?(?:${digit}|${word}|${ordinal})$`).test(text)
-      : new RegExp(`^i(?: would|'d)? (?:choose|pick|want|prefer) (?:the )?(?:${digit}|${word}|${ordinal})$`).test(text));
+      ? new RegExp(`^(?:(?:minha|a) )?(?:${noun})(?: e| seria)? (?:a |o )?${selection}${polite}$|^(?:a |o )?${selection} (?:${noun})${polite}$`)
+      : new RegExp(`^(?:my (?:final )?|the )?(?:${noun})(?: is| would be)? (?:the )?${selection}${polite}$|^(?:the )?${selection} (?:${noun})${polite}$`);
+    const natural = locale === 'pt-BR'
+      ? new RegExp(`^(?:eu )?(?:acho que (?:e|a resposta e)|escolho|quero|prefiro) (?:a |o )?${selection}${polite}$`).test(text)
+      : new RegExp(`^(?:i think (?:it|(?:the )?answer) is|i(?: would|'d)? (?:choose|pick|want|prefer)) (?:the )?${selection}${polite}$`).test(text);
     if (bare.test(text) || marked.test(text) || natural) return index;
   }
   return null;
@@ -1100,4 +1139,20 @@ function containsPhrase(text: string, phrase: string): boolean {
   if (!phrase) return false;
   const escaped = phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
   return new RegExp(`(?:^|\\b)${escaped}(?:$|\\b)`).test(text);
+}
+
+function matchesBoundedAnswerForm(
+  text: string,
+  candidate: string,
+  locale: SupportedLocale,
+): boolean {
+  if (text === candidate) return true;
+  const form = escapePattern(candidate).replace(/\s+/g, '\\s+');
+  return locale === 'pt-BR'
+    ? new RegExp(`^(?:(?:(?:minha|a) )?(?:resposta|escolha|opcao)(?: e| seria)?|(?:eu )?acho que (?:e|a resposta e|isso e)) (?:a |o )?${form}(?: por favor)?$|^${form} por favor$`).test(text)
+    : new RegExp(`^(?:(?:my (?:final )?|the )?(?:answer|choice|option)(?: is| would be)?|i think (?:it|(?:the )?answer) is) (?:the )?${form}(?: please)?$|^${form} please$`).test(text);
+}
+
+function escapePattern(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

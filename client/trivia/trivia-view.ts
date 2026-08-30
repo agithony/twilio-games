@@ -47,7 +47,6 @@ const COPY = {
     displayReady: 'Display ready', displayPreparing: 'Preparing display', countdown: 'Round starts in',
     question: 'Question', of: 'of', getReady: 'Get ready', promptBody: 'Phones are finishing the question prompt.',
     cueReady: 'Get ready to answer', cueBody: 'Phones are synchronizing the answer cue.',
-    startsIn: 'Answers open in',
     answerNow: 'Answer now', seconds: 'seconds', listening: 'Listening', locked: 'Answer locked',
     reveal: 'Answer reveal', correctAnswer: 'Correct answer', explanation: 'Why it is right',
     correct: 'Correct', incorrect: 'Incorrect', noAnswer: 'No answer', recorded: 'Answer recorded',
@@ -71,7 +70,6 @@ const COPY = {
     displayReady: 'Tela pronta', displayPreparing: 'Preparando a tela', countdown: 'A rodada começa em',
     question: 'Pergunta', of: 'de', getReady: 'Preparem-se', promptBody: 'Os telefones estão terminando a pergunta.',
     cueReady: 'Preparem-se para responder', cueBody: 'Os telefones estão sincronizando o aviso de resposta.',
-    startsIn: 'As respostas abrem em',
     answerNow: 'Respondam agora', seconds: 'segundos', listening: 'Escutando', locked: 'Resposta registrada',
     reveal: 'Revelação da resposta', correctAnswer: 'Resposta correta', explanation: 'Por que está certa',
     correct: 'Correto', incorrect: 'Incorreto', noAnswer: 'Sem resposta', recorded: 'Resposta recebida',
@@ -177,19 +175,13 @@ function renderQuestion(
   const copy = COPY[context.locale];
   const question = state.question;
   const answering = stage === 'answering';
-  const preStart = answering && state.answeringStartsAtMs !== null && context.serverNowMs < state.answeringStartsAtMs;
-  const timing = answering && !preStart && state.answeringStartsAtMs !== null && state.questionEndsAtMs !== null
+  const timing = answering && state.answeringStartsAtMs !== null && state.questionEndsAtMs !== null
     ? triviaQuestionTiming(state.answeringStartsAtMs, state.questionEndsAtMs, context.serverNowMs)
     : null;
   const answered = state.players.filter(player => player.answered).length;
-  const activelyAnswering = answering && !preStart;
+  const activelyAnswering = answering;
   const mode = activelyAnswering ? copy.answerNow : stage === 'cue' ? copy.cueReady : copy.getReady;
-  const startsInSeconds = preStart && state.answeringStartsAtMs !== null
-    ? Math.max(1, Math.ceil((state.answeringStartsAtMs - context.serverNowMs) / 1_000))
-    : 0;
-  const timer = preStart
-    ? `<div class="prompt-status question-prestart"><span class="voice-wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span><strong>${escapeHtml(copy.startsIn)} <b id="question-start-seconds">${startsInSeconds}</b> ${escapeHtml(copy.seconds)}</strong></div>`
-    : timing
+  const timer = timing
     ? `<div class="question-timer" aria-label="${escapeHtml(copy.answerNow)}"><strong id="question-seconds">${timing.remainingSeconds}</strong><span>${escapeHtml(copy.seconds)}</span><div class="timer-track" role="progressbar" aria-label="${escapeHtml(copy.answerNow)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(timing.progress * 100)}"><i id="timer-fill" style="width:${timing.progress * 100}%"></i></div></div>`
     : `<div class="prompt-status"><span class="voice-wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span><strong>${escapeHtml(stage === 'cue' ? copy.cueBody : copy.promptBody)}</strong></div>`;
   const html = `<section class="scene question-scene" data-view="${state.phase}">
@@ -197,11 +189,10 @@ function renderQuestion(
     <div class="question-layout"><article class="question-board"><h1>${escapeHtml(question.prompt)}</h1><ol class="choice-grid">${renderChoices(question.choices)}</ol>${timer}</article><aside class="answer-status" aria-label="${escapeHtml(copy.players)}">${state.players.map(player => playerPill(player, context.locale, activelyAnswering)).join('')}</aside></div>
   </section>`;
   const announcement = answering
-    ? preStart ? `${copy.startsIn} ${startsInSeconds} ${copy.seconds}.`
-      : answered > 0 ? `${answered} of ${state.players.length} ${copy.locked}.` : `${copy.answerNow}. ${timing?.remainingSeconds ?? 10} ${copy.seconds}.`
+    ? answered > 0 ? `${answered} of ${state.players.length} ${copy.locked}.` : `${copy.answerNow}. ${timing?.remainingSeconds ?? 10} ${copy.seconds}.`
     : stage === 'cue' ? `${copy.cueReady}. ${copy.cueBody}`
-      : `${copy.question} ${(state.questionIndex ?? 0) + 1}. ${question.prompt}. ${question.choices.map((choice, index) => `${choiceLetter(index)}. ${choice.text}`).join('. ')}`;
-  return rendered(`${state.phase}:${question.id}:${preStart ? 'prestart' : stage}:${answered}`, announcement, html);
+      : `${copy.question} ${(state.questionIndex ?? 0) + 1}. ${question.prompt}. ${question.choices.map((choice, index) => `${index + 1}. ${choice.text}`).join('. ')}`;
+  return rendered(`${state.phase}:${question.id}:${stage}:${answered}`, announcement, html);
 }
 
 function renderReveal(state: Extract<TriviaState, { phase: 'reveal' }>, context: TriviaViewContext): TriviaRenderedView {
@@ -252,7 +243,7 @@ function playerPill(player: TriviaPublicPlayer, locale: SupportedLocale, answeri
 }
 
 function renderChoices(choices: readonly { id: string; text: string }[], correctIndex = -1): string {
-  return choices.map((choice, index) => `<li${index === correctIndex ? ' class="correct-choice"' : ''}><span>${choiceLetter(index)}</span><strong>${escapeHtml(choice.text)}</strong>${index === correctIndex ? '<i aria-hidden="true">&#10003;</i>' : ''}</li>`).join('');
+  return choices.map((choice, index) => `<li${index === correctIndex ? ' class="correct-choice"' : ''}><span>${index + 1}</span><strong>${escapeHtml(choice.text)}</strong>${index === correctIndex ? '<i aria-hidden="true">&#10003;</i>' : ''}</li>`).join('');
 }
 
 function renderRevealStandings(state: Extract<TriviaState, { phase: 'reveal' }>, context: TriviaViewContext): string {
@@ -292,7 +283,6 @@ function difficultyLabel(difficulty: 'easy' | 'medium' | 'hard', locale: Support
   return difficulty[0]!.toUpperCase() + difficulty.slice(1);
 }
 
-function choiceLetter(index: number): string { return String.fromCharCode(65 + index); }
 function formatScore(score: number, locale: SupportedLocale): string { return new Intl.NumberFormat(locale).format(score); }
 
 export function escapeTriviaHtml(value: string): string {

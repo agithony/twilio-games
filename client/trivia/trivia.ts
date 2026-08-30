@@ -280,16 +280,6 @@ function updateTimeDrivenUi(): void {
     }
   } else if (current?.phase === 'question' && current.answeringStartsAtMs !== null
     && current.questionEndsAtMs !== null) {
-    if (now < current.answeringStartsAtMs) {
-      const startsIn = Math.max(1, Math.ceil((current.answeringStartsAtMs - now) / 1_000));
-      const node = document.getElementById('question-start-seconds');
-      if (node) node.textContent = String(startsIn);
-      return;
-    }
-    if (document.getElementById('question-start-seconds')) {
-      render();
-      return;
-    }
     const timing = triviaQuestionTiming(current.answeringStartsAtMs, current.questionEndsAtMs, now);
     const seconds = document.getElementById('question-seconds');
     const fill = document.getElementById('timer-fill');

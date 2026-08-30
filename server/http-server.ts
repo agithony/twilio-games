@@ -1460,7 +1460,9 @@ export class HttpServer {
       if (route === 'racer') return adapter.boundRoomCode ? { game: 'racer', roomCode: adapter.boundRoomCode } : null;
       return assertNever(route);
     });
-    const say = (text: string, isCurrent?: () => boolean) => sendRelayText(ws, text, relayLocale, isCurrent,route==='battle');
+    const say = (text: string, isCurrent?: () => boolean) => sendRelayText(
+      ws, text, relayLocale, isCurrent, route === 'battle' || route === 'trivia',
+    );
     const processFrame = (raw: string) => {
       if (route === null) {
         try {
@@ -1518,7 +1520,11 @@ export class HttpServer {
         karaoke.setStationManaged(stationManaged);
         karaoke.handleMessage(raw);
       } else if (route === 'trivia') {
-        if (!trivia) trivia = this.makeTriviaSession(say, () => stationManaged);
+        if (!trivia) trivia = this.makeTriviaSession(
+          say,
+          () => stationManaged,
+          () => clearRelayTextQueue(ws),
+        );
         trivia.setAuthoritativeName(stationFirstName);
         trivia.setStationManaged(stationManaged);
         trivia.setExpectedPlayers(stationManaged ? stationParticipantCount : 1);
@@ -1776,12 +1782,15 @@ export class HttpServer {
     }
     if (game === 'trivia') {
       const commands = locale === 'pt-BR'
-        ? ['quiz', 'trivia', 'categoria', 'misturado', 'resposta', 'letra', 'começar', 'próximo', 'jogar novamente', 'ajuda']
-        : ['quiz', 'trivia', 'category', 'mixed', 'answer', 'letter', 'start', 'next', 'play again', 'help'];
+        ? ['quiz', 'trivia', 'categoria', 'misturado', 'resposta', 'opção', 'número', 'letra', 'começar', 'próximo', 'jogar novamente', 'ajuda']
+        : ['quiz', 'trivia', 'category', 'mixed', 'answer', 'choice', 'option', 'number', 'letter', 'start', 'next', 'play again', 'help'];
+      const letters = locale === 'pt-BR'
+        ? ['A', 'ah', 'alfa', 'B', 'bravo', 'C', 'Charlie', 'D', 'Delta']
+        : ['A', 'ay', 'aye', 'alpha', 'B', 'bee', 'bravo', 'C', 'sea', 'Charlie', 'D', 'dee', 'Delta'];
       const categories = locale === 'pt-BR'
         ? ['conhecimentos gerais', 'ciências', 'geografia', 'história', 'entretenimento', 'esportes', 'tecnologia', 'Twilio']
         : ['general knowledge', 'science', 'geography', 'history', 'entertainment', 'sports', 'technology', 'Twilio'];
-      return voiceHintList(commands, numbers, categories);
+      return voiceHintList(commands, numbers, letters, categories);
     }
     const commands = locale === 'pt-BR'
       ? ['esquerda', 'direita', 'acelerar', 'acelere', 'acelera', 'vai', 'frear', 'freie', 'freia', 'devagar', 'reduzir', 'reduza', 'desacelerar', 'desacelere', 'parar', 'nitro', 'turbo', 'poder', 'começar', 'iniciar', 'próximo', 'próxima', 'corrida', 'correr', 'revanche', 'sim']
@@ -1794,6 +1803,7 @@ export class HttpServer {
   private makeTriviaSession(
     say: (text: string, isCurrent?: () => boolean) => void | Promise<boolean>,
     stationFixed: () => boolean = () => false,
+    preemptSpeech: () => void = () => {},
   ): TriviaVoiceSession {
     let session: TriviaVoiceSession;
     session = new TriviaVoiceSession({
@@ -1852,6 +1862,7 @@ export class HttpServer {
         this.trivia.resolveVoiceAnswer(code, questionId, spoken, locale)
       ),
       say,
+      preemptSpeech,
     });
     return session;
   }
