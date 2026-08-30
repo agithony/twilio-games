@@ -339,6 +339,17 @@ describe('Arcade API', () => {
         {map:'luz-no-ritmo-dev',label:'Luz no Ritmo',records:0},
         {map:'never-gonna-give-you-up',label:'Never Gonna Give You Up',records:2},
       ]},
+      {game:'trivia',resettable:true,maps:[
+        {map:'all-time',label:'All time',records:0},
+        {map:'general',label:'general',records:0},
+        {map:'science',label:'science',records:0},
+        {map:'geography',label:'geography',records:0},
+        {map:'history',label:'history',records:0},
+        {map:'entertainment',label:'entertainment',records:0},
+        {map:'sports',label:'sports',records:0},
+        {map:'technology',label:'technology',records:0},
+        {map:'twilio',label:'twilio',records:0},
+      ]},
     ]});
     const etag=listed.headers.get('etag');expect(etag).toMatch(/^"leaderboard-[a-f0-9]{16}"$/);
     const resetHeaders={...ADMIN_HEADER,'Content-Type':'application/json',Origin:'http://localhost'};

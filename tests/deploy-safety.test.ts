@@ -5,6 +5,10 @@ const workflow = readFileSync(new URL('../.github/workflows/deploy.yml', import.
 const ci = readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
 const containerApp = readFileSync(new URL('../.github/containerapp.yaml', import.meta.url), 'utf8');
 const serverIndex = readFileSync(new URL('../server/index.ts', import.meta.url), 'utf8');
+const startScript = readFileSync(new URL('../scripts/start.sh', import.meta.url), 'utf8');
+const packageManifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as {
+  scripts: Record<string, string>;
+};
 
 describe('deployment rollback safety', () => {
   it('keeps CI independent of Git LFS and verifies the private asset mirror before ACR build', () => {
@@ -95,6 +99,23 @@ describe('deployment rollback safety', () => {
     expect(workflow).toContain('--revision-weight "${NEW_REVISION}=100"');
     expect(workflow.indexOf('https://${REVISION_FQDN}${route}'))
       .toBeLessThan(workflow.indexOf('--revision-weight "${NEW_REVISION}=100"'));
+  });
+
+  it('validates and smokes Voice Trivia before publishing its deployed URL', () => {
+    expect(packageManifest.scripts['validate:trivia-bank']).toBe('tsx tools/validate-trivia-bank.ts');
+    expect(packageManifest.scripts['smoke:trivia']).toBe('node tools/smoke-trivia.mjs');
+    expect(workflow).toContain('npm run validate:trivia-bank');
+    expect(workflow).toContain('/karaoke.html /trivia.html /analytics');
+    expect(workflow).toContain('Voice Trivia:   https://${FQDN}/trivia.html');
+    expect(workflow.indexOf('https://${REVISION_FQDN}${route}'))
+      .toBeLessThan(workflow.indexOf('--revision-weight "${NEW_REVISION}=100"'));
+  });
+
+  it('documents both mutable Trivia files on persistent storage', () => {
+    expect(startScript).toContain('data/trivia-questions.json');
+    expect(startScript).toContain('data/trivia-leaderboard.json');
+    expect(workflow).toContain('data/trivia-questions.json');
+    expect(workflow).toContain('data/trivia-leaderboard.json');
   });
 
   it('declares and provisions the Dub secret before referencing it', () => {

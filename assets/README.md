@@ -27,6 +27,7 @@ The counts below are verified against the committed runtime layout and exclude i
 | `fighters/source/` | 41 FBXs | 12 fighter models, animation sources, and 4 currently unreferenced clips |
 | `fighters/maps/` | 3 GLBs plus `maps.json` | Fighter map models and the 5-entry map catalog; 2 entries are procedural |
 | `fighters/previews/` | 17 PNG/SVG files | 12 fighter portraits and 5 map previews |
+| `karaoke/` | 5 GLBs plus `venue.json` | Voice Karaoke stage, performers, immutable venue seed, and production asset guide |
 | `fixtures/` | 2 generated GLBs | Test-only models produced by `npm run make-fixtures` |
 | `manifest.json` | 19 cars, 1 barrier, 1 boost, 0 props | Racer model roles and per-model display transforms |
 
@@ -39,13 +40,13 @@ The browser also consumes these asset trees outside this directory:
 | `client/public/assets/monsters/` | 16 GIFs | `/assets/monsters/` |
 | `client/public/audio/` | 25 MP3/M4A files | `/audio/` |
 | `client/public/fonts/` | 5 OTF files | `/fonts/` |
-| `client/public/video/` | 4 MP4 files | `/video/` |
+| `client/public/video/` | 5 MP4 files | `/video/` |
 | `client/public/brand/` | 2 SVG logos and 3 PNG QR images | `/brand/` |
 | `client/public/draco/` | JavaScript and WASM decoders | `/draco/` |
 
 The font inventory is `TwilioSansDisplay-Regular.otf`, `TwilioSansDisplay-Extrabold.otf`, `TwilioSansText-Regular.otf`, `TwilioSansText-Bold.otf`, and `TwilioSansMono-Regular.otf`. CSS loads them directly with `@font-face`; the production server maps `.otf` to `font/otf`.
 
-The home-page previews use `vr-demo.mp4`, `vm-demo.mp4`, `vf-demo.mp4`, and `vk-demo.mp4` for Voice Racer, Voice Monsters, Voice Fighter, and Voice Karaoke. The Karaoke preview is a silent H.264 1280x692 24fps runtime derivative; its raw source stays in ignored `client/public/video/_raw/`. The brand inventory is `twilio_logo_1color_white.svg`, `Twilio_Logo_Bug_White.svg`, the standalone fallback `join-qr.png`, and the locale-specific station QR images `arcade-en.png` and `arcade-pt.png`.
+The home-page previews use `vr-demo.mp4`, `vm-demo.mp4`, `vf-demo.mp4`, `vk-demo.mp4`, and `vt-demo.mp4` for Voice Racer, Voice Monsters, Voice Fighter, Voice Karaoke, and Voice Trivia. The generated Trivia preview is a silent H.264 1280x692 24fps 12-second MP4 with no audio stream. The Karaoke preview is a silent H.264 1280x692 24fps runtime derivative; its raw source stays in ignored `client/public/video/_raw/`. Voice Karaoke serves exactly two licensed 45-second English excerpts from `client/public/audio/karaoke/`: `classic-instrumental-45s.mp3` (*Never Gonna Give You Up* by Rick Astley) and `thousand-miles-45s.mp3` (*A Thousand Miles* by Vanessa Carlton). Their confirmed rights and detailed provenance are in [CREDITS.md](CREDITS.md). The brand inventory is `twilio_logo_1color_white.svg`, `Twilio_Logo_Bug_White.svg`, the standalone fallback `join-qr.png`, and the locale-specific station QR images `arcade-en.png` and `arcade-pt.png`.
 
 Vite serves the public tree directly. In development it proxies other `/assets/*` requests to the Node server; in production the Node server resolves built client assets first and then repository-root `assets/` files.
 
@@ -65,7 +66,7 @@ npm run inspect-assets
 
 This command is destructive to hand-tuned role assignments, names, and transforms. Review the generated manifest before saving further edits.
 
-Use `/garage` to inspect and tune Racer model roles and transforms. Use `/editor` for Racer maps, the Voice Monsters arena, Fighter maps, and Voice Karaoke venue/timing authoring. Editor writes use the API; local writes are open when `EDITOR_TOKEN` is unset, while production startup requires it. Deployed editor data may use persistent runtime files rather than modifying the committed seed files.
+Use `/garage` to inspect and tune Racer model roles and transforms. Use `/editor` for Racer maps, the Voice Monsters arena, Fighter maps, Voice Karaoke venue authoring, and the protected Voice Trivia question bank; open `/editor?game=karaoke&tool=timing` for Karaoke word timing and `/editor?game=trivia` for Trivia prompts, choices, private aliases, sources, and review metadata. Editor writes use the API; local writes are open when `EDITOR_TOKEN` is unset, while production startup requires it. Deployed editor data uses persistent runtime files rather than modifying image-owned seed files.
 
 ### Racer Optimization
 
@@ -92,9 +93,39 @@ The Fighter map editor can save map configuration and PNG previews. Runtime-gene
 
 Voice Monsters tries `<id>_<view>.gif`, then `<id>_<view>.png`, and uses its hand-authored canvas sprite only if both fail. Details are in the [monster sprite guide](../client/public/assets/monsters/README.md).
 
-Music and effects are not stored under `assets/`. They are served from `client/public/audio/`: contextual music is grouped under `lobby/`, `racer/`, `monsters/`, `fighter/music/`, and `leaderboard/`; shared effects use `sfx/`, with Fighter effects in `fighter/sfx/`. A missing audio file logs a browser error and produces silence; it does not substitute another file.
+Music and effects are not stored under `assets/`. They are served from `client/public/audio/`:
+contextual music is grouped under `lobby/`, `racer/`, `monsters/`, `fighter/music/`, `leaderboard/`,
+and `karaoke/`; shared effects use `sfx/`, with Fighter effects in `fighter/sfx/`. A missing general
+music or effect file logs a browser error and produces silence; it does not substitute another file.
+A missing Voice Karaoke backing instead fails audio preflight and keeps the performance in sound
+check for retry or timeout.
+
+Voice Trivia has no dedicated audio files. Its current client does not select a `MusicManager`
+context, so it does not reuse the global lobby or leaderboard tracks.
 
 The Monsters arena loads `assets/arena/arena.glb` using `arena.json`. If that GLB fails, the battle keeps its rendered green-void backdrop.
+
+### Voice Karaoke Production Assets
+
+Voice Karaoke's [production asset guide](karaoke/README.md) contains the detailed GLB attribution,
+audio provenance, calibration procedure, and acceptance checks. The venue editor writes the strict
+live `data/karaoke-venue.json`; `assets/karaoke/venue.json` seeds it only when the live copy is missing
+or invalid. The timing editor writes calibrated, ETag-protected sparse overrides to
+`data/karaoke-timings.json`. Omitted word boundaries come from `shared/karaoke-songs.ts`, and a
+missing or invalid live timing file uses the compiled charts.
+
+On the production `DATA_MOUNT`, the venue, timings, and `data/karaoke-leaderboard.json` survive
+container restarts and redeploys. Karaoke GLBs and browser audio remain image-owned. The display's
+sound check must decode the selected backing, warm the stage, and obtain a running unmuted Web Audio
+context before it reports ready; station countdown also waits for an authenticated inbound Media
+Stream.
+
+Phone scoring combines voice-gated timing, normalized lyric evidence, and pitch at 50/30/20 weights.
+Production lyric verification connects directly to Deepgram and sends only the caller's inbound 8 kHz
+mu-law track, with bounded chart-derived keyterms. Raw audio and transcript text are not persisted or
+logged by the application. Deepgram remains a third-party processor with its own configured retention
+and data-processing terms. Use the guide's separate workflows for sparse word timing, browser-local
+A/V alignment, and measured handset/carrier `KARAOKE_CALIBRATION_OFFSET_MS` validation.
 
 ## Governance
 
@@ -102,13 +133,15 @@ Git LFS tracks `assets/fighters/source/*.fbx` and `assets/fighters/maps/*.glb`. 
 
 CI runs `npm run verify:fighter-asset-pointers`, which enumerates every tracked FBX and Fighter map GLB independently of Git LFS and rejects malformed pointers. `npm run sync:fighter-assets` snapshots exactly those files into a no-overwrite, content-addressed private Blob prefix and rejects extra files when it verifies the downloaded mirror.
 
-Raw originals and excluded models are local-only. `.gitignore` and `.dockerignore` exclude `assets/_raw/`, `assets/_quarantine_noncommercial/`, `assets/maps/_raw/`, both Racer role-local `_raw/` directories, and `assets/fighters/maps/_raw/`. `tools/.smoke/` is also ignored and excluded from the container because it contains generated render evidence, not runtime assets.
+Raw originals and excluded models are local-only. `.gitignore` and `.dockerignore` exclude `assets/_raw/`, `assets/_quarantine_noncommercial/`, `assets/maps/_raw/`, both Racer role-local `_raw/` directories, `assets/fighters/maps/_raw/`, and `assets/karaoke/_raw/`. `tools/.smoke/` is also ignored and excluded from the container because it contains generated render evidence, not runtime assets.
 
 Run the relevant checks after changing the catalog or binaries:
 
 ```bash
 npm test -- tests/asset-manifest.test.ts tests/asset-fit.test.ts tests/inspect-assets.test.ts
 npm test -- tests/fighter-assets.test.ts tests/fighter-asset-governance.test.ts
+npm test -- tests/karaoke-assets.test.ts tests/karaoke-song-audio.test.ts tests/karaoke-timings.test.ts
+npm run smoke:karaoke-editor
 npm run verify:fighter-assets
 npm run sync:fighter-assets
 npm run typecheck
@@ -119,4 +152,4 @@ npm run build
 
 The repository has no root `LICENSE` file and must not be treated as granting general reuse rights. Asset licenses are file-specific. Consult [CREDITS.md](CREDITS.md), preserve required attribution, and verify that a source license permits the intended distribution and modification before adding or publishing an asset.
 
-The Racer, arena, and map ledger includes CC BY material, one CC BY-ND Racer map, incomplete source fields, and excluded noncommercial or unknown-license models. Fighter source URLs and licenses remain explicitly unverified. The current ledger does not document the audio files, fonts, demo videos, monster GIFs, QR images, or Twilio brand files. Do not infer permission from a filename, a download site, or inclusion in this repository.
+The Racer, arena, and map ledger includes CC BY material, one CC BY-ND Racer map, incomplete source fields, and excluded noncommercial or unknown-license models. Fighter source URLs and licenses remain explicitly unverified. Apart from the two user-confirmed Voice Karaoke excerpts, the current ledger does not document source or rights provenance for the audio files, fonts, demo videos, monster GIFs, QR images, or Twilio brand files. The technical Trivia preview inventory is not a credit or license grant. The Karaoke rights confirmations are not a general license grant. Do not infer permission from a filename, a download site, or inclusion in this repository.

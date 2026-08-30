@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#FFFFFF" />
+  <link rel="icon" href="data:," />
+  <script src="/theme-init.js"></script>
+  <link rel="stylesheet" href="/theme.css" />
+  <link rel="stylesheet" href="./trivia/trivia.css" />
+  <title>Voice Trivia</title>
+</head>
+<body data-phase="connecting">
+  <div id="app">
+    <div class="stage-atmosphere" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+    <header class="stage-header">
+      <a class="game-home" href="/" aria-label="Return to Twilio Games home">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11.5 12 4l9 7.5M5.5 10v10h13V10M9.5 20v-6h5v6" /></svg><span>Home</span>
+      </a>
+      <div class="stage-brand"><img src="/brand/Twilio_Logo_Bug_White.svg" alt=""><span>VOICE</span><strong>TRIVIA</strong></div>
+      <div id="trivia-controls" class="trivia-controls">
+        <div id="music-toggle-container"></div>
+        <div id="connection-status" class="connection-status" role="status" aria-live="polite">Connecting</div>
+        <button id="theme-toggle" class="round-control" type="button" title="Light theme" aria-label="Light theme">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.66 6.34l1.41-1.41"></path></svg>
+        </button>
+      </div>
+    </header>
+    <main id="trivia-stage" aria-label="Voice Trivia quiz stage" aria-busy="true">
+      <section class="scene center-scene connecting-scene"><h1>Opening the quiz stage</h1></section>
+    </main>
+  </div>
+  <div id="announcer" class="visually-hidden" role="status" aria-live="assertive" aria-atomic="true"></div>
+  <script type="module" src="./trivia/trivia.ts"></script>
+</body>
+</html>

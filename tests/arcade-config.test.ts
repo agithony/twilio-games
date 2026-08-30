@@ -46,13 +46,14 @@ describe('Twilio Games runtime configuration', () => {
         monsters: { enabled: true },
         fighter: { enabled: true },
         karaoke: { enabled: true },
+        trivia: { enabled: true },
       },
       comingSoon: {
-        trivia: { enabled: true },
+        trivia: { enabled: false },
       },
       automaticSelection: {
         policy: 'best_fit_rotation',
-        order: ['racer', 'monsters', 'fighter', 'karaoke'],
+        order: ['racer', 'monsters', 'fighter', 'karaoke', 'trivia'],
       },
       qrRail: 'auto',
     });
@@ -184,7 +185,7 @@ describe('Twilio Games runtime configuration', () => {
 
   it('requires exact station game settings and an enabled game while arcade mode is on', () => {
     const allDisabled = rawConfig();
-    for (const game of ['racer', 'monsters', 'fighter', 'karaoke']) allDisabled.station.games[game].enabled = false;
+    for (const game of ['racer', 'monsters', 'fighter', 'karaoke', 'trivia']) allDisabled.station.games[game].enabled = false;
     expect(parseArcadeConfig(allDisabled).station.games.racer.enabled).toBe(false);
 
     allDisabled.arcade.mode = 'coin_only';
@@ -195,7 +196,7 @@ describe('Twilio Games runtime configuration', () => {
     expectInvalid(fixedRegistry);
 
     const extraGame = rawConfig();
-    extraGame.station.games.trivia = { enabled: true };
+    extraGame.station.games.pong = { enabled: true };
     expectInvalid(extraGame);
 
     const missingGame = rawConfig();
@@ -205,6 +206,10 @@ describe('Twilio Games runtime configuration', () => {
     const retiredConcept = rawConfig();
     retiredConcept.station.comingSoon.karaoke = { enabled: true };
     expectInvalid(retiredConcept);
+
+    const revivedTombstone = rawConfig();
+    revivedTombstone.station.comingSoon.trivia.enabled = true;
+    expect(() => parseArcadeConfig(revivedTombstone)).toThrow(/compatibility tombstone must remain false/);
   });
 
   it.each(['best_fit_rotation', 'round_robin', 'fixed_priority'] as const)(
@@ -212,10 +217,10 @@ describe('Twilio Games runtime configuration', () => {
     policy => {
       const candidate = rawConfig();
       candidate.station.automaticSelection.policy = policy;
-      candidate.station.automaticSelection.order = ['fighter', 'racer', 'monsters', 'karaoke'];
+      candidate.station.automaticSelection.order = ['trivia', 'fighter', 'racer', 'monsters', 'karaoke'];
       expect(parseArcadeConfig(candidate).station.automaticSelection).toEqual({
         policy,
-        order: ['fighter', 'racer', 'monsters', 'karaoke'],
+        order: ['trivia', 'fighter', 'racer', 'monsters', 'karaoke'],
       });
     },
   );
@@ -224,8 +229,8 @@ describe('Twilio Games runtime configuration', () => {
     for (const order of [
       ['racer', 'monsters'],
       ['racer', 'monsters', 'fighter', 'racer'],
-      ['racer', 'racer', 'fighter', 'karaoke'],
-      ['racer', 'monsters', 'fighter', 'trivia'],
+      ['racer', 'racer', 'fighter', 'karaoke', 'trivia'],
+      ['racer', 'monsters', 'fighter', 'karaoke', 'pong'],
     ]) {
       const candidate = rawConfig();
       candidate.station.automaticSelection.order = order;

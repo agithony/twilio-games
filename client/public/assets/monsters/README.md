@@ -8,7 +8,7 @@ These sprites ship with the main application and require no separate installatio
 
 ## Usage
 
-Name each file with a roster ID and view:
+Name each file with a stable roster ID and view:
 
 ```text
 <id>_front.gif
@@ -17,9 +17,11 @@ Name each file with a roster ID and view:
 <id>_back.png
 ```
 
-`front` is the opponent-facing view and `back` is the player's rear view. Valid IDs are `sparkmouse`, `embertail`, `shellback`, `thornling`, `galecoil`, `voltcrest`, `dazeduck`, and `psyclone`.
+`front` is the opponent-facing view and `back` is the player's rear view. Valid IDs are `sparkmouse`, `embertail`, `shellback`, `thornling`, `galecoil`, `voltcrest`, `dazeduck`, and `psyclone`. The current inventory is GIF-only: each ID has one front and one back GIF, with no PNG files. Filenames use these IDs rather than localized display names.
 
-The battle renderer tries GIF first and PNG second for each monster and view, so GIF wins when both exist. If both requests fail, it draws the hand-authored canvas sprite from `client/battle/monster-art.ts`; an unknown roster ID degrades to a simple tinted shape. The selection and battle screens use the same candidate order, which is covered by the roster and sprite-source tests. No manifest or code change is needed when replacing an existing filename.
+The battle renderer paints the hand-authored canvas sprite from `client/battle/monster-art.ts` immediately, then tries GIF first and PNG second for each monster and view. The first asset that loads replaces the placeholder, so GIF wins when both exist and the canvas remains when both fail. Monster-selection portraits use the same candidate order for their front view. An unknown roster ID with a valid type degrades to a simple tinted shape. The roster and candidate order are covered by the roster and sprite-source tests. No manifest or code change is needed when replacing an existing filename.
+
+Sprite names do not define spoken game commands. During monster selection, callers choose by localized monster name or number. During battle, `attack`, `guard`, `item`, and `taunt` drive the root menu; after `attack`, a move is selected by its roster-defined name or a number from `1` through `4`. Those names, aliases, and actions come from shared roster, localization, and intent code, so replacing an image cannot change them.
 
 Use transparent, roughly square artwork. The UI renders sprites with nearest-neighbor scaling. GIF transparency has hard one-bit edges; an animated PNG stored with a `.png` extension can retain full alpha in supporting browsers. Static PNGs still receive the battle renderer's attack and hit motion.
 

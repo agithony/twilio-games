@@ -12,6 +12,7 @@ interface GameBucket {
   voiceCommands: number;
   maps: Record<string, number>;
   songs: Record<string, number>;
+  categories: Record<string, number>;
   characters: Record<string, number>;
   vehicles: Record<string, number>;
 }
@@ -26,6 +27,7 @@ export interface MatchRecord {
   completed: boolean;
   map?: string | null;
   song?: string | null;
+  category?: string | null;
   characters?: string[];
   vehicles?: string[];
   at?: number;
@@ -59,6 +61,7 @@ export class AnalyticsStore {
     bucket.playSeconds += Math.max(0, Math.round(record.durationSeconds));
     increment(bucket.maps, record.map);
     increment(bucket.songs, record.song);
+    increment(bucket.categories, record.category);
     for (const character of record.characters ?? []) increment(bucket.characters, character);
     for (const vehicle of record.vehicles ?? []) increment(bucket.vehicles, vehicle);
     this.persist();
@@ -74,12 +77,13 @@ export class AnalyticsStore {
     const games = Object.fromEntries(ANALYTICS_GAMES.map(game => [game, this.metrics(dates, game)])) as Record<AnalyticsGame, AnalyticsGameMetrics>;
     const selected = filter === 'all' ? ANALYTICS_GAMES : [filter];
     const summary = this.combinedMetrics(dates, selected);
-    const dimensions = { maps: {} as Record<string, number>, songs: {} as Record<string, number>, characters: {} as Record<string, number>, vehicles: {} as Record<string, number> };
+    const dimensions = { maps: {} as Record<string, number>, songs: {} as Record<string, number>, categories: {} as Record<string, number>, characters: {} as Record<string, number>, vehicles: {} as Record<string, number> };
     for (const date of dates) for (const game of selected) {
       const bucket = this.data.days[date]?.games[game];
       if (!bucket) continue;
       mergeCounts(dimensions.maps, bucket.maps);
       mergeCounts(dimensions.songs, bucket.songs ?? {});
+      mergeCounts(dimensions.categories, bucket.categories ?? {});
       mergeCounts(dimensions.characters, bucket.characters);
       mergeCounts(dimensions.vehicles, bucket.vehicles);
     }
@@ -90,7 +94,7 @@ export class AnalyticsStore {
     });
     return {
       generatedAt: new Date().toISOString(), range: { from, to, days: dates.length }, filter, summary, games, trend,
-      selections: { maps: ranked(dimensions.maps), songs: ranked(dimensions.songs), characters: ranked(dimensions.characters), vehicles: ranked(dimensions.vehicles) },
+      selections: { maps: ranked(dimensions.maps), songs: ranked(dimensions.songs), categories: ranked(dimensions.categories), characters: ranked(dimensions.characters), vehicles: ranked(dimensions.vehicles) },
       insights: insights(summary, games, filter),
     };
   }
@@ -126,6 +130,7 @@ export class AnalyticsStore {
     for (const game of ANALYTICS_GAMES) {
       day.games[game] ??= emptyBucket();
       day.games[game]!.songs ??= {};
+      day.games[game]!.categories ??= {};
     }
     return day;
   }
@@ -154,7 +159,7 @@ export class AnalyticsStore {
 
 function emptyBucket(): GameBucket {
   return { participants: [], sessions: 0, completed: 0, abandoned: 0, playSeconds: 0, voiceCommands: 0,
-    maps: {}, songs: {}, characters: {}, vehicles: {} };
+    maps: {}, songs: {}, categories: {}, characters: {}, vehicles: {} };
 }
 function increment(counts: Record<string, number>, value?: string | null): void { if (value) counts[value] = (counts[value] ?? 0) + 1; }
 function mergeCounts(target: Record<string, number>, source: Record<string, number>): void { for (const [key, count] of Object.entries(source)) target[key] = (target[key] ?? 0) + count; }
@@ -187,5 +192,6 @@ function insights(summary: AnalyticsGameMetrics, games: Record<AnalyticsGame, An
 }
 const GAME_LABELS: Readonly<Record<AnalyticsGame, string>> = {
   racer: 'Voice Racer', monsters: 'Voice Monsters', fighter: 'Voice Fighter', karaoke: 'Voice Karaoke',
+  trivia: 'Voice Trivia',
 };
 function label(game: AnalyticsGame): string { return GAME_LABELS[game]; }

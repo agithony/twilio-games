@@ -1,8 +1,66 @@
 # Voice Karaoke Production Assets
 
-Voice Karaoke is fully playable with procedural fallbacks, and the five optimized GLBs below are
-the progressive runtime visuals. English uses the licensed recording documented below; Brazilian
-Portuguese continues to use synthesized development music.
+Voice Karaoke's production package uses the five optimized GLBs below, two user-provided licensed
+45-second English excerpts, and calibrated sparse word-timing overrides. Brazilian Portuguese
+continues to use synthesized development music. Procedural visuals and compiled song charts keep
+their documented fallback roles; a licensed backing-track load failure does not substitute other
+audio.
+
+## Installation
+
+These assets are part of the main application, not a standalone package. Follow the
+[root installation instructions](../../README.md#installation), then run the server and Vite client
+in separate terminals:
+
+```bash
+npm run dev:server
+npm run dev:client
+```
+
+The release GLBs and browser audio are included in the checkout. Ignored files under
+`assets/karaoke/_raw/` are authoring sources and are not required at runtime. Production requires
+`DEEPGRAM_API_KEY` for lyric verification and `EDITOR_TOKEN` for writable editor APIs; consult the
+root configuration and deployment documentation for the remaining Twilio and persistent-storage
+settings.
+
+## Usage
+
+| Purpose | URL |
+|---|---|
+| Voice Karaoke display | `http://localhost:5173/karaoke.html?display=1&room=4821` |
+| Venue editor | `http://localhost:5173/editor?game=karaoke` |
+| Word-timing editor | `http://localhost:5173/editor?game=karaoke&tool=timing` |
+
+The venue editor controls all five model transforms, the `batteria` or manual drum anchor,
+responsive cameras and lyric highway, and concert lighting. The timing editor auditions the exact
+production backing tracks and saves only word boundaries that differ from the compiled charts.
+
+The repository's calibrated timing layer is `data/karaoke-timings.json`. It is intentionally sparse:
+omitted songs and words retain the boundaries compiled in `shared/karaoke-songs.ts`. At startup the
+server validates and applies the live file to both room catalogs and authoritative media scoring; a
+missing or invalid file uses the complete compiled fallback instead. Existing rounds retain their
+chart snapshot when a later editor save updates future performances.
+
+In production, `data/karaoke-venue.json`, `data/karaoke-timings.json`, and
+`data/karaoke-leaderboard.json` live under the `DATA_MOUNT`-backed `data/` directory and survive
+container restarts and redeploys. `assets/karaoke/venue.json` seeds a missing or invalid venue only;
+timings have no separate asset seed, so the approved mounted timing file must be retained. GLBs and
+browser audio remain image-owned release files.
+
+Before countdown, the display performs an audio preflight: it fetches and decodes the selected
+backing track (or synthesizes the Portuguese development backing), warms the stage, and waits for a
+running, unmuted Web Audio context and a settled scene. A station performance also waits for its
+authenticated inbound Twilio Media Stream. A preparation failure remains in sound check for retry;
+the loading timeout returns the singer to song selection rather than starting without ready audio or
+media.
+
+Authoritative phone scoring analyzes timestamped inbound voice activity, timing, recognized chart
+words, and pitch. The score weights are 50% timing, 30% lyrics, and 20% pitch; silence earns zero,
+while missing matching lyric evidence reduces acoustic credit rather than acting as an immediate
+hard gate. Final per-word `perfect`, `good`, or `miss` judgments drive points and combo, with the
+complete chart bounded to 100,000 points. The current MIDI contours are conservative and remain
+provisional; the calibrated production data in `data/karaoke-timings.json` concerns word timing, not
+target pitch.
 
 ## Release GLB Models
 
@@ -72,9 +130,19 @@ For each 45-second song, provide:
 - A private guide-vocal reference for chart authoring; do not ship it in the backing mix.
 - Optional square cover art and a 10-second attract-mode preview.
 
-Place browser audio at `client/public/audio/karaoke/<song-id>/backing.mp3`. Add its root-relative URL and chart to `shared/karaoke-songs.ts`. Production songs need a provenance entry in `assets/CREDITS.md` before enablement.
+Place browser audio at a stable path under `client/public/audio/karaoke/`. Add its root-relative URL
+and chart to `shared/karaoke-songs.ts`. Production songs need a provenance entry in
+`assets/CREDITS.md` before enablement.
 
-### Current licensed recording
+### Current licensed 45-second excerpts
+
+| Runtime excerpt | Recording attribution | Production selection | Confirmed rights |
+|---|---|---|---|
+| `client/public/audio/karaoke/classic-instrumental-45s.mp3` | *Never Gonna Give You Up* by Rick Astley | Aligned and tempo-corrected instrumental excerpt, exactly 45 seconds | User confirmed the required recording, synchronization, lyric display, public-performance, telephony, and distribution rights for this use |
+| `client/public/audio/karaoke/thousand-miles-45s.mp3` | *A Thousand Miles* by Vanessa Carlton | Source seconds 18.000 through 63.000, exactly 45 seconds | User confirmed the required recording, lyric synchronization, display, public-performance, telephony, and distribution rights for this use |
+
+These confirmations are recorded in `assets/CREDITS.md`; they are not a general license or grant of
+reuse rights for the recordings, compositions, or lyrics.
 
 `assets/karaoke/_raw/audio/classic.MP3` is the local vocal timing source for *Never Gonna Give You Up*
 by Rick Astley. `assets/karaoke/_raw/audio/classic-instrumental.mp4` is the local production backing
@@ -93,7 +161,9 @@ album and single vocal previews supplies individual opening and chorus word boun
 instrumental onsets anchor the intervening pre-chorus. The four-lane MIDI contour remains provisional
 pending isolated-vocal pitch calibration.
 
-### Browser A/V calibration
+## Calibration Workflow
+
+### 1. Calibrate word timing
 
 Open `/editor?game=karaoke&tool=timing` to author persistent per-word timing overrides for every
 runtime song. The editor plays and scrubs the production audio against a zoomable four-lane timeline.
@@ -105,6 +175,14 @@ are available in the inspector. Saves write only changed word boundaries to `dat
 lyrics, lanes, pitch, credits, and audio metadata remain compiled and cannot be changed by this tool.
 The server validates non-overlapping 100-5000 ms windows, protects concurrent saves with ETags, and
 applies accepted changes to future performances without changing an active round's chart snapshot.
+
+Use the production excerpt, not a full-length source or guide vocal, for this pass. Audition each word
+and phrase, move only boundaries that need correction, save, reload, and verify the effective chart.
+The saved output remains sparse relative to `shared/karaoke-songs.ts`; reset removes an override and
+restores that word's compiled boundary. The current calibrated set for both licensed songs is
+`data/karaoke-timings.json`.
+
+### 2. Calibrate browser A/V
 
 Run the game server and Vite client in separate terminals with `npm run dev:server` and
 `npm run dev:client`. Use these exact URLs:
@@ -130,18 +208,48 @@ the instrumental URL preserves the chosen visual alignment. Confirm the two safe
 guide label or calibration rail; `guide=1` never changes the runtime catalog, station display, or
 production backing source.
 
+This browser-local visual correction affects lyric presentation only. It does not alter the shared
+word chart or authoritative phone score.
+
+### 3. Calibrate handset scoring
+
+Use live calls on representative handsets, carriers, and the final venue audio path to measure any
+consistent offset between inbound Media Stream timestamps and the calibrated chart. Apply only the
+repeatable signed correction through `KARAOKE_CALIBRATION_OFFSET_MS` (`-5000` through `5000`, default
+`0`), then repeat silence, low/high voice, speakerphone-bleed, and word-judgment checks. Do not copy a
+browser's estimated output latency or `voice-karaoke-visual-offset-ms` into this server setting; the
+browser display and inbound scoring clocks are separate calibration domains.
+
 For the deterministic real-browser check, run `node tools/smoke-karaoke.mjs` while both development
 servers are running. It verifies the presentation clock is monotonic, requests the versioned guide
 source, and confirms the compact judgment rail has reserved space outside the stage and HUD.
 
-The word windows follow the supplied synced line boundaries. Their four-lane MIDI contour is a
-conservative provisional chart only. Final target pitches must be calibrated against an isolated
-guide vocal before pitch-scoring accuracy is considered production-ready.
+The effective production word windows are the validated sparse overrides over the supplied synced
+line boundaries. Their four-lane MIDI contour is a conservative provisional chart. Recalibrate the
+target notes against an isolated guide vocal before treating a future pitch-chart revision as
+melody-accurate.
 
-## Acceptance
+## Production Acceptance
 
-Before enabling Karaoke, test both locale phone numbers on several real handsets and carriers. Measure clock calibration, word judgments, low/high voices, speakerphone bleed, silence, dropped media, callback retries, and a display reconnect during a song. Raw Media Stream audio must remain memory-only and must not be logged or persisted.
+For each venue, audio-device, or carrier change, test both locale phone numbers on several real
+handsets. Measure clock calibration, word judgments, low/high voices, speakerphone bleed, silence,
+dropped media, callback retries, and a display reconnect during a song. Raw Media Stream audio must
+remain memory-only and must not be logged or persisted.
 
 Production lyric verification uses a direct Deepgram streaming connection and requires `DEEPGRAM_API_KEY` because Karaoke is enabled by default. The server sends only the caller's inbound 8 kHz mu-law Media Stream, never `classic-instrumental-45s.mp3`, another backing track, or outbound call audio. Recognized words are normalized and reduced to bounded chart evidence in memory; raw audio and recognized transcripts are not written to application storage or logs. Credential-free local development retains the timing/pitch fallback, but production startup and deployment fail closed without the key.
 
+Deepgram uses the `nova-3` model with the song locale and receives at most 50 unique chart keyterms
+whose lengths are 4-64 characters. The recognizer accepts bounded interim and final results, maps
+provider time back to inbound media time, and retains only chart-matched scalar evidence. A configured
+provider connection or finalization failure prevents the production score from being committed.
+
 Deepgram is a third-party audio processor. The phone flow discloses this processing and requires the caller to say Start before handoff. Review the Deepgram project's region, retention, model-improvement, and data-processing settings before operation. The application's memory-only handling does not override Deepgram's service-side processing or retention policy.
+
+## License
+
+This repository has no root `LICENSE` file and this package grants no general reuse rights. The five
+release GLBs are the CC-BY 4.0 derivatives attributed above. Rights for the two audio excerpts,
+compositions, and displayed lyrics are limited here to the user-confirmed rights recorded in
+[`assets/CREDITS.md`](../CREDITS.md); no separate audio license terms are supplied by this README.
+Preserve the model attribution and verify the confirmed audio rights and intended scope before any
+distribution, modification, or reuse.

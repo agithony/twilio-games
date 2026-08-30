@@ -46,6 +46,7 @@ jobs:
       - name: Validate application
         run: |
           npm run verify:fighter-asset-pointers
+          npm run validate:trivia-bank
           npm run typecheck
           npm test
           npm run build
@@ -248,7 +249,7 @@ jobs:
           cp -R "$ASSET_DOWNLOAD_ROOT/$ASSET_BUNDLE/assets/fighters/." assets/fighters/
           npm run verify:fighter-assets
 
-      - name: Ensure File Share exists (persistent leaderboard)
+      - name: Ensure File Share exists (persistent application data)
         run: |
           STORAGE_KEY=$(az storage account keys list \
             --resource-group "$RESOURCE_GROUP" \
@@ -721,8 +722,9 @@ jobs:
               --output none
             # Let the registry write settle before the full-spec update hits the same entity.
             sleep 10
-            # Both JSON stores are single-writer. ACA single-revision rollouts overlap old and new
-            # replicas while readiness settles, so explicitly stop the old revision before update.
+            # Mutable JSON stores are single-writer, including data/trivia-questions.json and
+            # data/trivia-leaderboard.json. ACA single-revision rollouts overlap old and new replicas
+            # while readiness settles, so explicitly stop the old revision before update.
             # This creates a short planned outage but prevents duplicate messages and lost file writes.
             CURRENT_MODE=$(az containerapp show \
               --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" \
@@ -929,7 +931,7 @@ jobs:
           SMOKE_OK=false
           for attempt in $(seq 1 30); do
             FAILED_ROUTES=()
-            for route in /livez /healthz / /instructions /join /player /karaoke.html /analytics /operator; do
+            for route in /livez /healthz / /instructions /join /player /karaoke.html /trivia.html /analytics /operator; do
               RESULT=$(curl --silent --show-error --output /dev/null --write-out '%{http_code} %{redirect_url}' \
                 --connect-timeout 5 --max-time 20 "https://${REVISION_FQDN}${route}" || true)
               CODE=${RESULT%% *}
@@ -1018,6 +1020,7 @@ jobs:
           echo "  App:            https://${FQDN}"
           echo "  Racer display:  https://${FQDN}/play.html?display=1&room=4821"
           echo "  Voice Karaoke:  https://${FQDN}/karaoke.html"
+          echo "  Voice Trivia:   https://${FQDN}/trivia.html"
           echo "  Editor:         https://${FQDN}/editor"
           echo "  Garage:         https://${FQDN}/garage"
           echo "  Voice webhook:  https://${FQDN}/voice/incoming"

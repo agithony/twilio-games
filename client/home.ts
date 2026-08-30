@@ -45,9 +45,6 @@ const copy = locale === 'pt-BR' ? {
   quickStartOne: 'Toque no jogo', quickStartTwo: 'Escaneie o código QR', quickStartThree: 'Ligue e jogue por voz',
   standaloneUnavailable: 'Os jogos por voz não estão disponíveis agora. Peça ajuda à equipe.',
   previousPage: 'Página anterior', nextPage: 'Próxima página', pageStatus: 'Página {page} de {pages}',
-  comingSoon: 'Em breve',
-  triviaTitle: 'Quiz por Voz',
-  triviaPreview: 'Perguntas rápidas, respostas em voz alta e rodadas para todos.',
   nextGame: 'Próximo jogo', gameComplete: 'Partida concluída',
   playersNext: 'jogadores já estão prontos para a próxima partida',
   displaySetup: 'Conexão segura necessária', missingDisplayToken: 'Tela não conectada',
@@ -61,6 +58,7 @@ const copy = locale === 'pt-BR' ? {
   monstersBlurb: 'Comande os golpes em uma batalha tática de criaturas.',
   fighterBlurb: 'Transforme cada golpe gritado em um confronto na arena.',
   karaokeBlurb: 'Escolha a música e cante cada palavra no tempo certo.',
+  triviaBlurb: 'Responda em voz alta a perguntas rápidas e marque pontos antes dos rivais.',
   freeDescription: 'Escaneie, entre pelo WhatsApp e responda PRONTO quando estiver pronto na tela.',
   freeStep: 'Responda PRONTO na tela',
   vote: 'voto', votes: 'votos', leader: 'Na liderança', tiedLeader: 'Líder empatado', textCommand: 'Envie',
@@ -83,9 +81,6 @@ const copy = locale === 'pt-BR' ? {
   quickStartOne: 'Tap the game', quickStartTwo: 'Scan the QR code', quickStartThree: 'Call and play by voice',
   standaloneUnavailable: 'Voice games are unavailable right now. Please ask booth staff for help.',
   previousPage: 'Previous page', nextPage: 'Next page', pageStatus: 'Page {page} of {pages}',
-  comingSoon: 'Coming soon',
-  triviaTitle: 'Voice Trivia',
-  triviaPreview: 'Quick questions, spoken answers, and rounds built for everyone.',
   nextGame: 'Next game', gameComplete: 'Game complete',
   playersNext: 'players are already ready for the next game',
   displaySetup: 'Secure connection required', missingDisplayToken: 'Display not connected',
@@ -99,6 +94,7 @@ const copy = locale === 'pt-BR' ? {
   monstersBlurb: 'Call the moves in a tactical creature battle.',
   fighterBlurb: 'Turn every shouted move into an arena showdown.',
   karaokeBlurb: 'Pick a song and sing every word on the beat.',
+  triviaBlurb: 'Answer quick-fire questions out loud and score before your rivals.',
   freeDescription: 'Scan, join, and reply READY when you are at the screen.',
   freeStep: 'Reply READY at the screen',
   vote: 'vote', votes: 'votes', leader: 'Leading', tiedLeader: 'Tied lead', textCommand: 'Text',
@@ -133,16 +129,17 @@ let standaloneLineupKey='__unset__';
 let standalonePageIndex=0;
 const selectionVideos: Partial<Record<PlayableArcadeGame, string>> = {
   racer: '/video/vr-demo.mp4', monsters: '/video/vm-demo.mp4', fighter: '/video/vf-demo.mp4',
-  karaoke: '/video/vk-demo.mp4',
+  karaoke: '/video/vk-demo.mp4', trivia: '/video/vt-demo.mp4',
 };
 const gameCommands: Readonly<Record<PlayableArcadeGame, number>> = {
-  racer: 1, monsters: 2, fighter: 3, karaoke: 4,
+  racer: 1, monsters: 2, fighter: 3, karaoke: 4, trivia: 5,
 };
 const gameBlurbs: Readonly<Record<PlayableArcadeGame, string>> = {
   racer: copy.racerBlurb,
   monsters: copy.monstersBlurb,
   fighter: copy.fighterBlurb,
   karaoke: copy.karaokeBlurb,
+  trivia: copy.triviaBlurb,
 };
 
 interface PreviewConnection {
@@ -171,14 +168,14 @@ let freePlay = false;
 let leadCaptureMode = false;
 let enabledGames = new Set<PlayableArcadeGame>();
 let standaloneGameOrder: PlayableArcadeGame[] = PLAYABLE_ARCADE_GAMES.map(game => game.id);
-let comingSoon = { trivia: false };
 let smsAvailable = false;
 let whatsappAvailable = false;
 let selectionLineup = '';
 let selectionVotes: string | null = null;
 
 function renderGameCards(station: PublicStation): void {
-  const available = station.games.filter(impact => enabledGames.has(impact.id));
+  const available = orderByConfiguredIds(station.games, standaloneGameOrder)
+    .filter(impact => enabledGames.has(impact.id));
   const lineup = available.map(impact => impact.id).join(',');
   if (lineup !== selectionLineup) {
     selectionLineup = lineup;
@@ -226,11 +223,10 @@ function renderStandaloneLauncher(): void {
   const games=orderByConfiguredIds(PLAYABLE_ARCADE_GAMES,standaloneGameOrder)
     .filter(game=>enabledGames.has(game.id));
   const lineupKey=games.map(game=>game.id).join(',');
-  const key=`${lineupKey}|${comingSoon.trivia?1:0}`;
+  const key=lineupKey;
   if(key===standaloneGamesKey)return;
   if(lineupKey!==standaloneLineupKey)standalonePageIndex=0;
   standaloneGamesKey=key;standaloneLineupKey=lineupKey;standaloneGames.replaceChildren();
-  renderComingSoon();
   if(!games.length){const message=document.createElement('p');message.className='standalone-unavailable';message.textContent=copy.standaloneUnavailable;standaloneGames.append(message);renderStandalonePage();return;}
   standaloneGames.append(...games.map(game => {
     const link = document.createElement('a');
@@ -264,11 +260,6 @@ function renderStandalonePage(nextPage=standalonePageIndex): void {
     ? format(copy.pageStatus,{page:standalonePageIndex+1,pages:pageCount})
     : '';
   syncPreviewPlayback();
-}
-
-function renderComingSoon(): void {
-  document.getElementById('futureTrivia')!.hidden=!comingSoon.trivia;
-  document.getElementById('standaloneFuture')!.hidden=!comingSoon.trivia;
 }
 
 function previewPlaybackAllowed(): boolean {
@@ -463,9 +454,6 @@ function localizeStaticPage(): void {
   document.getElementById('standaloneQuickStartThree')!.textContent=copy.quickStartThree;
   standalonePreviousPage.setAttribute('aria-label',copy.previousPage);standalonePreviousPage.title=copy.previousPage;
   standaloneNextPage.setAttribute('aria-label',copy.nextPage);standaloneNextPage.title=copy.nextPage;
-  document.getElementById('futureGamesLabel')!.textContent=copy.comingSoon;
-  document.getElementById('voiceTriviaTitle')!.textContent=copy.triviaTitle;
-  document.getElementById('voiceTriviaDescription')!.textContent=copy.triviaPreview;
   document.getElementById('persistentJoinLabel')!.textContent=locale==='pt-BR'?'Proxima rodada':'Next round';
   document.getElementById('persistentJoinTitle')!.textContent=locale==='pt-BR'?'Escaneie para entrar':'Scan to join';
   const operator=document.getElementById('operatorLink')!;operator.innerHTML=OPERATOR_ICON;operator.title=copy.operator;operator.setAttribute('aria-label',copy.operator);
@@ -554,7 +542,6 @@ async function refreshConfiguration(): Promise<void> {
         isPlayableArcadeGame(entry[0]) && entry[1].enabled
       ))
       .map(([game]) => game));
-    comingSoon={trivia:config.station.comingSoon.trivia.enabled};
     standaloneGameOrder=[...config.station.automaticSelection.order];
     const localStandalonePreview = standaloneMode && ['localhost', '127.0.0.1', '::1'].includes(location.hostname);
     enabledGames = localStandalonePreview || (config.channels.voice && Boolean(bootstrap.voiceNumbers?.[locale]))
@@ -572,7 +559,6 @@ async function refreshConfiguration(): Promise<void> {
     }
   } catch {
     enabledGames = new Set<PlayableArcadeGame>();
-    comingSoon={trivia:false};
     selectionLineup = '';
     if (standaloneMode) renderStandaloneLauncher();
     if (current) renderGameCards(current);

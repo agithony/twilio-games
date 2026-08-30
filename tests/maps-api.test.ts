@@ -60,6 +60,9 @@ describe('maps API', () => {
     const noTok = await fetch(`http://127.0.0.1:${port}/api/maps`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(VALID) });
     expect(noTok.status).toBe(401);
+    const queryTok = await fetch(`http://127.0.0.1:${port}/api/maps?token=secret123`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(VALID) });
+    expect(queryTok.status).toBe(401);
     const withTok = await fetch(`http://127.0.0.1:${port}/api/maps`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'x-editor-token': 'secret123' }, body: JSON.stringify(VALID) });
     expect(withTok.status).toBe(200);

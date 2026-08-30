@@ -69,7 +69,7 @@ describe('Arcade browser UI', () => {
 
   it('renders selection as a stable video-backed vote display with automatic fallback copy', () => {
     expect(stationClient).toContain('choices: number');
-    expect(homeScript).toContain('racer: 1, monsters: 2, fighter: 3, karaoke: 4');
+    expect(homeScript).toContain('racer: 1, monsters: 2, fighter: 3, karaoke: 4, trivia: 5');
     expect(homeScript).toContain('impact.choices');
     expect(homeScript).toContain('Ready players: text the number shown or the game name.');
     expect(homeScript).not.toContain('In a browser, choose on your player page.');
@@ -115,7 +115,7 @@ describe('Arcade browser UI', () => {
     expect(stationGameSelect).toContain('value="monsters"');
     expect(stationGameSelect).toContain('value="fighter"');
     expect(stationGameSelect).toContain('value="karaoke"');
-    expect(stationGameSelect).not.toContain('value="trivia"');
+    expect(stationGameSelect).toContain('value="trivia"');
     expect(script).toContain("show('recruiting-control',!paused&&phase==='RECRUITING')");
     expect(script).toContain("show('selection-control',!paused&&phase==='GAME_SELECTION')");
     expect(script).toContain("show('playing-control',!paused&&phase==='PLAYING')");
@@ -314,22 +314,21 @@ describe('Arcade browser UI', () => {
     expect(css).toContain('.operator-page .challenge-form{grid-template-columns:repeat(2');
   });
 
-  it('keeps Trivia conceptual while exposing Karaoke as a playable game', () => {
-    const concepts = /<fieldset class="choice-grid coming-soon-concepts"[\s\S]*?<\/fieldset>/.exec(html)?.[0] ?? '';
-    expect(concepts).toContain('<b>Voice Trivia</b>');
-    expect(concepts).toContain('Coming soon cards shown on the home screen');
-    expect(concepts).toContain('id="admin-coming-soon-trivia"');
-    expect(concepts).not.toContain('Voice Karaoke');
+  it('exposes Trivia as the fifth playable game and retires its coming-soon control', () => {
     expect(html).toContain('id="admin-game-karaoke"');
+    expect(html).toContain('id="admin-game-trivia"');
     expect(html).toMatch(/data-game-choice="karaoke"><span>4<\/span><b>Voice Karaoke<\/b>/);
-    expect(concepts).not.toMatch(/<(?:button|a|option)\b|\btabindex=|\bdata-game-choice=/);
-    expect(stationGameSelect).not.toMatch(/Trivia/i);
+    expect(html).toMatch(/data-game-choice="trivia"><span>5<\/span><b>Voice Trivia<\/b>/);
+    expect(html).not.toContain('admin-coming-soon-trivia');
+    expect(html).not.toContain('coming-soon-concepts');
     expect(stationGameSelect).toContain('Voice Karaoke · 1 player');
-    expect(script).toContain("const HOME_CONCEPTS: readonly HomeConcept[] = ['trivia']");
+    expect(stationGameSelect).toContain('Voice Trivia · up to 4');
+    expect(script).toContain('station.comingSoon.trivia.enabled=false');
+    expect(script).not.toContain('const HOME_CONCEPTS');
     expect(script).not.toContain('admin-coming-soon-karaoke');
     expect(html).toContain('id="admin-console"');
     expect(homeScript).toContain('isPlayableArcadeGame(entry[0]) && entry[1].enabled');
-    expect(homeScript).toContain('station.games.filter(impact => enabledGames.has(impact.id))');
+    expect(homeScript).toContain('.filter(impact => enabledGames.has(impact.id))');
   });
 
   it('renders aggregate vote counts and allows a capacity-one no-show replacement', () => {
@@ -628,15 +627,27 @@ describe('Arcade browser UI', () => {
     expect(joinCss).toContain('.channel-fallback-label');
   });
 
-  it('provides a guarded operator control for persistent Racer and Karaoke scores', () => {
+  it('provides a guarded, game-neutral operator control for persistent scores', () => {
     expect(html).toContain('id="leaderboard-reset-panel"');
-    expect(html).toContain('Voice Racer and Voice Karaoke store persistent scores.');
+    expect(html).toContain('Persistent game leaderboards can be reset here.');
+    expect(html).toContain('<label>Leaderboard<select id="leaderboard-reset-map">');
     expect(script).toContain("request<LeaderboardAdminSummary>('/api/admin/arcade/leaderboards')");
     expect(script).toContain("'If-Match':state.leaderboardEtag");
     expect(script).toContain('does not store persistent scores, so there is nothing to reset');
     expect(script).toContain('This cannot be undone.');
     expect(html).toContain('<option value="karaoke">Voice Karaoke</option>');
+    expect(html).toContain('<option value="trivia">Voice Trivia</option>');
     expect(script).toContain('payload.games.find(item=>item.game===game)??{game,resettable:false,maps:[]}');
+  });
+
+  it('renders all five priority positions and score-based station fallback results', () => {
+    const prioritySelects = [...html.matchAll(/<select id="admin-game-priority-[1-5]"[^>]*>[\s\S]*?<\/select>/g)].map(match => match[0]);
+    expect(prioritySelects).toHaveLength(5);
+    for (const select of prioritySelects) expect(select).toContain('<option value="trivia">Voice Trivia</option>');
+    expect(stationDisplay).toContain('result.score!==null');
+    expect(stationDisplay).toContain('result.score.toLocaleString(locale)');
+    expect(stationDisplay).toContain("className='station-result-metric'");
+    expect(stationDisplayCss).toContain('.station-result-metric{font-family:');
   });
 
   it('exposes the persisted game order as the standalone display order', () => {

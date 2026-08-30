@@ -18,18 +18,24 @@ describe('standalone and station display UX', () => {
     const home = readClient('home.ts');
     const fighter = readClient('fighter/fighter.ts');
     const fighterCss = readClient('fighter/fighter.css');
+    const trivia = readClient('trivia/trivia.ts');
     const refresh = /async function refresh\(\)[\s\S]*?\n}/.exec(home)?.[0] ?? '';
     expect(refresh.indexOf('if (standaloneMode)')).toBeLessThan(refresh.indexOf('fetchPublicStation(displayToken)'));
     expect(refresh).toMatch(/if \(standaloneMode\) \{[\s\S]*?return;/);
     expect(home).not.toContain('validateStandaloneDisplay()');
     expect(home).toContain('enabledGames = localStandalonePreview || (config.channels.voice');
     expect(home).toContain("config.channels.voice && Boolean(bootstrap.voiceNumbers?.[locale])");
+    expect(home).toContain("trivia: '/video/vt-demo.mp4'");
+    expect(home).toContain('const url = new URL(game.route, location.origin)');
     expect(fighter).toContain('connection.setDisplayAuth(roomCode, isDisplay ? stationDisplay.displayToken : null)');
     expect(fighter.indexOf("const isDisplay = params.get('display') === '1'")).toBeLessThan(fighter.indexOf('localizeStaticUi();'));
     expect(fighter).not.toContain("params.get('hostToken')");
     expect(fighter).toContain("pageUrl.searchParams.delete('hostToken')");
     expect(fighter).not.toContain("t('lobby.room', { room: roomCode })");
     expect(fighter).toContain('connection.spectate(roomCode');
+    const triviaConnect = /function connect\(\): void \{[\s\S]*?\n}/.exec(trivia)?.[0] ?? '';
+    expect(triviaConnect).toContain('if (stationLaunchRequested) connection.setDisplayAuth(roomCode, stationDisplay.displayToken)');
+    expect(triviaConnect.match(/setDisplayAuth/g)).toHaveLength(1);
     expect(fighterCss).toMatch(/@media \(orientation:portrait\) and \(min-width:721px\) \{[\s\S]*?\.lobby-layout \{ flex:none;grid-template-columns:1fr/);
     expect(fighterCss).toMatch(/@media \(orientation:portrait\) and \(min-width:721px\) \{[\s\S]*?\.select-grid\.fighter-grid \{ grid-template-columns:repeat\(4,minmax\(0,1fr\)\);grid-template-rows:repeat\(3,minmax\(0,1fr\)\)/);
     expect(fighterCss).toContain('.fighter-grid .card-preview { background-size:cover;background-position:center; }');
@@ -77,6 +83,10 @@ describe('standalone and station display UX', () => {
     expect(home).toContain("document.getElementById('persistentJoinQr')");
     expect(stationDisplay).toContain("if(railMode==='always')return true");
     expect(stationDisplay).toContain("latest?.station.phase==='LAUNCHING'||latest?.station.phase==='PLAYING'||latest?.station.phase==='RESULTS'");
+    expect(stationDisplay).toContain("portuguese ? 'Entrar na próxima partida do Twilio Games'");
+    expect(stationDisplay).toContain("portuguese ? 'Código QR para entrar no Twilio Games'");
+    expect(stationDisplay).toContain("root.setAttribute('aria-label', railLabel)");
+    expect(stationDisplay).toContain('role="img" aria-label="${qrLabel}"');
   });
 
   it('warms the exact Racer scene before releasing a station countdown', () => {

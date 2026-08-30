@@ -19,7 +19,7 @@ export async function saveManifest(m: Manifest): Promise<Manifest> {
     body: JSON.stringify(m),
   });
   if (!res.ok) {
-    const detail = res.status === 401 ? 'unauthorized — open this page with ?token=YOUR_EDITOR_TOKEN' : `HTTP ${res.status}`;
+    const detail = res.status === 401 ? 'unauthorized - supply EDITOR_TOKEN when prompted or in the initial #token= fragment' : `HTTP ${res.status}`;
     throw new Error(`save failed: ${detail}`);
   }
   return res.json();

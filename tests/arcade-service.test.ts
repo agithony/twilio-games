@@ -65,6 +65,7 @@ function arcadeConfig(
     chargePolicy?: 'per_player' | 'per_match' | 'host_sponsors' | 'free';
     refundOnLobbyTimeout?: boolean;
     karaokeEnabled?: boolean;
+    triviaEnabled?: boolean;
   } = {},
 ): ArcadeConfigSnapshot {
   const input = JSON.parse(JSON.stringify(DEFAULT_ARCADE_CONFIG)) as Record<string, any>;
@@ -78,6 +79,7 @@ function arcadeConfig(
     : chargePolicy;
   input.coins.refundOnLobbyTimeout = overrides.refundOnLobbyTimeout ?? true;
   input.station.games.karaoke.enabled = overrides.karaokeEnabled ?? false;
+  input.station.games.trivia.enabled = overrides.triviaEnabled ?? false;
   input.earning.challenges = [{
     id: 'voice-docs',
     title: 'Read the Voice docs',
@@ -171,7 +173,7 @@ async function moveToLobby(
   h: Harness,
   playerId: string,
   prefix: string,
-  game: 'racer' | 'karaoke' = 'racer',
+  game: 'racer' | 'karaoke' | 'trivia' = 'racer',
 ): Promise<string> {
   const joined = await h.service.joinQueue({
     playerId, preferredGame: game, idempotencyKey: `${prefix}:join`,
@@ -212,6 +214,30 @@ describe('ArcadeService durable journey', () => {
     expect(restarted.snapshot().queueEntryConfigs[joined.entry.id]?.assignedGame).toBe('karaoke');
   });
 
+  it('persists promoted Trivia queue preferences and assignments when enabled', async () => {
+    const h = await harness(arcadeConfig('lead_capture', { triviaEnabled: true }));
+    await h.service.registerPlayer(registration('p1'));
+    const joined = await h.service.joinQueue({
+      playerId: 'p1', preferredGame: 'trivia', idempotencyKey: 'trivia:join',
+    });
+    await h.service.markApproaching({
+      playerId: 'p1', queueEntryId: joined.entry.id, idempotencyKey: 'trivia:approach', ...OPERATOR,
+    });
+    await h.service.confirmPresence({
+      playerId: 'p1', queueEntryId: joined.entry.id, idempotencyKey: 'trivia:confirm',
+    });
+    await h.service.callQueueEntry({
+      playerId: 'p1', queueEntryId: joined.entry.id, idempotencyKey: 'trivia:call', ...OPERATOR,
+    });
+    await h.service.checkInQueueEntry({
+      playerId: 'p1', queueEntryId: joined.entry.id, game: 'trivia', idempotencyKey: 'trivia:check-in',
+    });
+
+    const restarted = await ArcadeStateStore.open(h.file);
+    expect(restarted.snapshot().queueEntries[joined.entry.id]?.preferredGame).toBe('trivia');
+    expect(restarted.snapshot().queueEntryConfigs[joined.entry.id]?.assignedGame).toBe('trivia');
+  });
+
   it('rejects disabled and nonplayable games at every legacy queue assignment boundary', async () => {
     const h = await harness();
     await h.service.registerPlayer(registration('p1'));
@@ -220,7 +246,7 @@ describe('ArcadeService durable journey', () => {
     })).rejects.toMatchObject({ code: 'GAME_DISABLED' });
     await expect(h.service.joinQueue({
       playerId: 'p1', preferredGame: 'trivia', idempotencyKey: 'disabled:join-trivia',
-    })).rejects.toMatchObject({ code: 'INVALID_GAME' });
+    })).rejects.toMatchObject({ code: 'GAME_DISABLED' });
 
     const joined = await h.service.joinQueue({
       playerId: 'p1', preferredGame: 'racer', flexibleGame: true, idempotencyKey: 'disabled:join-racer',
@@ -239,7 +265,7 @@ describe('ArcadeService durable journey', () => {
     })).rejects.toMatchObject({ code: 'GAME_DISABLED' });
     await expect(h.service.checkInQueueEntry({
       playerId: 'p1', queueEntryId: joined.entry.id, game: 'trivia', idempotencyKey: 'disabled:check-trivia',
-    })).rejects.toMatchObject({ code: 'INVALID_GAME' });
+    })).rejects.toMatchObject({ code: 'GAME_DISABLED' });
 
     const enabled = await harness(arcadeConfig('lead_capture', { karaokeEnabled: true }));
     await enabled.service.registerPlayer(registration('p2'));

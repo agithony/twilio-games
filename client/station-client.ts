@@ -43,7 +43,8 @@ export interface PublicArcadeConfig {
   station: {
     timings: { recruitingSeconds:number;hardDeadlineSeconds:number;selectionSeconds:number;lockedSeconds:number;launchTimeoutSeconds:number;resultsSeconds:number;postGameRecruitingSeconds:number };
     games: Record<StationGame,{enabled:boolean}>;
-    comingSoon: Record<HomeConcept,{enabled:boolean}>;
+    /** @deprecated Schema-v7 compatibility tombstone; Trivia is configured through games. */
+    comingSoon: Record<HomeConcept,{enabled:false}>;
     automaticSelection: { policy:'best_fit_rotation'|'round_robin'|'fixed_priority';order:readonly StationGame[] };
     qrRail: 'auto'|'always'|'hidden';
   };

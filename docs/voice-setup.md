@@ -1,6 +1,6 @@
 # Voice Setup
 
-This guide configures the locale-specific Twilio numbers used by Voice Racer, Voice Monsters, Voice Fighter, and Voice Karaoke. For the project overview and general development setup, see the [README](../README.md).
+This guide configures the locale-specific Twilio numbers used by Voice Racer, Voice Monsters, Voice Fighter, Voice Karaoke, and Voice Trivia. For the project overview and general development setup, see the [README](../README.md).
 
 ## How Calls Are Routed
 
@@ -22,14 +22,15 @@ In station mode, the server resolves the caller to one persisted admitted player
 | Voice Monsters | `http://localhost:5173/monsters.html?display=1&room=4821` | `/battle` |
 | Voice Fighter | `http://localhost:5173/fighter.html?display=1&room=4821` | `/fighter` |
 | Voice Karaoke | `http://localhost:5173/karaoke.html?display=1&room=4821` | `/karaoke` and `/karaoke-media` |
+| Voice Trivia | `http://localhost:5173/trivia.html?display=1&room=4821` | `/trivia` |
 
 Room `4821` is the standalone room only. Active station matches use generated 12-character engine room codes.
 
-For standalone testing, open the intended shared display before placing the call and close unused game displays. An eligible display must belong to an operator-enabled game, connect as `display=1`, and remain open. Standalone display registration does not validate the station display token, so expose standalone routing only in a controlled deployment. If several eligible displays are open, the most recently registered one wins. If none is open, the call receives unavailable TwiML; it does not default to Voice Racer.
+For standalone testing, pause the event, open the intended shared display before placing the call, and close unused game displays. An eligible display must belong to an operator-enabled game, connect as `display=1`, and remain open. Standalone room `4821` does not use operator pairing or validate the station display token, so expose standalone routing only in a controlled deployment. Generated station rooms are different: their display must inherit the authenticated `ARCADE_DISPLAY_TOKEN` capability installed by `/operator`. If several eligible standalone displays are open, the most recently registered one wins. If none is open, the call receives unavailable TwiML; it does not default to Voice Racer.
 
 The selected game is passed to `/voice` as a Conversation Relay custom parameter and remains fixed for that call. `POST /voice/join` is a legacy alias: it uses a posted `Digits` value when present and otherwise uses `4821`. Do not configure new numbers to use `/voice/join`.
 
-When Conversation Relay ends a session, Twilio calls `POST /voice/session-ended`. The server uses the call SID to recover or clean up all three games.
+When Conversation Relay ends a session, Twilio calls `POST /voice/session-ended`. The server uses the call SID to recover or clean up all five games.
 
 ## Requirements
 
@@ -37,6 +38,7 @@ When Conversation Relay ends a session, Twilio calls `POST /voice/session-ended`
 - A primary Twilio account with the English Voice number, a separate SMS-capable number, and an approved WhatsApp sender required for preferred Portuguese Messaging entry; lead-capture mode retains a browser fallback
 - A second Twilio account with the Portuguese Voice number
 - Both account Auth Tokens for webhook signature validation
+- A Deepgram project and server-side API key for production Karaoke Nova-3 streaming lyric verification
 - A public HTTPS URL that forwards to the server on port `8080`
 - A public WebSocket path on the same host; the server derives `wss://<public-host>/voice` from `PUBLIC_BASE_URL`
 
@@ -51,6 +53,8 @@ npm install
 
 PUBLIC_BASE_URL=https://<public-host> \
 TWILIO_AUTH_TOKEN=<auth-token> \
+VOICE_RELAY_TOKEN=<independent-random-token> \
+DEEPGRAM_API_KEY=<deepgram-api-key> \
 GAME_PHONE_NUMBER=<e164-number> \
 PORT=8080 \
 npm run dev:server
@@ -59,7 +63,7 @@ npm run dev:server
 Start the client in another terminal:
 
 ```bash
-npm run dev:client
+GAME_SERVER_EXPECTED_ORIGIN=https://<public-host> npm run dev:client
 ```
 
 Expose port `8080` through one public HTTPS tunnel. Examples:
@@ -74,7 +78,7 @@ ngrok http 8080
 
 VS Code public port forwarding also works. Forward port `8080`, set its visibility to public, and use its HTTPS URL as `PUBLIC_BASE_URL`. Do not tunnel the Vite port. Twilio must reach the Node server, which owns the webhooks and `/voice` WebSocket.
 
-If the tunnel URL changes, update `PUBLIC_BASE_URL`, restart the server, and update the Twilio webhook. Twilio signs the exact public webhook URL, so the configured URL and `PUBLIC_BASE_URL` must match, including the scheme and host.
+If the tunnel URL changes, update server-side `PUBLIC_BASE_URL`, update client-side `GAME_SERVER_EXPECTED_ORIGIN`, restart both development processes, and update the Twilio webhook. Twilio signs the exact public webhook URL, so the configured URL and `PUBLIC_BASE_URL` must match, including the scheme and host.
 
 For a deployed environment, configure the same `POST /voice/incoming` webhook against the deployed host. See [Infrastructure Setup](INFRA_SETUP.md) and [Deployment](DEPLOYMENT.md).
 
@@ -96,12 +100,24 @@ For a deployed environment, configure the same `POST /voice/incoming` webhook ag
 | `VOICE_RELAY_TOKEN` | Required by production deployment | Independent token of at least 32 characters that authenticates the Conversation Relay `setup` frame. The generated TwiML passes it to Twilio automatically; do not reuse `TWILIO_AUTH_TOKEN`. |
 | `OPENAI_API_KEY` | No | Enables English free-form menu help for Voice Racer and Voice Monsters. Portuguese free-form OpenAI replies are disabled; deterministic localized setup and gameplay remain available. |
 | `OPENAI_MODEL` | No | Overrides the OpenAI model when `OPENAI_API_KEY` is set. |
-| `DEEPGRAM_API_KEY` | Required in production | Direct lyric recognition for Voice Karaoke. Production startup and deployment fail closed when missing because Karaoke is enabled by default. |
-| `KARAOKE_CALIBRATION_OFFSET_MS` | No | Measured signed handset/carrier scoring offset from `-5000` to `5000`; defaults to `0`. |
+| `DEEPGRAM_API_KEY` | Required in production | Direct monolingual Nova-3 streaming lyric recognition with chart keyterms for Voice Karaoke. Production startup and deployment fail closed when missing because Karaoke is enabled by default. |
+| `KARAOKE_CALIBRATION_OFFSET_MS` | No | Measured signed handset/carrier scoring offset from `-5000` to `5000`; defaults to `0`. Positive maps observations later and negative maps them earlier. |
+| `ARCADE_DISPLAY_TOKEN` | Required for production station displays | Server-held kiosk capability installed into a station tab by `/operator`; standalone room `4821` does not pair or require it. |
+| `KARAOKE_TIMINGS_PATH` | No | Persistent sparse timing-override file; defaults to `data/karaoke-timings.json`. |
+| `EDITOR_TOKEN` | Required in production | Protects timing-editor and other disk writes. Supply it when prompted or in an initial `#token=` fragment; query-token credentials are ignored. It is not used by the caller or standalone display. |
+| `TRIVIA_QUESTIONS_PATH` | No | Live writable Trivia bank; defaults to `data/trivia-questions.json`. A missing file is seeded from `BUNDLED_TRIVIA_QUESTIONS_PATH`. |
+| `BUNDLED_TRIVIA_QUESTIONS_PATH` | No | Immutable Trivia seed; defaults to `content/trivia/questions.json`. |
+| `TRIVIA_LEADERBOARD_PATH` | No | Persistent normalized Trivia results; defaults to `data/trivia-leaderboard.json`. |
 | `FIGHTER_DISPLAY_TOKEN` | No | Server-side standalone override for custom Fighter integrations. Browser URLs do not accept display credentials; station booth access is installed through `/operator`. |
 | `NODE_ENV` | No | `production` enables signature validation by default when `TWILIO_VALIDATE_SIGNATURES` is unset, along with production-only warnings and serving behavior. |
 
-`EDITOR_TOKEN`, map paths, arena paths, and persistence paths affect editing and deployment but are not required to place a voice call. Production startup still requires `EDITOR_TOKEN` so writable editor routes cannot fail open.
+Map, arena, and persistence-path overrides are not required to place a voice call. Production startup still requires `EDITOR_TOKEN` so writable editor routes cannot fail open. Production deployment also requires `ARCADE_SIGNING_SECRET`, `ARCADE_DISPLAY_TOKEN`, Google OAuth or `ANALYTICS_ADMIN_PIN`, and the primary TAC/Messaging credentials documented in [Infrastructure Setup](INFRA_SETUP.md).
+
+## Prepare the Karaoke Display
+
+Standalone Karaoke does not pair. Pause the event, open `/karaoke.html?display=1&room=4821`, and leave that eligible display open before dialing. For a station-managed launch, authenticate in the intended booth tab at `/operator` and select **Pair this tab as the big screen**; the same-origin flow stores the display capability only in that tab's `sessionStorage`.
+
+On either production path, select **Enable concert audio** before the first call in that loaded tab. The one-time gesture unmutes and starts Web Audio. Karaoke deliberately withholds display readiness and the countdown while audio is muted, suspended, or not preloaded. Reloading, opening a new tab, or starting a new kiosk browser session can require the gesture again.
 
 ## Conversation Relay Configuration
 
@@ -130,9 +146,9 @@ Speech barge-in stops Relay TTS. Voice Racer and Voice Monsters also invalidate 
 
 ## Station Launch And Personal Setup
 
-Station games admit up to two callers. The persisted match roster supplies an expected caller count of one or two and a stable slot for each caller. The server reuses each registered first name instead of asking for it again; only a station identity without a stored completed name falls back to voice name capture.
+The persisted match roster supplies a stable slot for every caller: one for Karaoke, up to two for Racer, Monsters, or Fighter, and up to four for Trivia. The server reuses each registered first name instead of asking for it again; only a station identity without a stored completed name falls back to voice name capture.
 
-Each caller controls only their personal setup choices. All three games keep explicit shared phase gates: after all expected callers connect, either caller says the prompted keyword to open selection; after every caller makes their personal choices, either says the prompted keyword to continue. Racer and Fighter add a voting gate before gameplay. A one-caller Monsters or Fighter match creates an AI opponent after that caller finishes setup, and solo matches follow the same explicit gates with one caller.
+Each caller controls only their personal setup choices. Racer, Monsters, and Fighter keep explicit shared phase gates; Racer and Fighter add a voting gate before gameplay. Trivia automatically opens category voting after all expected names are confirmed and begins loading when every caller has voted. A one-caller Monsters or Fighter match creates an AI opponent after setup; Karaoke and Trivia have no AI players.
 
 A station match starts only when the display has acknowledged the current launch generation, the selected engine has started, and every expected caller is connected and bound. The launch timeout is also the setup inactivity window. After all expected callers connect, each final speech prompt or DTMF input from either caller moves that deadline forward by the configured launch timeout; partial transcripts do not. Activity extends setup but does not mark gameplay started or redeem a coin.
 
@@ -140,7 +156,7 @@ At the deadline, a disconnected admitted caller is replaced by the first FIFO ov
 
 ## Connection Recovery
 
-All three games retain the call SID-to-player binding for 30 seconds after a Relay WebSocket disconnect. A replacement WebSocket for the same call SID and room resumes that player and preserves completed personal choices; a normal session-ended callback removes the binding immediately, subject to retaining completed station result state.
+Racer, Monsters, Fighter, and Trivia retain the call SID-to-player binding for 30 seconds after a Relay WebSocket disconnect. A replacement WebSocket for the same call SID and room resumes that player and preserves completed choices, Trivia prompt readiness, and a locked Trivia answer; a normal session-ended callback removes the binding immediately, subject to retaining completed station result state.
 
 This 30-second binding grace is separate from Relay session recovery. When `SessionStatus=failed`, the call remains `in-progress`, and the error is absent or recoverable (`39001`, `64103`, `64105`, `64111`, or `64112`), `/voice/session-ended` can return new Conversation Relay TwiML up to two times. Station recovery refreshes the route when possible and still revalidates the setup against current state. A permanent error, a completed call, or an exhausted recovery count hangs up and clears the bindings.
 
@@ -236,6 +252,33 @@ Combat locks remain long enough for readable animation, but punch, kick, block, 
 
 The common 30-second caller binding and up-to-two Relay recovery attempts apply to Fighter. Hit and miss cues are throttled, and the phone host narrates the intro, countdown, health context, and result.
 
+## Voice Trivia
+
+Voice Trivia is the fifth default-enabled game and stable station or Messaging option `5`. Station matches accept 1-4 callers; the default standalone voice route expects one caller. Trivia has no AI opponent and uses deterministic server content and parsing even when `OPENAI_API_KEY` is set. Standalone play opens `/trivia.html?display=1&room=4821`; station play launches `/trivia.html` with a generated room and the current `station`, `match`, and `launchGeneration`. Both use the same-origin `/trivia?display=1` display WebSocket, while callers remain on `/voice`.
+
+The voice flow is:
+
+1. In standalone play, each caller says a first name. Station play greets each caller by the registered first name unless it is missing. After all expected callers connect and confirm names, the server leaves `lobby` for `category_select`.
+2. Each caller votes by category name or spoken number: General Knowledge, Science, Geography, History, Entertainment, Sports, Technology, Twilio, or Mixed. Votes can be revised. A unique plurality wins; a tied plurality or no votes selects Mixed.
+3. `loading` snapshots eight questions and shuffled choices from the current bank. The display must authenticate when station-managed and send readiness for the current generation within 30 seconds. Readiness starts the three-second `countdown`; a timeout returns the room to category voting.
+4. Each `question_prompt` displays the question and choices while Conversation Relay reads the same localized prompt to every connected caller. Answers are disabled until every current prompt settles or the conservative 60-second prompt recovery deadline expires. The room then enters `answer_cue` and sends one neutral get-ready cue to each active caller; answering remains disabled until every current cue settles or its separate 25-second recovery deadline expires.
+5. The server enters `question`, announces “answer now,” and schedules one shared 10-second window to begin three seconds later so normal TTS latency does not consume answer time. A valid final speech or DTMF answer received during that pre-start interval locks normally and is clamped to elapsed time zero. Say `A` through `D`, `1` through `4`, an ordinal such as `the second choice`, or an unambiguous full phrase such as `I think the answer is Paris`. DTMF `1`-`4` selects the displayed position. The first valid final answer locks even if it is wrong; interim speech can capture an earlier matching onset but cannot lock an answer. An onset inside the 10 seconds may receive its final frame during the 1.5-second transport grace.
+6. `reveal` lasts four seconds and discloses the correct answer, explanation, per-player result, and standings. The cycle repeats for eight questions, then `results` reports raw score, normalized leaderboard score, correct answers, best streak, and rank. Standalone callers can say `play again`; station callers return through the station requeue flow.
+
+The eight content categories are General Knowledge, Science, Geography, History, Entertainment, Sports, Technology, and Twilio. A selected-category round contains two easy, four medium, and two hard questions. Mixed contains one question from every category with the same overall difficulty split. The complete bank has 200 questions, 25 per category, and requires matching `en-US` and `pt-BR` choice IDs plus localized prompts, choices, optional private voice aliases, and explanations.
+
+Correct-answer speed points are 1,300 before 3 seconds, 1,200 from 3 to under 6, 1,100 from 6 to under 9, and 1,000 from 9 through 10 seconds. A correct streak adds 100 points per answer after the first, capped at 500 per answer; a wrong answer or no answer scores zero and resets the streak. The maximum raw score is 12,900. Results normalize with `round(raw * 100000 / 12900)` to a maximum of 100,000.
+
+Final rank sorts by raw score, correct count, lower cumulative time for correct answers, then stable join/seat order. Phone speech, the shared display, and station results all use that authoritative rank; only players sharing rank `1` are announced as winners. Category vote ties select Mixed. The persistent leaderboard sorts by normalized score, correct count, cumulative correct time, then stable persisted result keys.
+
+All answer authority remains on the server. The display is spectator-only, and the browser protocol has no answer or score command. During `question_prompt`, `answer_cue`, and `question`, browser state excludes the correct choice, aliases, explanation, source/review fields, future questions, and each caller's submitted choice; it exposes only whether a caller has locked. The correct choice and explanation appear only in `reveal`.
+
+The protected editor at `/editor?game=trivia` reads and writes the complete bilingual bank through no-store, ETag-guarded `GET`/`POST /api/trivia-questions`. Production requires `EDITOR_TOKEN`; supply it when prompted or in an initial `#token=` fragment, never a query credential, and never expose the API or its answer keys to game clients. Saves strictly validate all 200 records and atomically replace `TRIVIA_QUESTIONS_PATH`. Active rooms keep their creation-time bank, while new rooms use the new revision. Private aliases are optional with a maximum of 12 per localized choice. Source, fact-check, review-status, reviewer, date, and provenance fields are required; original provenance is immutable in the editor, so the bundled `ai-assisted-draft` provenance cannot be relabeled as human-authored.
+
+Completed rounds append normalized results to `TRIVIA_LEADERBOARD_PATH`. `GET /api/trivia/leaderboard?board=all-time&limit=10` and the eight category board IDs return only rank, display name, score, category, and the played-at timestamp; Mixed has no separate board and appears only in all-time. Private activation analytics record Trivia participants, sessions, completion or abandonment, active seconds, accepted voice actions, and category popularity without question text, choices, answers, transcripts, room codes, or display names.
+
+The display reconnects with exponential delays from 500 ms to 8 seconds, then reauthenticates, re-registers its spectator identity, and resumes server-clock sync. Losing the active display during `loading` invalidates that loading generation, so the replacement must send a fresh readiness signal. Caller Relay replacement with the same call SID and room resumes the same slot for 30 seconds; recoverable Relay failures can receive new TwiML up to two times under the common recovery rules above.
+
 ## Voice Karaoke
 
 Voice Karaoke admits one singer. Conversation Relay owns setup and results, while the same call transitions to a signed, one-use Twilio Media Stream during the 45-second performance.
@@ -244,19 +287,52 @@ Voice Karaoke admits one singer. Conversation Relay owns setup and results, whil
 2. The host explains the falling-word highway and display-supplied backing music.
 3. The caller chooses a localized song by number or title.
 4. The caller hears the third-party speech-recognition disclosure, then explicitly says `start` to consent. `#` repeats the disclosure.
-5. The display preloads and unlocks Web Audio, then the server issues a one-use Media Stream handoff.
-6. The countdown starts only after both the display and authenticated inbound stream are ready.
-7. Media timestamps, voice activity, and pitch observations produce authoritative word judgments. Raw caller audio is not retained.
-8. Conversation Relay reconnects after final scoring to announce score and best combo.
+5. The display preloads the selected instrumental and reports ready only when its Web Audio context is running and unmuted.
+6. The server sends Conversation Relay an `end` envelope with call-bound `HandoffData`. Twilio posts it to `/voice/session-ended`; the server validates the live account, call, room, singer, song, locale, and generation before issuing one-use attempt credentials.
+7. The returned TwiML starts `inbound_track` at the signed, query-free `/karaoke-media` WebSocket, pauses for the 3-second countdown, 45-second song, and a 5-second stop grace, then stops the named stream and redirects to `/voice/karaoke/complete`. `/voice/karaoke/stream-status` receives signed lifecycle callbacks.
+8. The countdown starts only after both the display and authenticated Media Stream `start` frame are ready. Only caller mu-law 8 kHz mono audio is analyzed; the backing track and outbound call audio are excluded.
+9. At stream stop the server asks Deepgram to finalize, commits the authoritative score only if identity and provider health still pass, and lets the completion callback retry briefly while finalization is in flight.
+10. `/voice/karaoke/complete` reconnects Conversation Relay in result mode to announce score and best combo.
 
-The production performance WebSocket is `/karaoke-media`. Twilio must preserve its signed upgrade request, and reverse proxies must expose the public `wss://` URL represented by `PUBLIC_BASE_URL`. Karaoke is enabled in fresh Arcade settings; complete licensed-song, production-GLB, and live handset calibration acceptance before deployment.
+The production performance WebSocket is `/karaoke-media`. Twilio must preserve its signed upgrade request, and reverse proxies must expose the exact public `wss://` URL represented by `PUBLIC_BASE_URL`. The parser treats bounded, non-empty `connected.protocol` and `connected.version` as informational so observed Twilio values such as `Call`/`1.0` and `Call`/`1.0.0` remain compatible. It still strictly validates event order, sequence/chunk/timestamp continuity, stream/account/call identity, custom attempt binding, inbound-only track, and `audio/x-mulaw` 8 kHz mono format.
+
+Karaoke starts enabled in fresh Arcade settings. Complete licensed-song, production-GLB, display-audio, Deepgram billing, and live handset calibration acceptance before deployment.
+
+### Scoring
+
+The fixed score is 50% timing, 30% recognized lyrics, and 20% pitch; missing components are not renormalized. Locally detected voice activity gates all acoustic credit, so silence is always zero even if provider evidence claims the right word. For each exact normalized chart-word match, Deepgram confidence supplies the lyric score and scales both timing and pitch as `0.70 + 0.30 * confidence`. Consequently, missing singing ASR leaves 70% of otherwise earned acoustic credit instead of forcing a hard lyric miss, while confidence `1.0` permits 100%.
+
+Phone input receives modest soft tolerances rather than a broad lyric gate: timing falls linearly across 200 ms before and 250 ms after a word, recognized words align in chart order within 650 ms, and pitch falls across 200 cents after folding the observation to the nearest octave. The octave-invariant comparison lets different vocal ranges follow the same melody. Live `good` and `perfect` labels use 0.3 and 0.8 word-score thresholds, while authoritative points retain the continuous component score.
+
+Deepgram receives monolingual Nova-3 streaming options, the call locale, and up to 50 unique chart words of 4-64 characters as repeated, unweighted `keyterm` parameters. Interim revisions can update the display-time evidence, but final scoring uses only final provider words. On stop the server sends `Finalize` and `CloseStream` and waits at most 2.5 seconds. A provider startup/protocol/finalization failure, including timeout, rejects the score; it does not commit interim evidence. See [Infrastructure Setup](INFRA_SETUP.md#deepgram-billing-and-privacy) for the official free-credit, Pay As You Go, and per-performance cost note.
+
+### Calibration And Chart Timing
+
+Use `KARAOKE_CALIBRATION_OFFSET_MS` only for consistent inbound handset/carrier/venue transport bias. Start at `0`, run several performances with representative phones and carriers, and adjust in small increments based on aggregates. Positive values map incoming observations later on the song timeline; negative values map them earlier. If evidence is consistently mapped late, move the offset negative; if it is consistently early, move it positive. Do not compensate for one singer, a badly authored chart, display speaker delay, or browser rendering with this global server variable.
+
+Each finalized attempt logs `[karaoke] score finalized` with `accepted`, total `words`, `voicedWords`, `recognizedWords`, `voicedRatio`, `pitchRatio`, aggregate `timing`, `lyrics`, and `pitch`, plus `calibrationMs`. `/healthz` also reports `karaokeLyricRecognition`, `karaokeMediaSessions`, and the active `karaokeCalibrationOffsetMs`. Compare these fields across a useful sample: low `voicedRatio` suggests gain, muting, or call-path trouble; low `pitchRatio` with normal voice activity suggests noisy/unclear pitch; normal voice/pitch with weak lyric confidence suggests recognition, language, chart-word, or bleed problems. The application does not log transcripts or raw audio.
+
+Use `/editor?game=karaoke&tool=timing` for chart errors. It overlays the persistent sparse timing file on the compiled songs and provides waveform playback, scrub/zoom, word or selected-section preview, 10/100 ms nudges, boundary drags, group moves, and reset controls. **Save timings** requires `EDITOR_TOKEN`, sends the loaded ETag with `If-Match`, atomically writes `KARAOKE_TIMINGS_PATH` (default `data/karaoke-timings.json`), and applies changes to future performances. A `412` means another editor saved first; reload and reconcile. Resetting and saving a song removes its sparse overrides so compiled timings win. Back up Azure Files before broad timing edits.
 
 ## Test Without Twilio
 
 Run the voice-focused unit and integration tests:
 
 ```bash
-npm test -- voice-intent battle-intent fighter-intent karaoke twiml conversation-relay battle-voice fighter-voice voice-integration
+npm test -- voice-intent battle-intent fighter-intent karaoke trivia twiml conversation-relay battle-voice fighter-voice voice-integration
+```
+
+Validate and smoke Voice Trivia with the exact package scripts:
+
+```bash
+npm run validate:trivia-bank
+npm test -- trivia
+```
+
+Start `npm run dev:client` before the browser smoke; it injects public server projections, so the Node game server and Twilio are not required:
+
+```bash
+npm run smoke:trivia
 ```
 
 The integration tests open fake Conversation Relay and Media Stream WebSockets and verify room binding, setup, handoff security, and deterministic scoring. They do not replace live handset tests for carrier latency, pitch quality, acoustic backing-track bleed, or Twilio callback ordering.
@@ -279,9 +355,27 @@ Signature validation is enabled while `TWILIO_AUTH_TOKEN` is empty. Set the prim
 
 Confirm the public host supports WebSocket upgrades at `/voice` and that the generated URL uses `wss://`. Check for `unauthorized relay` in the server log; `VOICE_RELAY_TOKEN` must remain stable between the webhook response and the Relay setup frame. For standalone play, confirm the display uses room `4821`. For station play, confirm the display acknowledged the current generated room and launch generation.
 
+### Karaoke stays on loading
+
+Confirm the display tab has passed **Enable concert audio**, is not muted, and can fetch the selected instrumental. The handoff is not requested until display readiness; after handoff, the countdown still waits for the authenticated Media Stream start frame. `[karaoke] loading timeout ... displayReady=false` points to the display/audio path, while `mediaReady=false` points to Twilio handoff, upgrade, identity, or stream-start failure.
+
+### Karaoke hangs up during the Media Stream handoff
+
+Trace these success markers in order: `[karaoke] media handoff requested`, `[CR] session ended` with the handoff callback, `[karaoke] media attempt issued`, `[karaoke] media stream started`, and `[karaoke] score finalized ... accepted=true`. A missing stage identifies the boundary to inspect. `[karaoke] media upgrade rejected` reports path, TLS-forwarding, Twilio-signature, adapter, and capacity booleans. `[karaoke] media socket rejected` reports attempt/capacity rejection, and `[karaoke] media frame rejected code=...` identifies malformed order, identity, format, sequence, chunk, timestamp, payload, or session-limit failure. Ensure the proxy preserves the exact query-free `/karaoke-media` URL, `X-Twilio-Signature`, and ACA `X-Forwarded-Proto: https` semantics.
+
+Do not reject a stream solely because Twilio's bounded `connected` metadata says `Call`/`1.0` rather than `Call`/`1.0.0`; the application intentionally treats those metadata fields as informational. Failures after `[karaoke] score finalized ... accepted=false` indicate stale identity or lyric-provider startup/protocol/finalization failure. Check the Deepgram project's key, credit, limits, region, usage, and Auto-Load/payment settings.
+
+### Karaoke timing or scores are consistently early or late
+
+First distinguish display-only drift from authoritative phone scoring. The local guide visual offset affects only the browser's lyric presentation and is not `KARAOKE_CALIBRATION_OFFSET_MS`. Fix song-specific chart errors in the persistent timing editor; use the global calibration variable only when aggregate handset evidence across songs and singers has one consistent transport bias. Confirm the deployed value in `/healthz` and the `calibrationMs` field in `[karaoke] score finalized`.
+
+### Timing edits disappear or do not save
+
+Confirm `KARAOKE_TIMINGS_PATH` resolves through `/app/data` to Azure Files and the display uses a future performance, not one already in progress. Supply `EDITOR_TOKEN` when prompted. A `412` requires a reload because the ETag changed. Check for `[karaoke-timings] invalid live config; using compiled timings`; malformed or missing live data deliberately falls back to compiled charts.
+
 ### The caller hears the right game but cannot join
 
-Voice Racer may already have two players. Voice Monsters may have two occupied slots. Voice Fighter may have two players or may already be past fighter selection. Voice Karaoke may already have its one microphone slot occupied. End stale calls or reset the shared display before retrying.
+Voice Racer may already have two players. Voice Monsters may have two occupied slots. Voice Fighter may have two players or may already be past fighter selection. Voice Karaoke may already have its one microphone slot occupied. Voice Trivia may already have four callers or may be past `lobby`. End stale calls or reset the shared display before retrying.
 
 ### Speech works only after the caller finishes talking
 
@@ -293,7 +387,7 @@ Inspect the returned TwiML for `interruptible="any"` and `reportInputDuringAgent
 
 ### Menus are quiet without an OpenAI key
 
-Voice Racer and Voice Monsters keep deterministic name, number, advance, help, and gameplay paths without OpenAI. English open-ended questions and recommendations require `OPENAI_API_KEY`. Portuguese sessions never send free-form prompts or replies to OpenAI. Voice Fighter does not use the OpenAI host.
+Voice Racer and Voice Monsters keep deterministic name, number, advance, help, and gameplay paths without OpenAI. English open-ended questions and recommendations require `OPENAI_API_KEY`. Portuguese sessions never send free-form prompts or replies to OpenAI. Voice Fighter and Voice Trivia do not use the OpenAI host; Trivia reads only its validated question bank at runtime.
 
 ### The displayed phone number is missing
 

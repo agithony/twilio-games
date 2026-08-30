@@ -37,7 +37,13 @@ async function harness(configure?: (input: Record<string, any>) => void) {
   let sequence = 0;
   let scheduled: { handle: NodeJS.Timeout; callback: () => void; delayMs: number } | null = null;
   const removedMatches: Array<{ game: string; roomCode: string; removal: 'retire'|'abort' }> = [];
-  const participantUpdates:Array<{game:string;roomCode:string;count:number;activeEnginePlayerIds:readonly string[]}>=[];
+  const participantUpdates: Array<{
+    game: string;
+    roomCode: string;
+    count: number;
+    activeEnginePlayerIds: readonly string[];
+    participantSlots: readonly (string | null)[];
+  }> = [];
   const runtimeErrors: unknown[] = [];
   const service = new ArcadeService({
     store,
@@ -71,7 +77,9 @@ async function harness(configure?: (input: Record<string, any>) => void) {
       if (scheduled?.handle === handle) scheduled = null;
     },
     onMatchRemoved: (game, roomCode, removal) => removedMatches.push({ game, roomCode, removal }),
-    onMatchParticipantsChanged:(game,roomCode,count,activeEnginePlayerIds)=>participantUpdates.push({game,roomCode,count,activeEnginePlayerIds}),
+    onMatchParticipantsChanged: (game, roomCode, count, activeEnginePlayerIds, participantSlots) => {
+      participantUpdates.push({ game, roomCode, count, activeEnginePlayerIds, participantSlots });
+    },
     onError: error => runtimeErrors.push(error),
   });
   return {
@@ -176,12 +184,14 @@ describe('ArcadeStationRuntime', () => {
     });
 
     expect(h.participantUpdates).toEqual([
-      {game:'racer',roomCode:'DROP',count:2,activeEnginePlayerIds:[]},
-      {game:'racer',roomCode:'DROP',count:1,activeEnginePlayerIds:[]},
+      {game:'racer',roomCode:'DROP',count:2,activeEnginePlayerIds:[],participantSlots:[null,null]},
+      {game:'racer',roomCode:'DROP',count:1,activeEnginePlayerIds:[],participantSlots:[null]},
     ]);
     h.participantUpdates.length = 0;
     await runtime.dropAdmittedEntry(firstDropInput);
-    expect(h.participantUpdates).toEqual([{game:'racer',roomCode:'DROP',count:1,activeEnginePlayerIds:[]}]);
+    expect(h.participantUpdates).toEqual([{
+      game:'racer',roomCode:'DROP',count:1,activeEnginePlayerIds:[],participantSlots:[null],
+    }]);
   });
 
   it('recovers an overdue recruiting deadline and advances later deadlines deterministically', async () => {
@@ -513,12 +523,65 @@ describe('ArcadeStationRuntime', () => {
     expect(replaced?.matches[replaced.station.activeMatchId!]!.launchGeneration).toBe(2);
     expect(h.participantUpdates.at(-1)).toEqual({
       game:'racer',roomCode:'AUTO',count:2,activeEnginePlayerIds:[`legacy:${admitted[0]}`],
+      participantSlots:[`legacy:${admitted[0]}`,null],
     });
     expect(h.scheduled()?.delayMs).toBe(120_000);
     h.setTime(T0+240_000);
     runtime.markParticipantConnected(launching.match!.overflowReadyEntryIds[0]!);
     await runtime.flush();
     expect(h.scheduled()?.delayMs).toBe(120_000);
+    await runtime.stop();
+  });
+
+  it('projects indexed slots through middle replacement and later capacity shrink', async () => {
+    const h = await harness();
+    for (let index = 1; index <= 5; index++) {
+      await h.service.identifyCoinOnly({ playerId: `slot-p${index}`, idempotencyKey: `slot-identify:${index}` });
+      await h.service.insertStationCoin({
+        stationId: 'expo', playerId: `slot-p${index}`, idempotencyKey: `slot-coin:${index}`,
+      });
+    }
+    const runtime = h.makeRuntime();
+    await runtime.start();
+    await runtime.flush();
+    const recruiting = await h.service.getStation('expo');
+    const selecting = await h.service.closeStationRecruiting({
+      stationId: 'expo', expectedRevision: recruiting!.station.revision,
+      idempotencyKey: 'slot-close', authorization: AUTHORIZATION,
+    });
+    const locked = await h.service.selectStationGame({
+      stationId: 'expo', expectedRevision: selecting.station.revision,
+      idempotencyKey: 'slot-select', authorization: AUTHORIZATION,
+      game: 'trivia', engineRoomCode: 'SLOT-PROJECTION',
+    });
+    const original = locked.match!.participantReadyEntryIds;
+    expect(original).toHaveLength(4);
+    original.forEach((readyEntryId, index) => runtime.markParticipantConnected(readyEntryId, `engine-${index}`));
+    await runtime.flush();
+
+    runtime.markParticipantDisconnected(original[1]!);
+    const replaced = await runtime.dropAdmittedEntry({
+      readyEntryId: original[1]!, expectedRevision: locked.station.revision,
+      idempotencyKey: 'slot-replace-middle', authorization: OPERATOR_AUTHORIZATION,
+      reason: 'replace middle no-show',
+    });
+    expect(h.participantUpdates.at(-1)).toEqual({
+      game: 'trivia', roomCode: 'SLOT-PROJECTION', count: 4,
+      activeEnginePlayerIds: ['engine-0', 'engine-2', 'engine-3'],
+      participantSlots: ['engine-0', null, 'engine-2', 'engine-3'],
+    });
+
+    runtime.markParticipantDisconnected(original[0]!);
+    await runtime.dropAdmittedEntry({
+      readyEntryId: original[0]!, expectedRevision: replaced.station.revision,
+      idempotencyKey: 'slot-shrink-with-pending', authorization: OPERATOR_AUTHORIZATION,
+      reason: 'shrink while replacement is pending',
+    });
+    expect(h.participantUpdates.at(-1)).toEqual({
+      game: 'trivia', roomCode: 'SLOT-PROJECTION', count: 3,
+      activeEnginePlayerIds: ['engine-2', 'engine-3'],
+      participantSlots: [null, 'engine-2', 'engine-3'],
+    });
     await runtime.stop();
   });
 
@@ -649,7 +712,7 @@ describe('ArcadeStationRuntime', () => {
       input.station.timings.postGameRecruitingSeconds = 20;
       input.station.games.racer.enabled = false;
       input.station.automaticSelection.policy = 'fixed_priority';
-      input.station.automaticSelection.order = ['fighter', 'monsters', 'racer', 'karaoke'];
+      input.station.automaticSelection.order = ['fighter', 'monsters', 'racer', 'karaoke', 'trivia'];
     });
     await h.service.identifyCoinOnly({ playerId: 'p1', idempotencyKey: 'identify:p1' });
     await h.service.insertStationCoin({ stationId: 'expo', playerId: 'p1', idempotencyKey: 'coin:p1' });
@@ -677,7 +740,7 @@ describe('ArcadeStationRuntime', () => {
       stationId: 'expo', expectedRevision: recruiting!.station.revision,
       idempotencyKey: 'vote-close', authorization: AUTHORIZATION,
     });
-    expect(chooseStationGame((await h.service.getStation('expo'))!)).toBe('racer');
+    expect(chooseStationGame((await h.service.getStation('expo'))!)).toBe('trivia');
     await h.service.recordStationGameChoice({
       stationId: 'expo', playerId: 'p1', game: 'racer', idempotencyKey: 'vote-p1',
     });
@@ -686,7 +749,7 @@ describe('ArcadeStationRuntime', () => {
     });
     const fixed = JSON.parse(JSON.stringify(DEFAULT_ARCADE_CONFIG)) as Record<string, any>;
     fixed.station.automaticSelection.policy = 'fixed_priority';
-    fixed.station.automaticSelection.order = ['fighter', 'monsters', 'racer', 'karaoke'];
+    fixed.station.automaticSelection.order = ['fighter', 'monsters', 'racer', 'karaoke', 'trivia'];
     const fixedConfig = parseArcadeConfig(fixed);
     expect(chooseStationGame((await h.service.getStation('expo'))!, fixedConfig.station)).toBe('racer');
 
@@ -709,7 +772,7 @@ describe('ArcadeStationRuntime', () => {
         historical: { game: 'monsters' },
       },
     } as unknown as typeof tied;
-    fixed.station.automaticSelection.order = ['racer', 'monsters', 'fighter', 'karaoke'];
+    fixed.station.automaticSelection.order = ['racer', 'monsters', 'fighter', 'karaoke', 'trivia'];
     fixed.station.automaticSelection.policy = 'round_robin';
     const roundRobin = parseArcadeConfig(fixed);
     expect(chooseStationGame(withPreviousMonsters, roundRobin.station)).toBe('fighter');

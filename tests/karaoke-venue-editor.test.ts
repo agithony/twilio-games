@@ -6,8 +6,9 @@ const editor = readFileSync(new URL('../client/editor/karaoke-venue-editor.ts', 
 const timingEditor = readFileSync(new URL('../client/editor/karaoke-timing-editor.ts', import.meta.url), 'utf8');
 
 describe('Voice Karaoke venue editor surface', () => {
-  it('is linked from the unified hub and preserves editor tokens in navigation', () => {
-    expect(hub).toContain('href="?game=karaoke${tokenQ}"');
+  it('is linked from the unified hub without propagating editor tokens', () => {
+    expect(hub).toContain('href="?game=karaoke"');
+    expect(hub).not.toContain('tokenQ');
     expect(hub).toContain("game === 'karaoke'");
     expect(hub).toContain("import('./karaoke-venue-editor')");
     expect(hub).toContain("import('./karaoke-timing-editor')");

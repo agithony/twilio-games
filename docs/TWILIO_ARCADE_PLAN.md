@@ -6,15 +6,23 @@
 > **Operational truth:** Use the [README](../README.md), [Deployment](DEPLOYMENT.md), and
 > [Infrastructure Setup](INFRA_SETUP.md) for current behavior and operations.
 >
-> **Current implementation delta (2026-07-25):** Direct Conversation Relay owns Voice. The signed
+> **Earlier implementation delta (2026-07-25):** Direct Conversation Relay owns Voice. The signed
 > `POST /sms` webhook owns deterministic SMS/WhatsApp commands and immediate replies; Conversation
 > Orchestrator and TAC enrich Conversation Memory only. The station uses one individual FIFO ready
 > line, admits up to two humans to Racer, Monsters, or Fighter, and keeps overflow in FIFO order.
 > Assigned callers are routed to stable personal slots. All games advance setup only when either
 > caller speaks the next phase command after all required choices.
 > WhatsApp call-now uses the approved localized
-> Phone CTA when configured. All three games report factual authoritative results, and staff can reset
+> Phone CTA when configured. Those games reported factual authoritative results, and staff could reset
 > the Racer leaderboard for one selected map.
+>
+> **Current implementation delta (2026-08-29):** The canonical registry contains five playable games.
+> Racer, Monsters, and Fighter each admit up to two humans; Karaoke admits one; Trivia admits one to
+> four. Karaoke and Trivia have no AI fallback. All five participate in station voting, automatic
+> selection, launch routing, one-coin-per-human validation, localized factual results, and analytics.
+> Voice Trivia runs localized eight-question rounds from a protected 200-question `en-US`/`pt-BR`
+> bank and persists normalized all-time/category leaderboards. Authenticated staff can reset Racer map,
+> Karaoke song, and Trivia board records.
 
 **Original plan date:** 2026-07-20
 **Status:** Product-direction roadmap and decision history; implementation checkpoints below are historical and incomplete
@@ -46,9 +54,10 @@ The intended event journey is:
 5. The visitor joins the virtual line for the one physical arcade display.
 6. When promoted, the visitor checks in and one coin is reserved.
 7. The coin is redeemed only when the match actually starts.
-8. The current station admits the first two eligible players from one FIFO ready line for every
-   playable game. Overflow keeps its reservation and FIFO priority, and can replace a launch-time
-   no-show automatically.
+8. The current station admits the oldest eligible players from one FIFO ready line up to the selected
+   game's registered capacity: two for Racer, Monsters, and Fighter; one for Karaoke; and four for
+   Trivia. Overflow keeps its reservation and FIFO priority, and can replace a launch-time no-show
+   automatically.
 9. After a match, the station outbox sends a localized factual result summary and optional wallet
    balance.
    Browser challenges provide one-click opportunities to earn more coins; conversational rematch
@@ -93,11 +102,11 @@ These decisions are approved unless explicitly revisited later.
 | Challenge reward | Configurable; default one coin per unique player/challenge |
 | Social challenges | Track the click, not whether the visitor actually followed the account |
 | Queue capacity | Independent of game capacity; configurable high limit, default 250 waiting players |
-| Current ready line | One individual FIFO line; up to two humans play and overflow keeps original priority |
+| Current ready line | One individual FIFO line; the selected game's one-to-four-human capacity applies and overflow keeps original priority |
 | Roadmap queue fairness | Party, readiness, capacity, and one deferral adjustment remain historical roadmap concepts |
 | Shared display privacy | Show first names/aliases and queue status only; never email, company, or phone |
 | Post-game | Configurable SMS/WhatsApp factual results notice with optional wallet balance |
-| Racer leaderboard maintenance | Authenticated staff can reset stored results for one selected map with a reason |
+| Leaderboard maintenance | Authenticated staff can reset Racer records by map, Karaoke records by song, and Trivia records by all-time/category board with a reason |
 | Intelligence | Configurable call analysis; advisory only |
 | Runtime changes | Stored centrally, versioned, audited, and pushed live without deployment |
 
@@ -273,6 +282,7 @@ authenticated API and admin screen.
       "racer": 1,
       "monsters": 1,
       "fighter": 1,
+      "karaoke": 1,
       "trivia": 1
     },
     "chargePolicy": "per_player",
@@ -475,7 +485,7 @@ AI opponents and the shared spectator display never consume coins.
 
 The current station accepts only `per_player` and `free`. In `per_player`, every admitted human costs
 exactly one coin and `startingBalance` must be at least one so every new player can immediately enter
-the ready pool. `defaultGameCost` and every game-specific cost, including future-facing Trivia, must
+the ready pool. `defaultGameCost` and every game-specific cost, including Trivia, must
 equal `1`; the validator rejects rather than ignores any other value. Free play uses a zero starting
 balance and does not create wallet grants or reservations.
 
@@ -581,7 +591,8 @@ The approved default is one coin per human participant:
 | Voice Racer | 2 | 1 (prefer 2) | Optional race with fewer humans | One per human |
 | Voice Fighter | 2 | 1 | AI fighter | One per human |
 | Voice Monsters | 2 | 1 | AI monster | One per human |
-| Voice Trivia | Configurable | Configurable | None by default | One per human |
+| Voice Karaoke | 1 | 1 | None | One per human |
+| Voice Trivia | 4 | 1 | None | One per human |
 
 ### 10.3 Party Behavior
 
@@ -755,7 +766,7 @@ estimated wait =
   + moving average setup/results duration
 ```
 
-Track separate moving averages for Racer, Fighter, Monsters, and future games. Show a range rather
+Track separate moving averages for Racer, Monsters, Fighter, Karaoke, and Trivia. Show a range rather
 than false precision when confidence is low.
 
 ### 11.8 Player and Display Status
@@ -875,9 +886,10 @@ Post-game wallet: 0
 
 ## 13. Post-Game Delivery
 
-The implemented station completion notification uses normalized authoritative results from all three
+The implemented station completion notification uses normalized authoritative results from all five
 playable games. It sends factual per-player outcomes over configured SMS and/or WhatsApp, including
-Racer place and time and Monsters/Fighter win or loss when supplied by the engine.
+Racer place and time, Monsters/Fighter win or loss, Karaoke score, and Trivia rank plus normalized
+score when supplied by the engine.
 `includeCoinBalance` optionally adds the authoritative available wallet balance. Enabled delivery
 requires at least one selected channel, and every selected channel must also be enabled globally.
 
@@ -894,8 +906,9 @@ activating them; new defaults set them to `false`.
 
 The operator console reports delivery as off or enabled with the selected result, balance, and challenge options.
 WhatsApp outbound messages must follow applicable opt-in and template/session requirements.
-The same console can reset persisted Racer leaderboard records for one selected map after an
-authenticated operator supplies a reason. This is data maintenance, not a post-game message option.
+The same console can reset persisted Racer records for one selected map, Karaoke records for one
+selected song, or Trivia records for one all-time/category board after an authenticated operator
+supplies a reason. This is data maintenance, not a post-game message option.
 
 ## 14. Conversation Intelligence
 

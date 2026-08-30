@@ -63,6 +63,19 @@ describe('public visitor URLs', () => {
     expect(url.searchParams.has('hostToken')).toBe(false);
     expect(url.hash).toBe('');
   });
+
+  it('builds the promoted Trivia station launch route', () => {
+    const target = stationLaunchUrl({
+      phase: 'LAUNCHING', revision: 1, activeGame: 'trivia', deadline: null,
+      currentReadyCount: 4, nextReadyCount: 0, roster: [], games: [],
+      launch: { game: 'trivia', route: '/trivia.html', roomCode: 'QUIZ', matchId: 'MATCH', generation: 1 },
+      results: [], resultSource: null, resultsHeld: false,
+    }, 'ARCADE-01', 'pt-BR');
+    const url = new URL(target!);
+    expect(url.pathname).toBe('/trivia.html');
+    expect(url.searchParams.get('room')).toBe('QUIZ');
+    expect(url.searchParams.get('locale')).toBe('pt-BR');
+  });
 });
 
 describe('display token session storage', () => {

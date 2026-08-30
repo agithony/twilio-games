@@ -4,7 +4,12 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import WebSocket from 'ws';
 import type { ArcadeApi } from '../server/arcade-api';
-import { HttpServer, karaokeBrowserTestingAllowed, resolveVoiceRelayToken } from '../server/http-server';
+import {
+  HttpServer,
+  karaokeBrowserTestingAllowed,
+  resolveVoiceRelayToken,
+  triviaLocalKeyboardTestingAllowed,
+} from '../server/http-server';
 import type { SupportedLocale } from '../shared/i18n/locales';
 import { monsterName } from '../shared/i18n/content';
 import { rosterEntries } from '../shared/monster-roster';
@@ -105,6 +110,14 @@ describe('Arcade Voice routing', () => {
     expect(karaokeBrowserTestingAllowed('test', 'http://127.0.0.1:8081')).toBe(true);
     expect(karaokeBrowserTestingAllowed('production', 'http://localhost:8081')).toBe(false);
     expect(karaokeBrowserTestingAllowed('development', 'https://games.example')).toBe(false);
+  });
+  it('keeps hidden Trivia keyboard testing on the standalone loopback default room only', () => {
+    expect(triviaLocalKeyboardTestingAllowed('development', 'http://localhost:8081', '4821', false)).toBe(true);
+    expect(triviaLocalKeyboardTestingAllowed('test', 'http://127.0.0.1:8081', '4821', false)).toBe(true);
+    expect(triviaLocalKeyboardTestingAllowed('production', 'http://localhost:8081', '4821', false)).toBe(false);
+    expect(triviaLocalKeyboardTestingAllowed('development', 'https://games.example', '4821', false)).toBe(false);
+    expect(triviaLocalKeyboardTestingAllowed('development', 'http://localhost:8081', 'OTHER', false)).toBe(false);
+    expect(triviaLocalKeyboardTestingAllowed('development', 'http://localhost:8081', '4821', true)).toBe(false);
   });
   it('never reuses the Twilio webhook secret as a Relay bearer outside loopback development', () => {
     expect(resolveVoiceRelayToken('https://games.example', undefined, 'twilio-secret', 'production')).toBe('');
@@ -231,6 +244,29 @@ describe('Arcade Voice routing', () => {
     display.close();
   });
 
+  it('never promotes an authenticated station Trivia display to standalone recency after pause', async () => {
+    const { port } = await harness({
+      active: true,
+      activeChecks: [true, false],
+      standaloneVoiceEnabled: true,
+    });
+    const display = new WebSocket(`ws://127.0.0.1:${port}/trivia?display=1`, {
+      headers: { Origin: 'http://localhost' },
+    });
+    await new Promise<void>((resolve, reject) => {
+      display.once('open', resolve);
+      display.once('error', reject);
+    });
+    display.send(JSON.stringify({ type: 'display_auth', roomCode: 'STATION-TRIVIA', token: DISPLAY_TOKEN }));
+    display.send(JSON.stringify({ type: 'spectate', roomCode: 'STATION-TRIVIA' }));
+    await new Promise(resolve => setTimeout(resolve, 20));
+
+    const xml = await (await incomingCall(port)).text();
+    expect(xml).toContain('voice play is unavailable');
+    expect(xml).not.toContain('<ConversationRelay');
+    display.close();
+  });
+
   it('rejects direct nonstation Karaoke players while standalone mode is disabled', async () => {
     const { port } = await harness({ active: false, standaloneVoiceEnabled: false });
     const player = new WebSocket(`ws://127.0.0.1:${port}/karaoke`, {
@@ -313,6 +349,22 @@ describe('Arcade Voice routing', () => {
     expect(xml).toContain('<Parameter name="roomCode" value="KARAOKE-ROOM"');
     expect(xml).toContain('Never Gonna Give You Up');
     expect(xml).not.toContain('Luz no Ritmo');
+  });
+
+  it('routes an admitted Trivia caller with quiz/category/answer hints', async () => {
+    const route: NonNullable<StationVoiceRoute> = {
+      game: 'trivia', roomCode: 'TRIVIA-ROOM', matchId: 'trivia-match', launchGeneration: 3,
+      admitted: true, readyEntryId: 'trivia-ready', participantIndex: 2, participantCount: 4,
+    };
+    const { port } = await harness({ active: true, route, locale: 'en-US' });
+    const xml = await (await incomingCall(port, { callSid: 'CA-trivia-route' })).text();
+
+    expect(xml).toContain('<ConversationRelay');
+    expect(xml).toContain('<Parameter name="game" value="trivia"');
+    expect(xml).toContain('<Parameter name="roomCode" value="TRIVIA-ROOM"');
+    expect(xml).toContain('quiz, trivia, category, mixed, answer, letter');
+    expect(xml).toContain('general knowledge');
+    expect(xml).toContain('science');
   });
 
   it('returns unavailable TwiML when active station routing fails', async () => {
