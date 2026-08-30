@@ -223,10 +223,13 @@ function renderResultsFallback(root:HTMLElement,results:PublicStation['results']
     const row=document.createElement('div');row.className=`station-result-row${result.won?' winner':''}`;
     const rank=document.createElement('strong');rank.textContent=result.rank===null?'—':`#${result.rank}`;
     const name=document.createElement('span');name.textContent=result.displayName;
-    const time=document.createElement('time');time.textContent=result.durationSeconds!==null&&result.durationSeconds>0
-      ?`${result.durationSeconds.toFixed(2)}s`
-      :result.completed?(locale==='pt-BR'?'Concluído':'Complete'):'DNF';
-    row.append(rank,name,time);root.append(row);
+    const metric=document.createElement('span');metric.className='station-result-metric';
+    metric.textContent=result.score!==null
+      ?`${result.score.toLocaleString(locale)} pts`
+      :result.durationSeconds!==null&&result.durationSeconds>0
+        ?`${result.durationSeconds.toFixed(2)}s`
+        :result.completed?(locale==='pt-BR'?'Concluído':'Complete'):'DNF';
+    row.append(rank,name,metric);root.append(row);
   }
   const hold=document.createElement('p');hold.className='station-results-hold';hold.textContent=held
     ?(locale==='pt-BR'?'A cabine manteve o placar na tela.':'The booth is holding the scoreboard on screen.')
@@ -262,13 +265,15 @@ function buildRail(): {
   instructions: HTMLElement;
 } {
   const portuguese = locale === 'pt-BR';
+  const railLabel = portuguese ? 'Entrar na próxima partida do Twilio Games' : 'Join the next Twilio Games match';
+  const qrLabel = portuguese ? 'Código QR para entrar no Twilio Games' : 'Join Twilio Games QR code';
   const root = document.createElement('aside');
   root.className = 'station-rail';
-  root.setAttribute('aria-label', 'Join the next Twilio Games match');
+  root.setAttribute('aria-label', railLabel);
   root.innerHTML = `
     <div class="station-rail-brand"><img src="/brand/Twilio_Logo_Bug_White.svg" alt=""><strong>Twilio Games</strong></div>
     <div class="station-rail-copy"><span>${portuguese ? 'Próximo jogo' : 'Next game'}</span><h2>${portuguese ? 'Escaneie para entrar' : 'Scan to join'}</h2><p>${portuguese ? 'Entre pelo WhatsApp e responda <b>MOEDA</b> quando estiver na tela.' : 'Start on your phone, then reply <b>COIN</b> when you are at the screen.'}</p></div>
-    <div class="station-rail-qr"><img alt="Join Twilio Games QR code"></div>
+    <div class="station-rail-qr" role="img" aria-label="${qrLabel}"><img alt=""></div>
     <div class="station-rail-count"><strong>0</strong><span>${portuguese ? 'prontos para o próximo' : 'ready next'}</span></div>
     <div class="station-rail-status" role="status">${portuguese ? 'Conectando' : 'Connecting to station'}</div>`;
   return {

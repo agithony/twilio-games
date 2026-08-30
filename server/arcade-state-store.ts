@@ -34,9 +34,9 @@ import {
 import type { ArcadeGame } from '../shared/arcade-config';
 import { isArcadeGame, isPlayableArcadeGame } from '../shared/arcade-games';
 
-// Activate v10 writes only after every rollback target can read v10. The staged deployment owns that
-// compatibility gate; this store deliberately does not invent a lossy v10-to-v9 downmigration.
-export const ARCADE_STATE_SCHEMA_VERSION = 10 as const;
+// Activate v11 writes only after every rollback target can read v11. The staged deployment owns that
+// compatibility gate; this store deliberately does not invent a lossy v11-to-v10 downmigration.
+export const ARCADE_STATE_SCHEMA_VERSION = 11 as const;
 export const ARCADE_STATE_MAX_FILE_BYTES = 64 * 1024 * 1024;
 export const ARCADE_STATE_MAX_PLAYERS = 100_000;
 export const ARCADE_STATE_MAX_QUEUE_ENTRIES = 100_000;
@@ -1719,14 +1719,55 @@ function migrateArcadeState(state: unknown): unknown {
     );
     current = { ...schemaEight, schemaVersion: 9, outboundNotifications };
   }
-  if (!isRecord(current) || current.schemaVersion !== 9) return current;
-  const schemaNine = requireExactRecord(current, [
+  if (isRecord(current) && current.schemaVersion === 9) {
+    const schemaNine = requireExactRecord(current, [
+      'schemaVersion', 'players', 'wallets', 'queueEntries', 'queueEntryConfigs',
+      'queueEvents', 'idempotencyRecords', 'stations', 'stationRounds', 'stationReadyEntries',
+      'stationMatches', 'channelAddresses', 'messagingDrafts', 'inboundMessages',
+      'stationReadyChannels', 'outboundNotifications', 'messagingAuditEvents', 'stationControlEvents',
+    ], '$');
+    current = { ...schemaNine, schemaVersion: 10 };
+  }
+  if (!isRecord(current) || current.schemaVersion !== 10) return current;
+  const schemaTen = requireExactRecord(current, [
     'schemaVersion', 'players', 'wallets', 'queueEntries', 'queueEntryConfigs',
     'queueEvents', 'idempotencyRecords', 'stations', 'stationRounds', 'stationReadyEntries',
     'stationMatches', 'channelAddresses', 'messagingDrafts', 'inboundMessages',
     'stationReadyChannels', 'outboundNotifications', 'messagingAuditEvents', 'stationControlEvents',
   ], '$');
-  return { ...schemaNine, schemaVersion: ARCADE_STATE_SCHEMA_VERSION };
+  assertNoPreV11TriviaStationIdentity(schemaTen);
+  return { ...schemaTen, schemaVersion: ARCADE_STATE_SCHEMA_VERSION };
+}
+
+function assertNoPreV11TriviaStationIdentity(state: Record<string, unknown>): void {
+  const hasTriviaIdentity = (value: unknown): boolean => {
+    if (!isRecord(value)) return false;
+    if (['activeGame', 'selectedGame', 'game', 'gameChoice'].some(field => value[field] === 'trivia')) return true;
+    const choices = value.gameChoicesByReadyEntryId;
+    return isRecord(choices) && Object.values(choices).includes('trivia');
+  };
+  const collections = ['stations', 'stationRounds', 'stationMatches'] as const;
+  for (const collection of collections) {
+    const values = requireRecord(state[collection], collection);
+    if (Object.values(values).some(hasTriviaIdentity)) {
+      throw new ArcadeStateStoreError(
+        'INVALID_STATE',
+        `${collection} contains Trivia station identity before schema v11`,
+      );
+    }
+  }
+  const records = requireRecord(state.idempotencyRecords, 'idempotencyRecords');
+  for (const [key, item] of Object.entries(records)) {
+    const record = requireRecord(item, `idempotencyRecords.${key}`);
+    if (!STATION_MUTATION_RESULT_OPERATIONS.has(String(record.operation))) continue;
+    const result = isRecord(record.result) ? record.result : {};
+    if (hasTriviaIdentity(result) || ['station', 'round', 'match'].some(field => hasTriviaIdentity(result[field]))) {
+      throw new ArcadeStateStoreError(
+        'INVALID_STATE',
+        `idempotencyRecords.${key}.result contains Trivia station identity before schema v11`,
+      );
+    }
+  }
 }
 
 function cloneJson<T>(value: T): T {

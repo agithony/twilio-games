@@ -9,7 +9,7 @@ import {
 describe('Arcade game registry', () => {
   it('defines the approved playable capacities from one source', () => {
     expect(PLAYABLE_ARCADE_GAMES.map(game => [game.id, game.humanCapacity])).toEqual([
-      ['racer', 2], ['monsters', 2], ['fighter', 2], ['karaoke', 1],
+      ['racer', 2], ['monsters', 2], ['fighter', 2], ['karaoke', 1], ['trivia', 4],
     ]);
     expect(arcadeGameDefinition('racer').route).toBe('/play.html');
     expect(arcadeGameDefinition('karaoke')).toMatchObject({
@@ -17,9 +17,11 @@ describe('Arcade game registry', () => {
     });
   });
 
-  it('keeps Trivia visible as future work but not station-selectable', () => {
-    expect(ARCADE_GAME_DEFINITIONS.trivia).toMatchObject({ playable: false, route: null });
-    expect(isPlayableArcadeGame('trivia')).toBe(false);
+  it('promotes Trivia as a routed station game without an AI fallback', () => {
+    expect(ARCADE_GAME_DEFINITIONS.trivia).toMatchObject({
+      playable: true, route: '/trivia.html', humanCapacity: 4, minimumHumans: 1, aiFallback: false,
+    });
+    expect(isPlayableArcadeGame('trivia')).toBe(true);
     expect(isPlayableArcadeGame('racer')).toBe(true);
     expect(isPlayableArcadeGame('karaoke')).toBe(true);
     expect(isPlayableArcadeGame('__proto__')).toBe(false);

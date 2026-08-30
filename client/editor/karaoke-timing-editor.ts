@@ -69,14 +69,12 @@ export class KaraokeTimingEditor {
     for (const song of KARAOKE_RUNTIME_SONGS) {
       this.editable.set(song.id, song.chart.words.map(word => ({ ...word })));
     }
-    const token = params.get('token');
-    const tokenQuery = token ? `&token=${encodeURIComponent(token)}` : '';
     this.root.innerHTML = `
       <div class="kte">
         <header>
           <strong>Voice Karaoke <span>Word Timing</span></strong>
           <a href="/editor">All editors</a>
-          <nav aria-label="Karaoke editor tools"><a href="?game=karaoke${tokenQuery}">Venue</a><a class="active" href="?game=karaoke&tool=timing${tokenQuery}">Word timing</a></nav>
+          <nav aria-label="Karaoke editor tools"><a href="?game=karaoke">Venue</a><a class="active" href="?game=karaoke&tool=timing">Word timing</a></nav>
           <label>Song <select id="ktSong">${KARAOKE_RUNTIME_SONGS.map(song => `<option value="${song.id}">${escapeHtml(song.title)}</option>`).join('')}</select></label>
           <span class="grow"></span><i id="ktStatus" role="status" aria-live="polite">Loading timings...</i>
           <button id="ktSave" class="save" disabled>Save timings</button>

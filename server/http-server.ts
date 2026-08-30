@@ -10,6 +10,9 @@ import { GameServer } from './game-server';
 import { BattleServer } from './battle-server';
 import { FighterServer } from './fighter-server';
 import { KaraokeServer } from './karaoke-server';
+import { TriviaServer, type TriviaServerOptions } from './trivia-server';
+import { TriviaVoiceSession, type TriviaVoiceSnapshot } from './trivia-voice';
+import { TriviaContentStore } from './trivia-content-store';
 import {
   KaraokeMediaRuntime,
   type KaraokeMediaAttempt,
@@ -34,6 +37,16 @@ import {
   topKaraokeEntries,
   type KaraokeLeaderboardEntry,
 } from '../shared/karaoke-leaderboard-store';
+import {
+  TRIVIA_ALL_TIME_BOARD_ID,
+  TRIVIA_BOARD_IDS,
+  TriviaLeaderboardStore,
+  isTriviaBoardId,
+  parseTriviaLeaderboardStrict,
+  type PublicTriviaLeaderboardEntry,
+  type StoredTriviaLeaderboardEntry,
+  type TriviaBoardId,
+} from '../shared/trivia-leaderboard-store';
 import { speechSafeText } from '../shared/speech-text';
 import { SmsConcierge, type ConciergeRoom } from './sms-concierge';
 import { OpenAiClient, NullLlmClient, type LlmClient, type LlmTurn } from './llm';
@@ -56,6 +69,14 @@ import type { ArcadeTacGateway } from './arcade-tac-gateway';
 import { DEFAULT_LOCALE, SUPPORTED_LOCALES, resolveLocale, type SupportedLocale } from '../shared/i18n/locales';
 import { KARAOKE_COUNTDOWN_MS, type KaraokeResult } from '../shared/karaoke-protocol';
 import { isSafeKaraokeId, KARAOKE_SONG_DURATION_MS } from '../shared/karaoke';
+import {
+  TRIVIA_CATEGORY_IDS,
+  TRIVIA_MAX_JSON_LENGTH,
+  isSafeTriviaId,
+  parseTriviaQuestionBankJson,
+  type TriviaQuestionBank,
+} from '../shared/trivia';
+import { parseTriviaClientMessage, type TriviaResult } from '../shared/trivia-protocol';
 import { KARAOKE_DEVELOPMENT_SONGS } from '../shared/karaoke-songs';
 import {
   EMPTY_KARAOKE_TIMING_CONFIG,
@@ -93,6 +114,11 @@ const BATTLE_VOICE_RECONNECT_GRACE_MS = 30_000;
 const FIGHTER_VOICE_RECONNECT_GRACE_MS = 30_000;
 const RACER_VOICE_RECONNECT_GRACE_MS = 30_000;
 const KARAOKE_VOICE_RECONNECT_GRACE_MS = 30_000;
+const TRIVIA_VOICE_RECONNECT_GRACE_MS = 30_000;
+export const TRIVIA_PUBLIC_DISPLAY_LIMIT = 8;
+export const TRIVIA_PENDING_CONNECTION_LIMIT = 8;
+export const TRIVIA_IDENTIFICATION_TIMEOUT_MS = 5_000;
+const TRIVIA_RESULT_PERSISTENCE_LIMIT = 256;
 const KARAOKE_MEDIA_GRACE_SECONDS = 5;
 const KARAOKE_FAILURE_LOCALE_RETENTION_MS = 5 * 60_000;
 const KARAOKE_HANDOFF_RESPONSE_RETENTION_MS = 5 * 60_000;
@@ -181,7 +207,15 @@ interface KaraokeVoiceCallBinding {
   completed: boolean;
   completionRetries: number;
 }
-type MountedVoiceGame = 'racer' | 'battle' | 'fighter' | 'karaoke';
+interface TriviaVoiceCallBinding {
+  code: string;
+  playerId: string;
+  locale: SupportedLocale;
+  participantIndex: number | null;
+  activeSession: TriviaVoiceSession | null;
+  leaveTimer: ReturnType<typeof setTimeout> | null;
+}
+type MountedVoiceGame = 'racer' | 'battle' | 'fighter' | 'karaoke' | 'trivia';
 
 export class HttpServer {
   private server: http.Server;
@@ -189,13 +223,18 @@ export class HttpServer {
   private battle: BattleServer;
   private fighter: FighterServer;
   private karaoke: KaraokeServer;
+  private trivia: TriviaServer;
+  private readonly triviaContent: TriviaContentStore;
+  private readonly triviaLeaderboard: TriviaLeaderboardStore;
   private karaokeMedia: KaraokeMediaRuntime;
   private karaokeMediaWss: WebSocketServer;
   private voiceWss: WebSocketServer;
   private readonly port: number;
+  private readonly triviaIdentificationTimeoutMs: number;
   private readonly authToken?: string;
   private readonly authTokens: readonly string[];
   private readonly publicBaseUrl: string;
+  private readonly triviaDisplayToken: string;
   private readonly validateSignatures: boolean;
   private manifestStore: ManifestStore;
   private readonly mapsPath: string;
@@ -214,6 +253,7 @@ export class HttpServer {
   private readonly karaokeAssetDirectory: string;
   private readonly leaderboardPath: string;
   private readonly karaokeLeaderboardPath: string;
+  private readonly triviaLeaderboardPath: string;
   private readonly editorToken?: string;
   private readonly analytics: AnalyticsStore;
   private readonly analyticsObserver: AnalyticsObserver;
@@ -267,6 +307,9 @@ export class HttpServer {
   private fighterVoiceCallBindings = new Map<string, FighterVoiceCallBinding>();
   private karaokeVoice = new Map<string, Set<KaraokeVoiceSession>>();
   private karaokeVoiceCallBindings = new Map<string, KaraokeVoiceCallBinding>();
+  private triviaVoice = new Map<string, Set<TriviaVoiceSession>>();
+  private triviaVoiceCallBindings = new Map<string, TriviaVoiceCallBinding>();
+  private readonly triviaResultPersistence = new Map<string, Promise<void>>();
   private karaokeFailureLocales = new Map<string, { locale: SupportedLocale; timer: ReturnType<typeof setTimeout> }>();
   private karaokeHandoffResponses = new Map<string, { xml: string; expiresAtMs: number }>();
   private voiceAccountSids = new Map<string, string>();
@@ -276,6 +319,10 @@ export class HttpServer {
   }>();
   private voiceReconnectAttempts = new Map<string, number>();
   private standaloneDisplays = new Map<MountedVoiceGame,Map<WebSocket,number>>();
+  private readonly standaloneTriviaDisplayCandidates = new WeakSet<WebSocket>();
+  private readonly authenticatedTriviaDisplays = new WeakSet<WebSocket>();
+  private readonly publicTriviaDisplays = new Set<WebSocket>();
+  private readonly pendingTriviaDisplays = new Map<WebSocket, ReturnType<typeof setTimeout>>();
   private fighterMaps: FighterMapEntry[] = FIGHTER_MAPS;
   private readonly fighterMapsPath: string;
   private readonly bundledFighterMapsPath: string;
@@ -304,7 +351,11 @@ export class HttpServer {
     karaokeAssetDirectory?: string;// direct release GLB directory (default assets/karaoke)
     leaderboardPath?: string;// injectable; persistent global leaderboard JSON (default data/leaderboard.json)
     karaokeLeaderboardPath?: string;// injectable; persistent Karaoke score history (default data/karaoke-leaderboard.json)
-    editorToken?: string;    // when set, /api writes require ?token= or x-editor-token; open if unset
+    triviaQuestionsPath?: string;// persistent validated Trivia bank (default data/trivia-questions.json)
+    bundledTriviaQuestionsPath?: string;// immutable image seed (default content/trivia/questions.json)
+    triviaLeaderboardPath?: string;// persistent Trivia leaderboard (default data/trivia-leaderboard.json)
+    triviaAnonymizationSalt?: string;// stable deployment secret used only to derive Trivia player hashes
+    editorToken?: string;    // when set, /api writes require x-editor-token; open if unset
     clientDir?: string;      // the Vite-built client to serve (prod single-process); default client/dist
     gamePhoneNumber?: string;// the number players CALL to join (shown + QR-encoded in the lobby)
     smsNumber?: string;// SMS-capable sender/receiver, separate from locale-specific voice numbers
@@ -314,6 +365,9 @@ export class HttpServer {
     fighterPreviewDir?: string;
     fighterDisplayToken?: string;
     karaokeDisplayToken?: string;
+    triviaDisplayToken?: string;
+    triviaIdentificationTimeoutMs?: number;
+    triviaServerOptions?: Omit<TriviaServerOptions, 'bank' | 'contentRevision' | 'displayToken' | 'server'>;
     analyticsPath?: string;
     googleOAuthClientId?: string;
     googleOAuthClientSecret?: string;
@@ -330,12 +384,19 @@ export class HttpServer {
     karaokeLyricRecognizerFactory?: KaraokeLyricRecognizerFactory;
   }) {
     this.port = opts.port;
+    this.triviaIdentificationTimeoutMs = opts.triviaIdentificationTimeoutMs
+      ?? TRIVIA_IDENTIFICATION_TIMEOUT_MS;
+    if (!Number.isSafeInteger(this.triviaIdentificationTimeoutMs)
+      || this.triviaIdentificationTimeoutMs < 1 || this.triviaIdentificationTimeoutMs > 60_000) {
+      throw new TypeError('triviaIdentificationTimeoutMs must be an integer from 1 to 60000');
+    }
     this.authToken = opts.authToken;
     this.authTokens = Object.freeze([...new Set([
       opts.authToken,
       ...(opts.additionalAuthTokens ?? []),
     ].map(value => value?.trim()).filter((value): value is string => Boolean(value))) ]);
     this.publicBaseUrl = opts.publicBaseUrl.replace(/\/$/, '');
+    this.triviaDisplayToken = (opts.triviaDisplayToken ?? opts.fighterDisplayToken ?? '').trim();
     this.validateSignatures = opts.validateSignatures ?? true;
     this.manifestStore = new ManifestStore(opts.manifestPath ?? 'assets/manifest.json');
     // LIVE levels default to the persistent mount (data/) — same fate as the leaderboard — so
@@ -350,6 +411,17 @@ export class HttpServer {
     this.karaokeAssetDirectory = opts.karaokeAssetDirectory ?? 'assets/karaoke';
     this.leaderboardPath = opts.leaderboardPath ?? 'data/leaderboard.json';
     this.karaokeLeaderboardPath = opts.karaokeLeaderboardPath ?? 'data/karaoke-leaderboard.json';
+    this.triviaContent = new TriviaContentStore(
+      opts.triviaQuestionsPath ?? 'data/trivia-questions.json',
+      opts.bundledTriviaQuestionsPath ?? 'content/trivia/questions.json',
+    );
+    this.triviaLeaderboardPath = opts.triviaLeaderboardPath ?? 'data/trivia-leaderboard.json';
+    this.triviaLeaderboard = new TriviaLeaderboardStore(
+      this.triviaLeaderboardPath,
+      deriveTriviaAnonymizationSalt(
+        opts.triviaAnonymizationSalt ?? opts.authToken ?? opts.editorToken ?? 'twilio-games-local',
+      ),
+    );
     this.editorToken = opts.editorToken;
     this.analyticsAuth = opts.analyticsAuth ?? new GoogleAnalyticsAuth({
       clientId: opts.googleOAuthClientId, clientSecret: opts.googleOAuthClientSecret,
@@ -405,6 +477,10 @@ export class HttpServer {
     this.battle = new BattleServer({ server: this.server, displayToken: opts.fighterDisplayToken });
     this.fighter = new FighterServer({ server: this.server, displayToken: opts.fighterDisplayToken ?? process.env.FIGHTER_DISPLAY_TOKEN });
     this.karaoke = new KaraokeServer({ displayToken: opts.karaokeDisplayToken ?? opts.fighterDisplayToken });
+    this.trivia = new TriviaServer({
+      ...opts.triviaServerOptions,
+      displayToken: opts.triviaDisplayToken ?? opts.fighterDisplayToken,
+    });
     this.karaokeMediaWss = new WebSocketServer({
       noServer: true,
       maxPayload: 16 * 1024,
@@ -445,7 +521,9 @@ export class HttpServer {
       if (removal === 'retire') this.retireStationEngine(game, roomCode);
       else this.abortStationEngine(game, roomCode);
     });
-    this.arcadeApi?.setStationParticipantCountHandler?.((game,roomCode,count,activeEnginePlayerIds) => {
+    this.arcadeApi?.setStationParticipantCountHandler?.((
+      game, roomCode, count, activeEnginePlayerIds, participantSlots,
+    ) => {
       if (game === 'racer') {
         const retained=new Set(activeEnginePlayerIds);
         for(const[callSid,binding]of this.racerVoiceCallBindings){
@@ -481,6 +559,30 @@ export class HttpServer {
           this.stationVoiceReconnectRoutes.delete(callSid);this.voiceReconnectAttempts.delete(callSid);
         }
         this.karaoke.voiceExpectHumanPlayers(roomCode,count,activeEnginePlayerIds);
+      } else if (game === 'trivia') {
+        if (!this.trivia.voiceReconcilePregameRoster(
+          roomCode, count, activeEnginePlayerIds, participantSlots,
+        )) return;
+        const reconciledOrder = new Map(
+          this.trivia.findRoom(roomCode)?.state().players.map(player => [player.playerId, player.playerOrder]) ?? [],
+        );
+        for (const [callSid, binding] of this.triviaVoiceCallBindings) {
+          if (binding.code !== roomCode) continue;
+          const participantIndex = reconciledOrder.get(binding.playerId);
+          if (participantIndex !== undefined) {
+            binding.participantIndex = participantIndex;
+            continue;
+          }
+          if (binding.leaveTimer) clearTimeout(binding.leaveTimer);
+          if (binding.activeSession) {
+            this.unregisterTriviaVoiceSession(binding.activeSession);
+            binding.activeSession.handleReplaced();
+          }
+          this.arcadeApi?.stationVoiceCallEnded(callSid);
+          this.triviaVoiceCallBindings.delete(callSid);
+          this.stationVoiceReconnectRoutes.delete(callSid);
+          this.voiceReconnectAttempts.delete(callSid);
+        }
       } else assertNever(game);
     });
     this.arcadeApi?.setPlayerResetCleanupHandler?.(context => this.cleanupResetPlayerHistory(context));
@@ -494,11 +596,38 @@ export class HttpServer {
       && this.standaloneVoiceEnabled
       && this.arcadeApi?.standaloneVoiceAvailable?.() !== false
       && this.arcadeApi?.standaloneGameEnabled?.('karaoke') !== false);
+    this.trivia.setBrowserPlayerAdmission(roomCode => triviaLocalKeyboardTestingAllowed(
+      process.env.NODE_ENV,
+      this.publicBaseUrl,
+      roomCode,
+      this.arcadeApi?.isStationEngineRoom(roomCode) ?? false,
+    ));
     this.karaoke.setDisplayAuthenticationRequirement(roomCode => !allowBrowserPlayer(roomCode));
+    this.trivia.setDisplayAuthenticationRequirement(roomCode => (
+      roomCode.trim().toUpperCase() !== DEFAULT_ROOM || !allowBrowserPlayer(roomCode)
+    ));
     this.game.setOnDisplayAuthenticated(ws => this.registerStandaloneDisplay('racer', ws));
     this.battle.setOnDisplayAuthenticated(ws => this.registerStandaloneDisplay('battle', ws));
     this.fighter.setOnDisplayAuthenticated(ws => this.registerStandaloneDisplay('fighter', ws));
     this.karaoke.setOnDisplayAuthenticated(ws => this.registerStandaloneDisplay('karaoke', ws));
+    this.trivia.setOnDisplayAuthenticated(ws => {
+      this.authenticatedTriviaDisplays.add(ws);
+      this.publicTriviaDisplays.delete(ws);
+      this.clearPendingTriviaDisplay(ws);
+    });
+    this.trivia.setOnDisplayRegistered((ws, roomCode) => {
+      if (this.standaloneTriviaDisplayCandidates.has(ws) && roomCode === DEFAULT_ROOM
+        && !this.authenticatedTriviaDisplays.has(ws) && !this.publicTriviaDisplays.has(ws)) {
+        if (this.publicTriviaDisplays.size >= TRIVIA_PUBLIC_DISPLAY_LIMIT) {
+          ws.close(1013, 'public trivia display capacity');
+          return;
+        }
+        this.publicTriviaDisplays.add(ws);
+        ws.once('close', () => this.publicTriviaDisplays.delete(ws));
+      }
+      this.clearPendingTriviaDisplay(ws);
+      if (this.standaloneTriviaDisplayCandidates.has(ws)) this.registerStandaloneDisplay('trivia', ws);
+    });
     // Feed newly-created rooms the selectable cars (manifest) + maps (maps.json). Reads are async
     // and the provider is sync, so keep a cache refreshed at startup + on an interval; rooms read
     // the cache. Empty until the first refresh resolves (rooms then reconfigure on next create).
@@ -511,8 +640,6 @@ export class HttpServer {
       this.analyticsObserver.raceAbandoned(room);
       this.arcadeApi?.stationEngineAbandoned('racer', room.code);
     });
-    void this.refreshRoomConfig();
-    this.roomConfigTimer = setInterval(() => void this.refreshRoomConfig(), 5000);
     // Persist each finished race onto the global leaderboard (serialized, atomic).
     this.game.setOnRaceFinished((room) => {
       const persistedResults = room.results().map(result => ({
@@ -603,16 +730,54 @@ export class HttpServer {
       this.resetCompletedKaraokeAttempt(roomCode, state?.phase);
       this.notifyKaraokeVoiceState(roomCode);
     });
+    this.trivia.setOnRoomEvents((roomCode, events) => {
+      for (const event of events) {
+        if (event.type === 'round_finished') this.persistTriviaResult(roomCode, event.result);
+      }
+    });
+    this.trivia.setOnRoomState(roomCode => {
+      const room = this.trivia.findRoom(roomCode);
+      if (room) this.analyticsObserver.triviaState(room);
+      const state = room?.state();
+      const stationReady = Boolean(state && this.trivia.hasAuthenticatedDisplay(roomCode)
+        && state.displayReady && state.hasExpectedPlayers
+        && state.players.every(player => player.connected));
+      const triviaStarted = this.activeStationEngines.has(`trivia:${roomCode}`);
+      const lifecyclePhase = state && (triviaStarted
+        || !['countdown', 'question_prompt', 'answer_cue', 'question', 'reveal'].includes(state.phase)
+        || stationReady) ? state.phase : undefined;
+      this.updateStationEngineLifecycle(
+        'trivia', roomCode, lifecyclePhase,
+        ['countdown', 'question_prompt', 'answer_cue', 'question', 'reveal'], ['results'],
+        state?.result?.players.map(player => ({
+          enginePlayerId: player.playerId,
+          rank: player.rank,
+          completed: true,
+          won: player.rank === 1,
+          score: player.normalizedScore,
+          durationSeconds: null,
+        })) ?? [],
+        ['loading'],
+      );
+      for (const session of this.triviaVoice.get(roomCode) ?? []) session.onStateChanged();
+    });
     // SMS concierge: resolves a room code to a live Room wrapped as a ConciergeRoom (adds car names).
     this.concierge = new SmsConcierge({ findRoom: (code) => this.conciergeRoom(code) });
-    this.smsSweepTimer = setInterval(() => this.concierge.sweep(), 5 * 60 * 1000);
     this.voiceWss = new WebSocketServer({ noServer: true });
     this.server.on('upgrade', (req, socket, head) => {
       const path = (req.url ?? '').split('?')[0];
+      const requestUrl = new URL(req.url ?? '/', 'http://localhost');
+      const displayValues = requestUrl.searchParams.getAll('display');
       const standaloneDisplay = this.standaloneVoiceEnabled
-        && new URL(req.url ?? '/', 'http://localhost').searchParams.get('display') === '1'
+        && displayValues.length === 1 && displayValues[0] === '1'
         && !(this.arcadeApi?.requiresStationVoiceAssignment() ?? false);
-      if (path === '/karaoke' && req.headers.origin !== new URL(this.publicBaseUrl).origin) {
+      if ((path === '/karaoke' || path === '/trivia')
+        && req.headers.origin !== new URL(this.publicBaseUrl).origin) {
+        socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
+        socket.destroy();
+        return;
+      }
+      if (path === '/trivia' && (displayValues.length !== 1 || displayValues[0] !== '1')) {
         socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
         socket.destroy();
         return;
@@ -647,6 +812,22 @@ export class HttpServer {
       } else if (path === '/karaoke') {
         this.karaoke.handleUpgrade(req, socket, head, ws => {
           if (standaloneDisplay) this.registerStandaloneDisplay('karaoke', ws);
+        });
+      } else if (path === '/trivia') {
+        if (this.pendingTriviaDisplays.size >= TRIVIA_PENDING_CONNECTION_LIMIT) {
+          socket.write('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n');
+          socket.destroy();
+          return;
+        }
+        if (this.publicTriviaDisplays.size >= TRIVIA_PUBLIC_DISPLAY_LIMIT
+          && !(this.arcadeApi?.requiresStationVoiceAssignment() ?? false)) {
+          socket.write('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n');
+          socket.destroy();
+          return;
+        }
+        this.trivia.handleUpgrade(req, socket, head, ws => {
+          if (standaloneDisplay) this.standaloneTriviaDisplayCandidates.add(ws);
+          this.trackPendingTriviaDisplay(ws);
         });
       } else if (path === '/karaoke-media') {
         this.karaokeMedia.handleUpgrade(req, socket, head);
@@ -727,6 +908,16 @@ export class HttpServer {
       }
       this.analyticsObserver.karaokeAborted(roomCode);
       this.karaoke.abortRoom(roomCode);
+    } else if (game === 'trivia') {
+      for (const session of [...(this.triviaVoice.get(roomCode) ?? [])]) session.handleReplaced();
+      this.triviaVoice.delete(roomCode);
+      for (const [callSid, binding] of this.triviaVoiceCallBindings) {
+        if (binding.code !== roomCode) continue;
+        if (binding.leaveTimer) clearTimeout(binding.leaveTimer);
+        this.triviaVoiceCallBindings.delete(callSid);
+      }
+      this.analyticsObserver.triviaAborted(roomCode);
+      this.trivia.abortRoom(roomCode);
     } else assertNever(game);
     for(const [callSid,route] of this.stationVoiceReconnectRoutes){
       if(route.game!==game||route.roomCode!==roomCode)continue;
@@ -800,6 +991,21 @@ export class HttpServer {
         }
         this.analyticsObserver.karaokeAborted(roomCode);
         this.karaoke.abortRoom(roomCode);
+      } else if (game === 'trivia') {
+        for (const session of [...(this.triviaVoice.get(roomCode) ?? [])]) session.handleReplaced();
+        this.triviaVoice.delete(roomCode);
+        for (const [callSid, binding] of this.triviaVoiceCallBindings) {
+          if (binding.code !== roomCode) continue;
+          if (binding.leaveTimer) clearTimeout(binding.leaveTimer);
+          this.triviaVoiceCallBindings.delete(callSid);
+        }
+        for (const [callSid, route] of this.stationVoiceReconnectRoutes) {
+          if (route.game !== 'trivia' || route.roomCode !== roomCode) continue;
+          this.stationVoiceReconnectRoutes.delete(callSid);
+          this.voiceReconnectAttempts.delete(callSid);
+        }
+        this.analyticsObserver.triviaAborted(roomCode);
+        this.trivia.abortRoom(roomCode);
       } else assertNever(game);
       this.activeStationEngines.delete(`${game}:${roomCode}`);
     };
@@ -809,6 +1015,10 @@ export class HttpServer {
       void Promise.race([settled, sleep(RELAY_SPEECH_SETTLE_TIMEOUT_MS)]).then(finalize);
     } else if (game === 'monsters') {
       const settled = Promise.all([...this.battleVoice.get(roomCode) ?? []]
+        .map(session => session.whenSpeechSettled()));
+      void Promise.race([settled, sleep(RELAY_SPEECH_SETTLE_TIMEOUT_MS)]).then(finalize);
+    } else if (game === 'trivia') {
+      const settled = Promise.all([...this.triviaVoice.get(roomCode) ?? []]
         .map(session => session.whenSpeechSettled()));
       void Promise.race([settled, sleep(RELAY_SPEECH_SETTLE_TIMEOUT_MS)]).then(finalize);
     } else if (game === 'fighter' || game === 'karaoke') {
@@ -914,63 +1124,120 @@ export class HttpServer {
     }).catch(error => console.error('Karaoke leaderboard persist error:', (error as Error).message));
   }
 
-  private async leaderboardAdminSummary(): Promise<{
-    games: Array<{ game: 'racer' | 'karaoke'; resettable: true; maps: Array<{ map: string; label?: string; records: number }> }>;
+  private persistTriviaResult(roomCode: string, result: TriviaResult): void {
+    const persistedResult: TriviaResult = Object.freeze({
+      ...result,
+      players: Object.freeze(result.players.map(player => {
+        const canonical = this.arcadeApi?.canonicalStationEnginePlayerId?.(player.playerId) ?? player.playerId;
+        return Object.freeze({ ...player, playerId: isSafeTriviaId(canonical) ? canonical : player.playerId });
+      })),
+    });
+    const key = triviaLeaderboardResultId(roomCode, persistedResult);
+    if (this.triviaResultPersistence.has(key)) return;
+    const append = this.leaderboardWrite.then(async () => {
+      await this.triviaLeaderboard.appendRound({
+        uniqueResultId: key,
+        identityNamespace: triviaIdentityNamespace(roomCode),
+        result: persistedResult,
+      });
+    });
+    let tracked: Promise<void>;
+    tracked = append.then(
+      () => { if (this.triviaResultPersistence.get(key) === tracked) this.triviaResultPersistence.delete(key); },
+      error => {
+        if (this.triviaResultPersistence.get(key) === tracked) this.triviaResultPersistence.delete(key);
+        console.error('Trivia leaderboard persist error:', error instanceof Error ? error.message : String(error));
+      },
+    );
+    this.leaderboardWrite = tracked;
+    if (this.triviaResultPersistence.size >= TRIVIA_RESULT_PERSISTENCE_LIMIT) {
+      const oldest = this.triviaResultPersistence.keys().next().value;
+      if (oldest !== undefined) this.triviaResultPersistence.delete(oldest);
+    }
+    this.triviaResultPersistence.set(key, tracked);
+  }
+
+  private leaderboardAdminSummary(): Promise<{
+    games: Array<{ game: 'racer' | 'karaoke' | 'trivia'; resettable: true; maps: Array<{ map: string; label?: string; records: number }> }>;
     etag: string;
   }> {
-    await this.leaderboardWrite;
-    const [racerEntries, karaokeEntries] = await Promise.all([
-      this.readLeaderboardStrict(),
-      this.readKaraokeLeaderboardStrict(),
-    ]);
-    const mapNames = new Set([...this.roomConfigCache.maps, ...racerEntries.map(entry => entry.map)]);
-    const songTitles = new Map(KARAOKE_DEVELOPMENT_SONGS.map(song => [song.id, song.title]));
-    const songIds = new Set([...songTitles.keys(), ...karaokeEntries.map(entry => entry.songId)]);
-    return{
-      games: [
-        { game: 'racer', resettable: true, maps: [...mapNames].sort().map(map => ({
-          map, records: racerEntries.filter(entry => entry.map === map).length,
-        })) },
-        { game: 'karaoke', resettable: true, maps: [...songIds].sort().map(songId => ({
-          map: songId,
-          ...(songTitles.get(songId) ? { label: songTitles.get(songId) } : {}),
-          records: karaokeEntries.filter(entry => entry.songId === songId).length,
-        })) },
-      ],
-      etag:this.leaderboardEtag(racerEntries, karaokeEntries),
-    };
+    const task = this.leaderboardWrite.then(async () => {
+      const [racerEntries, karaokeEntries, triviaStored] = await Promise.all([
+        this.readLeaderboardStrict(),
+        this.readKaraokeLeaderboardStrict(),
+        this.readTriviaLeaderboardStrict(),
+      ]);
+      const mapNames = new Set([...this.roomConfigCache.maps, ...racerEntries.map(entry => entry.map)]);
+      const songTitles = new Map(KARAOKE_DEVELOPMENT_SONGS.map(song => [song.id, song.title]));
+      const songIds = new Set([...songTitles.keys(), ...karaokeEntries.map(entry => entry.songId)]);
+      return{
+        games: [
+          { game: 'racer', resettable: true, maps: [...mapNames].sort().map(map => ({
+            map, records: racerEntries.filter(entry => entry.map === map).length,
+          })) },
+          { game: 'karaoke', resettable: true, maps: [...songIds].sort().map(songId => ({
+            map: songId,
+            ...(songTitles.get(songId) ? { label: songTitles.get(songId) } : {}),
+            records: karaokeEntries.filter(entry => entry.songId === songId).length,
+          })) },
+          { game: 'trivia', resettable: true, maps: TRIVIA_BOARD_IDS.map(board => ({
+            map: board,
+            label: board === TRIVIA_ALL_TIME_BOARD_ID ? 'All time' : board,
+            records: board === TRIVIA_ALL_TIME_BOARD_ID
+              ? triviaStored.length
+              : triviaStored.filter(entry => entry.category === board).length,
+          })) },
+        ] satisfies Array<{
+          game: 'racer' | 'karaoke' | 'trivia';
+          resettable: true;
+          maps: Array<{ map: string; label?: string; records: number }>;
+        }>,
+        etag:this.leaderboardEtag(racerEntries, karaokeEntries, triviaStored),
+      };
+    });
+    this.leaderboardWrite = task.then(() => undefined, () => undefined);
+    return task;
   }
 
   private leaderboardEtag(
     racerEntries: readonly LeaderboardEntry[],
     karaokeEntries: readonly KaraokeLeaderboardEntry[] = [],
+    triviaEntries: readonly PublicTriviaLeaderboardEntry[] | readonly StoredTriviaLeaderboardEntry[] = [],
   ): string {
-    return `"leaderboard-${createHash('sha256').update(JSON.stringify({ racerEntries, karaokeEntries })).digest('hex').slice(0,16)}"`;
+    return `"leaderboard-${createHash('sha256').update(JSON.stringify({ racerEntries, karaokeEntries, triviaEntries })).digest('hex').slice(0,16)}"`;
   }
 
   private resetLeaderboardScores(
-    game: 'racer' | 'karaoke',
+    game: 'racer' | 'karaoke' | 'trivia',
     map: string,
     expectedEtag: string,
   ): Promise<{deleted:number;remaining:number;etag:string}> {
     const task=this.leaderboardWrite.then(async()=>{
-      const [racerEntries, karaokeEntries] = await Promise.all([
+      const [racerEntries, karaokeEntries, triviaEntries] = await Promise.all([
         this.readLeaderboardStrict(),
         this.readKaraokeLeaderboardStrict(),
+        this.readTriviaLeaderboardStrict(),
       ]);
-      const currentEtag=this.leaderboardEtag(racerEntries, karaokeEntries);
+      const currentEtag=this.leaderboardEtag(racerEntries, karaokeEntries, triviaEntries);
       if(expectedEtag!==currentEtag)throw Object.assign(new Error('leaderboard changed; refresh and confirm again'),{code:'PRECONDITION_FAILED',etag:currentEtag});
       if (game === 'racer') {
         if(!new Set([...this.roomConfigCache.maps,...racerEntries.map(entry=>entry.map)]).has(map))throw Object.assign(new Error('unknown map'),{code:'UNKNOWN_MAP'});
         const remaining=racerEntries.filter(entry=>entry.map!==map),deleted=racerEntries.length-remaining.length;
         await this.writeFileAtomic(this.leaderboardPath,JSON.stringify(remaining));
         this.leaderboardEntriesCache=remaining;this.leaderboardLoaded=true;
-        return{deleted,remaining:remaining.length,etag:this.leaderboardEtag(remaining,karaokeEntries)};
+        return{deleted,remaining:remaining.length,etag:this.leaderboardEtag(remaining,karaokeEntries,triviaEntries)};
       }
-      if(!new Set([...KARAOKE_DEVELOPMENT_SONGS.map(song=>song.id),...karaokeEntries.map(entry=>entry.songId)]).has(map))throw Object.assign(new Error('unknown song'),{code:'UNKNOWN_MAP'});
-      const remaining=karaokeEntries.filter(entry=>entry.songId!==map),deleted=karaokeEntries.length-remaining.length;
-      await this.writeFileAtomic(this.karaokeLeaderboardPath,JSON.stringify(remaining));
-      return{deleted,remaining:remaining.length,etag:this.leaderboardEtag(racerEntries,remaining)};
+      if (game === 'karaoke') {
+        if(!new Set([...KARAOKE_DEVELOPMENT_SONGS.map(song=>song.id),...karaokeEntries.map(entry=>entry.songId)]).has(map))throw Object.assign(new Error('unknown song'),{code:'UNKNOWN_MAP'});
+        const remaining=karaokeEntries.filter(entry=>entry.songId!==map),deleted=karaokeEntries.length-remaining.length;
+        await this.writeFileAtomic(this.karaokeLeaderboardPath,JSON.stringify(remaining));
+        return{deleted,remaining:remaining.length,etag:this.leaderboardEtag(racerEntries,remaining,triviaEntries)};
+      }
+      if (!isTriviaBoardId(map)) throw Object.assign(new Error('unknown Trivia board'), { code: 'UNKNOWN_MAP' });
+      const reset = await this.triviaLeaderboard.reset(map);
+      const remaining = await this.readTriviaLeaderboardStrict();
+      return { deleted: reset.deleted, remaining: remaining.length,
+        etag: this.leaderboardEtag(racerEntries, karaokeEntries, remaining) };
     });
     this.leaderboardWrite=task.then(()=>undefined,()=>undefined);
     return task;
@@ -998,6 +1265,18 @@ export class HttpServer {
     }
   }
 
+  private async readTriviaLeaderboardStrict(): Promise<StoredTriviaLeaderboardEntry[]> {
+    await this.triviaLeaderboard.flush();
+    try {
+      const file = parseTriviaLeaderboardStrict(await readFile(this.triviaLeaderboardPath, 'utf8'));
+      if (!file) throw new Error('Trivia leaderboard storage is corrupt');
+      return [...file.entries];
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+      throw error;
+    }
+  }
+
   private cleanupResetPlayerHistory(context: PlayerResetCleanupContext): Promise<void> {
     const targets = new Set(context.nameHashes);
     const enginePlayerIds = new Set(context.racers
@@ -1011,9 +1290,10 @@ export class HttpServer {
       else if (racer.game === 'monsters') this.battle.anonymizePlayer(racer.roomCode,racer.enginePlayerId);
       else if (racer.game === 'fighter') this.fighter.anonymizePlayer(racer.roomCode,racer.enginePlayerId);
       else if (racer.game === 'karaoke') this.karaoke.anonymizePlayer(racer.roomCode,racer.enginePlayerId);
+      else if (racer.game === 'trivia') this.trivia.anonymizePlayer(racer.roomCode,racer.enginePlayerId);
       else assertNever(racer.game);
     }
-    if (!targets.size && !enginePlayerIds.size && !karaokeEnginePlayerIds.size) return Promise.resolve();
+    if (!targets.size && !enginePlayerIds.size && !karaokeEnginePlayerIds.size && !context.racers.some(racer => racer.game === 'trivia')) return Promise.resolve();
     const cleanup = this.leaderboardWrite.then(async () => {
       let entries: LeaderboardEntry[] = [];
       try {
@@ -1046,8 +1326,8 @@ export class HttpServer {
         if (parsed === null) throw new Error('Karaoke leaderboard storage is corrupt');
         karaokeEntries = parsed;
       } catch (error) {
-        if ((error as { code?: unknown }).code === 'ENOENT') return;
-        throw error;
+        if ((error as { code?: unknown }).code === 'ENOENT') karaokeEntries = [];
+        else throw error;
       }
       let karaokeChanged = false;
       const anonymizedKaraoke = karaokeEntries.map(entry => {
@@ -1061,6 +1341,12 @@ export class HttpServer {
         return { ...entry, name: 'PLAYER' };
       });
       if (karaokeChanged) await this.writeFileAtomic(this.karaokeLeaderboardPath, JSON.stringify(anonymizedKaraoke));
+      for (const racer of context.racers.filter(candidate => candidate.game === 'trivia')) {
+        await this.triviaLeaderboard.anonymizePlayer({
+          identityNamespace: triviaIdentityNamespace(racer.roomCode),
+          playerId: racer.enginePlayerId,
+        });
+      }
     });
     this.leaderboardWrite = cleanup.catch(error => console.error('leaderboard reset cleanup failed:', error));
     return cleanup;
@@ -1155,6 +1441,7 @@ export class HttpServer {
     let battle: BattleVoiceSession | null = null;
     let fighter: FighterVoiceSession | null = null;
     let karaoke: KaraokeVoiceSession | null = null;
+    let trivia: TriviaVoiceSession | null = null;
     let relayCallSid = '';
     let stationCallSid = '';
     let stationReadyEntryId = '';
@@ -1169,6 +1456,7 @@ export class HttpServer {
       if (route === 'battle') return battle?.boundRoom ? { game: 'monsters', roomCode: battle.boundRoom } : null;
       if (route === 'fighter') return fighter?.boundRoomCode ? { game: 'fighter', roomCode: fighter.boundRoomCode } : null;
       if (route === 'karaoke') return karaoke?.boundRoomCode ? { game: 'karaoke', roomCode: karaoke.boundRoomCode } : null;
+      if (route === 'trivia') return trivia?.boundRoomCode ? { game: 'trivia', roomCode: trivia.boundRoomCode } : null;
       if (route === 'racer') return adapter.boundRoomCode ? { game: 'racer', roomCode: adapter.boundRoomCode } : null;
       return assertNever(route);
     });
@@ -1229,6 +1517,13 @@ export class HttpServer {
         karaoke.setAuthoritativeName(stationFirstName);
         karaoke.setStationManaged(stationManaged);
         karaoke.handleMessage(raw);
+      } else if (route === 'trivia') {
+        if (!trivia) trivia = this.makeTriviaSession(say, () => stationManaged);
+        trivia.setAuthoritativeName(stationFirstName);
+        trivia.setStationManaged(stationManaged);
+        trivia.setExpectedPlayers(stationManaged ? stationParticipantCount : 1);
+        if (stationManaged) trivia.setStationAssignment(stationParticipantIndex);
+        trivia.handleMessage(raw);
       } else if (route === 'racer') {
         adapter.setAuthoritativeName(stationFirstName);
         adapter.setStationManaged(stationManaged);
@@ -1243,6 +1538,7 @@ export class HttpServer {
           const bound = route === 'battle' ? battle?.boundPlayerId
             : route === 'fighter' ? fighter?.boundPlayerId
               : route === 'karaoke' ? karaoke?.boundPlayerId
+                : route === 'trivia' ? trivia?.boundPlayerId
                 : route === 'racer' ? adapter.boundPlayerId : null;
           if (bound && readyEntryId) {
             this.arcadeApi?.stationVoiceParticipantConnected(String(setup.callSid ?? ''), readyEntryId, bound, stationConnectionId);
@@ -1306,6 +1602,8 @@ export class HttpServer {
               ? this.hasResumableFighterVoiceCall(stationCallSid, assignedRoom)
               : assignedGame === 'karaoke'
                 ? this.hasResumableKaraokeVoiceCall(stationCallSid, assignedRoom)
+                : assignedGame === 'trivia'
+                  ? this.hasResumableTriviaVoiceCall(stationCallSid, assignedRoom)
                 : this.hasResumableRacerVoiceCall(stationCallSid, assignedRoom);
           if ((identity.terminal || racerPhase === 'finished' || racerPhase === 'results') && !resumable) {
             ws.close(1008, 'finished station assignment');
@@ -1338,6 +1636,10 @@ export class HttpServer {
       }
       if (battle) battle.handleClose();
       else if (fighter) fighter.handleClose();
+      else if (trivia) {
+        this.unregisterTriviaVoiceSession(trivia);
+        trivia.handleClose();
+      }
       else if (karaoke) {
         const binding = relayCallSid ? this.karaokeVoiceCallBindings.get(relayCallSid) : undefined;
         const phase = karaoke.boundRoomCode
@@ -1377,6 +1679,7 @@ export class HttpServer {
       if (g === 'monsters' || g === 'battle') return 'battle';
       if (g === 'fighter' || g === 'fight') return 'fighter';
       if (g === 'karaoke' || g === 'sing') return 'karaoke';
+      if (g === 'trivia' || g === 'quiz') return 'trivia';
       if (g === 'racer' || g === 'race') return 'racer';
     } catch { /* fall through to auto-detect */ }
     // Auto-detect: route to the game whose screen most recently opened. This avoids a stale tab for one
@@ -1403,11 +1706,37 @@ export class HttpServer {
     if (firstRegistration) ws.once('close',()=>{connections!.delete(ws);if(!connections!.size)this.standaloneDisplays.delete(game);});
   }
 
+  private trackPendingTriviaDisplay(ws: WebSocket): void {
+    const timer = setTimeout(() => {
+      if (this.pendingTriviaDisplays.get(ws) !== timer) return;
+      this.pendingTriviaDisplays.delete(ws);
+      ws.terminate();
+    }, this.triviaIdentificationTimeoutMs);
+    timer.unref?.();
+    this.pendingTriviaDisplays.set(ws, timer);
+    ws.once('close', () => this.clearPendingTriviaDisplay(ws));
+    ws.on('message', data => {
+      if (!this.triviaDisplayToken) return;
+      const message = parseTriviaClientMessage(data.toString());
+      if (message.type !== 'display_auth' || message.token !== this.triviaDisplayToken) return;
+      this.authenticatedTriviaDisplays.add(ws);
+      this.clearPendingTriviaDisplay(ws);
+    });
+  }
+
+  private clearPendingTriviaDisplay(ws: WebSocket): void {
+    const timer = this.pendingTriviaDisplays.get(ws);
+    if (!timer) return;
+    clearTimeout(timer);
+    this.pendingTriviaDisplays.delete(ws);
+  }
+
   private recentVoiceLocale(game: MountedVoiceGame, roomCode: string): SupportedLocale {
     if (game === 'battle' && this.battle.connectionCount > 0) return this.battle.preferredLocale(roomCode, this.defaultLocale);
     if (game === 'fighter' && this.fighter.connectionCount > 0) return this.fighter.preferredLocale(roomCode, this.defaultLocale);
     if (game === 'racer' && this.game.connectionCount > 0) return this.game.preferredLocale(roomCode, this.defaultLocale);
     if (game === 'karaoke' && this.karaoke.connectionCount > 0) return this.karaoke.preferredLocale(roomCode, this.defaultLocale);
+    if (game === 'trivia' && this.trivia.connectionCount > 0) return this.trivia.preferredLocale(roomCode, this.defaultLocale);
     return this.defaultLocale;
   }
 
@@ -1445,12 +1774,198 @@ export class HttpServer {
       const titles = (localized.length ? localized : KARAOKE_DEVELOPMENT_SONGS).map(song => song.title);
       return voiceHintList(commands, numbers, titles);
     }
+    if (game === 'trivia') {
+      const commands = locale === 'pt-BR'
+        ? ['quiz', 'trivia', 'categoria', 'misturado', 'resposta', 'letra', 'começar', 'próximo', 'jogar novamente', 'ajuda']
+        : ['quiz', 'trivia', 'category', 'mixed', 'answer', 'letter', 'start', 'next', 'play again', 'help'];
+      const categories = locale === 'pt-BR'
+        ? ['conhecimentos gerais', 'ciências', 'geografia', 'história', 'entretenimento', 'esportes', 'tecnologia', 'Twilio']
+        : ['general knowledge', 'science', 'geography', 'history', 'entertainment', 'sports', 'technology', 'Twilio'];
+      return voiceHintList(commands, numbers, categories);
+    }
     const commands = locale === 'pt-BR'
       ? ['esquerda', 'direita', 'acelerar', 'acelere', 'acelera', 'vai', 'frear', 'freie', 'freia', 'devagar', 'reduzir', 'reduza', 'desacelerar', 'desacelere', 'parar', 'nitro', 'turbo', 'poder', 'começar', 'iniciar', 'próximo', 'próxima', 'corrida', 'correr', 'revanche', 'sim']
       : ['left', 'right', 'boost', 'go', 'brake', 'slow', 'stop', 'nitro', 'power', 'start', 'next', 'race', 'rematch'];
     const cars = this.roomConfigCache.carNames.flatMap(localizedCarAliases);
     const tracks = this.roomConfigCache.maps.flatMap(localizedTrackAliases);
     return voiceHintList(commands, numbers, cars, tracks);
+  }
+
+  private makeTriviaSession(
+    say: (text: string, isCurrent?: () => boolean) => void | Promise<boolean>,
+    stationFixed: () => boolean = () => false,
+  ): TriviaVoiceSession {
+    let session: TriviaVoiceSession;
+    session = new TriviaVoiceSession({
+      bind: (code, name, callSid, locale, nameConfirmed, expectedPlayers, participantIndex) => {
+        code = code.trim().toUpperCase();
+        const fixed = stationFixed();
+        if (fixed && participantIndex === undefined) return null;
+        const resumed = this.resumeTriviaVoiceCall(code, callSid, session, participantIndex);
+        if (resumed) return { playerId: resumed, resumed: true };
+        const playerId = this.trivia.voiceJoin(
+          code,
+          name,
+          expectedPlayers,
+          nameConfirmed,
+          locale,
+          { stationFixed: fixed, allowReplay: !fixed, ...(participantIndex !== undefined ? { participantIndex } : {}) },
+        );
+        if (!playerId) return null;
+        this.rememberTriviaVoiceCall(callSid, code, playerId, locale, participantIndex, session);
+        this.registerTriviaVoiceSession(code, session);
+        return { playerId, resumed: false };
+      },
+      leave: (code, playerId, callSid) => {
+        this.unregisterTriviaVoiceSession(session);
+        this.scheduleTriviaVoiceLeave(code, playerId, callSid, session);
+      },
+      setName: (code, playerId, name) => {
+        const accepted = this.trivia.voiceSetName(code, playerId, name);
+        if (accepted) this.analyticsObserver.voiceCommand('trivia');
+        return accepted;
+      },
+      voteCategory: (code, playerId, category) => {
+        const accepted = this.trivia.voiceVoteCategory(code, playerId, category);
+        if (accepted) this.analyticsObserver.voiceCommand('trivia');
+        return accepted;
+      },
+      advance: (code, playerId) => {
+        const explicit = this.trivia.findRoom(code)?.phase === 'results';
+        const accepted = this.trivia.voiceAdvance(code, playerId);
+        if (accepted && explicit) this.analyticsObserver.voiceCommand('trivia');
+        return accepted;
+      },
+      questionPromptReady: (code, playerId, questionId) => (
+        this.trivia.voiceQuestionPromptReady(code, playerId, questionId)
+      ),
+      questionAnswerCueReady: (code, playerId, questionId) => (
+        this.trivia.voiceQuestionAnswerCueReady(code, playerId, questionId)
+      ),
+      answerAt: (code, playerId, choiceId, final, answeredAtMs) => {
+        const accepted = this.trivia.voiceAnswerAt(code, playerId, choiceId, final, answeredAtMs);
+        if (accepted) this.analyticsObserver.voiceCommand('trivia');
+        return accepted;
+      },
+      snapshot: (code, playerId, locale) => this.trivia.voiceSnapshot(code, playerId, locale),
+      resolveAnswer: (code, questionId, spoken, locale) => (
+        this.trivia.resolveVoiceAnswer(code, questionId, spoken, locale)
+      ),
+      say,
+    });
+    return session;
+  }
+
+  private registerTriviaVoiceSession(code: string, session: TriviaVoiceSession): void {
+    let sessions = this.triviaVoice.get(code);
+    if (!sessions) {
+      sessions = new Set();
+      this.triviaVoice.set(code, sessions);
+    }
+    sessions.add(session);
+  }
+
+  private unregisterTriviaVoiceSession(session: TriviaVoiceSession): void {
+    for (const [code, sessions] of this.triviaVoice) {
+      if (sessions.delete(session) && sessions.size === 0) this.triviaVoice.delete(code);
+    }
+  }
+
+  private rememberTriviaVoiceCall(
+    callSid: string,
+    code: string,
+    playerId: string,
+    locale: SupportedLocale,
+    participantIndex: number | undefined,
+    session: TriviaVoiceSession,
+  ): void {
+    const sid = callSid.trim();
+    if (!sid) return;
+    const previous = this.triviaVoiceCallBindings.get(sid);
+    if (previous?.leaveTimer) clearTimeout(previous.leaveTimer);
+    if (previous?.activeSession && previous.activeSession !== session) {
+      this.unregisterTriviaVoiceSession(previous.activeSession);
+      previous.activeSession.handleReplaced();
+    }
+    if (previous && (previous.code !== code || previous.playerId !== playerId)) {
+      this.trivia.voiceLeave(previous.code, previous.playerId);
+    }
+    this.triviaVoiceCallBindings.set(sid, {
+      code, playerId, locale, participantIndex: participantIndex ?? null, activeSession: session, leaveTimer: null,
+    });
+  }
+
+  private resumeTriviaVoiceCall(
+    code: string,
+    callSid: string,
+    session: TriviaVoiceSession,
+    participantIndex: number | undefined,
+  ): string | null {
+    const sid = callSid.trim();
+    const binding = this.triviaVoiceCallBindings.get(sid);
+    if (!binding || binding.code !== code || binding.participantIndex !== (participantIndex ?? null)
+      || !this.trivia.findRoom(code)?.hasPlayer(binding.playerId)) return null;
+    if (binding.leaveTimer) clearTimeout(binding.leaveTimer);
+    if (binding.activeSession && binding.activeSession !== session) {
+      this.unregisterTriviaVoiceSession(binding.activeSession);
+      binding.activeSession.handleReplaced();
+    }
+    binding.activeSession = session;
+    binding.leaveTimer = null;
+    this.registerTriviaVoiceSession(code, session);
+    this.trivia.voiceSetConnected(code, binding.playerId, true);
+    return binding.playerId;
+  }
+
+  private hasResumableTriviaVoiceCall(callSid: string, code: string): boolean {
+    const binding = this.triviaVoiceCallBindings.get(callSid.trim());
+    return Boolean(binding && binding.code === code && this.trivia.findRoom(code)?.hasPlayer(binding.playerId));
+  }
+
+  private scheduleTriviaVoiceLeave(
+    code: string,
+    playerId: string,
+    callSid: string,
+    session: TriviaVoiceSession,
+  ): void {
+    this.trivia.voiceSetConnected(code, playerId, false);
+    const sid = callSid.trim();
+    if (!sid) {
+      this.trivia.voiceLeave(code, playerId);
+      return;
+    }
+    const binding = this.triviaVoiceCallBindings.get(sid);
+    if (binding?.activeSession && binding.activeSession !== session) return;
+    if (binding?.leaveTimer) clearTimeout(binding.leaveTimer);
+    const leaveTimer = setTimeout(() => {
+      const current = this.triviaVoiceCallBindings.get(sid);
+      if (!current || current.code !== code || current.playerId !== playerId) return;
+      if (current.participantIndex !== null) this.arcadeApi?.stationVoiceCallEnded(sid);
+      this.triviaVoiceCallBindings.delete(sid);
+      this.trivia.voiceLeave(code, playerId);
+    }, TRIVIA_VOICE_RECONNECT_GRACE_MS);
+    leaveTimer.unref?.();
+    this.triviaVoiceCallBindings.set(sid, {
+      code,
+      playerId,
+      locale: binding?.locale ?? session.locale,
+      participantIndex: binding?.participantIndex ?? null,
+      activeSession: null,
+      leaveTimer,
+    });
+  }
+
+  private endTriviaVoiceCall(callSid: string): void {
+    const sid = callSid.trim();
+    const binding = this.triviaVoiceCallBindings.get(sid);
+    if (!binding) return;
+    if (binding.leaveTimer) clearTimeout(binding.leaveTimer);
+    if (binding.activeSession) {
+      this.unregisterTriviaVoiceSession(binding.activeSession);
+      binding.activeSession.handleReplaced();
+    }
+    this.triviaVoiceCallBindings.delete(sid);
+    this.trivia.voiceLeave(binding.code, binding.playerId);
   }
 
   private makeFighterSession(say: (text: string, isCurrent?: () => boolean) => void): FighterVoiceSession {
@@ -2721,7 +3236,10 @@ export class HttpServer {
     // Dependency-aware health is used by rollout smoke and operational monitoring.
     if (req.method === 'GET' && path === '/healthz') {
       const arcadeHealth = this.arcadeApi?.getHealthStatus();
-      const degraded = arcadeHealth?.degraded ?? false;
+      const triviaContent = this.triviaContent.getStatus();
+      const triviaLeaderboard = this.triviaLeaderboard.getStatus();
+      const degraded = (arcadeHealth?.degraded ?? false)
+        || triviaContent.state !== 'ready' || triviaLeaderboard.state !== 'ready';
       res.writeHead(degraded ? 503 : 200, {
         'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*',
       });
@@ -2729,6 +3247,9 @@ export class HttpServer {
         status: degraded ? 'degraded' : 'ok',
         rooms: this.game.roomCount,
         karaokeRooms: this.karaoke.roomCount,
+        triviaRooms: this.trivia.roomCount,
+        triviaContent,
+        triviaLeaderboard,
         karaokeMediaSessions: this.karaokeMedia.activeSessionCount,
         karaokeLyricRecognition: this.deepgramConfigured ? 'configured' : 'unavailable',
         karaokeCalibrationOffsetMs: this.karaokeCalibrationOffsetMs,
@@ -2772,7 +3293,7 @@ export class HttpServer {
       try{
         const summary=await this.leaderboardAdminSummary();
         res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store','ETag':summary.etag});
-        res.end(JSON.stringify({games:[summary.games[0],{game:'monsters',resettable:false,maps:[]},{game:'fighter',resettable:false,maps:[]},summary.games[1]]}));
+        res.end(JSON.stringify({games:[summary.games[0],{game:'monsters',resettable:false,maps:[]},{game:'fighter',resettable:false,maps:[]},summary.games[1],summary.games[2]]}));
       }catch(error){res.writeHead(503,{'Content-Type':'application/json'}).end(JSON.stringify({error:(error as Error).message}));}
       return;
     }
@@ -2782,7 +3303,7 @@ export class HttpServer {
       if(req.headers.origin!==new URL(this.publicBaseUrl).origin){res.writeHead(403,{'Content-Type':'application/json'}).end(JSON.stringify({error:'same-origin request required'}));return;}
       let body:unknown;try{body=JSON.parse(await readBody(req));}catch{res.writeHead(400,{'Content-Type':'application/json'}).end(JSON.stringify({error:'invalid JSON'}));return;}
       const input=body as {game?:unknown;map?:unknown;reason?:unknown};
-      if((input.game!=='racer'&&input.game!=='karaoke')||typeof input.map!=='string'||!input.map.trim()||typeof input.reason!=='string'||!input.reason.trim()||input.reason.trim().length>200){
+       if((input.game!=='racer'&&input.game!=='karaoke'&&input.game!=='trivia')||typeof input.map!=='string'||!input.map.trim()||typeof input.reason!=='string'||!input.reason.trim()||input.reason.trim().length>200){
         res.writeHead(400,{'Content-Type':'application/json'}).end(JSON.stringify({error:'game, leaderboard selection, and reason are required'}));return;
       }
       try{
@@ -3074,8 +3595,10 @@ export class HttpServer {
                 :station.game==='monsters'
                   ?this.hasResumableBattleVoiceCall(callSid,station.roomCode)
                   :station.game==='fighter'
-                    ?this.hasResumableFighterVoiceCall(callSid,station.roomCode)
-                    :this.hasResumableKaraokeVoiceCall(callSid,station.roomCode);
+                  ?this.hasResumableFighterVoiceCall(callSid,station.roomCode)
+                    :station.game==='karaoke'
+                      ?this.hasResumableKaraokeVoiceCall(callSid,station.roomCode)
+                      :this.hasResumableTriviaVoiceCall(callSid,station.roomCode);
               if(!terminalBinding){this.stationVoiceReconnectRoutes.delete(callSid);station=undefined;}
             }
           } catch { /* fall back to the last validated route; setup validation still fails closed */ }
@@ -3084,9 +3607,10 @@ export class HttpServer {
         const battle = this.battleVoiceCallBindings.get(callSid);
         const fighter = this.fighterVoiceCallBindings.get(callSid);
         const karaoke = this.karaokeVoiceCallBindings.get(callSid);
-        const game = station?.game ?? (battle ? 'monsters' : fighter ? 'fighter' : karaoke ? 'karaoke' : racer ? 'racer' : null);
-        const roomCode = station?.roomCode ?? battle?.code ?? fighter?.code ?? karaoke?.code ?? racer?.code;
-        const locale = station?.locale ?? battle?.locale ?? fighter?.locale ?? karaoke?.locale ?? racer?.locale ?? this.defaultLocale;
+        const trivia = this.triviaVoiceCallBindings.get(callSid);
+        const game = station?.game ?? (battle ? 'monsters' : fighter ? 'fighter' : karaoke ? 'karaoke' : trivia ? 'trivia' : racer ? 'racer' : null);
+        const roomCode = station?.roomCode ?? battle?.code ?? fighter?.code ?? karaoke?.code ?? trivia?.code ?? racer?.code;
+        const locale = station?.locale ?? battle?.locale ?? fighter?.locale ?? karaoke?.locale ?? trivia?.locale ?? racer?.locale ?? this.defaultLocale;
         if (game && roomCode) {
           this.voiceReconnectAttempts.set(callSid, attempts + 1);
           const xml = twimlConnectRelay({
@@ -3108,6 +3632,7 @@ export class HttpServer {
       this.stationVoiceReconnectRoutes.delete(callSid);
       this.arcadeApi?.stationVoiceCallEnded(callSid);
       this.endRacerVoiceCall(callSid); this.endBattleVoiceCall(callSid); this.endFighterVoiceCall(callSid);
+      this.endTriviaVoiceCall(callSid);
       const karaokeBinding = this.karaokeVoiceCallBindings.get(callSid);
       if (karaokeBinding && this.karaoke.findRoom(karaokeBinding.code)?.state().phase !== 'results') {
         this.failKaraokeCall(callSid);
@@ -3209,6 +3734,67 @@ export class HttpServer {
         supportedLocales: SUPPORTED_LOCALES,
         publicBaseUrl: this.publicBaseUrl,
       }));
+      return;
+    }
+    if (path === '/api/trivia-questions' && req.method === 'GET') {
+      if (!this.authorizeTriviaEditor(req, res)) return;
+      const etag = this.triviaContent.etag;
+      if (req.headers['if-none-match'] === etag) {
+        res.writeHead(304, { 'Cache-Control': 'no-store', ETag: etag }).end();
+        return;
+      }
+      res.writeHead(200, {
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-store',
+        ETag: etag,
+        'X-Trivia-Content-Revision': this.triviaContent.revision,
+      });
+      res.end(JSON.stringify(this.triviaContent.bank));
+      return;
+    }
+    if (path === '/api/trivia-questions' && req.method === 'POST') {
+      if (!this.authorizeTriviaEditor(req, res)) return;
+      const expectedEtag = Array.isArray(req.headers['if-match']) ? '' : (req.headers['if-match'] ?? '');
+      if (!expectedEtag) {
+        res.writeHead(428, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' })
+          .end('a current Trivia question-bank ETag is required');
+        return;
+      }
+      let bank: TriviaQuestionBank;
+      try {
+        bank = parseTriviaQuestionBankJson(await readBody(req, TRIVIA_MAX_JSON_LENGTH));
+      } catch (error) {
+        res.writeHead(400, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' })
+          .end(error instanceof Error ? error.message : 'invalid Trivia question bank');
+        return;
+      }
+      try {
+        const saved = await this.triviaContent.replace(bank, expectedEtag);
+        this.trivia.replaceQuestionBank(saved, this.triviaContent.revision);
+        res.writeHead(200, {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-store',
+          ETag: this.triviaContent.etag,
+          'X-Trivia-Content-Revision': this.triviaContent.revision,
+        });
+        res.end(JSON.stringify(saved));
+      } catch (error) {
+        const failure = error as Error & { code?: string; etag?: string };
+        if (failure.code === 'PRECONDITION_FAILED') {
+          res.writeHead(412, {
+            'Content-Type': 'text/plain',
+            'Cache-Control': 'no-store',
+            ...(failure.etag ? { ETag: failure.etag } : {}),
+          }).end(failure.message);
+          return;
+        }
+        if (failure.code === 'IMMUTABLE_TRIVIA_PROVENANCE') {
+          res.writeHead(400, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' })
+            .end('Trivia question IDs and provenance are immutable');
+          return;
+        }
+        throw error;
+      }
       return;
     }
     // ---- manifest API ----
@@ -3468,6 +4054,32 @@ export class HttpServer {
       res.end(JSON.stringify({ entries: top.map(({ enginePlayerId: _enginePlayerId, ...entry }) => entry) }));
       return;
     }
+    if (path === '/api/trivia/leaderboard' && req.method === 'GET') {
+      const url = new URL(req.url ?? '', 'http://localhost');
+      const board = url.searchParams.get('board');
+      const rawLimit = url.searchParams.get('limit') ?? '10';
+      if (!isTriviaBoardId(board) || !/^\d{1,3}$/.test(rawLimit)
+        || Number(rawLimit) < 1 || Number(rawLimit) > 100) {
+        res.writeHead(400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify({ error: 'valid Trivia board and limit from 1 to 100 are required' }));
+        return;
+      }
+      const entries = await this.triviaLeaderboard.entries(board, Number(rawLimit));
+      const response = JSON.stringify({ entries });
+      const etag = `"trivia-leaderboard-${createHash('sha256').update(response).digest('hex').slice(0, 24)}"`;
+      if (req.headers['if-none-match'] === etag) {
+        res.writeHead(304, { 'Cache-Control': 'no-store', ETag: etag }).end();
+        return;
+      }
+      res.writeHead(200, {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-store',
+        ETag: etag,
+      });
+      res.end(response);
+      return;
+    }
     // ---- private activation analytics (daily anonymous aggregates, no transcripts or phone data) ----
     if ((path === '/api/analytics' || path === '/api/analytics.pdf') && req.method === 'GET') {
       if (!this.analyticsAuth.currentAnalyticsUser(req)) {
@@ -3541,19 +4153,26 @@ export class HttpServer {
   }
 
   /**
-   * Gate a disk-writing /api endpoint. When editorToken is set (production/public deploy) the
-   * request must present it via ?token= or the x-editor-token header; on mismatch we 401 and
-   * return false. When no token is configured (local dev) writes are open. Sends the response on
-   * failure so callers can early-return.
+    * Gate a disk-writing /api endpoint. When editorToken is set (production/public deploy) the
+    * request must present it via the x-editor-token header; on mismatch we 401 and return false.
+    * When no token is configured (local dev) writes are open. Sends the response on failure so
+    * callers can early-return.
    */
   private authorizeWrite(req: http.IncomingMessage, res: http.ServerResponse): boolean {
     if (!this.editorToken) return true;   // dev: no token configured → open
     const header = req.headers['x-editor-token'];
-    const headerTok = Array.isArray(header) ? header[0] : header;
-    const url = new URL(req.url ?? '', 'http://localhost');
-    const tok = headerTok ?? url.searchParams.get('token') ?? '';
-    if (tok === this.editorToken) return true;
+    const token = Array.isArray(header) ? '' : (header ?? '');
+    if (token === this.editorToken) return true;
     res.writeHead(401, { 'Content-Type': 'text/plain', 'Access-Control-Allow-Origin': '*' }).end('unauthorized');
+    return false;
+  }
+
+  private authorizeTriviaEditor(req: http.IncomingMessage, res: http.ServerResponse): boolean {
+    if (!this.editorToken) return true;
+    const header = req.headers['x-editor-token'];
+    const token = Array.isArray(header) ? '' : (header ?? '');
+    if (token === this.editorToken) return true;
+    res.writeHead(401, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' }).end('unauthorized');
     return false;
   }
 
@@ -3664,6 +4283,9 @@ export class HttpServer {
   }
 
   async start(): Promise<number> {
+    const triviaBank = await this.triviaContent.load();
+    this.trivia.replaceQuestionBank(triviaBank, this.triviaContent.revision);
+    await this.triviaLeaderboard.load();
     await this.analytics.load();
     await this.arcadeApi?.start();
     await this.arcadeTacGateway?.start();
@@ -3674,6 +4296,8 @@ export class HttpServer {
     // Re-read the (possibly just-seeded) maps into the lobby cache so map choices are correct on the
     // very first connection — the constructor's initial refresh may have run before the seed wrote.
     await this.refreshRoomConfig();
+    this.roomConfigTimer ??= setInterval(() => void this.refreshRoomConfig(), 5000);
+    this.smsSweepTimer ??= setInterval(() => this.concierge.sweep(), 5 * 60 * 1000);
     const listeningPort = await new Promise<number>((resolve) => {
       this.server.listen(this.port, () => {
         const addr = this.server.address();
@@ -3794,19 +4418,43 @@ export class HttpServer {
       this.fighterVoiceCallBindings.clear(); this.fighterVoice.clear();
       for (const binding of this.karaokeVoiceCallBindings.values()) if (binding.leaveTimer) clearTimeout(binding.leaveTimer);
       this.karaokeVoiceCallBindings.clear(); this.karaokeVoice.clear(); this.voiceAccountSids.clear();
+      for (const binding of this.triviaVoiceCallBindings.values()) {
+        if (binding.leaveTimer) clearTimeout(binding.leaveTimer);
+        binding.activeSession?.handleReplaced();
+      }
+      this.triviaVoiceCallBindings.clear(); this.triviaVoice.clear();
       this.karaokeHandoffResponses.clear();
       for (const failure of this.karaokeFailureLocales.values()) clearTimeout(failure.timer);
       this.karaokeFailureLocales.clear();
       this.activeStationEngines.clear();
+      this.standaloneDisplays.clear();
+      this.publicTriviaDisplays.clear();
+      for (const timer of this.pendingTriviaDisplays.values()) clearTimeout(timer);
+      this.pendingTriviaDisplays.clear();
       this.game.stopLoopOnly();
       this.battle.stopLoopOnly();
       this.fighter.stopLoopOnly();
       this.karaokeMedia.close();
       this.karaoke.stopLoopOnly();
+      this.trivia.stopLoopOnly();
+      for (const socket of this.voiceSockets.keys()) {
+        disposeRelayQueue(socket);
+        socket.terminate();
+      }
+      this.voiceSockets.clear();
+      this.voiceWss.close();
       const arcadeStop = this.arcadeApi?.stop() ?? Promise.resolve();
       const arcadeTacStop = this.arcadeTacGateway?.stop() ?? Promise.resolve();
       this.server.close(() => {
-        void Promise.all([this.analytics.flush(), this.leaderboardWrite, arcadeStop, arcadeTacStop]).then(() => resolve(), reject);
+        void Promise.all([
+          this.analytics.flush(),
+          this.leaderboardWrite,
+          this.triviaContent.flush(),
+          this.triviaLeaderboard.flush(),
+          ...this.triviaResultPersistence.values(),
+          arcadeStop,
+          arcadeTacStop,
+        ]).then(() => resolve(), reject);
       });
     });
   }
@@ -4088,14 +4736,13 @@ export function contentType(name: string): string {
   }
 }
 
-function readBody(req: http.IncomingMessage): Promise<string> {
+function readBody(req: http.IncomingMessage, maximumBytes = 64 * 1024): Promise<string> {
   return new Promise((resolve, reject) => {
-    const MAX = 64 * 1024;
     let data = '';
     let size = 0;
     req.on('data', (c) => {
       size += c.length;
-      if (size > MAX) {
+      if (size > maximumBytes) {
         req.destroy();
         reject(new Error('request body too large'));
         return;
@@ -4114,6 +4761,16 @@ function isLoopbackUrl(value: string): boolean {
 
 export function karaokeBrowserTestingAllowed(nodeEnv: string | undefined, publicBaseUrl: string): boolean {
   return nodeEnv !== 'production' && isLoopbackUrl(publicBaseUrl);
+}
+
+export function triviaLocalKeyboardTestingAllowed(
+  nodeEnv: string | undefined,
+  publicBaseUrl: string,
+  roomCode: string,
+  stationManaged: boolean,
+): boolean {
+  return nodeEnv !== 'production' && isLoopbackUrl(publicBaseUrl) && !stationManaged
+    && roomCode.trim().toUpperCase() === DEFAULT_ROOM;
 }
 
 export function resolveVoiceRelayToken(
@@ -4142,6 +4799,32 @@ export function isSecureKaraokeMediaRequest(
 
 function validProviderIdentity(value: string): boolean {
   return value.length > 0 && value.length <= 128 && /^[A-Za-z0-9_-]+$/.test(value);
+}
+
+function deriveTriviaAnonymizationSalt(secret: string): string {
+  const root = secret.trim() || 'twilio-games-local';
+  return createHash('sha256').update(`trivia-leaderboard-anonymization-v1\0${root}`).digest('hex');
+}
+
+function triviaIdentityNamespace(roomCode: string): string {
+  const normalized = roomCode.trim().toUpperCase();
+  if (/^[A-Z0-9](?:[A-Z0-9-]{0,62}[A-Z0-9])?$/.test(normalized)) return `trivia-room:${normalized}`;
+  return `trivia-room:${createHash('sha256').update(normalized).digest('hex').slice(0, 32)}`;
+}
+
+export function triviaLeaderboardResultId(roomCode: string, result: TriviaResult): string {
+  const players = result.players
+    .map(player => [player.playerId, player.rawScore, player.normalizedScore] as const)
+    .sort((a, b) => a[0].localeCompare(b[0]) || a[1] - b[1] || a[2] - b[2]);
+  const canonical = JSON.stringify([
+    'trivia-leaderboard-result-v1',
+    roomCode.trim().toUpperCase(),
+    result.resultId,
+    result.completedAtMs,
+    result.category,
+    players,
+  ]);
+  return `trivia:${createHash('sha256').update(canonical).digest('hex')}`;
 }
 
 function karaokeHandoffResponseKey(params: Record<string, string>): string {

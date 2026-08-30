@@ -161,11 +161,16 @@ const srv = new HttpServer({
   karaokeTimingsPath: process.env.KARAOKE_TIMINGS_PATH ?? 'data/karaoke-timings.json',
   karaokeAssetDirectory: process.env.KARAOKE_ASSET_DIRECTORY ?? 'assets/karaoke',
   karaokeLeaderboardPath: process.env.KARAOKE_LEADERBOARD_PATH ?? 'data/karaoke-leaderboard.json',
+  triviaQuestionsPath: process.env.TRIVIA_QUESTIONS_PATH ?? 'data/trivia-questions.json',
+  bundledTriviaQuestionsPath: process.env.BUNDLED_TRIVIA_QUESTIONS_PATH ?? 'content/trivia/questions.json',
+  triviaLeaderboardPath: process.env.TRIVIA_LEADERBOARD_PATH ?? 'data/trivia-leaderboard.json',
+  triviaAnonymizationSalt: process.env.ARCADE_SIGNING_SECRET ?? authToken,
   fighterMapsPath: process.env.FIGHTER_MAPS_PATH ?? 'data/fighter-maps.json',
   bundledFighterMapsPath: process.env.BUNDLED_FIGHTER_MAPS_PATH ?? 'assets/fighters/maps/maps.json',
   fighterPreviewDir: process.env.FIGHTER_PREVIEW_DIR ?? 'data/fighter-previews',
   fighterDisplayToken: process.env.ARCADE_DISPLAY_TOKEN ?? process.env.FIGHTER_DISPLAY_TOKEN,
   karaokeDisplayToken: process.env.ARCADE_DISPLAY_TOKEN ?? process.env.FIGHTER_DISPLAY_TOKEN,
+  triviaDisplayToken: process.env.ARCADE_DISPLAY_TOKEN ?? process.env.FIGHTER_DISPLAY_TOKEN,
   // The number players call to join (shown + QR-encoded on the lobby screen). Unset → placeholder.
   gamePhoneNumber: process.env.GAME_PHONE_NUMBER,
   smsNumber: smsNumber ?? undefined,
@@ -177,6 +182,7 @@ srv.start().then((p) => {
   console.log(`Voice Racer listening on http://localhost:${p}`);
   console.log(`  game WS: ws://localhost:${p}/game   voice WS: ws://localhost:${p}/voice`);
   console.log(`  karaoke WS: ws://localhost:${p}/karaoke   media WS: wss://${new URL(publicBaseUrl).host}/karaoke-media`);
+  console.log(`  trivia WS: ws://localhost:${p}/trivia   questions: ${process.env.TRIVIA_QUESTIONS_PATH ?? 'data/trivia-questions.json'}`);
   console.log(`  webhooks: POST ${publicBaseUrl}/voice/incoming , /voice/join`);
   console.log(`  twilio signature validation: ${validateSignatures ? 'ON' : 'OFF'}`);
 });

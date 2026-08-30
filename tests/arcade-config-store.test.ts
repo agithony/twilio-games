@@ -69,9 +69,17 @@ function legacyConfig(version = 2): any {
 
 function removeKaraokeSchemaFields(config: any): void {
   delete config.station.games.karaoke;
+  delete config.station.games.trivia;
   config.station.automaticSelection.order = config.station.automaticSelection.order
-    .filter((game: string) => game !== 'karaoke');
+    .filter((game: string) => game !== 'karaoke' && game !== 'trivia');
   delete config.coins.gameCosts.karaoke;
+}
+
+function migratedStationDefaults(): any {
+  const station = JSON.parse(JSON.stringify(createDefaultArcadeConfig().station));
+  station.games.trivia.enabled = false;
+  station.comingSoon.trivia.enabled = false;
+  return station;
 }
 
 function legacyAuditRecord(config: any, previousHash = '0'.repeat(64)): any {
@@ -140,6 +148,18 @@ function schema5Config(version = 2): any {
   return config;
 }
 
+function schema6Config(version = 2): any {
+  const config = JSON.parse(JSON.stringify(createDefaultArcadeConfig()));
+  config.schemaVersion = 6;
+  config.version = version;
+  config.updatedAt = '2026-07-19T17:00:00.000Z';
+  config.updatedBy = 'schema6@example.com';
+  delete config.station.games.trivia;
+  config.station.comingSoon.trivia.enabled = true;
+  config.station.automaticSelection.order = ['karaoke', 'fighter', 'racer', 'monsters'];
+  return config;
+}
+
 function updateRequest(
   idempotencyKey: string,
   expectedVersion = 1,
@@ -187,7 +207,7 @@ describe('ArcadeConfigStore loading and persistence', () => {
       updatedAt: oldConfig.updatedAt,
       updatedBy: oldConfig.updatedBy,
       arcade: oldConfig.arcade,
-      station: createDefaultArcadeConfig().station,
+      station: migratedStationDefaults(),
     });
     const legacyShape = JSON.parse(JSON.stringify(migrated));
     legacyShape.schemaVersion = 1;
@@ -235,7 +255,7 @@ describe('ArcadeConfigStore loading and persistence', () => {
       ...oldConfig,
       schemaVersion: ARCADE_CONFIG_SCHEMA_VERSION,
       arcade: { ...oldConfig.arcade, mode: 'off' },
-      station: createDefaultArcadeConfig().station,
+      station: migratedStationDefaults(),
       coins: {
         ...oldConfig.coins,
         gameCosts: { ...oldConfig.coins.gameCosts, karaoke: 1 },
@@ -387,9 +407,9 @@ describe('ArcadeConfigStore loading and persistence', () => {
     expect(migrated).toMatchObject({
       schemaVersion: ARCADE_CONFIG_SCHEMA_VERSION,
       station: {
-        games: { karaoke: { enabled: false } },
-        comingSoon: { trivia: { enabled: true } },
-        automaticSelection: { order: ['racer', 'monsters', 'fighter', 'karaoke'] },
+        games: { karaoke: { enabled: false }, trivia: { enabled: false } },
+        comingSoon: { trivia: { enabled: false } },
+        automaticSelection: { order: ['racer', 'monsters', 'fighter', 'karaoke', 'trivia'] },
       },
       coins: { gameCosts: { karaoke: 1 } },
     });
@@ -398,7 +418,7 @@ describe('ArcadeConfigStore loading and persistence', () => {
     expect(store.getStatus().degraded).toBe(false);
   });
 
-  it('keeps schema-v5 bytes unchanged until the staged compatibility gate activates v6 writes', async () => {
+  it('keeps schema-v5 bytes unchanged while migrating through v6 before current writes', async () => {
     const directory = await temporaryDirectory();
     const store = new ArcadeConfigStore(directory);
     const oldConfig = schema5Config();
@@ -413,9 +433,9 @@ describe('ArcadeConfigStore loading and persistence', () => {
       schemaVersion: ARCADE_CONFIG_SCHEMA_VERSION,
       version: oldConfig.version,
       station: {
-        games: { karaoke: { enabled: false } },
-        comingSoon: { trivia: { enabled: true } },
-        automaticSelection: { order: ['racer', 'monsters', 'fighter', 'karaoke'] },
+        games: { karaoke: { enabled: false }, trivia: { enabled: false } },
+        comingSoon: { trivia: { enabled: false } },
+        automaticSelection: { order: ['racer', 'monsters', 'fighter', 'karaoke', 'trivia'] },
       },
       coins: { gameCosts: { karaoke: 1 } },
     });
@@ -423,13 +443,60 @@ describe('ArcadeConfigStore loading and persistence', () => {
     expect(await readFile(store.cachePath, 'utf8')).toBe(cacheBytes);
     expect(await readFile(store.auditPath, 'utf8')).toBe(auditBytes);
 
-    const next = await store.update(updateRequest('schema-6-write', oldConfig.version, 'off'));
+    const next = await store.update(updateRequest('schema-7-write', oldConfig.version, 'off'));
     const lines = (await readFile(store.auditPath, 'utf8')).trim().split('\n');
     expect(lines[0]).toBe(JSON.stringify(oldRecord));
     expect(JSON.parse(lines[1]!)).toMatchObject({
       previousHash: oldRecord.recordHash,
       config: { schemaVersion: ARCADE_CONFIG_SCHEMA_VERSION, version: next.version },
     });
+  });
+
+  it('appends disabled Trivia to a strict schema-v6 order without changing historical bytes or hashes', async () => {
+    const directory = await temporaryDirectory();
+    const store = new ArcadeConfigStore(directory);
+    const oldConfig = schema6Config();
+    const oldRecord = legacyAuditRecord(oldConfig);
+    const cacheBytes = `${JSON.stringify(oldConfig, null, 2)}\n`;
+    const auditBytes = `${JSON.stringify(oldRecord)}\n`;
+    await writeFile(store.cachePath, cacheBytes, 'utf8');
+    await writeFile(store.auditPath, auditBytes, 'utf8');
+
+    const migrated = await store.load();
+    expect(migrated.station).toMatchObject({
+      games: { trivia: { enabled: false } },
+      comingSoon: { trivia: { enabled: false } },
+      automaticSelection: { order: ['karaoke', 'fighter', 'racer', 'monsters', 'trivia'] },
+    });
+    expect(await readFile(store.cachePath, 'utf8')).toBe(cacheBytes);
+    expect(await readFile(store.auditPath, 'utf8')).toBe(auditBytes);
+
+    const next = await store.update(updateRequest('schema-7-after-v6', oldConfig.version, 'off'));
+    const lines = (await readFile(store.auditPath, 'utf8')).trim().split('\n');
+    expect(lines[0]).toBe(JSON.stringify(oldRecord));
+    expect(JSON.parse(lines[1]!)).toMatchObject({
+      previousHash: oldRecord.recordHash,
+      config: { schemaVersion: 7, version: next.version },
+    });
+  });
+
+  it.each([
+    ['an extra game', (config: any) => { config.station.games.trivia = { enabled: true }; }],
+    ['a malformed order', (config: any) => { config.station.automaticSelection.order[3] = 'fighter'; }],
+    ['an extra tombstone field', (config: any) => { config.station.comingSoon.trivia.preview = true; }],
+  ])('rejects hash-valid schema-v6 audit data with %s', async (_label, malformed) => {
+    const directory = await temporaryDirectory();
+    const store = new ArcadeConfigStore(directory);
+    const oldConfig = schema6Config();
+    malformed(oldConfig);
+    const oldRecord = legacyAuditRecord(oldConfig);
+    await writeFile(store.cachePath, `${JSON.stringify(oldConfig, null, 2)}\n`, 'utf8');
+    await writeFile(store.auditPath, `${JSON.stringify(oldRecord)}\n`, 'utf8');
+
+    const recovered = await store.load();
+    expect(recovered).toEqual(createDefaultArcadeConfig());
+    expect(store.getStatus()).toMatchObject({ degraded: true, version: 1 });
+    expect(await readFile(store.auditPath, 'utf8')).toBe('');
   });
 
   it.each([

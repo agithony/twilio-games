@@ -1,9 +1,14 @@
-import type { AnalyticsReport } from '../shared/analytics';
+import type { AnalyticsGame, AnalyticsReport } from '../shared/analytics';
+
+const GAME_LABELS: Readonly<Record<AnalyticsGame, string>> = {
+  racer: 'Voice Racer', monsters: 'Voice Monsters', fighter: 'Voice Fighter', karaoke: 'Voice Karaoke',
+  trivia: 'Voice Trivia',
+};
 
 export function analyticsPdf(report: AnalyticsReport): Buffer {
   const lines = [
     'TWILIO GAMES | ACTIVATION REPORT',
-    `${report.range.from} to ${report.range.to} | ${report.filter === 'all' ? 'All games' : report.filter}`,
+    `${report.range.from} to ${report.range.to} | ${report.filter === 'all' ? 'All games' : GAME_LABELS[report.filter]}`,
     '',
     `Participants: ${report.summary.participants}`,
     `Sessions: ${report.summary.sessions}`,
@@ -13,10 +18,12 @@ export function analyticsPdf(report: AnalyticsReport): Buffer {
     `Active play time: ${formatDuration(report.summary.playSeconds)}`,
     `Voice commands: ${report.summary.voiceCommands}`,
     '', 'GAME PERFORMANCE',
-    ...Object.entries(report.games).map(([game, value]) => `${game.toUpperCase()}: ${value.participants} participants | ${value.sessions} sessions | ${value.completed} completed | ${value.abandoned} abandoned | ${formatDuration(value.playSeconds)} active`),
+    ...(Object.entries(report.games) as [AnalyticsGame, AnalyticsReport['games'][AnalyticsGame]][])
+      .map(([game, value]) => `${GAME_LABELS[game]}: ${value.participants} participants | ${value.sessions} sessions | ${value.completed} completed | ${value.abandoned} abandoned | ${formatDuration(value.playSeconds)} active`),
     '', 'TOP SELECTIONS',
     `Maps: ${list(report.selections.maps)}`,
     `Songs: ${list(report.selections.songs)}`,
+    `Categories: ${list(report.selections.categories)}`,
     `Characters: ${list(report.selections.characters)}`,
     `Vehicles: ${list(report.selections.vehicles)}`,
     '', 'KEY TAKEAWAYS', ...report.insights.map(text => `- ${text}`),

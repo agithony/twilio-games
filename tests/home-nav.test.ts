@@ -8,18 +8,25 @@ import {
   sanitizeRoomCode,
   sanitizeName,
 } from '../client/home-nav';
+import { HOME_MESSAGES } from '../shared/i18n/home';
 
 describe('standalone game pagination', () => {
+  it('describes Trivia scoring independently for every correct caller', () => {
+    expect(HOME_MESSAGES['en-US']['games.trivia.blurb']).toContain('Every correct caller scores independently.');
+    expect(HOME_MESSAGES['pt-BR']['games.trivia.blurb']).toContain('Cada jogador que acerta marca pontos de forma independente.');
+  });
+
   it('uses the configured order and appends any newly introduced game safely', () => {
-    const games = [{ id: 'racer' }, { id: 'monsters' }, { id: 'fighter' }, { id: 'karaoke' }];
-    expect(orderByConfiguredIds(games, ['karaoke', 'fighter', 'racer', 'monsters']).map(game => game.id))
-      .toEqual(['karaoke', 'fighter', 'racer', 'monsters']);
+    const games = [{ id: 'racer' }, { id: 'monsters' }, { id: 'fighter' }, { id: 'karaoke' }, { id: 'trivia' }];
+    expect(orderByConfiguredIds(games, ['trivia', 'karaoke', 'fighter', 'racer', 'monsters']).map(game => game.id))
+      .toEqual(['trivia', 'karaoke', 'fighter', 'racer', 'monsters']);
     expect(orderByConfiguredIds(games, ['fighter']).map(game => game.id))
-      .toEqual(['fighter', 'racer', 'monsters', 'karaoke']);
+      .toEqual(['fighter', 'racer', 'monsters', 'karaoke', 'trivia']);
   });
 
   it('calculates pages in groups of three', () => {
     expect([0, 1, 3, 4, 6, 7].map(count => calculatePageCount(count))).toEqual([0, 1, 1, 2, 2, 3]);
+    expect(calculatePageCount(5)).toBe(2);
   });
 
   it('clamps both navigation boundaries and a page after the catalog shrinks', () => {

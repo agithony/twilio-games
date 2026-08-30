@@ -19,6 +19,14 @@ import {
 
 type Timer = ReturnType<typeof setTimeout>;
 export type StationMatchRemoval = 'retire' | 'abort';
+export type StationParticipantSlots = readonly (string | null)[];
+export type StationMatchParticipantsChangedHandler = (
+  game: PlayableArcadeGame,
+  roomCode: string,
+  count: number,
+  activeEnginePlayerIds: readonly string[],
+  participantSlots: StationParticipantSlots,
+) => void;
 
 export interface ArcadeStationRuntimeOptions {
   readonly service: ArcadeService;
@@ -33,9 +41,7 @@ export interface ArcadeStationRuntimeOptions {
   readonly clearTimer?: (timer: Timer) => void;
   readonly onError?: (error: unknown) => void;
   readonly onMatchRemoved?: (game: PlayableArcadeGame, roomCode: string, removal: StationMatchRemoval) => void;
-  readonly onMatchParticipantsChanged?: (
-    game:PlayableArcadeGame,roomCode:string,count:number,activeEnginePlayerIds:readonly string[],
-  ) => void;
+  readonly onMatchParticipantsChanged?: StationMatchParticipantsChangedHandler;
 }
 
 type ScheduledTransition = Readonly<{
@@ -56,9 +62,7 @@ export class ArcadeStationRuntime {
   private readonly clearTimer: (timer: Timer) => void;
   private readonly onError?: (error: unknown) => void;
   private onMatchRemoved?: (game: PlayableArcadeGame, roomCode: string, removal: StationMatchRemoval) => void;
-  private onMatchParticipantsChanged?: (
-    game:PlayableArcadeGame,roomCode:string,count:number,activeEnginePlayerIds:readonly string[],
-  ) => void;
+  private onMatchParticipantsChanged?: StationMatchParticipantsChangedHandler;
   private timer: Timer | null = null;
   private unsubscribe: (() => void) | null = null;
   private pending: Promise<void> = Promise.resolve();
@@ -96,7 +100,7 @@ export class ArcadeStationRuntime {
   }
 
   setMatchParticipantsChangedHandler(
-    handler: (game:PlayableArcadeGame,roomCode:string,count:number,activeEnginePlayerIds:readonly string[]) => void,
+    handler: StationMatchParticipantsChangedHandler,
   ): void {
     this.onMatchParticipantsChanged = handler;
   }
@@ -231,14 +235,17 @@ export class ArcadeStationRuntime {
       ? current.matches[current.station.activeMatchId]
       : undefined;
     if (currentMatch && currentMatch.id === result.match?.id) {
+      const participantSlots = currentMatch.participantReadyEntryIds.map(readyEntryId => (
+        this.knownEnginePlayerByReadyEntry.get(readyEntryId)
+          ?? currentMatch.enginePlayerIdsByReadyEntryId[readyEntryId]
+          ?? null
+      ));
       this.onMatchParticipantsChanged?.(
         currentMatch.game,
         currentMatch.engineRoomCode,
         currentMatch.participantReadyEntryIds.length,
-        currentMatch.participantReadyEntryIds
-          .map(readyEntryId=>this.knownEnginePlayerByReadyEntry.get(readyEntryId)
-            ??currentMatch.enginePlayerIdsByReadyEntryId[readyEntryId])
-          .filter((enginePlayerId):enginePlayerId is string=>Boolean(enginePlayerId)),
+        participantSlots.filter((enginePlayerId): enginePlayerId is string => enginePlayerId !== null),
+        participantSlots,
       );
     }
     return result;

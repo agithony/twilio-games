@@ -172,10 +172,13 @@ describe('Arcade station reducer', () => {
       readyEntryId: 'ready-2', roundId: 'stale-round', game: 'racer', at: at(93),
       expectedRevision: state.station.revision,
     })).toThrow(/not active for this round/);
-    expect(() => recordStationGameChoice(state, {
+    state = recordStationGameChoice(state, {
       readyEntryId: 'ready-2', roundId: 'round-1', game: 'trivia', at: at(93),
       expectedRevision: state.station.revision,
-    })).toThrow(/not station-playable/);
+    });
+    expect(state.rounds['round-1']?.gameChoicesByReadyEntryId).toEqual({
+      'ready-1': 'fighter', 'ready-2': 'trivia',
+    });
     expect(() => recordStationGameChoice(state, {
       readyEntryId: 'ready-2', roundId: 'round-1', game: 'racer', at: at(93),
       expectedRevision: selectionRevision,
@@ -184,7 +187,7 @@ describe('Arcade station reducer', () => {
     state = leaveStationReadyEntry(state, {
       readyEntryId: 'ready-1', at: at(94), expectedRevision: state.station.revision,
     });
-    expect(state.rounds['round-1']?.gameChoicesByReadyEntryId).toEqual({});
+    expect(state.rounds['round-1']?.gameChoicesByReadyEntryId).toEqual({ 'ready-2': 'trivia' });
     state = recordStationGameChoice(state, {
       readyEntryId: 'ready-2', roundId: 'round-1', game: 'racer', at: at(95),
       expectedRevision: state.station.revision,
@@ -212,7 +215,7 @@ describe('Arcade station reducer', () => {
     expect(state.rounds['round-1']?.gameChoicesByReadyEntryId).toEqual({});
   });
 
-  it.each([['racer', 2], ['monsters', 2], ['fighter', 2], ['karaoke', 1]] as const)('enforces %s capacity %d', (game, capacity) => {
+  it.each([['racer', 2], ['monsters', 2], ['fighter', 2], ['karaoke', 1], ['trivia', 4]] as const)('enforces %s capacity %d', (game, capacity) => {
     let state = createArcadeStation('ARCADE-01', T0);
     for (let index = 1; index <= 4; index++) state = insert(state, `player-${index}`, index);
     state = closeStationRecruiting(state, { at: at(90), expectedRevision: state.station.revision });
@@ -289,14 +292,15 @@ describe('Arcade station reducer', () => {
     })).toThrow(/hard deadline must not precede post-game recruiting deadline/);
   });
 
-  it('rejects Trivia and malformed cross-record state', () => {
+  it('accepts Trivia and rejects malformed cross-record state', () => {
     let state = createArcadeStation('ARCADE-01', T0);
     state = insert(state, 'player-1', 1);
     state = closeStationRecruiting(state, { at: at(90), expectedRevision: state.station.revision });
-    expect(() => selectStationGame(state, {
+    state = selectStationGame(state, {
       game: 'trivia', matchId: 'match-1', engineRoomCode: '4821', at: at(91),
       expectedRevision: state.station.revision,
-    })).toThrow(/not station-playable/);
+    });
+    expect(state.station.activeGame).toBe('trivia');
     expect(() => assertStationInvariants({
       ...state,
       station: { ...state.station, activeRoundId: 'missing' },

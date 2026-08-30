@@ -31,8 +31,14 @@ Twilio Games serves 25 audio files from `client/public/audio/`: 8 music tracks a
 | Voice Fighter | Lobby, fighter selection, map selection, or loading | `lobby` |
 | Voice Fighter | Intro begins | `fighter` |
 | Voice Fighter | Knockout event | `fighter-victory` |
+| Voice Trivia | First permitted playback through results | `lobby` |
 
 The Fighter track starts at the intro and remains active through countdown and combat. The victory track is a separate, non-looping context. A later lobby or rematch transition replaces it with lobby music.
+
+Voice Trivia reuses the global `lobby` track throughout its display lifecycle. It attempts playback
+when the page opens and retries on the first pointer or keyboard interaction when browser autoplay
+policy blocks the initial attempt. Its English `3, 2, 1` display starts the shared countdown effect
+once when the authoritative server clock first reaches `3`, matching Racer, Fighter, and Karaoke.
 
 The home page waits for its first click before starting lobby music. Game state transitions call `audio.play()` immediately. A browser autoplay rejection logs `Failed to play track` and leaves playback silent; the manager does not install a global gesture retry. A later context switch, explicit `resume()`, or mute-then-unmute action attempts playback again.
 
@@ -66,7 +72,7 @@ The effects manager preloads every file and debounces repeated playback of the s
 | `sfx/crash.mp3` | `playCrash()` | Racer barrier hit |
 | `sfx/powerup.mp3` | `playPowerUp()` | Racer boost pickup |
 | `sfx/turbo.mp3` | `playTurbo()` | Racer power activation |
-| `sfx/countdown.mp3` | `playCountdown()` | English Racer and Fighter countdown cue |
+| `sfx/countdown.mp3` | `playCountdown()` | English Racer, Fighter, Karaoke, and Trivia countdown cue |
 | `sfx/select.mp3` | `playSelect()` | Joins, selections, station admissions, and menu feedback |
 | `sfx/attack-electric.mp3` | `playAttack('electric')` | Electric Monsters move and fallback for types without a dedicated file |
 | `sfx/attack-fire.mp3` | `playAttack('fire')` | Fire Monsters move |

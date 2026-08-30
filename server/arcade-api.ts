@@ -33,7 +33,10 @@ import {
   ArcadePlayerRuntime,
   ArcadePlayerRuntimeError,
 } from './arcade-player-runtime';
-import type { StationMatchRemoval } from './arcade-station-runtime';
+import type {
+  StationMatchParticipantsChangedHandler,
+  StationMatchRemoval,
+} from './arcade-station-runtime';
 import {
   ArcadePlayerSessionError,
   type ArcadePlayerSessionService,
@@ -172,9 +175,7 @@ export class ArcadeApi {
   private readonly stationVoiceCalls = new Map<string, { callSid: string; readyEntryId: string }>();
   private readonly stationVoiceConnections = new Map<string, string>();
   private abortStationEngine: ((game: RoutedStationGame, roomCode: string, removal: StationMatchRemoval) => void) | null = null;
-  private updateStationEngineParticipants: ((
-    game:RoutedStationGame,roomCode:string,count:number,activeEnginePlayerIds:readonly string[],
-  )=>void)|null=null;
+  private updateStationEngineParticipants: StationMatchParticipantsChangedHandler | null = null;
   private playerResetCleanup: ((context: PlayerResetCleanupContext) => Promise<void>) | null = null;
   private started = false;
   private stopped = false;
@@ -317,7 +318,7 @@ export class ArcadeApi {
   }
 
   setStationParticipantCountHandler(
-    handler:(game:RoutedStationGame,roomCode:string,count:number,activeEnginePlayerIds:readonly string[])=>void,
+    handler: StationMatchParticipantsChangedHandler,
   ): void {
     this.updateStationEngineParticipants = handler;
     const resources = this.playerRuntime?.getInitializedResources();
@@ -2431,8 +2432,8 @@ export class ArcadeApi {
     resources.station.setMatchRemovedHandler((game, roomCode, removal) => {
       this.removeLiveStationEngine(game, roomCode, removal);
     });
-    resources.station.setMatchParticipantsChangedHandler((game,roomCode,count,activeEnginePlayerIds) => {
-      this.updateStationEngineParticipants?.(game,roomCode,count,activeEnginePlayerIds);
+    resources.station.setMatchParticipantsChangedHandler((game, roomCode, count, activeEnginePlayerIds, participantSlots) => {
+      this.updateStationEngineParticipants?.(game, roomCode, count, activeEnginePlayerIds, participantSlots);
     });
   }
 

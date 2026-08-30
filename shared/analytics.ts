@@ -35,6 +35,7 @@ export interface AnalyticsReport {
   selections: {
     maps: { name: string; count: number }[];
     songs: { name: string; count: number }[];
+    categories: { name: string; count: number }[];
     characters: { name: string; count: number }[];
     vehicles: { name: string; count: number }[];
   };

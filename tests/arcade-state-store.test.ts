@@ -126,7 +126,7 @@ describe('ArcadeStateStore', () => {
     await expect(store.transaction(addPlayer('p1'))).rejects.toMatchObject({ code: 'STORE_NOT_INITIALIZED' });
   });
 
-  it('persists schema-v10 state and restores it after restart', async () => {
+  it('persists schema-v11 state and restores it after restart', async () => {
     const file = await stateFile();
     const first = await ArcadeStateStore.open(file);
     await first.transaction(addPlayer('trusted:p1'));
@@ -146,7 +146,7 @@ describe('ArcadeStateStore', () => {
     expect(restarted.snapshot().wallets['trusted:p1']?.wallet.cachedBalance).toBe(0);
   });
 
-  it('keeps schema-v9 bytes unchanged until the staged compatibility gate activates v10 writes', async () => {
+  it('keeps schema-v9 bytes unchanged while preserving the v9-to-v10 migration boundary', async () => {
     const file = await stateFile();
     const first = await ArcadeStateStore.open(file);
     await first.transaction(addPlayer('p1'));
@@ -162,7 +162,25 @@ describe('ArcadeStateStore', () => {
     expect((JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>).schemaVersion).toBe(9);
 
     // Rollback compatibility must be established before this first current-schema write; there is no
-    // lossy v10-to-v9 downmigration fallback.
+    // lossy current-to-v9 downmigration fallback.
+    await migrated.transaction(() => undefined);
+    expect((JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>).schemaVersion)
+      .toBe(ARCADE_STATE_SCHEMA_VERSION);
+  });
+
+  it('keeps schema-v10 bytes unchanged until the v11 identity gate activates writes', async () => {
+    const file = await stateFile();
+    const first = await ArcadeStateStore.open(file);
+    await first.transaction(addPlayer('p1'));
+    const schemaTen = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
+    schemaTen.schemaVersion = 10;
+    const legacyBytes = JSON.stringify(schemaTen);
+    await writeFile(file, legacyBytes);
+
+    const migrated = await ArcadeStateStore.open(file);
+    expect(migrated.snapshot().schemaVersion).toBe(ARCADE_STATE_SCHEMA_VERSION);
+    expect(await readFile(file, 'utf8')).toBe(legacyBytes);
+
     await migrated.transaction(() => undefined);
     expect((JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>).schemaVersion)
       .toBe(ARCADE_STATE_SCHEMA_VERSION);
@@ -202,7 +220,64 @@ describe('ArcadeStateStore', () => {
       .toEqual({ 'ready-1': 'karaoke' });
   });
 
-  it('migrates schema-v1 state losslessly and writes schema v10 on the next transaction', async () => {
+  it('persists Trivia votes, matches, and results only with the v11 identity', async () => {
+    const file = await stateFile();
+    const store = await ArcadeStateStore.open(file);
+    await store.transaction(state => {
+      addReadyPlayer(state);
+      let voting = closeStationRecruiting({
+        station: state.stations.expo!, rounds: state.stationRounds,
+        readyEntries: state.stationReadyEntries, matches: state.stationMatches,
+      }, { at: T0, expectedRevision: 2 });
+      voting = recordStationGameChoice(voting, {
+        readyEntryId: 'ready-1', roundId: 'round-1', game: 'trivia', at: T0,
+        expectedRevision: voting.station.revision,
+      });
+      state.stations.expo = voting.station;
+      Object.assign(state.stationRounds, voting.rounds);
+
+      addPlayer('p2')(state);
+      let completed = insertStationCoin(createArcadeStation('trivia-results', T0), {
+        readyEntryId: 'ready-2', roundId: 'round-2', playerId: 'p2', reservationId: null,
+        at: T0, configVersion: 1, expectedRevision: 1,
+      });
+      completed = closeStationRecruiting(completed, { at: T0, expectedRevision: 2 });
+      completed = selectStationGame(completed, {
+        game: 'trivia', matchId: 'trivia-match', engineRoomCode: 'QUIZ', at: T0, expectedRevision: 3,
+      });
+      completed = requestStationLaunch(completed, { at: T0, expectedRevision: 4 });
+      completed = markStationDisplayReady(completed, { at: T0, expectedRevision: 5 });
+      completed = markStationMatchStarted(completed, {
+        at: T0, expectedRevision: 6, redeemedReservationIds: [],
+        enginePlayerIdsByReadyEntryId: { 'ready-2': 'trivia-player-2' },
+      });
+      completed = completeStationMatch(completed, {
+        at: T0, expectedRevision: 7,
+        engineResults: [{
+          enginePlayerId: 'trivia-player-2', rank: 1, completed: true, won: true,
+          score: 10, durationSeconds: 8,
+        }],
+      });
+      state.stations['trivia-results'] = completed.station;
+      Object.assign(state.stationRounds, completed.rounds);
+      Object.assign(state.stationReadyEntries, completed.readyEntries);
+      Object.assign(state.stationMatches, completed.matches);
+    });
+
+    const restored = (await ArcadeStateStore.open(file)).snapshot();
+    expect(restored.stationRounds['round-1']?.gameChoicesByReadyEntryId).toEqual({ 'ready-1': 'trivia' });
+    expect(restored.stationMatches['trivia-match']).toMatchObject({
+      game: 'trivia', humanCapacity: 4,
+      result: { source: 'ENGINE', participants: [{ readyEntryId: 'ready-2', score: 10 }] },
+    });
+
+    const prePromotion = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
+    prePromotion.schemaVersion = 10;
+    await writeFile(file, JSON.stringify(prePromotion));
+    await expect(ArcadeStateStore.open(file)).rejects.toThrow(/Trivia station identity before schema v11/);
+  });
+
+  it('migrates schema-v1 state losslessly and writes schema v11 on the next transaction', async () => {
     const file = await stateFile();
     const first = await ArcadeStateStore.open(file);
     await first.transaction(addPlayer('p1'));

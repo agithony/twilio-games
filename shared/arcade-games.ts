@@ -30,8 +30,8 @@ export const ARCADE_GAME_DEFINITIONS: Readonly<Record<ArcadeGame, ArcadeGameDefi
     aiFallback: false, playable: true,
   }),
   trivia: Object.freeze({
-    id: 'trivia', route: null, humanCapacity: null, minimumHumans: null,
-    aiFallback: false, playable: false,
+    id: 'trivia', route: '/trivia.html', humanCapacity: 4, minimumHumans: 1,
+    aiFallback: false, playable: true,
   }),
 });
 

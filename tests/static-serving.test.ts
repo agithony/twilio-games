@@ -24,6 +24,7 @@ beforeEach(async () => {
   await writeFile(join(clientDir, 'index.html'), '<!doctype html><title>home</title>');
   await writeFile(join(clientDir, 'play.html'), '<!doctype html><title>play</title>');
   await writeFile(join(clientDir, 'karaoke.html'), '<!doctype html><title>karaoke</title>');
+  await writeFile(join(clientDir, 'trivia.html'), '<!doctype html><title>trivia</title>');
   await writeFile(join(clientDir, 'editor', 'index.html'), '<!doctype html><title>editor</title>');
   await writeFile(join(clientDir, 'garage', 'index.html'), '<!doctype html><title>garage</title>');
   await writeFile(join(clientDir, 'analytics', 'index.html'), '<!doctype html><title>analytics</title>');
@@ -37,7 +38,10 @@ afterEach(async () => { await srv?.stop(); try { await rm(clientDir, { recursive
 
 function makeServer() {
   return new HttpServer({ port: 0, publicBaseUrl: 'http://localhost',
-    validateSignatures: false, clientDir });
+    validateSignatures: false, clientDir,
+    triviaQuestionsPath: join(clientDir, 'data', 'trivia-questions.json'),
+    bundledTriviaQuestionsPath: 'content/trivia/questions.json',
+    triviaLeaderboardPath: join(clientDir, 'data', 'trivia-leaderboard.json') });
 }
 const get = async (port: number, p: string) => {
   const res = await fetch(`http://127.0.0.1:${port}${p}`);
@@ -76,6 +80,7 @@ describe('static client serving', () => {
     srv = makeServer(); const port = await srv.start();
     expect((await get(port, '/play.html')).body).toContain('play');
     expect((await get(port, '/karaoke.html')).body).toContain('karaoke');
+    expect((await get(port, '/trivia.html')).body).toContain('trivia');
   });
 
   it('serves clean routes including the dedicated operator console', async () => {
@@ -96,7 +101,10 @@ describe('static client serving', () => {
     const auth = new GoogleAnalyticsAuth({ redirectUri: 'http://localhost/auth/google/callback',
       adminPin: 'Game!Night#2026' });
     srv = new HttpServer({ port: 0, publicBaseUrl: 'http://localhost', validateSignatures: false,
-      clientDir, analyticsAuth: auth, operatorAuthRequired: true });
+      clientDir, analyticsAuth: auth, operatorAuthRequired: true,
+      triviaQuestionsPath: join(clientDir, 'data', 'trivia-questions.json'),
+      bundledTriviaQuestionsPath: 'content/trivia/questions.json',
+      triviaLeaderboardPath: join(clientDir, 'data', 'trivia-leaderboard.json') });
     const port = await srv.start(), base = `http://127.0.0.1:${port}`;
     const locked = await fetch(`${base}/operator`, { redirect: 'manual' });
     expect(locked.status).toBe(302);

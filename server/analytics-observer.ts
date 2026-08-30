@@ -2,6 +2,7 @@ import type { Room } from './room';
 import type { BattleRoom } from './battle-room';
 import type { FighterRoom } from './fighter-room';
 import type { KaraokeRoom } from './karaoke-room';
+import type { TriviaRoom } from './trivia-room';
 import { AnalyticsStore } from './analytics-store';
 import type { AnalyticsGame } from '../shared/analytics';
 
@@ -11,6 +12,7 @@ interface ActiveMatch {
   participants: string[];
   map?: string | null;
   song?: string | null;
+  category?: string | null;
   characters: string[];
 }
 
@@ -26,6 +28,7 @@ export class AnalyticsObserver {
   private battleActive = new Map<string, ActiveMatch>();
   private fighterActive = new Map<string, ActiveMatch>();
   private karaokeActive = new Map<string, ActiveMatch>();
+  private triviaActive = new Map<string, ActiveMatch>();
 
   constructor(private readonly store: AnalyticsStore, private readonly now: () => number = Date.now) {}
 
@@ -113,6 +116,38 @@ export class AnalyticsObserver {
     if (active) this.finish('karaoke', roomCode, active, false);
   }
 
+  triviaState(room: TriviaRoom): void {
+    const state = room.state();
+    const active = this.triviaActive.get(room.code);
+    const generation = String(state.loadingGeneration);
+    const live = state.loadingGeneration > 0
+      && state.category !== null
+      && (state.phase === 'loading' || state.phase === 'countdown'
+        || state.phase === 'question_prompt' || state.phase === 'answer_cue'
+        || state.phase === 'question' || state.phase === 'reveal');
+    if (live && (!active || active.key !== generation)) {
+      if (active) this.finish('trivia', room.code, active, false);
+      this.triviaActive.set(room.code, {
+        key: generation,
+        startedAt: this.now(),
+        participants: state.players.map(player => `trivia:${room.code}:slot:${player.playerOrder}`),
+        category: state.category,
+        characters: [],
+      });
+      return;
+    }
+    if (!active || live) return;
+    const completed = state.phase === 'results' && state.result?.generation === Number(active.key);
+    this.finish('trivia', room.code, active, completed, completed ? state.result!.completedAtMs : this.now());
+  }
+
+  /** Finalizes a live generation before its room is removed without another state callback. */
+  triviaAborted(roomCode: string): void {
+    const active = this.triviaActive.get(roomCode);
+    if (active) this.finish('trivia', roomCode, active, false);
+  }
+
+  /** Counts an authoritative accepted command; no command text or recognition payload is accepted. */
   voiceCommand(game: Exclude<AnalyticsGame, 'karaoke'>): void {
     this.store.recordVoiceCommand(game, this.now());
   }
@@ -130,18 +165,19 @@ export class AnalyticsObserver {
   }
 
   private finish(
-    game: 'monsters' | 'fighter' | 'karaoke',
+    game: 'monsters' | 'fighter' | 'karaoke' | 'trivia',
     roomCode: string,
     match: ActiveMatch,
     completed: boolean,
     finishedAt = this.now(),
   ): void {
     this.store.recordMatch({ game, participantIds: match.participants, durationSeconds: (finishedAt - match.startedAt) / 1000,
-      completed, map: match.map, song: match.song, characters: match.characters, at: finishedAt });
+      completed, map: match.map, song: match.song, category: match.category, characters: match.characters, at: finishedAt });
     switch (game) {
       case 'monsters': this.battleActive.delete(roomCode); break;
       case 'fighter': this.fighterActive.delete(roomCode); break;
       case 'karaoke': this.karaokeActive.delete(roomCode); break;
+      case 'trivia': this.triviaActive.delete(roomCode); break;
     }
   }
 }

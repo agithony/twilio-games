@@ -1,18 +1,47 @@
-// Editor/garage write authentication. On a PUBLIC deploy the server sets EDITOR_TOKEN and gates all
-// /api writes (manifest + maps) — a request must present the token via ?token= or the x-editor-token
-// header, else 401. To avoid URL juggling, the token is resolved from (in order): the page URL
-// (?token=…), then localStorage (remembered from a previous entry). If a write still 401s, callers
-// call promptForToken() which asks once, stores it, and lets the caller retry. Local dev (no
-// EDITOR_TOKEN) needs no token — the header is simply absent and writes are open.
+// Editor/garage authentication. A credential may be supplied once in a #token= fragment. Token
+// parameters are always scrubbed from the query, but never accepted there. The credential is
+// remembered locally and sent only through x-editor-token. Local dev remains open without a token.
 
 const LS_KEY = 'voiceRacer.editorToken';
 
+export interface ConsumedEditorToken {
+  token: string;
+  scrubbedPath: string | null;
+}
+
+export function consumeEditorToken(url: URL): ConsumedEditorToken {
+  const queryHasToken = url.searchParams.has('token');
+  const hashParams = new URLSearchParams(url.hash.slice(1));
+  const hashHasToken = hashParams.has('token');
+  const hashToken = hashParams.get('token')?.trim() ?? '';
+
+  if (!queryHasToken && !hashHasToken) return { token: '', scrubbedPath: null };
+  url.searchParams.delete('token');
+  if (hashHasToken) {
+    hashParams.delete('token');
+    const nextHash = hashParams.toString();
+    url.hash = nextHash ? `#${nextHash}` : '';
+  }
+  return {
+    token: hashToken,
+    scrubbedPath: `${url.pathname}${url.search}${url.hash}`,
+  };
+}
+
 function readInitial(): string {
+  let fromUrl = '';
   try {
-    const fromUrl = new URLSearchParams(location.search).get('token');
-    if (fromUrl) { localStorage.setItem(LS_KEY, fromUrl); return fromUrl; }   // URL wins + is remembered
-    return localStorage.getItem(LS_KEY) ?? '';
-  } catch { return ''; }
+    const consumed = consumeEditorToken(new URL(location.href));
+    fromUrl = consumed.token;
+    if (consumed.scrubbedPath !== null) {
+      history.replaceState(history.state, '', consumed.scrubbedPath);
+    }
+  } catch { /* URL/history access may be unavailable in embedded contexts. */ }
+  if (fromUrl) {
+    try { localStorage.setItem(LS_KEY, fromUrl); } catch { /* Keep it in memory for this page. */ }
+    return fromUrl;
+  }
+  try { return localStorage.getItem(LS_KEY) ?? ''; } catch { return ''; }
 }
 
 let editorToken = readInitial();
@@ -21,13 +50,6 @@ let editorToken = readInitial();
  *  (no token) is unaffected. Merge into a fetch() headers object. */
 export function authHeaders(base: Record<string, string> = {}): Record<string, string> {
   return editorToken ? { ...base, 'x-editor-token': editorToken } : { ...base };
-}
-
-/** Append ?token= to a URL for verbs where a header is awkward (e.g. DELETE via query). */
-export function withToken(url: string): string {
-  if (!editorToken) return url;
-  const sep = url.includes('?') ? '&' : '?';
-  return `${url}${sep}token=${encodeURIComponent(editorToken)}`;
 }
 
 /** Ask the user for the editor token (once), remember it, and return whether one was entered. Callers
@@ -41,5 +63,5 @@ export function promptForToken(): boolean {
   return true;
 }
 
-/** True when we currently hold a token (URL or remembered). */
+/** True when we currently hold a token (initial entry, prompt, or remembered). */
 export const hasEditorToken = () => editorToken.length > 0;

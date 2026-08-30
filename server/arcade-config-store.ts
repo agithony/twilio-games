@@ -37,6 +37,7 @@ const STATION_CONFIG_SCHEMA_VERSION = 2;
 const CHALLENGE_MESSAGE_CONFIG_SCHEMA_VERSION = 3;
 const HOME_CONCEPT_CONFIG_SCHEMA_VERSION = 4;
 const PRE_KARAOKE_CONFIG_SCHEMA_VERSION = 5;
+const KARAOKE_CONFIG_SCHEMA_VERSION = 6;
 const LEGACY_CONFIG_KEYS = [
   'schemaVersion', 'version', 'updatedAt', 'updatedBy',
   'arcade', 'registration', 'coins', 'earning', 'queue', 'channels', 'postGame', 'intelligence',
@@ -789,31 +790,35 @@ function parseStoredConfig(input: unknown): ParsedStoredConfig {
     throw new Error('stored config must be an object');
   }
   const object = decoded as Record<string, unknown>;
+  if (object.schemaVersion === KARAOKE_CONFIG_SCHEMA_VERSION) {
+    const snapshot = parseArcadeConfig(promoteTriviaConfig(object));
+    return { snapshot, hashConfig: decoded };
+  }
   if (object.schemaVersion === PRE_KARAOKE_CONFIG_SCHEMA_VERSION) {
-    const snapshot = parseArcadeConfig(promoteKaraokeConfig(object));
+    const snapshot = parseArcadeConfig(promoteTriviaConfig(promoteKaraokeConfig(object)));
     return { snapshot, hashConfig: decoded };
   }
   if (object.schemaVersion === HOME_CONCEPT_CONFIG_SCHEMA_VERSION) {
-    const snapshot = parseArcadeConfig(promoteKaraokeConfig({
+    const snapshot = parseArcadeConfig(promoteTriviaConfig(promoteKaraokeConfig({
       ...object,
       schemaVersion: PRE_KARAOKE_CONFIG_SCHEMA_VERSION,
       station: addHomeConceptSettings(object.station),
-    }));
+    })));
     return { snapshot, hashConfig: decoded };
   }
   if (object.schemaVersion === CHALLENGE_MESSAGE_CONFIG_SCHEMA_VERSION) {
-    const snapshot = parseArcadeConfig(promoteKaraokeConfig({
+    const snapshot = parseArcadeConfig(promoteTriviaConfig(promoteKaraokeConfig({
       ...object,
       schemaVersion: PRE_KARAOKE_CONFIG_SCHEMA_VERSION,
       station: addHomeConceptSettings(object.station),
       earning: addChallengeMessages(object.earning),
       postGame: normalizeLegacyPostGame(object.postGame, object.channels),
-    }));
+    })));
     return { snapshot, hashConfig: decoded };
   }
   if (object.schemaVersion === STATION_CONFIG_SCHEMA_VERSION) {
     const legacyChannels = object.channels as Record<string, unknown>;
-    const snapshot = parseArcadeConfig(promoteKaraokeConfig({
+    const snapshot = parseArcadeConfig(promoteTriviaConfig(promoteKaraokeConfig({
       ...object,
       schemaVersion: PRE_KARAOKE_CONFIG_SCHEMA_VERSION,
       station: addHomeConceptSettings(object.station),
@@ -823,7 +828,7 @@ function parseStoredConfig(input: unknown): ParsedStoredConfig {
         ...legacyChannels,
         voiceNumbers: { 'en-US': null, 'pt-BR': null },
       },
-    }));
+    })));
     return { snapshot, hashConfig: decoded };
   }
   if (object.schemaVersion !== LEGACY_CONFIG_SCHEMA_VERSION) {
@@ -836,7 +841,17 @@ function parseStoredConfig(input: unknown): ParsedStoredConfig {
   if (keys.length !== expectedKeys.length || keys.some((key, index) => key !== expectedKeys[index])) {
     throw new Error('unexpected or missing schema 1 config fields');
   }
-  const station = createDefaultArcadeConfig().station;
+  const currentStation = createDefaultArcadeConfig().station;
+  const { trivia: _newGame, ...legacyGames } = currentStation.games;
+  const station = {
+    ...currentStation,
+    games: legacyGames,
+    comingSoon: { trivia: { enabled: true } },
+    automaticSelection: {
+      ...currentStation.automaticSelection,
+      order: currentStation.automaticSelection.order.filter(game => game !== 'trivia'),
+    },
+  };
   const legacyArcade = object.arcade as { mode?: unknown };
   const legacyChannels = object.channels as { voice?: unknown; sms?: unknown; whatsapp?: unknown };
   const legacyCoins = object.coins as Record<string, unknown>;
@@ -882,8 +897,8 @@ function parseStoredConfig(input: unknown): ParsedStoredConfig {
   const migratedPostGame = unsupportedPostGame
     ? { ...legacyPostGame, enabled: false }
     : object.postGame;
-  const snapshot = parseArcadeConfig({
-    schemaVersion: ARCADE_CONFIG_SCHEMA_VERSION,
+  const snapshot = parseArcadeConfig(promoteTriviaConfig({
+    schemaVersion: KARAOKE_CONFIG_SCHEMA_VERSION,
     version: object.version,
     updatedAt: object.updatedAt,
     updatedBy: object.updatedBy,
@@ -899,7 +914,7 @@ function parseStoredConfig(input: unknown): ParsedStoredConfig {
     },
     postGame: migratedPostGame,
     intelligence: object.intelligence,
-  });
+  }));
   return {
     snapshot,
     // Hash historical records using their untouched v1 shape, not the safe runtime migration.
@@ -907,8 +922,8 @@ function parseStoredConfig(input: unknown): ParsedStoredConfig {
   };
 }
 
-/** Promotes the exact schema-v5 game lists while retaining the original object for audit hashing. */
-function promoteKaraokeConfig(object: Record<string, unknown>): unknown {
+/** Promotes only the exact schema-v5 game lists; Trivia promotion remains a separate v6 boundary. */
+function promoteKaraokeConfig(object: Record<string, unknown>): Record<string, unknown> {
   const station = storedRecord(object.station, '$.station');
   const games = storedRecord(station.games, '$.station.games');
   requireStoredKeys(games, ['racer', 'monsters', 'fighter'], '$.station.games');
@@ -932,7 +947,7 @@ function promoteKaraokeConfig(object: Record<string, unknown>): unknown {
   const { karaoke: _retiredConcept, ...currentConcepts } = comingSoon;
   return {
     ...object,
-    schemaVersion: ARCADE_CONFIG_SCHEMA_VERSION,
+    schemaVersion: KARAOKE_CONFIG_SCHEMA_VERSION,
     station: {
       ...station,
       games: { ...games, karaoke: { enabled: false } },
@@ -943,6 +958,45 @@ function promoteKaraokeConfig(object: Record<string, unknown>): unknown {
   };
 }
 
+/** Promotes the exact schema-v6 identity lists while retaining the original object for audit hashing. */
+function promoteTriviaConfig(object: Record<string, unknown>): Record<string, unknown> {
+  const station = storedRecord(object.station, '$.station');
+  const games = storedRecord(station.games, '$.station.games');
+  requireStoredKeys(games, ['racer', 'monsters', 'fighter', 'karaoke'], '$.station.games', 'schema-v6');
+  const comingSoon = storedRecord(station.comingSoon, '$.station.comingSoon');
+  requireStoredKeys(comingSoon, ['trivia'], '$.station.comingSoon', 'schema-v6');
+  const retiredTrivia = storedRecord(comingSoon.trivia, '$.station.comingSoon.trivia');
+  requireStoredKeys(retiredTrivia, ['enabled'], '$.station.comingSoon.trivia', 'schema-v6');
+  if (typeof retiredTrivia.enabled !== 'boolean') {
+    throw new Error('$.station.comingSoon.trivia.enabled must be boolean');
+  }
+  const automaticSelection = storedRecord(station.automaticSelection, '$.station.automaticSelection');
+  const order = automaticSelection.order;
+  if (!Array.isArray(order) || order.length !== 4
+    || new Set(order).size !== 4
+    || order.some(game => !['racer', 'monsters', 'fighter', 'karaoke'].includes(String(game)))) {
+    throw new Error('$.station.automaticSelection.order must contain the four schema-v6 station games exactly once');
+  }
+  const coins = storedRecord(object.coins, '$.coins');
+  const gameCosts = storedRecord(coins.gameCosts, '$.coins.gameCosts');
+  requireStoredKeys(
+    gameCosts,
+    ['racer', 'monsters', 'fighter', 'karaoke', 'trivia'],
+    '$.coins.gameCosts',
+    'schema-v6',
+  );
+  return {
+    ...object,
+    schemaVersion: ARCADE_CONFIG_SCHEMA_VERSION,
+    station: {
+      ...station,
+      games: { ...games, trivia: { enabled: false } },
+      comingSoon: { trivia: { enabled: false } },
+      automaticSelection: { ...automaticSelection, order: [...order, 'trivia'] },
+    },
+  };
+}
+
 function storedRecord(value: unknown, path: string): Record<string, unknown> {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error(`${path} must be an object`);
@@ -950,11 +1004,16 @@ function storedRecord(value: unknown, path: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function requireStoredKeys(value: Record<string, unknown>, keys: readonly string[], path: string): void {
+function requireStoredKeys(
+  value: Record<string, unknown>,
+  keys: readonly string[],
+  path: string,
+  schema = 'schema-v5',
+): void {
   const actual = Object.keys(value).sort();
   const expected = [...keys].sort();
   if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) {
-    throw new Error(`${path} has malformed schema-v5 fields`);
+    throw new Error(`${path} has malformed ${schema} fields`);
   }
 }
 

@@ -62,12 +62,10 @@ export class KaraokeVenueEditor {
   private clock = new THREE.Clock();
 
   constructor(private root: HTMLElement) {
-    const token = new URLSearchParams(location.search).get('token');
-    const tokenQuery = token ? `&token=${encodeURIComponent(token)}` : '';
     this.root.innerHTML = `
       <div class="kve">
         <header class="kve-chrome"><strong>Voice Karaoke <span>Venue Editor</span></strong><a href="/editor">All editors</a>
-          <a href="?game=karaoke&tool=timing${tokenQuery}">Word timing</a>
+          <a href="?game=karaoke&tool=timing">Word timing</a>
           <select id="kvRole" aria-label="Selected scene role">${[...ROLES, 'highway'].map(role => `<option value="${role}">${LABELS[role as Selection]}</option>`).join('')}</select>
           <button data-mode="translate" class="active">Move W</button><button data-mode="rotate">Rotate E</button><button data-mode="scale">Scale R</button>
           <button id="kvFrame">Frame</button><button id="kvReset">Reset</button><span class="grow"></span>

@@ -4,13 +4,18 @@ import { rm, writeFile } from 'node:fs/promises';
 import { AnalyticsStore, dateRange, validDate } from '../server/analytics-store';
 import { AnalyticsObserver } from '../server/analytics-observer';
 import { KaraokeRoom } from '../server/karaoke-room';
+import { TriviaRoom } from '../server/trivia-room';
 import { analyticsPdf } from '../server/analytics-pdf';
 import { ANALYTICS_GAMES } from '../shared/analytics';
 import { EN_US_ORIGINAL_DEVELOPMENT_SONG } from '../shared/karaoke-songs';
 import type { KaraokeSong } from '../shared/karaoke';
+import { parseTriviaQuestionBankJson } from '../shared/trivia';
 
 const files: string[] = [];
 afterEach(async () => { await Promise.all(files.splice(0).map(file => rm(file, { force: true }))); });
+const triviaBank = parseTriviaQuestionBankJson(
+  readFileSync(new URL('../content/trivia/questions.json', import.meta.url), 'utf8'),
+);
 const finalHits = (song: KaraokeSong, score: number) => song.chart.words.map((word, index) => ({
   wordId: word.id, judgment: index === 0 ? 'perfect' as const : 'miss' as const, points: index === 0 ? score : 0,
 }));
@@ -31,7 +36,7 @@ describe('activation analytics', () => {
     expect(report.summary).toMatchObject({ participants: 3, sessions: 2, completed: 1, abandoned: 1, playSeconds: 136, voiceCommands: 1 });
     expect(report.games.racer.completionRate).toBe(1);
     expect(report.games.karaoke.sessions).toBe(0);
-    expect(ANALYTICS_GAMES).toEqual(['racer', 'monsters', 'fighter', 'karaoke']);
+    expect(ANALYTICS_GAMES).toEqual(['racer', 'monsters', 'fighter', 'karaoke', 'trivia']);
     expect(report.selections.maps.map(item => item.name)).toEqual(['neon-city', 'rain']);
     expect(JSON.stringify(await import('node:fs/promises').then(fs => fs.readFile(file, 'utf8')))).not.toContain('room:p1');
   });
@@ -52,6 +57,80 @@ describe('activation analytics', () => {
     const report = store.report(today, today);
     expect(report.games.racer.sessions).toBe(2);
     expect(report.games.karaoke.voiceCommands).toBe(1);
+  });
+
+  it('lazily adds Trivia/category buckets to version-1 days without losing old metrics', async () => {
+    const file = `data/_test-analytics-${process.pid}-${Date.now()}-legacy-trivia.json`; files.push(file);
+    const today = new Date().toISOString().slice(0, 10);
+    const empty = { participants: [], sessions: 0, completed: 0, abandoned: 0, playSeconds: 0,
+      voiceCommands: 0, maps: {}, songs: {}, characters: {}, vehicles: {} };
+    await writeFile(file, JSON.stringify({ version: 1, days: {
+      [today]: { games: { racer: { ...empty, sessions: 2 }, monsters: empty, fighter: empty, karaoke: empty } },
+    } }));
+    const store = new AnalyticsStore(file, 'secret');
+    await store.load();
+    store.recordMatch({ game: 'trivia', participantIds: ['trivia:ROOM:slot:0'], durationSeconds: 10,
+      completed: true, category: 'science', at: Date.parse(`${today}T12:00:00Z`) });
+    await store.flush();
+
+    const report = store.report(today, today, 'trivia');
+    expect(report.summary).toMatchObject({ participants: 1, sessions: 1, completed: 1 });
+    expect(report.games.racer.sessions).toBe(2);
+    expect(report.selections.categories).toEqual([{ name: 'science', count: 1 }]);
+    expect(JSON.parse(await import('node:fs/promises').then(fs => fs.readFile(file, 'utf8'))).version).toBe(1);
+  });
+
+  it('records each Trivia generation once with room-scoped slots, categories, and accepted command counts', async () => {
+    const file = `data/_test-analytics-${process.pid}-${Date.now()}-trivia.json`; files.push(file);
+    const today = new Date().toISOString().slice(0, 10);
+    let now = Date.parse(`${today}T12:00:00Z`);
+    const store = new AnalyticsStore(file, 'secret');
+    const observer = new AnalyticsObserver(store, () => now);
+    const room = new TriviaRoom('QUIZ', { bank: triviaBank, now: () => now, countdownMs: 1,
+      questionPromptTimeoutMs: 1, answerCueTimeoutMs: 1, finalAnswerGraceMs: 0, revealMs: 1 });
+    const first = room.addPlayer('Private Ada');
+    const second = room.addPlayer('Private Grace');
+    if ('error' in first || 'error' in second) throw new Error('players did not join');
+    room.advance();
+    room.voteCategory(first.playerId, 'science');
+    room.voteCategory(second.playerId, 'science');
+    room.advance();
+    observer.triviaState(room);
+    observer.triviaState(room);
+    observer.voiceCommand('trivia');
+    observer.voiceCommand('trivia');
+
+    expect(room.retryLoading(room.state().loadingGeneration)).toBe(true);
+    observer.triviaState(room);
+    observer.triviaState(room);
+    expect(room.ready(room.state().loadingGeneration)).toBe(true);
+    now += 200_000;
+    room.tick();
+    observer.triviaState(room);
+    observer.triviaState(room);
+
+    room.advance();
+    room.voteCategory(first.playerId, 'history');
+    room.voteCategory(second.playerId, 'history');
+    room.advance();
+    observer.triviaState(room);
+    now += 5_000;
+    observer.triviaAborted(room.code);
+    observer.triviaAborted(room.code);
+    await store.flush();
+
+    const report = store.report(today, today, 'trivia');
+    expect(report.filter).toBe('trivia');
+    expect(report.summary).toMatchObject({
+      participants: 2, sessions: 3, completed: 1, abandoned: 2, voiceCommands: 2,
+    });
+    expect(report.games.trivia).toEqual(report.summary);
+    expect(report.selections.categories).toEqual([
+      { name: 'science', count: 2 }, { name: 'history', count: 1 },
+    ]);
+    expect(report.selections.maps).toEqual([]);
+    const persisted = await import('node:fs/promises').then(fs => fs.readFile(file, 'utf8'));
+    expect(persisted).not.toMatch(/Private Ada|Private Grace|question|answer|transcript|QUIZ|slot/i);
   });
 
   it('records Karaoke generations, song selection, completion, abandonment, and semantic setup actions', async () => {
@@ -174,11 +253,27 @@ describe('activation analytics', () => {
     expect(report.insights).toContain('1 session was abandoned before completion.');
   });
 
-  it('offers Karaoke in the private analytics dashboard', () => {
+  it('renders Trivia filters, categories, and labels in reports and PDFs', async () => {
+    const file = `data/_test-analytics-${process.pid}-${Date.now()}-trivia-pdf.json`; files.push(file);
+    const store = new AnalyticsStore(file, 'secret');
+    store.recordMatch({ game: 'trivia', participantIds: ['trivia:room:slot:0'], durationSeconds: 80,
+      completed: true, category: 'technology', at: Date.parse('2026-07-14T12:00:00Z') });
+    await store.flush();
+    const report = store.report('2026-07-14', '2026-07-14', 'trivia');
+    const pdf = analyticsPdf(report).toString();
+    expect(report.selections.categories).toEqual([{ name: 'technology', count: 1 }]);
+    expect(pdf).toContain('Voice Trivia');
+    expect(pdf).toContain('Categories: technology \\(1\\)');
+  });
+
+  it('offers Karaoke and Trivia in the private analytics dashboard', () => {
     const html = readFileSync(new URL('../client/analytics/index.html', import.meta.url), 'utf8');
     const client = readFileSync(new URL('../client/analytics/analytics.ts', import.meta.url), 'utf8');
     expect(html).toContain('<option value="karaoke">Voice Karaoke</option>');
+    expect(html).toContain('<option value="trivia">Voice Trivia</option>');
     expect(client).toContain("karaoke:'Karaoke'");
+    expect(client).toContain("trivia:'Trivia'");
+    expect(client).toContain("['Categories',report.selections.categories]");
     expect(client).toContain("'Abandoned sessions'");
     expect(client).toContain('return `${total}s`');
   });

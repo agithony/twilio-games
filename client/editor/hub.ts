@@ -3,14 +3,14 @@
 //                   imported so its module-level boot runs against the racer chrome already in the DOM)
 //   ?game=battler → the Voice Monsters arena editor (client/editor/arena-editor.ts)
 //   ?game=karaoke → the Voice Karaoke venue and word-timing editors
+//   ?game=trivia  → the server-only Voice Trivia question-bank editor
 //   (no ?game)    → the picker
-// The editor token (?token=) is preserved across navigation so a gated deploy stays authorized.
+// editor-auth consumes and scrubs an initial credential before any route module is selected.
+import './editor-auth';
 import { injectMagicHat } from '../magic-hat';
 
 const params = new URLSearchParams(location.search);
 const game = params.get('game');
-const token = params.get('token') ?? '';
-const tokenQ = token ? `&token=${encodeURIComponent(token)}` : '';
 
 // The racer editor's chrome (topbar/tree/panel) lives statically in index.html. Show it only for the
 // racer view; hide it for the picker + the battler editor (which build their own UI).
@@ -27,21 +27,25 @@ function showPicker(): void {
       <div class="hub-title">Twilio Games — Editors</div>
       <div class="hub-sub">Pick a game to edit its content</div>
       <div class="hub-cards">
-        <a class="hub-card" href="?game=racer${tokenQ}">
+        <a class="hub-card" href="?game=racer">
           <div class="hub-card-name">Voice Racer</div>
           <div class="hub-card-desc">Level editor — tracks, maps, props, lighting, camera</div>
         </a>
-        <a class="hub-card" href="?game=battler${tokenQ}">
+        <a class="hub-card" href="?game=battler">
           <div class="hub-card-name">Voice Monsters</div>
           <div class="hub-card-desc">Arena editor — 3D arena transform, camera framing, spin speed</div>
         </a>
-        <a class="hub-card" href="?game=fighter${tokenQ}">
+        <a class="hub-card" href="?game=fighter">
           <div class="hub-card-name">Voice Fighter</div>
           <div class="hub-card-desc">Map editor — GLB placement, fight boundaries, floor and camera</div>
         </a>
-        <a class="hub-card" href="?game=karaoke${tokenQ}">
+        <a class="hub-card" href="?game=karaoke">
           <div class="hub-card-name">Voice Karaoke</div>
           <div class="hub-card-desc">Venue and word timing — band, cameras, lyric targets, starts and sustains</div>
+        </a>
+        <a class="hub-card" href="?game=trivia">
+          <div class="hub-card-name">Voice Trivia</div>
+          <div class="hub-card-desc">Question bank - bilingual prompts, choices, answer aliases, sources, and review metadata</div>
         </a>
       </div>
     </div>`;
@@ -73,6 +77,11 @@ async function boot(): Promise<void> {
       const { KaraokeVenueEditor } = await import('./karaoke-venue-editor');
       new KaraokeVenueEditor(document.getElementById('app')!);
     }
+  } else if (game === 'trivia') {
+    setRacerChrome(false);
+    document.title = 'Voice Trivia - Question Editor';
+    const { TriviaQuestionEditor } = await import('./trivia-question-editor');
+    new TriviaQuestionEditor(document.getElementById('app')!);
   } else {
     document.title = 'Twilio Games — Editors';
     showPicker();

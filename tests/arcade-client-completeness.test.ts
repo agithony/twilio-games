@@ -120,8 +120,8 @@ describe('Arcade client completeness', () => {
     expect(arcadeCss).toContain('.player-game-choices button.selected');
   });
 
-  it('never offers disabled games and preserves global game numbers', () => {
-    expect(arcade).toContain('games:Record<PlayableGame,{enabled:boolean}>;comingSoon:Record<HomeConcept,{enabled:boolean}>');
+  it('never offers disabled games and preserves all five global game numbers', () => {
+    expect(arcade).toContain('games:Record<PlayableGame,{enabled:boolean}>;comingSoon:Record<HomeConcept,{enabled:false}>');
     expect(arcade).toContain('const enabled=state.config?.station.games[game]?.enabled===true');
     expect(arcade).toContain('button.hidden=!enabled');
     expect(arcade).toContain('button.disabled=gameChoiceSaving||!enabled');
@@ -130,6 +130,10 @@ describe('Arcade client completeness', () => {
     expect(arcadeHtml).toMatch(/data-game-choice="monsters"><span>2<\/span>/);
     expect(arcadeHtml).toMatch(/data-game-choice="fighter"><span>3<\/span>/);
     expect(arcadeHtml).toMatch(/data-game-choice="karaoke"><span>4<\/span>/);
+    expect(arcadeHtml).toMatch(/data-game-choice="trivia"><span>5<\/span>/);
+    expect(arcadeHtml).toContain('id="admin-game-trivia"');
+    expect(arcadeHtml).not.toContain('id="admin-coming-soon-trivia"');
+    expect(arcade).toContain('station.comingSoon.trivia.enabled=false');
     expect(arcadeHtml).not.toContain('admin-coming-soon-karaoke');
   });
 });

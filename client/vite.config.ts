@@ -80,6 +80,24 @@ export default defineConfig(({ mode }) => {
         '/battle': { target: gameServer, ws: true, bypass: bypassNonWebSocket },
         '/fighter': { target: gameServer, ws: true, bypass: bypassNonWebSocket },
         '/karaoke': { target: gameServer, ws: true, bypass: bypassNonWebSocket },
+        '/trivia': {
+          target: gameServer,
+          ws: true,
+          bypass: bypassNonWebSocket,
+          configure(proxy) {
+            proxy.on('proxyReqWs', (proxyRequest, request) => {
+              const origin = request.headers.origin;
+              const forwardedOrigin = forwardedGameServerOrigin(
+                origin,
+                request.headers.host,
+                expectedGameServerOrigin,
+              );
+              if (forwardedOrigin !== undefined && forwardedOrigin !== origin) {
+                proxyRequest.setHeader('origin', forwardedOrigin);
+              }
+            });
+          },
+        },
         '/voice': { target: gameServer, ws: true, bypass: bypassNonWebSocket },
         // GLB models live in the repo-root assets/ served by the node server, so /assets is proxied.
         // EXCEPT monster sprites, which live in client/public/assets/monsters/ and are served by Vite.
@@ -100,6 +118,7 @@ export default defineConfig(({ mode }) => {
           monsters: resolve(__dirname, 'monsters.html'),           // Voice Monsters (the battler)
           fighter: resolve(__dirname, 'fighter.html'),              // Voice Fighter gameplay prototype
           karaoke: resolve(__dirname, 'karaoke.html'),              // Voice Karaoke
+          trivia: resolve(__dirname, 'trivia.html'),                // Voice Trivia display
           editor: resolve(__dirname, 'editor/index.html'),          // unified Level Editor (/editor)
           garage: resolve(__dirname, 'garage/index.html'),          // model viewer + configurator (/garage)
           analytics: resolve(__dirname, 'analytics/index.html'),    // private activation analytics (/analytics)
@@ -117,8 +136,8 @@ function bypassNonWebSocket(req: { url?: string; headers: { upgrade?: string } }
   return req.headers.upgrade?.toLowerCase() === 'websocket' ? undefined : req.url;
 }
 
-export function configuredGameServerOrigin(gameServer: string, configuredOrigin?: string): string {
-  return new URL(configuredOrigin || gameServer).origin;
+export function configuredGameServerOrigin(_gameServer: string, configuredOrigin?: string): string {
+  return new URL(configuredOrigin || 'http://localhost:5173').origin;
 }
 
 export function forwardedGameServerOrigin(

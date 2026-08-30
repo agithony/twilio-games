@@ -1,6 +1,6 @@
-// Activate v6 writes only after every rollback target can read v6. Promotion is intentionally one-way;
+// Activate v7 writes only after every rollback target can read v7. Promotion is intentionally one-way;
 // deployment must provide the staged compatibility gate rather than relying on a lossy downmigration.
-export const ARCADE_CONFIG_SCHEMA_VERSION = 6 as const;
+export const ARCADE_CONFIG_SCHEMA_VERSION = 7 as const;
 
 export type ArcadeMode = 'off' | 'coin_only' | 'lead_capture';
 export type ArcadeGame = 'racer' | 'monsters' | 'fighter' | 'karaoke' | 'trivia';
@@ -48,8 +48,9 @@ export type ArcadeSettings = {
   readonly displayName: string;
 };
 
-export type StationGame = Exclude<ArcadeGame, 'trivia'>;
-export type HomeConcept = Extract<ArcadeGame, 'trivia'>;
+export type StationGame = ArcadeGame;
+/** @deprecated Compatibility tombstone retained for schema v7 only. */
+export type HomeConcept = 'trivia';
 export type AutomaticSelectionPolicy = 'best_fit_rotation' | 'round_robin' | 'fixed_priority';
 export type StationQrRail = 'auto' | 'always' | 'hidden';
 
@@ -68,7 +69,7 @@ export type StationGameSettings = {
 };
 
 export type StationGamesSettings = Readonly<Record<StationGame, StationGameSettings>>;
-export type HomeConceptSettings = Readonly<Record<HomeConcept, StationGameSettings>>;
+export type HomeConceptSettings = Readonly<Record<HomeConcept, { readonly enabled: false }>>;
 
 export type StationAutomaticSelectionSettings = {
   readonly policy: AutomaticSelectionPolicy;
@@ -218,7 +219,7 @@ const CONFIG_KEYS = [
 const SETTINGS_KEYS = [
   'arcade', 'station', 'registration', 'coins', 'earning', 'queue', 'channels', 'postGame', 'intelligence',
 ] as const;
-export const STATION_GAMES: readonly StationGame[] = Object.freeze(['racer', 'monsters', 'fighter', 'karaoke']);
+export const STATION_GAMES: readonly StationGame[] = Object.freeze(['racer', 'monsters', 'fighter', 'karaoke', 'trivia']);
 const HOME_CONCEPTS: readonly HomeConcept[] = ['trivia'];
 const REGISTRATION_FIELD_KEYS: readonly RegistrationFieldKey[] = [
   'firstName', 'lastName', 'workEmail', 'companyName', 'phoneNumber', 'countryCode',
@@ -496,13 +497,14 @@ function parseStation(value: unknown, mode: ArcadeMode): StationSettings {
     monsters: parseStationGame(gameInput.monsters, '$.station.games.monsters'),
     fighter: parseStationGame(gameInput.fighter, '$.station.games.fighter'),
     karaoke: parseStationGame(gameInput.karaoke, '$.station.games.karaoke'),
+    trivia: parseStationGame(gameInput.trivia, '$.station.games.trivia'),
   };
   if (mode !== 'off' && !STATION_GAMES.some(game => games[game].enabled)) {
     invalid('$.station.games', 'at least one game must be enabled when arcade mode is not off');
   }
   const conceptInput = exactObject(object.comingSoon, HOME_CONCEPTS, '$.station.comingSoon');
   const comingSoon: HomeConceptSettings = {
-    trivia: parseStationGame(conceptInput.trivia, '$.station.comingSoon.trivia'),
+    trivia: parseComingSoonTombstone(conceptInput.trivia, '$.station.comingSoon.trivia'),
   };
 
   const selectionInput = exactObject(
@@ -542,6 +544,12 @@ function parseStation(value: unknown, mode: ArcadeMode): StationSettings {
 function parseStationGame(value: unknown, path: string): StationGameSettings {
   const object = exactObject(value, ['enabled'], path);
   return { enabled: booleanAt(object.enabled, `${path}.enabled`) };
+}
+
+function parseComingSoonTombstone(value: unknown, path: string): HomeConceptSettings[HomeConcept] {
+  const setting = parseStationGame(value, path);
+  if (setting.enabled) invalid(`${path}.enabled`, 'deprecated compatibility tombstone must remain false');
+  return { enabled: false };
 }
 
 function parseRegistrationField(value: unknown, index: number): RegistrationField {
@@ -1024,13 +1032,14 @@ const DEFAULT_CONFIG_INPUT = {
       monsters: { enabled: true },
       fighter: { enabled: true },
       karaoke: { enabled: true },
+      trivia: { enabled: true },
     },
     comingSoon: {
-      trivia: { enabled: true },
+      trivia: { enabled: false },
     },
     automaticSelection: {
       policy: 'best_fit_rotation',
-      order: ['racer', 'monsters', 'fighter', 'karaoke'],
+      order: ['racer', 'monsters', 'fighter', 'karaoke', 'trivia'],
     },
     qrRail: 'auto',
   },

@@ -6,7 +6,7 @@ This directory contains three browser-public QR PNGs. Runtime-generated QR codes
 
 | File | Dimensions | Runtime role |
 |---|---:|---|
-| `join-qr.png` | 600 by 600 | Fallback when a standalone game cannot generate a QR for its locale-specific voice number |
+| `join-qr.png` | 600 by 600 | Fallback for Voice Racer, Voice Monsters, and Voice Fighter when they cannot generate a QR for the locale-specific voice number |
 | `arcade-en.png` | 600 by 600 | English station join QR for the production `ARCADE-01` deployment |
 | `arcade-pt.png` | 1200 by 1200 | Brazilian Portuguese station join QR for the production `ARCADE-01` deployment |
 
@@ -18,11 +18,15 @@ These assets ship with the main application and require no separate installation
 
 ### Standalone Joins
 
-Voice Racer, Voice Monsters, and Voice Fighter watch the configured number for the display locale. When a number is available, each game generates a 520-pixel QR data URL for `tel:<number>` with medium error correction. The browser updates that QR when the runtime configuration changes.
+Voice Racer, Voice Monsters, Voice Fighter, and Voice Karaoke watch the configured number for the display locale. Racer, Monsters, and Fighter generate a 520-pixel QR data URL for `tel:<number>` with medium error correction. Karaoke generates the same kind of QR at 420 pixels. Each browser updates its number and generated QR when the runtime configuration changes. The Voice Trivia stage does not render a phone QR or use any PNG in this directory; it remains a read-only display while callers answer through `/voice`.
 
-`/brand/join-qr.png?v=2` is only the fallback. A standalone lobby uses it when its locale has no configured number or when `QRCode.toDataURL()` fails. Replacing the PNG changes that fallback image; it does not replace the normal generated QR or update the written phone number.
+`/brand/join-qr.png?v=2` is only the Racer, Monsters, and Fighter fallback. Those standalone lobbies use it when their locale has no configured number or when `QRCode.toDataURL()` fails. Karaoke instead omits the QR in either case and keeps its voice-line loading copy when no number is configured; it does not use this PNG. Replacing the PNG changes only that fallback in those three lobbies, not a normal generated QR or the written phone number.
 
-The dialed locale-specific number determines the call locale when it maps uniquely to `en-US` or `pt-BR`. Standalone call routing then uses the most recently opened `display=1` game connection and the standalone room fallback. Standalone display registration does not validate the station display token. This open-display recency rule does not route station-managed calls.
+The default configuration exposes five enabled voice games. The standalone launcher follows the persisted display order and shows three games per page, so the default second page contains Voice Karaoke fourth and Voice Trivia fifth. Global game numbers do not change when games are disabled or reordered: Karaoke remains station and Messaging option `4`, and Trivia remains option `5`.
+
+The dialed locale-specific number determines the call locale when it maps uniquely to `en-US` or `pt-BR`. With the event paused and standalone voice enabled, a normal incoming call routes to room `4821` for the most recently registered, still-open `display=1` connection among enabled games. A later attendee or non-display socket does not change that choice, and no open standalone display means the call is unavailable. Standalone displays do not pair or validate the station display token.
+
+Station-managed booth displays are different: an operator pairs the intended tab through `/operator`, which stores display access in that tab's `sessionStorage`. Station launch URLs and visitor QRs carry no display credential. While an event is active, the caller's persisted station assignment chooses the game and dynamically generated room; standalone display recency is not consulted.
 
 ### Station Joins
 
@@ -36,7 +40,7 @@ The home and player views generate this QR at 520 pixels. The in-game station ra
 
 For station `ARCADE-01` on the configured production origin, `stationQrAsset()` selects `arcade-en.png` or `arcade-pt.png` before generating a QR. Those committed PNGs encode `https://twil.io/arcade-en?qr=1` and `https://twil.io/arcade-pt?qr=1`; the short links redirect to the locale-specific `/join` URLs. `resolveStationQrImage()` probes the selected image and generates the direct station join URL if the image cannot load. Other station IDs and origins always use a generated QR. There is no general image-element error-handler contract beyond this explicit resolution step.
 
-Scanning a station QR starts the `/join` registration, wallet, and queue flow. English join pages expose configured SMS and WhatsApp entry; Portuguese join pages expose WhatsApp but not SMS. Lead-capture mode also exposes a secondary browser fallback for both locales. When the caller reaches an active match, the server routes the call from its persisted station assignment to the selected game and that match's dynamically generated engine room. The launched display receives the same assigned room. Replacing a PNG cannot override those assignments or bind callers to a fixed room.
+Scanning a station QR starts the `/join` registration, wallet, and queue flow. English exposes each enabled channel with a valid configured number, SMS, WhatsApp, or both, and prefills `JOIN`. Portuguese suppresses SMS, exposes configured WhatsApp with `ENTRAR`, and reports entry unavailable in coin-only mode when WhatsApp is absent. Lead-capture mode also exposes a browser fallback for either locale, including browser-only entry when no compatible messaging channel is available. When the caller reaches an active match, the server routes the call from its persisted station assignment to the selected game and that match's dynamically generated engine room. The launched display receives the same assigned room. Replacing a PNG cannot override those assignments or bind callers to a fixed room.
 
 ### Updating The Files
 

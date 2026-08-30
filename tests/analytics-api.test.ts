@@ -49,5 +49,8 @@ describe('analytics API', () => {
     const port = await server.start(), headers = { cookie };
     expect((await fetch(`http://127.0.0.1:${port}/api/analytics?from=2026-02-30`, { headers })).status).toBe(400);
     expect((await fetch(`http://127.0.0.1:${port}/api/analytics?game=unknown`, { headers })).status).toBe(400);
+    const trivia = await fetch(`http://127.0.0.1:${port}/api/analytics?game=trivia`, { headers });
+    expect(trivia.status).toBe(200);
+    expect((await trivia.json()).filter).toBe('trivia');
   });
 });

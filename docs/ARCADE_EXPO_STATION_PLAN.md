@@ -6,13 +6,21 @@
 > **Operational truth:** Use the [README](../README.md), [Deployment](DEPLOYMENT.md), and
 > [Infrastructure Setup](INFRA_SETUP.md) for current behavior and operations.
 >
-> **Current implementation delta (2026-07-25):** Direct Conversation Relay owns Voice. Signed
+> **Earlier implementation delta (2026-07-25):** Direct Conversation Relay owns Voice. Signed
 > `POST /sms` owns SMS/WhatsApp commands and immediate replies; Conversation Orchestrator and TAC
 > enrich Conversation Memory only. One individual FIFO ready line feeds up to two assigned callers
-> in Racer, Monsters, or Fighter, with FIFO overflow and caller-scoped setup. All three games use
+> in Racer, Monsters, or Fighter, with FIFO overflow and caller-scoped setup. Those games used
 > explicit caller-driven phase gates. WhatsApp
 > call-now uses the approved Phone CTA when configured. Every playable game emits factual results,
 > and the operator can reset Racer leaderboard records for one selected map.
+>
+> **Current implementation delta (2026-08-29):** The canonical registry now has five playable games:
+> Racer, Monsters, and Fighter each admit up to two humans with AI/fewer-human fallback; Karaoke admits
+> one human without AI; Trivia admits one to four humans without AI at `/trivia.html`. The station,
+> messaging game choices (`1` through `5`), automatic selection order, launch routing, factual results,
+> and coin costs all consume that registry. Trivia provides localized category voting, eight-question
+> voice rounds, protected bilingual content, normalized results, and persistent all-time/category
+> leaderboards. Authenticated staff can reset Racer map, Karaoke song, and Trivia board records.
 
 **Original plan date:** 2026-07-21
 **Status:** Completed historical baseline; retained for decision history
@@ -44,7 +52,7 @@ flow. It is not the current operational source of truth.
 | Racer capacity | **Maximum 2 human players** |
 | Monsters capacity | Maximum 2 human players; AI fills solo play |
 | Fighter capacity | Maximum 2 human players; AI fills solo play |
-| Trivia | Not selectable until a playable authoritative engine exists |
+| Trivia | Deferred by this original baseline; superseded by the current five-game registry above |
 | Browser display voice | No browser `speechSynthesis`; caller audio remains Conversation Relay |
 | Language | Display language flows into QR, chooser, messaging, wallet, queue, and Memory preference |
 | Messaging authority | Signed `POST /sms` owns commands and immediate replies for SMS and WhatsApp |
@@ -271,7 +279,7 @@ Signed `/sms` parses deterministic commands and generates the immediate reply:
 - `STATUS`
 - `LEAVE`
 - `HELP`
-- `1` / `RACER`, `2` / `MONSTERS`, or `3` / `FIGHTER` during game selection
+- `1` / `RACER`, `2` / `MONSTERS`, `3` / `FIGHTER`, `4` / `KARAOKE`, or `5` / `TRIVIA` during game selection
 - localized equivalents
 
 Inbound provider message IDs are durably idempotent. SMS and WhatsApp addresses normalize into a
@@ -329,12 +337,16 @@ State schema changes require explicit migration. Existing schema-v1 files must n
 Create one canonical registry consumed by scheduler, APIs, display, launch coordinator, and engine
 admission:
 
+> **Historical registry snapshot:** This table preserves the original 2026-07-21 baseline. It
+> predates Karaoke and deferred Trivia; the five-game registry in the current implementation delta
+> above supersedes it.
+
 | Game | Route | Human capacity | Minimum | AI fallback | Playable |
 |---|---|---:|---:|---|---|
 | Voice Racer | `/play.html` | **2** | 1 | Race with fewer humans | Yes |
 | Voice Monsters | `/monsters.html` | 2 | 1 | AI opponent | Yes |
 | Voice Fighter | `/fighter.html` | 2 | 1 | AI opponent | Yes |
-| Voice Trivia | Future | TBD | TBD | TBD | No |
+| Voice Trivia | Deferred in this baseline | - | - | - | Superseded |
 
 Engine admission must enforce the same capacity and assigned participant set. Direct browser, Voice,
 or stale WebSocket joins must not bypass station assignment.
@@ -367,9 +379,11 @@ Never claim an engine launch and a file-store write are one transaction.
 Engine completion emits one normalized result into the station coordinator, which completes the
 Arcade match and transitions to results/recruiting.
 
-Racer, Monsters, and Fighter now provide factual authoritative participant results to the station
-display and result notices. Racer reports place and time; Monsters and Fighter report the outcome.
-Authenticated staff can reset persisted Racer leaderboard records for one selected map with a reason.
+All five registered games now provide factual authoritative participant results to the station
+display and result notices. Racer reports place and time; Monsters and Fighter report the outcome;
+Karaoke reports its normalized score; Trivia reports rank and normalized score. Authenticated staff
+can reset persisted Racer records for one map, Karaoke records for one song, or Trivia records for an
+all-time/category board with a reason.
 
 ## 12. Realtime Events
 
