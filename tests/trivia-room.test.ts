@@ -622,7 +622,8 @@ describe('authoritative trivia room', () => {
   });
 
   it('rejects pregame reconciliation after countdown without mutating the frozen roster', () => {
-    const room = new TriviaRoom('NO-ACTIVE-RECONCILE', { bank });
+    const now = { value: 0 };
+    const room = new TriviaRoom('NO-ACTIVE-RECONCILE', { bank, now: () => now.value });
     room.expectHumanPlayers(2, true, { stationFixed: true, allowReplay: false });
     const first = room.addPlayer('Ada', true, 0);
     const second = room.addPlayer('Grace', true, 1);
