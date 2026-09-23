@@ -38,11 +38,16 @@ vi.mock('../client/station-display', () => ({
   }),
 }));
 vi.mock('../client/station-client', () => ({ rejectDisplayToken() {} }));
-vi.mock('../client/i18n', () => ({ locale: 'en-US', injectLanguagePicker() {} }));
+vi.mock('../client/i18n', () => ({
+  locale: 'en-US',
+  commonText: (key: string) => key,
+  injectLanguagePicker() {},
+}));
 vi.mock('../client/music-manager', () => ({
   getMusicManager: () => ({ switchContext() {}, stop() {}, resume() {}, getCurrentContext: () => 'lobby' }),
 }));
 vi.mock('../client/music-toggle', () => ({ injectMusicToggle() {} }));
+vi.mock('../client/fullscreen-toggle', () => ({ injectFullscreenToggle() {} }));
 vi.mock('../client/sound-effects', () => ({
   getSoundEffectsManager: () => ({ playCountdown() {} }),
 }));

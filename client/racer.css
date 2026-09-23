@@ -338,16 +338,18 @@ html[data-theme="light"] .cl-row.cl-power :is(.cl-say,.cl-action) { color:#0E3E9
 #ticker { position: absolute; left: 16px; bottom: 16px; width: 340px; display: flex; flex-direction: column-reverse; gap: 6px; pointer-events: none; z-index: 20; }
 #ticker > div { background: var(--glass-2); border: 1px solid var(--glass-brd); border-left: 3px solid var(--red);
   border-radius: 10px; padding: 8px 12px; font-size: 13px; color: var(--ink); animation: chip-in .25s ease both; }
-#music-toggle-container .music-toggle {
-  position: absolute; right: 16px; bottom: 16px; z-index: 20; cursor: pointer;
+#music-toggle-container :is(.music-toggle,.fullscreen-toggle) {
+  position: absolute; bottom: 16px; z-index: 20; cursor: pointer;
   width:38px;height:38px;background: var(--glass-2); border: 1px solid var(--glass-brd); border-radius: 10px;
   padding:0;color: var(--ink-dim); backdrop-filter: blur(10px);
   display: flex; align-items: center; justify-content:center;text-decoration: none; outline: none;
 }
-#music-toggle-container .music-toggle:hover { color: var(--ink); border-color: var(--glass-brd-2); }
-#music-toggle-container .music-toggle:focus-visible { outline:3px solid #2188EF;outline-offset:3px; }
+#music-toggle-container .music-toggle { right:16px; }
+#music-toggle-container .fullscreen-toggle { right:62px; }
+#music-toggle-container :is(.music-toggle,.fullscreen-toggle):hover { color: var(--ink); border-color: var(--glass-brd-2); }
+#music-toggle-container :is(.music-toggle,.fullscreen-toggle):focus-visible { outline:3px solid #2188EF;outline-offset:3px; }
 #music-toggle-container .music-toggle-icon { display: flex; align-items: center; line-height: 0; }
-#music-toggle-container .music-toggle-icon svg { width: 18px; height: 18px; stroke: currentColor; }
+#music-toggle-container :is(.music-toggle-icon,.fullscreen-toggle) svg { width: 18px; height: 18px; fill:none;stroke: currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round; }
 
 /* ── Personal in-race gauge: power (nitro) charge + boost/brake bar ──
    Hidden by default; main.ts adds .show only for a genuine local player (never on a shared
@@ -405,7 +407,7 @@ html[data-theme="light"] .cl-row.cl-power :is(.cl-say,.cl-action) { color:#0E3E9
 @keyframes stun-flash { 0%,100% { border-color: var(--glass-brd); } 50% { border-color: var(--red); box-shadow: 0 0 16px rgba(239,34,58,.5); } }
 
 /* Hide HUD chrome while a menu screen is up — the menu is the focus, not the keyboard hint. */
-body.in-menu #hud, body.in-menu #hint, body.in-menu #ticker, body.in-menu #gauge, body.in-menu #music-toggle-container { opacity: 0; pointer-events: none; transition: opacity .3s; }
+body.in-menu #hud, body.in-menu #hint, body.in-menu #ticker, body.in-menu #gauge, body.in-menu #music-toggle-container .music-toggle { opacity: 0; pointer-events: none; transition: opacity .3s; }
 
 @media (max-width: 520px) {
   #screens { overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
@@ -441,6 +443,7 @@ body.in-menu #hud, body.in-menu #hint, body.in-menu #ticker, body.in-menu #gauge
   .res-row .rcar { display: none; }
   .res-row .rtime { width: 82px; }
   .board { width: 100%; }
+  #ticker { width:calc(100% - 124px); }
   .game-home { top: max(10px, env(safe-area-inset-top)); left: max(10px, env(safe-area-inset-left)); padding: 10px 12px; }
   #hud { top: 10px; left: 104px; }
   #hud .htitle { display: none; }

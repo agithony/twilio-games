@@ -152,6 +152,12 @@ body.station-mode .judgment-layer { right:calc(var(--station-rail-width) + 24px)
   .judgment-burst { font-size:clamp(22px,8vw,34px); }.judgment-burst small { font-size:9px; }
 }
 
+@media (max-width:390px) {
+  .karaoke-controls { gap:5px; }
+  .karaoke-controls .language-picker { width:94px; }.karaoke-controls .language-picker select { width:61px; }
+  .round-control,#music-toggle-container .music-toggle { width:40px;height:40px; }
+}
+
 @media (max-height:650px) and (min-width:701px) {
   .flow-overlay { padding-top:60px; }.flow-panel h1 { font-size:54px; }.flow-card { margin-top:15px;padding:18px; }.song-card { min-height:155px; }.song-card strong { margin-top:22px;font-size:32px; }.join-signal { min-height:180px; }
 }

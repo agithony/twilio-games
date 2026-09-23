@@ -106,13 +106,13 @@ body[data-phase="victory"] .voice-feed,body[data-phase="results"] .voice-feed { 
 .game-home:active { transform:scale(.97); }
 .game-home:focus-visible { outline:2px solid #ef223a; outline-offset:3px; }
 body[data-phase="fight"] .game-home,body[data-phase="victory"] .game-home,body[data-phase="results"] .game-home { top:max(82px,env(safe-area-inset-top)); }
-#music-toggle-container { position:fixed; top:max(16px,env(safe-area-inset-top)); left:max(118px,calc(env(safe-area-inset-left) + 118px)); z-index:30; }
-#music-toggle-container .music-toggle { width:38px;height:38px;min-height:38px;display:inline-flex;align-items:center;justify-content:center;padding:0;border:1px solid var(--theme-border);border-radius:10px;color:var(--theme-text-dim);background:var(--theme-nav);backdrop-filter:blur(10px);cursor:pointer;transition:border-color .18s,background .18s,color .18s,transform .12s; }
-#music-toggle-container .music-toggle:hover { border-color:#ef223a; color:#fff; background:rgba(239,34,58,.16); }
-#music-toggle-container .music-toggle:active { transform:scale(.97); }
-#music-toggle-container .music-toggle:focus-visible { outline:2px solid #ef223a; outline-offset:3px; }
+#music-toggle-container { position:fixed; top:max(16px,env(safe-area-inset-top)); left:max(118px,calc(env(safe-area-inset-left) + 118px)); z-index:30;display:flex;gap:8px; }
+#music-toggle-container :is(.music-toggle,.fullscreen-toggle) { width:38px;height:38px;min-height:38px;display:inline-flex;align-items:center;justify-content:center;padding:0;border:1px solid var(--theme-border);border-radius:10px;color:var(--theme-text-dim);background:var(--theme-nav);backdrop-filter:blur(10px);cursor:pointer;transition:border-color .18s,background .18s,color .18s,transform .12s; }
+#music-toggle-container :is(.music-toggle,.fullscreen-toggle):hover { border-color:#ef223a; color:#fff; background:rgba(239,34,58,.16); }
+#music-toggle-container :is(.music-toggle,.fullscreen-toggle):active { transform:scale(.97); }
+#music-toggle-container :is(.music-toggle,.fullscreen-toggle):focus-visible { outline:2px solid #ef223a; outline-offset:3px; }
 #music-toggle-container .music-toggle-icon { display:flex; align-items:center; justify-content:center; line-height:0; }
-#music-toggle-container .music-toggle-icon svg { width:18px; height:18px; }
+#music-toggle-container :is(.music-toggle-icon,.fullscreen-toggle) svg { width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round; }
 body[data-phase="fight"] #music-toggle-container,body[data-phase="victory"] #music-toggle-container,body[data-phase="results"] #music-toggle-container { top:max(82px,env(safe-area-inset-top)); }
 
 .hud { position: fixed; z-index: 2; top: 0; right: 0; left: 0; display: grid; grid-template-columns: 1fr 100px 1fr; gap: 20px; padding: max(25px,env(safe-area-inset-top)) max(34px,env(safe-area-inset-right)) 25px max(34px,env(safe-area-inset-left));background:linear-gradient(180deg,rgba(5,6,10,.84),rgba(5,6,10,.28) 72%,transparent); pointer-events: none; }

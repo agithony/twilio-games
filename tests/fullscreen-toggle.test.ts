@@ -1,13 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { createFullscreenGameShell } from '../client/fullscreen-game-shell';
 import { wireFullscreenToggle } from '../client/fullscreen-toggle';
 
-function createButton(): HTMLButtonElement {
+function createButton(lifecycleWindow?: EventTarget): HTMLButtonElement {
   const attributes = new Map<string, string>();
   return Object.assign(new EventTarget(), {
     hidden: false,
     innerHTML: '',
     title: '',
+    ownerDocument: lifecycleWindow ? { defaultView: lifecycleWindow } : undefined,
     setAttribute: (name: string, value: string) => attributes.set(name, value),
     getAttribute: (name: string) => attributes.get(name) ?? null,
   }) as unknown as HTMLButtonElement;
@@ -30,6 +32,37 @@ function createDocument(fullscreenEnabled = true): Document {
     }),
   } as unknown as HTMLElement;
   return stub as unknown as Document;
+}
+
+function createShellEnvironment(fullscreen = true): {
+  document: Document;
+  frame: HTMLIFrameElement;
+  classes: Set<string>;
+} {
+  const classes = new Set<string>();
+  const frameWindow = {
+    location: { href: 'about:blank' },
+    focus: vi.fn(),
+  };
+  const frame = Object.assign(new EventTarget(), {
+    className: '', title: '', allow: '', src: '', contentWindow: frameWindow,
+    setAttribute: vi.fn(), remove: vi.fn(),
+  }) as unknown as HTMLIFrameElement;
+  const body = {
+    children: [] as Element[],
+    classList: {
+      add: (value: string) => classes.add(value),
+      remove: (value: string) => classes.delete(value),
+      contains: (value: string) => classes.has(value),
+    },
+    append: vi.fn(),
+  };
+  const documentStub = {
+    body,
+    fullscreenElement: fullscreen ? {} : null,
+    createElement: vi.fn(() => frame),
+  } as unknown as Document;
+  return { document: documentStub, frame, classes };
 }
 
 afterEach(() => vi.unstubAllGlobals());
@@ -64,10 +97,66 @@ describe('fullscreen toggle', () => {
     expect(button.hidden).toBe(true);
   });
 
+  it('keeps its listeners while cached and removes them when the page is discarded', () => {
+    const lifecycleWindow = new EventTarget();
+    const documentStub = createDocument();
+    const button = createButton(lifecycleWindow);
+    vi.stubGlobal('document', documentStub);
+    wireFullscreenToggle(button, { enter: 'Enter fullscreen', exit: 'Exit fullscreen' });
+
+    const cached = new Event('pagehide');
+    Object.defineProperty(cached, 'persisted', { value: true });
+    lifecycleWindow.dispatchEvent(cached);
+    (documentStub as unknown as { fullscreenElement: Element | null }).fullscreenElement = documentStub.documentElement;
+    documentStub.dispatchEvent(new Event('fullscreenchange'));
+    expect(button.title).toBe('Exit fullscreen');
+
+    const discarded = new Event('pagehide');
+    Object.defineProperty(discarded, 'persisted', { value: false });
+    lifecycleWindow.dispatchEvent(discarded);
+    (documentStub as unknown as { fullscreenElement: Element | null }).fullscreenElement = null;
+    documentStub.dispatchEvent(new Event('fullscreenchange'));
+    expect(button.title).toBe('Exit fullscreen');
+  });
+
   it('places the control in the upper-right header icon group', () => {
     const html = readFileSync(new URL('../client/index.html', import.meta.url), 'utf8');
     const controls = html.slice(html.indexOf('<div id="header-controls">'), html.indexOf('</header>'));
     expect(controls).toContain('id="fullscreenToggle"');
     expect(controls).toContain('class="header-icon-button"');
+  });
+
+  it('keeps same-origin game navigation inside the fullscreen owner document', () => {
+    const environment = createShellEnvironment();
+    const onOpen = vi.fn();
+    vi.stubGlobal('document', environment.document);
+    vi.stubGlobal('location', { origin: 'https://games.example', href: 'https://games.example/' });
+    const shell = createFullscreenGameShell({ onOpen });
+
+    expect(shell.launch('/play.html?display=1')).toBe(true);
+    expect(environment.frame.src).toBe('https://games.example/play.html?display=1');
+    expect(environment.classes).toContain('fullscreen-game-active');
+    expect(shell.active).toBe(true);
+    expect(onOpen).toHaveBeenCalledOnce();
+
+    (environment.frame.contentWindow!.location as unknown as { href: string }).href = 'https://games.example/?locale=en-US';
+    environment.frame.dispatchEvent(new Event('load'));
+    expect(environment.frame.remove).not.toHaveBeenCalled();
+    expect(environment.classes).toContain('fullscreen-game-active');
+    expect(shell.active).toBe(true);
+    expect(environment.frame.contentWindow!.focus).toHaveBeenCalledOnce();
+  });
+
+  it('uses normal navigation outside fullscreen and exposes a toggle in every game', () => {
+    const environment = createShellEnvironment(false);
+    vi.stubGlobal('document', environment.document);
+    vi.stubGlobal('location', { origin: 'https://games.example', href: 'https://games.example/' });
+    expect(createFullscreenGameShell().launch('/play.html')).toBe(false);
+    expect(environment.document.body.append).not.toHaveBeenCalled();
+
+    for (const path of ['main.ts', 'battle/monsters.ts', 'fighter/fighter.ts', 'karaoke/karaoke.ts', 'trivia/trivia.ts']) {
+      const source = readFileSync(new URL(`../client/${path}`, import.meta.url), 'utf8');
+      expect(source, path).toContain('injectFullscreenToggle(');
+    }
   });
 });

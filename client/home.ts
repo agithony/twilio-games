@@ -6,6 +6,7 @@ import { injectMusicToggle } from './music-toggle';
 import { applyDocumentLocale, injectLanguagePicker, locale } from './i18n';
 import { injectMagicHat } from './magic-hat';
 import { OPERATOR_ICON } from './icon-controls';
+import { createFullscreenGameShell } from './fullscreen-game-shell';
 import { wireFullscreenToggle } from './fullscreen-toggle';
 import { wireThemeToggle } from './theme';
 import { createCoinInsertionPresenter } from './coin-insertion';
@@ -147,6 +148,7 @@ interface PreviewConnection {
   readonly saveData?: boolean;
   readonly effectiveType?: string;
   addEventListener?(type: 'change', listener: () => void): void;
+  removeEventListener?(type: 'change', listener: () => void): void;
 }
 
 const reducedMotionPreference = matchMedia('(prefers-reduced-motion: reduce)');
@@ -173,6 +175,13 @@ let smsAvailable = false;
 let whatsappAvailable = false;
 let selectionLineup = '';
 let selectionVotes: string | null = null;
+let unsubscribeStation = (): void => undefined;
+let refreshTimer: ReturnType<typeof setInterval> | null = null;
+let configurationTimer: ReturnType<typeof setInterval> | null = null;
+let countdownTimer: ReturnType<typeof setInterval> | null = null;
+const fullscreenGameShell = createFullscreenGameShell({
+  onOpen: () => { getMusicManager().stop(); syncPreviewPlayback(); stopHomeRuntime(); },
+});
 
 function renderGameCards(station: PublicStation): void {
   const available = orderByConfiguredIds(station.games, standaloneGameOrder)
@@ -264,7 +273,8 @@ function renderStandalonePage(nextPage=standalonePageIndex): void {
 }
 
 function previewPlaybackAllowed(): boolean {
-  return document.visibilityState !== 'hidden'
+  return !fullscreenGameShell.active
+    && document.visibilityState !== 'hidden'
     && !reducedMotionPreference.matches
     && !previewConnection?.saveData
     && !['slow-2g', '2g'].includes(previewConnection?.effectiveType ?? '');
@@ -333,7 +343,10 @@ function render(station: PublicStation): void {
       return;
     }
     const target = stationLaunchUrl(station, stationId, locale, joinBaseUrl);
-    if (target && target !== launched) { launched = target; location.replace(target); }
+    if (target && target !== launched) {
+      launched = target;
+      if (!fullscreenGameShell.launch(target)) location.replace(target);
+    }
   } else {
     show('recruiting');
   }
@@ -380,6 +393,7 @@ function showDisplaySetup(reason: 'missing' | 'invalid'): void {
 }
 
 async function refresh(): Promise<void> {
+  if (fullscreenGameShell.active) return;
   if (refreshing) { refreshPending = true; return; }
   refreshing = true;
   try {
@@ -430,6 +444,27 @@ function wireStandalonePagination(): void {
     if(nextPage===standalonePageIndex)return;
     event.preventDefault();renderStandalonePage(nextPage);
   });
+}
+
+function wireFullscreenGameLaunches(): void {
+  standaloneGames.addEventListener('click', event => {
+    if (!(event instanceof MouseEvent) || event.button !== 0
+      || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    const target = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>('a.standalone-game') : null;
+    if (target && fullscreenGameShell.launch(target.href)) event.preventDefault();
+  });
+}
+
+function stopHomeRuntime(): void {
+  unsubscribeStation();
+  unsubscribeStation = () => undefined;
+  if (refreshTimer !== null) clearInterval(refreshTimer);
+  if (configurationTimer !== null) clearInterval(configurationTimer);
+  if (countdownTimer !== null) clearInterval(countdownTimer);
+  refreshTimer = configurationTimer = countdownTimer = null;
+  reducedMotionPreference.removeEventListener('change', syncPreviewPlayback);
+  previewConnection?.removeEventListener?.('change', syncPreviewPlayback);
+  document.removeEventListener('visibilitychange', syncPreviewPlayback);
 }
 
 function localizeStaticPage(): void {
@@ -523,6 +558,7 @@ function renderEntryPolicyCopy(): void {
 }
 
 async function refreshConfiguration(): Promise<void> {
+  if (fullscreenGameShell.active) return;
   if (configuring) { configurationPending = true; return; }
   configuring = true;
   try {
@@ -580,19 +616,27 @@ async function initialize(): Promise<void> {
   wireTheme();
   wireFullscreen();
   wireStandalonePagination();
+  wireFullscreenGameLaunches();
   injectMusicToggle('header-controls');
   injectLanguagePicker('header-controls');
   injectMagicHat();
-  document.addEventListener('click', () => getMusicManager().switchContext('lobby'), { once: true });
+  document.addEventListener('click', () => {
+    if (!fullscreenGameShell.active) getMusicManager().switchContext('lobby');
+  }, { once: true });
   reducedMotionPreference.addEventListener('change', syncPreviewPlayback);
   previewConnection?.addEventListener?.('change', syncPreviewPlayback);
   document.addEventListener('visibilitychange',syncPreviewPlayback);
   await refreshConfiguration();
   const coinInsertion=createCoinInsertionPresenter();
-  subscribeToStation(() => { void refreshConfiguration().then(() => refresh()); },event=>coinInsertion.show(event));
-  setInterval(() => void refresh(), 5_000);
-  setInterval(() => void refreshConfiguration(), 30_000);
-  setInterval(updateTimers, 250);
+  unsubscribeStation=subscribeToStation(() => { void refreshConfiguration().then(() => refresh()); },event=>{
+    if (!fullscreenGameShell.active) coinInsertion.show(event);
+  });
+  refreshTimer=setInterval(() => void refresh(), 5_000);
+  configurationTimer=setInterval(() => void refreshConfiguration(), 30_000);
+  countdownTimer=setInterval(updateTimers, 250);
+  addEventListener('pagehide', event => {
+    if (!(event as PageTransitionEvent).persisted) stopHomeRuntime();
+  });
   await refresh();
 }
 

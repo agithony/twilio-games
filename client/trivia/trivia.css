@@ -135,8 +135,8 @@ body.station-mode .trivia-controls { margin-right:0; }
   body.station-mode #app { bottom:150px;height:calc(100vh - 150px); }.stage-error { right:12px;bottom:12px;left:12px; }
 }
 
-@media (max-width:390px) {
-  .trivia-controls .language-picker { width:94px; }.trivia-controls .language-picker select { width:61px; }.stage-brand img { display:none; }.category-grid { grid-template-columns:1fr 1fr; }.category-card>strong { font-size:16px; }.answer-status { grid-template-columns:1fr 1fr; }
+@media (max-width:400px) {
+  .stage-brand { display:none; }.trivia-controls { position:absolute;right:12px; }.trivia-controls .language-picker { width:94px; }.trivia-controls .language-picker select { width:61px; }.category-grid { grid-template-columns:1fr 1fr; }.category-card>strong { font-size:16px; }.answer-status { grid-template-columns:1fr 1fr; }
 }
 
 @media (max-height:650px) and (min-width:701px) {

@@ -11,6 +11,7 @@ import { frameStaticPortraitArena, proceduralFallbackCamera, responsiveVerticalF
 import { getSoundEffectsManager } from '../sound-effects';
 import { getMusicManager } from '../music-manager';
 import { injectMusicToggle } from '../music-toggle';
+import { injectFullscreenToggle } from '../fullscreen-toggle';
 import { commonText, locale } from '../i18n';
 import { isCountdownSoundCue } from '../../shared/countdown';
 import { DEFAULT_ROOM } from '../../shared/constants';
@@ -65,6 +66,9 @@ const p1FighterName = $('p1-fighter-name'), p2FighterName = $('p2-fighter-name')
 const p1PlayerName = $('p1-player-name'), p2PlayerName = $('p2-player-name');
 const commandButtons = [...document.querySelectorAll<HTMLButtonElement>('[data-command]')];
 injectMusicToggle('music-toggle-container');
+injectFullscreenToggle('music-toggle-container', {
+  enter: commonText('fullscreen.enter'), exit: commonText('fullscreen.exit'),
+});
 const stationDisplay = createStationDisplay();
 
 const pageUrl = new URL(location.href);
