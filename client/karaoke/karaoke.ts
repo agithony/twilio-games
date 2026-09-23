@@ -6,9 +6,10 @@ import { DEFAULT_ROOM } from '../../shared/constants';
 import { createStationDisplay } from '../station-display';
 import { rejectDisplayToken, watchVoiceNumber } from '../station-client';
 import { injectMusicToggle } from '../music-toggle';
+import { injectFullscreenToggle } from '../fullscreen-toggle';
 import { getMusicManager } from '../music-manager';
 import { getSoundEffectsManager } from '../sound-effects';
-import { injectLanguagePicker, locale } from '../i18n';
+import { commonText, injectLanguagePicker, locale } from '../i18n';
 import { wireThemeToggle } from '../theme';
 import { KaraokeAssetLoader, fetchKaraokeVenueConfig, karaokeAssetManifest } from './karaoke-assets';
 import { KaraokeAudioTransport } from './karaoke-audio';
@@ -76,6 +77,9 @@ const musicManager = getMusicManager();
 let visualOffsetMs = readVisualOffset();
 
 injectMusicToggle('music-toggle-container');
+injectFullscreenToggle('karaoke-controls', {
+  enter: commonText('fullscreen.enter'), exit: commonText('fullscreen.exit'),
+}, 'round-control');
 injectLanguagePicker('karaoke-controls');
 wireThemeToggle(element('theme-toggle'), { light: copy.lightTheme, dark: copy.darkTheme });
 audio.setMuted(musicManager.getIsMuted());

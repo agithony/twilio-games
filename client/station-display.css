@@ -16,6 +16,7 @@ body.station-mode .flow-panel { width: min(1240px, calc(100vw - var(--station-ra
 body.station-mode #hint, body.station-mode #gauge { right: calc(var(--station-rail-width) + 16px); }
 body.station-mode #big { right: var(--station-rail-width); }
 body.station-mode #music-toggle-container .music-toggle { right: calc(var(--station-rail-width) + 16px); }
+body.station-mode #music-toggle-container .fullscreen-toggle { right: calc(var(--station-rail-width) + 62px); }
 body.station-mode .countdown-screen,body.station-mode .intro-screen,body.station-mode .loading { right:var(--station-rail-width); }
 body.station-mode .flow-error,body.station-mode .voice-feed,body.station-mode .fight-call,
 body.station-mode .result,body.station-mode .error,body.station-mode .impact { left:calc((100vw - var(--station-rail-width))/2); }
@@ -59,6 +60,7 @@ html[data-theme="dark"] :is(.station-results-eyebrow,.station-result-row.winner)
   body.station-mode #big { right:0; bottom:150px; }
   body.station-mode .command-deck { right:24px; bottom:170px; }
   body.station-mode #music-toggle-container .music-toggle { right:16px; bottom:166px; }
+  body.station-mode #music-toggle-container .fullscreen-toggle { right:62px; bottom:166px; }
   body.station-mode #ticker { bottom:166px; }
   body.station-mode .countdown-screen,body.station-mode .intro-screen,body.station-mode .loading { right:0;bottom:150px; }
   body.station-mode .flow-error,body.station-mode .voice-feed,body.station-mode .fight-call,

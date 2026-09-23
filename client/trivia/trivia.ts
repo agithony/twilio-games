@@ -2,7 +2,8 @@ import { DEFAULT_ROOM } from '../../shared/constants';
 import type { TriviaEvent, TriviaState } from '../../shared/trivia-protocol';
 import { createStationDisplay } from '../station-display';
 import { rejectDisplayToken } from '../station-client';
-import { injectLanguagePicker, locale } from '../i18n';
+import { commonText, injectLanguagePicker, locale } from '../i18n';
+import { injectFullscreenToggle } from '../fullscreen-toggle';
 import { getMusicManager } from '../music-manager';
 import { injectMusicToggle } from '../music-toggle';
 import { getSoundEffectsManager } from '../sound-effects';
@@ -75,6 +76,9 @@ homeLink?.setAttribute('aria-label', copy.homeLabel);
 stage.setAttribute('aria-label', copy.stageLabel);
 connectionStatus.textContent = copy.connection.connecting;
 injectMusicToggle('music-toggle-container');
+injectFullscreenToggle('trivia-controls', {
+  enter: commonText('fullscreen.enter'), exit: commonText('fullscreen.exit'),
+}, 'round-control');
 injectLanguagePicker('trivia-controls');
 wireThemeToggle(element('theme-toggle'), {
   light: copy.theme.light,

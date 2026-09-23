@@ -38,6 +38,7 @@ html[data-theme="light"] .brand-lockup img, html[data-theme="light"] .countdown-
 #header-controls .music-toggle-icon { display:flex;align-items:center;justify-content:center;line-height:0; }
 #header-controls .music-toggle-icon svg { width:16px;height:16px; }
 #stationRoot { flex:1 1 auto;height:auto;min-height:0;overflow:hidden;padding:clamp(18px,2.4vw,38px) clamp(20px,3vw,52px) }
+.fullscreen-game-frame { position:fixed;z-index:1000;inset:0;width:100%;height:100%;border:0;background:#000D25; }
 .station-view { width:min(1820px,100%);height:100%;margin:0 auto }
 .recruiting-view { display: grid; grid-template-columns: minmax(0,1fr) minmax(320px,430px); gap: clamp(18px,2vw,34px); }
 .game-mosaic { position:relative;min-height:0;height:100%;display:grid;grid-template-columns:1.25fr .75fr;grid-template-rows:1fr 1fr;gap:12px;overflow:hidden;border-radius:26px;background:#080C18;box-shadow:0 26px 65px var(--th-panel-shadow) }

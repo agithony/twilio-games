@@ -19,6 +19,7 @@ import { hudStateFor } from './hud-state';
 import { BOOST_MAX, BOOST_MIN, DEFAULT_ROOM } from '../shared/constants';
 import { getMusicManager } from './music-manager';
 import { injectMusicToggle } from './music-toggle';
+import { injectFullscreenToggle } from './fullscreen-toggle';
 import { getSoundEffectsManager } from './sound-effects';
 import { commonText, locale } from './i18n';
 import { RACER_MESSAGES, type RacerMessageKey } from '../shared/i18n/racer';
@@ -91,6 +92,9 @@ function paintSplitLabels(snap: import('../shared/types').WorldSnapshot | null):
 
 // Inject music toggle button
 injectMusicToggle('music-toggle-container');
+injectFullscreenToggle('music-toggle-container', {
+  enter: commonText('fullscreen.enter'), exit: commonText('fullscreen.exit'),
+});
 const musicToggle = document.getElementById('music-toggle');
 function localizeMusicToggle(): void {
   if (!musicToggle) return;

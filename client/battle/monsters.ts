@@ -25,6 +25,7 @@ import { locale, commonText } from '../i18n';
 import { monsterName as localizedMonsterName, moveName as localizedMoveName } from '../../shared/i18n/content';
 import { getMusicManager } from '../music-manager';
 import { injectMusicToggle } from '../music-toggle';
+import { injectFullscreenToggle } from '../fullscreen-toggle';
 import { getSoundEffectsManager } from '../sound-effects';
 import { createStationDisplay } from '../station-display';
 import { watchVoiceNumber } from '../station-client';
@@ -61,6 +62,9 @@ overlay.setAttribute('aria-label', text('access.menuOverlay'));
 
 // Inject music toggle button
 injectMusicToggle('music-toggle-container');
+injectFullscreenToggle('music-toggle-container', {
+  enter: commonText('fullscreen.enter'), exit: commonText('fullscreen.exit'),
+});
 const musicToggle = document.getElementById('music-toggle');
 const localizeMusicToggle = (): void => {
   if (!musicToggle) return;

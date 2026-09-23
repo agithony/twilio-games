@@ -6,18 +6,29 @@ export interface FullscreenToggleLabels {
   exit: string;
 }
 
+function fullscreenOwnerDocument(): Document {
+  try {
+    if (typeof window !== 'undefined' && window.top && window.top !== window
+      && window.top.location.origin === window.location.origin) return window.top.document;
+  } catch {
+    // Cross-origin parents cannot participate in this page's fullscreen state.
+  }
+  return document;
+}
+
 export function wireFullscreenToggle(
   button: HTMLButtonElement,
   labels: FullscreenToggleLabels,
+  owner = fullscreenOwnerDocument(),
 ): () => void {
-  const supported = document.fullscreenEnabled !== false
-    && typeof document.documentElement.requestFullscreen === 'function'
-    && typeof document.exitFullscreen === 'function';
+  const supported = owner.fullscreenEnabled !== false
+    && typeof owner.documentElement.requestFullscreen === 'function'
+    && typeof owner.exitFullscreen === 'function';
   button.hidden = !supported;
   if (!supported) return () => undefined;
 
   const render = (): void => {
-    const active = document.fullscreenElement !== null;
+    const active = owner.fullscreenElement !== null;
     const label = active ? labels.exit : labels.enter;
     button.innerHTML = active ? EXIT_FULLSCREEN_ICON : ENTER_FULLSCREEN_ICON;
     button.title = label;
@@ -30,8 +41,8 @@ export function wireFullscreenToggle(
     if (pending) return;
     pending = true;
     try {
-      if (document.fullscreenElement) await document.exitFullscreen();
-      else await document.documentElement.requestFullscreen();
+      if (owner.fullscreenElement) await owner.exitFullscreen();
+      else await owner.documentElement.requestFullscreen();
     } finally {
       pending = false;
       render();
@@ -40,13 +51,35 @@ export function wireFullscreenToggle(
   const handleClick = (): void => { void toggle().catch(render); };
 
   button.addEventListener('click', handleClick);
-  document.addEventListener('fullscreenchange', render);
-  document.addEventListener('fullscreenerror', render);
+  owner.addEventListener('fullscreenchange', render);
+  owner.addEventListener('fullscreenerror', render);
+  const lifecycleWindow = button.ownerDocument?.defaultView;
+  const handlePageHide = (event: PageTransitionEvent): void => {
+    if (!event.persisted) cleanup();
+  };
+  lifecycleWindow?.addEventListener('pagehide', handlePageHide);
   render();
 
-  return () => {
+  function cleanup(): void {
     button.removeEventListener('click', handleClick);
-    document.removeEventListener('fullscreenchange', render);
-    document.removeEventListener('fullscreenerror', render);
-  };
+    owner.removeEventListener('fullscreenchange', render);
+    owner.removeEventListener('fullscreenerror', render);
+    lifecycleWindow?.removeEventListener('pagehide', handlePageHide);
+  }
+  return cleanup;
+}
+
+export function injectFullscreenToggle(
+  containerId: string,
+  labels: FullscreenToggleLabels,
+  controlClass = '',
+): HTMLButtonElement | null {
+  const container = document.getElementById(containerId);
+  if (!container) return null;
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = `fullscreen-toggle${controlClass ? ` ${controlClass}` : ''}`;
+  container.append(button);
+  wireFullscreenToggle(button, labels);
+  return button;
 }

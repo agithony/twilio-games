@@ -8,6 +8,8 @@ export type CommonMessageKey =
   | 'music.off'
   | 'music.toggleTitle'
   | 'music.toggleAria'
+  | 'fullscreen.enter'
+  | 'fullscreen.exit'
   | 'connection.connecting'
   | 'connection.connected'
   | 'connection.reconnecting'
@@ -25,6 +27,8 @@ export const COMMON_MESSAGES: LocalizedCatalog<CommonMessageKey> = {
     'music.off': 'Music Off',
     'music.toggleTitle': 'Toggle music on/off',
     'music.toggleAria': 'Toggle music',
+    'fullscreen.enter': 'Enter fullscreen',
+    'fullscreen.exit': 'Exit fullscreen',
     'connection.connecting': 'Connecting',
     'connection.connected': 'Connected',
     'connection.reconnecting': 'Reconnecting',
@@ -41,6 +45,8 @@ export const COMMON_MESSAGES: LocalizedCatalog<CommonMessageKey> = {
     'music.off': 'Música desligada',
     'music.toggleTitle': 'Ligar ou desligar a música',
     'music.toggleAria': 'Ligar ou desligar a música',
+    'fullscreen.enter': 'Entrar em tela cheia',
+    'fullscreen.exit': 'Sair da tela cheia',
     'connection.connecting': 'Conectando',
     'connection.connected': 'Conectado',
     'connection.reconnecting': 'Reconectando',
