@@ -250,6 +250,53 @@ describe('two-caller Chess over HTTP and Conversation Relay', () => {
     await vi.waitFor(() => expect(black.spoken.join(' ')).toMatch(/both players are ready.*Ada moves first/i));
   });
 
+  it('waits silently through a long pause after a lone square, then accepts a full move', async () => {
+    const port = await startServer();
+    const display = await openDisplay(port);
+    display.socket.send(JSON.stringify({ type: 'display_set_mode', roomCode: ROOM_CODE, mode: 'pvp' }));
+    await waitState(display.states, state => state.mode === 'pvp');
+    const white = await openCaller(port, 'CA-pvp-thinking-white');
+    const black = await openCaller(port, 'CA-pvp-thinking-black');
+    await vi.waitFor(() => expect(white.spoken.join(' ')).toMatch(/first name/i));
+    await vi.waitFor(() => expect(black.spoken.join(' ')).toMatch(/first name/i));
+    prompt(white.socket, 'My name is Ada');
+    prompt(black.socket, 'My name is Ben');
+    await waitState(display.states, state => state.phase === 'playing'
+      && state.turn === 'w' && state.phonePendingPlayerIds?.length === 0);
+    await vi.waitFor(() => expect(white.spoken.join(' ')).toMatch(/both players are ready.*your turn/i));
+    await vi.waitFor(() => expect(black.spoken.join(' ')).toMatch(/both players are ready.*Ada moves first/i));
+
+    const beforeWhiteSpeech = white.spoken.length;
+    const beforeBlackSpeech = black.spoken.length;
+    const beforeBoardUpdates = display.states.length;
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    try {
+      const processed = new Promise<void>(resolve => white.socket.once('pong', () => resolve()));
+      prompt(white.socket, 'D6');
+      white.socket.ping();
+      await processed;
+      await vi.advanceTimersByTimeAsync(120_000);
+      await new Promise<void>(resolve => setImmediate(resolve));
+
+      expect(white.spoken.slice(beforeWhiteSpeech)).toEqual([]);
+      expect(black.spoken.slice(beforeBlackSpeech)).toEqual([]);
+      expect(display.states).toHaveLength(beforeBoardUpdates);
+      expect(display.states.at(-1)).toMatchObject({ phase: 'playing', ply: 0, pendingMove: null });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    const beforeProposal = white.spoken.length;
+    prompt(white.socket, 'pawn from E two to E four');
+    await waitState(display.states, state => state.phase === 'pending'
+      && state.pendingMove?.from === 'e2' && state.pendingMove.to === 'e4');
+    await vi.waitFor(() => expect(white.spoken.slice(beforeProposal).join(' '))
+      .toMatch(/confirm or cancel/i));
+    prompt(white.socket, 'confirm');
+    await waitState(display.states, state => state.phase === 'playing'
+      && state.ply === 1 && state.lastMove?.from === 'e2' && state.lastMove.to === 'e4');
+  }, 15_000);
+
   it('keeps two phone conversations and both shared displays on one authorized match', async () => {
     const port = await startServer();
     const firstDisplay = await openDisplay(port);
