@@ -1,5 +1,6 @@
 import { parseCrMessage } from './conversation-relay';
-import { parseChessIntent, describeChessMove, type ChessIntent } from '../shared/chess-intent';
+import { parseBareChessFile, parseBareChessSquare, parseChessIntent, describeChessMove,
+  type ChessIntent } from '../shared/chess-intent';
 import type { ChessCommandResult, ChessEvent, ChessMoveRecord, ChessPieceType, ChessSquare, ChessState,
   WizardChessSceneSnapshot } from '../shared/chess-protocol';
 import { DEFAULT_LOCALE, resolveLocale, type SupportedLocale } from '../shared/i18n/locales';
@@ -15,6 +16,7 @@ const WIZARD_FINAL_ONLY_READY_GRACE_MS = 700;
 const WIZARD_READY_WATCH_MS = 200;
 /** The short recap needs time for Relay playback before the board resets. */
 const WIZARD_RECAP_PLAYBACK_BUDGET_MS = 15_000;
+const MAX_THINKING_DRAFT_CHARS = 160;
 type WizardUtteranceStart = { sceneId: number; phase: WizardChessSceneSnapshot['phase'];
   source: 'interrupt' | 'partial' };
 
@@ -86,6 +88,7 @@ export class ChessVoiceSession {
   private waitingPartialTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly failedTurnSpeech = new Map<number, string[]>();
   private failedWaitingReply: string | null = null;
+  private thinkingDraft: { text: string; gameId: number; revision: number; turn: ChessState['turn'] } | null = null;
 
   constructor(private readonly deps: ChessVoiceDeps) {}
 
@@ -171,6 +174,7 @@ export class ChessVoiceSession {
     const reset = events.find(event => event.type === 'reset');
     if (reset?.type === 'reset') {
       this.turnEpoch++;
+      this.thinkingDraft = null;
       this.clearWizardFinaleTimer();
       this.clearWizardReadyWatch();
       this.wizardUtteranceStart = null;
@@ -247,6 +251,10 @@ export class ChessVoiceSession {
     if (!state) return;
     const previous = this.lastObservedPhase;
     this.lastObservedPhase = state.phase;
+    if (this.thinkingDraft && (state.phase !== 'playing' && state.phase !== 'pending'
+      || state.gameId !== this.thinkingDraft.gameId
+      || state.revision !== this.thinkingDraft.revision
+      || state.turn !== this.thinkingDraft.turn)) this.thinkingDraft = null;
     if (state.mode !== 'pvp' || this.awaitingName || this.confirmingName) return;
     if (previous === 'waiting' && (state.phase === 'playing' || state.phase === 'pending')) {
       const current = state.players?.find(player => player.color === state.turn)?.name
@@ -313,6 +321,7 @@ export class ChessVoiceSession {
   handleReplaced(): void {
     this.active = false;
     this.turnEpoch++;
+    this.thinkingDraft = null;
     this.clearWizardFinaleTimer();
     this.clearWizardReadyWatch();
     this.wizardUtteranceStart = null;
@@ -325,6 +334,7 @@ export class ChessVoiceSession {
     if (!this.active) return;
     this.active = false;
     this.turnEpoch++;
+    this.thinkingDraft = null;
     this.clearWizardFinaleTimer();
     this.clearWizardReadyWatch();
     this.wizardUtteranceStart = null;
@@ -472,6 +482,7 @@ export class ChessVoiceSession {
       return;
     }
     if (before?.wizardScene) {
+      this.thinkingDraft = null;
       const action = parseWizardChessVoiceAction(spoken, this.commandLocale);
       const explicitH3 = action === 'final'
         || isExplicitWizardH3Move(spoken, this.commandLocale);
@@ -523,8 +534,14 @@ export class ChessVoiceSession {
       return;
     }
     if (before?.wizardAvailable && isWizardChessTrigger(spoken, this.commandLocale)) {
+      this.thinkingDraft = null;
       this.runCommand(spoken);
       return;
+    }
+    if (before) {
+      const prepared = this.prepareMoveSpeech(spoken, before);
+      if (prepared === null) return;
+      spoken = prepared;
     }
     const intent = parseChessIntent(spoken, this.commandLocale);
     // A request for advice is an action even when the caller phrases it as a question.
@@ -547,6 +564,120 @@ export class ChessVoiceSession {
     }
 
     this.runCommand(spoken);
+  }
+
+  /** Relay's final prompt marks a speech segment, not necessarily a finished move. */
+  private prepareMoveSpeech(spoken: string, state: ChessState): string | null {
+    if ((state.phase !== 'playing' && state.phase !== 'pending')
+      || state.turn !== this.ownColor(state)) {
+      this.thinkingDraft = null;
+      return spoken;
+    }
+    const draft = this.thinkingDraft;
+    if (draft && (draft.gameId !== state.gameId || draft.revision !== state.revision
+      || draft.turn !== state.turn)) this.thinkingDraft = null;
+    if (this.thinkingDraft && this.commandLocale === 'en-US') {
+      // Relay can put the article at the start of the next segment:
+      // "pawn from" / "the E2" / "to E4".
+      spoken = spoken.replace(/\bthe\s+(?=\S+)/gi, (article, index: number, text: string) => {
+        const [first, second] = text.slice(index + article.length).split(/\s+/);
+        return parseBareChessSquare(first ?? '', this.commandLocale)
+          || parseBareChessSquare(`${first ?? ''} ${second ?? ''}`, this.commandLocale)
+          ? '' : article;
+      });
+    }
+    if (this.thinkingDraft && parseChessIntent(spoken, this.commandLocale).kind === 'cancel') {
+      this.thinkingDraft = null;
+      if ((state.pendingMove || state.selection) && this.roomCode && this.callSid) {
+        this.deps.command(this.roomCode, this.callSid, 'cancel', this.commandLocale);
+      }
+      this.speak(this.commandLocale === 'pt-BR'
+        ? 'Jogada inacabada cancelada.' : 'Unfinished move cancelled.');
+      return null;
+    }
+    let normalized = normalizeForMatching(spoken, this.commandLocale).replace(/[-']/g, ' ').trim();
+    const correctionPrefix = this.commandLocale === 'pt-BR'
+      ? /^(?:(?:sim|yes|yeah|okay|ok)\s+)?(?:nao|na verdade|mas|corrigindo|quer dizer|actually|but|wait|sorry|i mean|i meant)\s+(.+)$/
+      : /^(?:(?:yes|yeah|okay|ok)\s+)?(?:no|actually|but|wait|sorry|i mean|i meant)\s+(.+)$/;
+    const correction = correctionPrefix.exec(normalized);
+    let proposalCancelled = false;
+    if (correction) {
+      // A correction starts a new thought. In particular, "no" cannot leave an
+      // older proposal available for a later accidental confirmation.
+      this.thinkingDraft = null;
+      spoken = correction[1]!;
+      normalized = spoken;
+      if ((state.pendingMove || state.selection) && this.roomCode && this.callSid) {
+        this.deps.command(this.roomCode, this.callSid, 'cancel', this.commandLocale);
+        proposalCancelled = true;
+      }
+    }
+    if (this.thinkingDraft
+      && this.thinkingDraft.text.length + 1 + spoken.length > MAX_THINKING_DRAFT_CHARS) {
+      // Keep thinking time unlimited while bounding the text carried between
+      // segments. A fresh fragment may begin a new draft below.
+      this.thinkingDraft = null;
+    }
+    const newBareSquare = parseBareChessSquare(spoken, this.commandLocale);
+    const draftSquare = this.thinkingDraft
+      ? parseBareChessSquare(this.thinkingDraft.text, this.commandLocale) : null;
+    const repeatsDraftSquare = newBareSquare && draftSquare === newBareSquare;
+    const draftHasOwnSource = draftSquare && state.pieces.some(piece =>
+      piece.square === draftSquare && piece.color === this.ownColor(state));
+    const completesSplitSquare = this.thinkingDraft
+      && parseBareChessFile(this.thinkingDraft.text, this.commandLocale)
+      && (parseBareChessSquare(`${this.thinkingDraft.text} ${spoken}`, this.commandLocale)
+        || parseBareChessSquare(`${this.thinkingDraft.text} ${spoken.trim().split(/\s+/)[0] ?? ''}`,
+          this.commandLocale));
+    if (this.thinkingDraft && !repeatsDraftSquare
+      && (!newBareSquare || !draftSquare || draftHasOwnSource)
+      && (newBareSquare || completesSplitSquare
+      || /^(?:to|toward|towards|into|onto|para|pra)\b/.test(normalized))) {
+      const priorText = this.thinkingDraft.text;
+      const priorIntent = parseChessIntent(priorText, this.commandLocale);
+      if (priorIntent.kind === 'select' && priorIntent.from) {
+        spoken = `${priorIntent.from} ${spoken}`;
+      } else if (priorIntent.kind === 'select' && priorIntent.fromFile && newBareSquare) {
+        spoken = `${priorText} ${this.commandLocale === 'pt-BR' ? 'para' : 'to'} ${spoken}`;
+      } else {
+        spoken = `${priorText} ${spoken}`;
+      }
+    }
+    this.thinkingDraft = null;
+    const intent = parseChessIntent(spoken, this.commandLocale);
+    const bareSquare = parseBareChessSquare(spoken, this.commandLocale);
+    if (state.selection && bareSquare && !correction) return spoken;
+    const words = normalizeForMatching(spoken, this.commandLocale).replace(/[-']/g, ' ').trim();
+    const explicitSelection = /^(?:select|choose|pick|selecionar|selecione|seleciona|escolher|escolha|escolhe)\b/.test(
+      words);
+    const trailingPreposition = /\b(?:from|to|toward|towards|into|onto|at|on|de|da|do|para|pra|em|na|no)$/.test(words);
+    const beforePreposition = words.replace(/\s+(?:from|to|toward|towards|into|onto|at|on|de|da|do|para|pra|em|na|no)$/, '');
+    const incompleteMovePhrase = trailingPreposition
+      && (/^(?:pawn|knight|night|horse|bishop|rook|queen|king|peao|cavalo|bispo|torre|rainha|dama|rei|move|play|put|mova|mover|joga|jogar|from|to|de|para)\b/.test(words)
+        || !!parseBareChessSquare(beforePreposition, this.commandLocale)
+        || parseChessIntent(beforePreposition, this.commandLocale).kind === 'select');
+    const unfinishedSourcePhrase = /^(?:(?:move|play|use|mova|mover|joga|jogar)\s+)?(?:(?:my|the|a|our|this|that|meu|minha|o|um|uma)\s+)?(?:pawn|knight|night|horse|bishop|rook|queen|king|peao|cavalo|bispo|torre|rainha|dama|rei)\s+(?:(?:on|at|from|in)\s+the|(?:na|no|da|do)\s+(?:casa|quadrado))$/.test(words);
+    const ownPieceAtOnlySquare = intent.kind === 'move' && intent.query.to && !intent.query.from
+      && !intent.query.fromFile && intent.query.castle === undefined
+      && !intent.query.captureOnly && !intent.query.promotion
+      && state.pieces.some(piece => piece.square === intent.query.to && piece.color === this.ownColor(state)
+        && (!intent.query.piece || intent.query.piece === piece.type))
+      && !/\b(?:to|toward|towards|into|onto|para|pra)\b/.test(words);
+    if (bareSquare || parseBareChessFile(spoken, this.commandLocale) || incompleteMovePhrase
+      || unfinishedSourcePhrase
+      || (intent.kind === 'select' && !explicitSelection)
+      || ownPieceAtOnlySquare) {
+      if (state.pendingMove && !proposalCancelled && this.roomCode && this.callSid) {
+        // A new thought replaces the old proposal; a later confirm must not play it.
+        this.deps.command(this.roomCode, this.callSid, 'cancel', this.commandLocale);
+      }
+      const draftText = unfinishedSourcePhrase && /\s+the$/.test(words)
+        ? spoken.replace(/\s+the\s*$/i, '') : spoken;
+      this.thinkingDraft = draftText.length > MAX_THINKING_DRAFT_CHARS ? null
+        : { text: draftText, gameId: state.gameId, revision: state.revision, turn: state.turn };
+      return null;
+    }
+    return spoken;
   }
 
   private handleReset(): void {

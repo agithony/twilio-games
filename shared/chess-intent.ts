@@ -106,6 +106,19 @@ function spokenSquares(text: string): ChessSquare[] {
   return squares;
 }
 
+const BARE_SQUARE = new RegExp(`^${SQUARE_SPOKEN_FORM}$`);
+
+export function parseBareChessFile(spoken: string, locale: SupportedLocale = 'en-US'): ChessFile | null {
+  const normalized = normalizeForMatching(spoken, locale);
+  return FILE_WORDS[normalized] ?? null;
+}
+
+/** A square on its own may be the start of a move, rather than its destination. */
+export function parseBareChessSquare(spoken: string, locale: SupportedLocale = 'en-US'): ChessSquare | null {
+  const normalized = normalizeForMatching(spoken, locale).replace(/[-']/g, ' ').trim();
+  return BARE_SQUARE.test(normalized) ? spokenSquares(normalized)[0] ?? null : null;
+}
+
 function startsSquare(tokens: readonly string[], index: number): boolean {
   const token = tokens[index];
   if (!token) return false;

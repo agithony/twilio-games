@@ -646,6 +646,430 @@ describe('ChessVoiceSession', () => {
     expect(game.spoken.at(-1)).toMatch(/confirm or cancel/i);
   });
 
+  it.each(['D6', 'D6....', 'D six...'])(
+    'keeps a final lone square "%s" silent through a long thinking pause', square => {
+      vi.useFakeTimers();
+      try {
+        const room = new ChessRoom('4821', {
+          humanColor: 'w', initialFen: '4k3/8/8/3P4/8/8/8/4K3 w - - 0 1',
+        });
+        const game = liveRoomHarness(room);
+        const introductionCount = game.spoken.length;
+        const initialFen = room.state().fen;
+
+        game.prompt(square);
+        expect(game.commands).toEqual([]);
+        expect(game.spoken).toHaveLength(introductionCount);
+        expect(room.state()).toMatchObject({ fen: initialFen, selection: null,
+          pendingMove: null, feedback: null, ply: 0 });
+
+        vi.advanceTimersByTime(120_000);
+        expect(game.commands).toEqual([]);
+        expect(game.spoken).toHaveLength(introductionCount);
+        expect(room.state()).toMatchObject({ fen: initialFen, selection: null,
+          pendingMove: null, feedback: null, ply: 0 });
+      } finally { vi.useRealTimers(); }
+    });
+
+  it.each(['D7', 'to D7'])(
+    'uses a lone source square after a long pause when the next prompt is "%s"', destination => {
+      vi.useFakeTimers();
+      try {
+        // Both the rook on D6 and queen on A4 can reach D7. The first square
+        // must survive the pause for the destination to identify one move.
+        const room = new ChessRoom('4821', {
+          humanColor: 'w', initialFen: '7k/8/3R4/8/Q7/8/8/4K3 w - - 0 1',
+        });
+        const game = liveRoomHarness(room);
+        const introductionCount = game.spoken.length;
+        const initialFen = room.state().fen;
+
+        game.prompt('D6');
+        vi.advanceTimersByTime(120_000);
+        expect(game.commands).toEqual([]);
+        expect(game.spoken).toHaveLength(introductionCount);
+        game.prompt(destination);
+
+        expect(game.commands).toHaveLength(1);
+        expect(room.state()).toMatchObject({ fen: initialFen, ply: 0,
+          pendingMove: { from: 'd6', to: 'd7' } });
+        expect(game.spoken.at(-1)).toMatch(/confirm or cancel/i);
+      } finally { vi.useRealTimers(); }
+    });
+
+  it.each([
+    ['E2', 'E2'],
+    ['E two', 'E2'],
+  ])('keeps a repeated source square quiet (%s, then %s)', (first, repeated) => {
+    const room = new ChessRoom('4821', { humanColor: 'w' });
+    const game = liveRoomHarness(room);
+    const introductionCount = game.spoken.length;
+    game.prompt(first);
+    game.prompt(repeated);
+    expect(game.commands).toEqual([]);
+    expect(game.spoken).toHaveLength(introductionCount);
+    game.prompt('to E4');
+    expect(room.state().pendingMove).toMatchObject({ from: 'e2', to: 'e4' });
+  });
+
+  it('holds a spoken source fragment through a long pause before its destination', () => {
+    vi.useFakeTimers();
+    try {
+      // A bishop on B1 can also reach E4, so the held pawn source matters.
+      const room = new ChessRoom('4821', {
+        humanColor: 'w', initialFen: '4k3/8/8/8/8/8/4P3/1B2K3 w - - 0 1',
+      });
+      const game = liveRoomHarness(room);
+      const introductionCount = game.spoken.length;
+      const initialFen = room.state().fen;
+
+      game.prompt('pawn E2');
+      vi.advanceTimersByTime(120_000);
+      expect(game.commands).toEqual([]);
+      expect(game.spoken).toHaveLength(introductionCount);
+      expect(room.state()).toMatchObject({ fen: initialFen, selection: null,
+        pendingMove: null, feedback: null, ply: 0 });
+      game.prompt('to E4');
+
+      expect(game.commands).toHaveLength(1);
+      expect(room.state()).toMatchObject({ fen: initialFen, ply: 0,
+        pendingMove: { from: 'e2', to: 'e4' } });
+      expect(game.spoken.at(-1)).toMatch(/confirm or cancel/i);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it.each([
+    ['en-US', 'my pawn on the', 'E2', 'to E4'],
+    ['en-US', 'move my pawn from the', 'E2', 'to E4'],
+    ['pt-BR', 'meu peão na casa', 'E2', 'para E4'],
+    ['pt-BR', 'mova meu peão da casa', 'E2', 'para E4'],
+  ] as const)('holds a source phrase ending in an article in %s', (locale, prefix, source, destination) => {
+    const room = new ChessRoom('4821', { humanColor: 'w' });
+    const game = liveRoomHarness(room, locale);
+    const introductionCount = game.spoken.length;
+    game.prompt(prefix);
+    game.prompt(source);
+    expect(game.commands).toEqual([]);
+    expect(game.spoken).toHaveLength(introductionCount);
+    game.prompt(destination);
+    expect(room.state().pendingMove).toMatchObject({ from: 'e2', to: 'e4' });
+  });
+
+  it('keeps Portuguese "no quadrado E2" as a source phrase', () => {
+    const room = new ChessRoom('4821', { humanColor: 'w' });
+    const game = liveRoomHarness(room, 'pt-BR');
+    const introductionCount = game.spoken.length;
+    game.prompt('no quadrado E2');
+    expect(game.commands).toEqual([]);
+    expect(game.spoken).toHaveLength(introductionCount);
+    game.prompt('para E4');
+    expect(room.state().pendingMove).toMatchObject({ from: 'e2', to: 'e4' });
+  });
+
+  it.each([
+    ['en-US', 'knight on B', 'C3'],
+    ['en-US', 'B-file knight', 'C3'],
+    ['pt-BR', 'cavalo da coluna B', 'C3'],
+  ] as const)('joins a held file-only source with its destination in %s (%s)', (locale, source, destination) => {
+    const room = new ChessRoom('4821', { humanColor: 'w' });
+    const game = liveRoomHarness(room, locale);
+    const introductionCount = game.spoken.length;
+    game.prompt(source);
+    expect(game.commands).toEqual([]);
+    expect(game.spoken).toHaveLength(introductionCount);
+    game.prompt(destination);
+    expect(room.state().pendingMove).toMatchObject({ from: 'b1', to: 'c3' });
+  });
+
+  it.each([
+    ['en-US', 'B-file knight', 'to'],
+    ['pt-BR', 'cavalo da coluna B', 'para'],
+  ] as const)('keeps a file-only source quiet through a separate preposition in %s', (locale, source, preposition) => {
+    const room = new ChessRoom('4821', { humanColor: 'w' });
+    const game = liveRoomHarness(room, locale);
+    const introductionCount = game.spoken.length;
+    game.prompt(source);
+    game.prompt(preposition);
+    expect(game.commands).toEqual([]);
+    expect(game.spoken).toHaveLength(introductionCount);
+    game.prompt('C3');
+    expect(room.state().pendingMove).toMatchObject({ from: 'b1', to: 'c3' });
+  });
+
+  it('bounds repeated speech fragments without a thinking timeout', () => {
+    const room = new ChessRoom('4821', { humanColor: 'w' });
+    const game = liveRoomHarness(room);
+    const introductionCount = game.spoken.length;
+    for (let index = 0; index < 100; index++) game.prompt('to');
+    const draft = (game.session as unknown as { thinkingDraft: { text: string } | null }).thinkingDraft;
+    expect(draft?.text.length).toBeLessThanOrEqual(160);
+    expect(game.commands).toEqual([]);
+    expect(game.spoken).toHaveLength(introductionCount);
+  });
+
+  it('proposes an explicitly directed lone destination immediately', () => {
+    const room = new ChessRoom('4821', {
+      humanColor: 'w', initialFen: '4k3/8/8/3P4/8/8/8/4K3 w - - 0 1',
+    });
+    const game = liveRoomHarness(room);
+    game.prompt('move to D6');
+    expect(game.commands).toEqual(['move to D6']);
+    expect(room.state()).toMatchObject({ ply: 0, pendingMove: { from: 'd5', to: 'd6' } });
+    expect(game.spoken.at(-1)).toMatch(/confirm or cancel/i);
+  });
+
+  it('lets a complete move supersede a held lone square and still requires confirmation', () => {
+    const room = new ChessRoom('4821', { humanColor: 'w' });
+    const game = liveRoomHarness(room);
+    const initialFen = room.state().fen;
+    game.prompt('D6');
+    game.prompt('pawn from E2 to E4');
+
+    expect(game.commands).toEqual(['pawn from E2 to E4']);
+    expect(room.state()).toMatchObject({ fen: initialFen, ply: 0,
+      pendingMove: { from: 'e2', to: 'e4' } });
+    expect(game.spoken.at(-1)).toMatch(/confirm or cancel/i);
+    game.prompt('confirm');
+    expect(room.state().lastMove).toMatchObject({ actor: 'human', from: 'e2', to: 'e4' });
+  });
+
+  it('replaces an unfinished destination instead of treating it as a source', () => {
+    const room = new ChessRoom('4821', { humanColor: 'w' });
+    const game = liveRoomHarness(room);
+    const introductionCount = game.spoken.length;
+    game.prompt('D6');
+    game.prompt('E4');
+    expect(game.commands).toEqual([]);
+    expect(game.spoken).toHaveLength(introductionCount);
+    expect(room.state().pendingMove).toBeNull();
+    game.prompt('move to E4');
+    expect(room.state().pendingMove).toMatchObject({ from: 'e2', to: 'e4' });
+  });
+
+  it('clears an earlier proposal silently when a new lone-square thought begins', () => {
+    const room = new ChessRoom('4821', { humanColor: 'w' });
+    const game = liveRoomHarness(room);
+    game.prompt('pawn from E2 to E4');
+    expect(room.state().pendingMove).toMatchObject({ from: 'e2', to: 'e4' });
+    const spokenCount = game.spoken.length;
+    game.prompt('D6');
+    expect(game.spoken).toHaveLength(spokenCount);
+    expect(room.state().pendingMove).toBeNull();
+    game.prompt('confirm');
+    expect(room.state().lastMove).toBeNull();
+  });
+
+  it('holds an unfinished move phrase through multiple final prompts', () => {
+    const room = new ChessRoom('4821', { humanColor: 'w' });
+    const game = liveRoomHarness(room);
+    const introductionCount = game.spoken.length;
+    game.prompt('pawn from');
+    game.prompt('E2');
+    expect(game.commands).toEqual([]);
+    expect(game.spoken).toHaveLength(introductionCount);
+    game.prompt('to E4');
+    expect(room.state().pendingMove).toMatchObject({ from: 'e2', to: 'e4' });
+  });
+
+  it('accepts a source square when the article starts the next speech segment', () => {
+    const room = new ChessRoom('4821', { humanColor: 'w' });
+    const game = liveRoomHarness(room);
+    const introductionCount = game.spoken.length;
+    game.prompt('pawn from');
+    game.prompt('the E2');
+    expect(game.commands).toEqual([]);
+    expect(game.spoken).toHaveLength(introductionCount);
+    game.prompt('to E4');
+    expect(room.state().pendingMove).toMatchObject({ from: 'e2', to: 'e4' });
+  });
+
+  it('ignores filler articles inside a resumed complete move', () => {
+    const room = new ChessRoom('4821', { humanColor: 'w' });
+    const game = liveRoomHarness(room);
+    game.prompt('move my pawn');
+    game.prompt('from the E2 to the E4');
+    expect(room.state().pendingMove).toMatchObject({ from: 'e2', to: 'e4' });
+  });
+
+  it.each([
+    ['en-US', 'D six', 'to', 'D seven'],
+    ['pt-BR', 'D seis', 'para', 'D sete'],
+  ] as const)('waits through a spoken-square preposition in %s', (locale, source, preposition, destination) => {
+    const room = new ChessRoom('4821', {
+      humanColor: 'w', initialFen: '7k/8/3R4/8/Q7/8/8/4K3 w - - 0 1',
+    });
+    const game = liveRoomHarness(room, locale);
+    const introductionCount = game.spoken.length;
+    game.prompt(source);
+    game.prompt(preposition);
+    expect(game.commands).toEqual([]);
+    expect(game.spoken).toHaveLength(introductionCount);
+    game.prompt(destination);
+    expect(room.state().pendingMove).toMatchObject({ from: 'd6', to: 'd7' });
+  });
+
+  it('waits when Relay splits a spoken square between file and rank', () => {
+    const room = new ChessRoom('4821', { humanColor: 'w' });
+    const game = liveRoomHarness(room);
+    const introductionCount = game.spoken.length;
+    game.prompt('D');
+    game.prompt('six');
+    expect(game.commands).toEqual([]);
+    expect(game.spoken).toHaveLength(introductionCount);
+    game.prompt('pawn from E2 to E4');
+    expect(room.state().pendingMove).toMatchObject({ from: 'e2', to: 'e4' });
+  });
+
+  it.each([
+    ['en-US', 'six to', 'D seven'],
+    ['pt-BR', 'seis para', 'D sete'],
+  ] as const)('joins a split source square and preposition in %s', (locale, middle, destination) => {
+    const room = new ChessRoom('4821', {
+      humanColor: 'w', initialFen: '7k/8/3R4/8/Q7/8/8/4K3 w - - 0 1',
+    });
+    const game = liveRoomHarness(room, locale);
+    const introductionCount = game.spoken.length;
+    game.prompt('D');
+    game.prompt(middle);
+    expect(game.commands).toEqual([]);
+    expect(game.spoken).toHaveLength(introductionCount);
+    game.prompt(destination);
+    expect(room.state().pendingMove).toMatchObject({ from: 'd6', to: 'd7' });
+  });
+
+  it('does not hold an invalid named piece just because another piece occupies its square', () => {
+    const room = new ChessRoom('4821', { humanColor: 'w' });
+    const game = liveRoomHarness(room);
+    game.prompt('bishop E2');
+    expect(game.commands).toEqual(['bishop E2']);
+    expect(game.spoken.at(-1)).toMatch(/not legal/i);
+  });
+
+  it('acknowledges cancellation of an unfinished spoken move', () => {
+    const room = new ChessRoom('4821', { humanColor: 'w' });
+    const game = liveRoomHarness(room);
+    game.prompt('D6');
+    game.prompt('cancel');
+    expect(game.spoken.at(-1)).toMatch(/cancelled|cleared/i);
+    expect(game.spoken.at(-1)).not.toMatch(/no move to cancel/i);
+    expect(room.state().pendingMove).toBeNull();
+  });
+
+  it('forgets a spoken draft when Wizard Chess takes over', () => {
+    const game = harness(state({ wizardAvailable: true }));
+    game.setup();
+    game.prompt('D6');
+    game.prompt('wizard chess');
+    game.prompt('to E4');
+    expect(game.calls.filter(call => call.startsWith('command:')))
+      .toEqual(['command:wizard chess', 'command:to E4']);
+  });
+
+  it('accepts a destination after an explicit piece selection', () => {
+    vi.useFakeTimers();
+    try {
+      const room = new ChessRoom('4821', { humanColor: 'w' });
+      const game = liveRoomHarness(room);
+      game.prompt('select E2');
+      expect(room.state().selection).toMatchObject({ from: 'e2' });
+      vi.advanceTimersByTime(120_000);
+      game.prompt('E4');
+      expect(game.commands).toEqual(['select E2', 'E4']);
+      expect(room.state().pendingMove).toMatchObject({ from: 'e2', to: 'e4' });
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('accepts a destination split into file and rank after explicit selection', () => {
+    const room = new ChessRoom('4821', { humanColor: 'w' });
+    const game = liveRoomHarness(room);
+    game.prompt('select E2');
+    game.prompt('E');
+    game.prompt('four');
+    expect(game.commands).toEqual(['select E2', 'E four']);
+    expect(room.state().pendingMove).toMatchObject({ from: 'e2', to: 'e4' });
+  });
+
+  it('cancelling a split destination also clears the selected piece', () => {
+    const room = new ChessRoom('4821', { humanColor: 'w' });
+    const game = liveRoomHarness(room);
+    game.prompt('select E2');
+    game.prompt('E');
+    game.prompt('cancel');
+    expect(room.state().selection).toBeNull();
+    expect(room.state().pendingMove).toBeNull();
+  });
+
+  it('a corrected square clears an earlier explicit selection', () => {
+    const room = new ChessRoom('4821', { humanColor: 'w' });
+    const game = liveRoomHarness(room);
+    game.prompt('select E2');
+    game.prompt('no, D2');
+    expect(room.state().selection).toBeNull();
+    game.prompt('to D4');
+    expect(room.state().pendingMove).toMatchObject({ from: 'd2', to: 'd4' });
+  });
+
+  it('drops a held square when a two-caller match pauses for reconnection', () => {
+    const players: ChessState['players'] = [
+      { playerId: 'c1', color: 'w', name: 'Ada', connected: true, nameConfirmed: true },
+      { playerId: 'c2', color: 'b', name: 'Ben', connected: true, nameConfirmed: true },
+    ];
+    const game = harness(state({ mode: 'pvp', players }));
+    game.setup();
+    game.prompt('E2');
+    game.setState(state({ mode: 'pvp', phase: 'waiting', players }));
+    game.session.onStateChanged();
+    game.setState(state({ mode: 'pvp', players }));
+    game.session.onStateChanged();
+    game.prompt('to E4');
+    expect(game.calls.filter(call => call.startsWith('command:'))).toEqual(['command:to E4']);
+  });
+
+  it.each([
+    ['en-US', 'no, D2', 'to D4'],
+    ['pt-BR', 'na verdade D2', 'para D4'],
+  ] as const)('keeps a corrected source quiet in %s', (locale, correction, destination) => {
+    const room = new ChessRoom('4821', { humanColor: 'w' });
+    const game = liveRoomHarness(room, locale);
+    const introductionCount = game.spoken.length;
+    game.prompt('E2');
+    game.prompt(correction);
+    expect(game.commands).toEqual([]);
+    expect(game.spoken).toHaveLength(introductionCount);
+    game.prompt(destination);
+    expect(room.state().pendingMove).toMatchObject({ from: 'd2', to: 'd4' });
+  });
+
+  it('does not confirm an old proposal after a corrected square', () => {
+    const room = new ChessRoom('4821', { humanColor: 'w' });
+    const game = liveRoomHarness(room);
+    game.prompt('pawn from E2 to E4');
+    expect(room.state().pendingMove).toMatchObject({ from: 'e2', to: 'e4' });
+    game.prompt('no, D6');
+    expect(room.state().pendingMove).toBeNull();
+    game.prompt('confirm');
+    expect(room.state().lastMove).toBeNull();
+    expect(room.state().ply).toBe(0);
+  });
+
+  it.each([
+    ['en-US', 'yes, actually D6'],
+    ['en-US', 'yes, but D6'],
+    ['pt-BR', 'sim, na verdade D6'],
+  ] as const)('does not confirm an old proposal after a qualified correction in %s', (locale, correction) => {
+    const room = new ChessRoom('4821', { humanColor: 'w' });
+    const game = liveRoomHarness(room, locale);
+    game.prompt('pawn from E2 to E4');
+    expect(room.state().pendingMove).toMatchObject({ from: 'e2', to: 'e4' });
+    const spokenCount = game.spoken.length;
+    game.prompt(correction);
+    expect(room.state().pendingMove).toBeNull();
+    expect(game.spoken).toHaveLength(spokenCount);
+    game.prompt(locale === 'pt-BR' ? 'confirmar' : 'confirm');
+    expect(room.state().lastMove).toBeNull();
+    expect(room.state().ply).toBe(0);
+  });
+
   it('announces a captured bishop when the computer move arrives', () => {
     const game = harness();
     game.setup();
