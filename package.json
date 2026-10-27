@@ -33,7 +33,7 @@
     "@types/qrcode": "1.5.5",
     "@types/three": "0.164.1",
     "@types/ws": "^8.5.10",
-    "puppeteer-core": "25.2.1",
+    "puppeteer-core": "25.16.0",
     "tsx": "^4.10.0",
     "typescript": "^5.4.0",
     "vite": "8.1.2",
