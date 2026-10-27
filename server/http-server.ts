@@ -2448,8 +2448,28 @@ export class HttpServer {
     }
     if (game === 'owl') {
       return voiceHintList(locale === 'pt-BR'
-        ? ['coruja', 'olá', 'sim', 'não', 'talvez', 'repita', 'imitar', 'rir', 'rir alto', 'piar', 'cantar', 'dançar', 'acenar', 'jornal', 'ler', 'telefone', 'biscoito', 'comer', 'chá', 'beber', 'arrotar', 'cutucar', 'fazer cócegas', 'laboratório', 'misturar', 'poção', 'frutas vermelhas', 'hortelã', 'âmbar', 'vermelho', 'azul', 'verde', 'dourado', 'ajuda', 'adeus']
-        : ['owl', 'hello', 'yes', 'no', 'maybe', 'repeat', 'copy me', 'laugh', 'giggle', 'hoot', 'sing', 'dance', 'wave', 'newspaper', 'read', 'phone', 'cookie', 'eat', 'tea', 'drink', 'burp', 'poke', 'tickle', 'lab', 'mix', 'potion', 'berry', 'mint', 'amber', 'red', 'blue', 'green', 'gold', 'help', 'goodbye']);
+        ? [
+          'coruja', 'olá', 'sim', 'não', 'talvez', 'repita', 'imitar',
+          'ria', 'acene', 'pense', 'surpresa', 'dance', 'durma', 'cante', 'pisque',
+          'encolha os ombros', 'continência', 'coce', 'boceje', 'psiu', 'comemore',
+          'trema', 'reverência', 'espirre',
+          'jornal', 'ler', 'telefone', 'biscoito', 'comer', 'chá', 'beber', 'arrotar',
+          'cutucar', 'fazer cócegas', 'laboratório', 'sala de leitura',
+          'misturar', 'misturar poções', 'poção', 'frutas vermelhas', 'hortelã',
+          'âmbar', 'Moonberry', 'Mossdrop', 'Sun Fizz', 'vermelho', 'azul', 'verde', 'dourado',
+          'mostrar menu', 'ver menu', 'mostrar reações', 'ajuda', 'adeus',
+        ]
+        : [
+          'owl', 'hello', 'yes', 'no', 'maybe', 'repeat', 'copy me',
+          'laugh', 'wave', 'ponder', 'gasp', 'dance', 'snooze', 'sing', 'wink',
+          'shrug', 'salute', 'scratch', 'yawn', 'hush', 'cheer', 'shiver', 'bow',
+          'sneeze', 'giggle', 'hoot',
+          'newspaper', 'read', 'phone', 'cookie', 'eat', 'tea', 'drink', 'burp',
+          'poke', 'tickle', 'lab', 'study', 'mix', 'mix potions', 'potion',
+          'berry', 'mint', 'amber', 'Moonberry', 'Mossdrop', 'Sun Fizz',
+          'red', 'blue', 'green', 'gold',
+          'show menu', 'see menu', 'show reactions', 'help', 'goodbye',
+        ]);
     }
     const commands = locale === 'pt-BR'
       ? ['esquerda', 'direita', 'acelerar', 'acelere', 'acelera', 'vai', 'frear', 'freie', 'freia', 'devagar', 'reduzir', 'reduza', 'desacelerar', 'desacelere', 'parar', 'nitro', 'turbo', 'poder', 'começar', 'iniciar', 'próximo', 'próxima', 'corrida', 'correr', 'revanche', 'sim']

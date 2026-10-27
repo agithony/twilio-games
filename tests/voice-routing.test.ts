@@ -1239,6 +1239,9 @@ describe('Arcade Voice routing', () => {
     expect(xml).toContain('<Parameter name="game" value="owl"');
     expect(xml).toContain('voice="r1KmysJdVYZjJCm4mL3b-flash_v2"');
     expect(xml).toContain('dance');
+    expect(xml).toContain('sneeze');
+    expect(xml).toContain('show menu');
+    expect(xml).toContain('mix potions');
     const { voice, spoken } = await connectChessVoice(port, callSid, {
       game: 'owl', roomCode: '4821', locale: 'en-US',
     });
@@ -1267,6 +1270,37 @@ describe('Arcade Voice routing', () => {
       expect(ended.status).toBe(200);
       await vi.waitFor(() => expect(states.some(state =>
         state.phase === 'finished' && state.result?.interactionCount === 1)).toBe(true), { timeout: 2_000 });
+    } finally {
+      voice.close();
+      display.close();
+    }
+  });
+
+  it('opens the Owl command menu and moves a potion request into the lab', async () => {
+    const { port } = await harness({ active: false, standaloneVoiceEnabled: true });
+    const { display, states, events } = await connectOwlDisplay(port, '4821');
+    const callSid = 'CA-owl-menu-lab';
+    await (await incomingCall(port, { callSid })).text();
+    const { voice, spoken } = await connectChessVoice(port, callSid, {
+      game: 'owl', roomCode: '4821', locale: 'en-US',
+    });
+    try {
+      await vi.waitFor(() => expect(spoken.join(' ')).toContain('first name'), { timeout: 2_000 });
+      voice.send(JSON.stringify({ type: 'prompt', voicePrompt: 'My name is Ada', last: true }));
+      await vi.waitFor(() => expect(states.some(state => state.phase === 'playing')).toBe(true), { timeout: 2_000 });
+
+      voice.send(JSON.stringify({ type: 'prompt', voicePrompt: 'Show me the menu', last: true }));
+      await vi.waitFor(() => expect(events.some(event => event.action === 'menu')).toBe(true), { timeout: 2_000 });
+
+      voice.send(JSON.stringify({ type: 'prompt', voicePrompt: 'I want to mix potions', last: true }));
+      await vi.waitFor(() => expect(events.some(event => event.action === 'lab')).toBe(true), { timeout: 2_000 });
+      await vi.waitFor(() => expect(states.some(state => state.roomMode === 'lab')).toBe(true), { timeout: 2_000 });
+      expect(events.findIndex(event => event.action === 'menu'))
+        .toBeLessThan(events.findIndex(event => event.action === 'lab'));
+
+      voice.send(JSON.stringify({ type: 'prompt', voicePrompt: 'Berry and mint', last: true }));
+      await vi.waitFor(() => expect(events.some(event => event.action === 'mix'
+        && event.reagents?.join(',') === 'berry,mint')).toBe(true), { timeout: 2_000 });
     } finally {
       voice.close();
       display.close();

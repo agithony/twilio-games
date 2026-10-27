@@ -86,6 +86,97 @@ describe('Talking Owl ConversationRelay session', () => {
     expect(actions(events).at(-1)).toBe('study');
   });
 
+  it('opens the lab for a potion request without ingredients and keeps study props in the study', () => {
+    const { server: owl, heard, events, setup, prompt, session } = fixture();
+    session.setStationManaged(true);
+    session.setAuthoritativeName('Mira');
+    setup('NEST', 'CA-mira');
+
+    prompt('Can you take me to the lab to mix potions?');
+    expect(actions(events).at(-1)).toBe('lab');
+    expect(owl.snapshot('NEST')?.roomMode).toBe('lab');
+    expect(heard.at(-1)).toMatch(/two ingredients.*berry.*mint.*amber/i);
+
+    for (const prop of ['eat a cookie', 'drink tea', 'read the newspaper',
+      'burp', 'look at the portrait', 'turn on the lamp', 'poke', 'tickle']) {
+      prompt(prop);
+      expect(actions(events).at(-1)).toBe('talk');
+      expect(heard.at(-1)).toMatch(/back to study/i);
+    }
+    expect(actions(events)).not.toContain('eat');
+    expect(actions(events)).not.toContain('sip');
+    expect(actions(events)).not.toContain('newspaper');
+    expect(actions(events)).not.toContain('burp');
+    expect(actions(events)).not.toContain('portrait');
+    expect(actions(events)).not.toContain('lamp');
+    expect(actions(events)).not.toContain('poke');
+    expect(actions(events)).not.toContain('tickle');
+
+    prompt('mix a potion');
+    expect(actions(events).at(-1)).toBe('talk');
+    expect(heard.at(-1)).toMatch(/two ingredients/i);
+    expect(actions(events).filter(action => action === 'lab')).toHaveLength(1);
+
+    prompt('wave');
+    expect(actions(events).at(-1)).toBe('wave');
+    prompt('mix berry and mint');
+    expect(actions(events).at(-1)).toBe('mix');
+    expect(actions(events).filter(action => action === 'lab')).toHaveLength(1);
+
+    prompt('back to study');
+    expect(actions(events).at(-1)).toBe('study');
+    prompt('eat a cookie');
+    expect(actions(events).at(-1)).toBe('eat');
+  });
+
+  it('mixes a bare ingredient pair after entering the lab, including visible vial names', () => {
+    const { server: owl, events, heard, setup, prompt } = fixture();
+    setup();
+    prompt('Ada');
+    prompt('mix potions');
+    expect(owl.snapshot('HOOT')?.roomMode).toBe('lab');
+    expect(heard.at(-1)).toMatch(/two ingredients/i);
+
+    prompt('berry and mint');
+    expect(actions(events).slice(-2)).toEqual(['lab', 'mix']);
+    expect(events.at(-1)).toMatchObject({ type: 'action', action: 'mix',
+      reagents: ['berry', 'mint'] });
+
+    prompt('Moonberry and Sun Fizz');
+    expect(actions(events).at(-1)).toBe('mix');
+    expect(events.at(-1)).toMatchObject({ type: 'action', action: 'mix',
+      reagents: ['berry', 'amber'] });
+  });
+
+  it('accepts a bare Portuguese ingredient pair only in the lab', () => {
+    const { server: owl, events, setup, prompt } = fixture();
+    setup('CORUJA', 'CA-pt', 'pt-BR');
+    prompt('Meu nome é Lia');
+    prompt('misture poções');
+    expect(owl.snapshot('CORUJA')?.roomMode).toBe('lab');
+
+    prompt('frutas vermelhas e hortelã');
+    expect(actions(events).slice(-2)).toEqual(['lab', 'mix']);
+    expect(events.at(-1)).toMatchObject({ type: 'action', action: 'mix',
+      reagents: ['berry', 'mint'] });
+  });
+
+  it('publishes a menu action for spoken help and keypad 9', () => {
+    const { events, heard, send, setup, prompt } = fixture();
+    setup();
+    prompt('Ada');
+
+    prompt('Can you show me the menu?');
+    expect(actions(events).at(-1)).toBe('menu');
+    expect(heard.at(-1)).toMatch(/menu|tricks/i);
+    expect(events.at(-1)).toMatchObject({ type: 'action', action: 'menu' });
+
+    prompt('What emotions can you show?');
+    expect(actions(events).at(-1)).toBe('menu');
+    send({ type: 'dtmf', digit: '9' });
+    expect(actions(events).at(-1)).toBe('menu');
+  });
+
   it('ignores partial, duplicate, and malformed frames and maps keypad input without inventing actions', () => {
     const { server: owl, events, heard, send, setup, prompt } = fixture();
     setup();
@@ -102,7 +193,8 @@ describe('Talking Owl ConversationRelay session', () => {
     send({ type: 'dtmf', digit: '2' });
     expect(actions(events).at(-1)).toBe('no');
     send({ type: 'dtmf', digit: '9' });
-    expect(heard.at(-1)).toMatch(/press 1 for yes/i);
+    expect(actions(events).at(-1)).toBe('menu');
+    expect(heard.at(-1)).toMatch(/menu|tricks/i);
     expect(owl.snapshot('HOOT')?.phase).toBe('playing');
   });
 
@@ -476,7 +568,28 @@ describe('deterministic Talking Owl speech map', () => {
     expect(interpretOwlSpeech('mix berry and mint')).toMatchObject({ action: 'mix', reagents: ['berry', 'mint'] });
     expect(interpretOwlSpeech('combine mint with amber')).toMatchObject({ action: 'mix', reagents: ['mint', 'amber'] });
     expect(interpretOwlSpeech('mix amber and berry')).toMatchObject({ action: 'mix', reagents: ['amber', 'berry'] });
-    expect(interpretOwlSpeech('mix some potion')).toMatchObject({ action: 'talk' });
+    expect(interpretOwlSpeech('mix Moonberry and Mossdrop'))
+      .toMatchObject({ action: 'mix', reagents: ['berry', 'mint'] });
+    expect(interpretOwlSpeech('mix Sun Fizz and Moonberry'))
+      .toMatchObject({ action: 'mix', reagents: ['amber', 'berry'] });
+    expect(interpretOwlSpeech('berry and mint', 0, 'en-US', 'lab'))
+      .toMatchObject({ action: 'mix', reagents: ['berry', 'mint'] });
+    expect(interpretOwlSpeech('Moonberry and Mossdrop', 0, 'en-US', 'lab'))
+      .toMatchObject({ action: 'mix', reagents: ['berry', 'mint'] });
+    expect(interpretOwlSpeech('mix some potion')).toMatchObject({ kind: 'lab_prompt' });
+    expect(interpretOwlSpeech('mix potions')).toMatchObject({ kind: 'lab_prompt' });
+    expect(interpretOwlSpeech('mixing potions')).toMatchObject({ kind: 'lab_prompt' });
+    expect(interpretOwlSpeech("let's mix a potion")).toMatchObject({ kind: 'lab_prompt' });
+    expect(interpretOwlSpeech('I want to mix potions')).toMatchObject({ kind: 'lab_prompt' });
+    expect(interpretOwlSpeech('can we make potions?')).toMatchObject({ kind: 'lab_prompt' });
+    for (const spoken of [
+      'I want to try mixing potions',
+      'Can we try mixing potions?',
+      'Can you take me to the lab to mix potions?',
+      "Let's do potion mixing",
+    ]) {
+      expect(interpretOwlSpeech(spoken)).toMatchObject({ kind: 'lab_prompt' });
+    }
   });
 
   it('routes ordinary speech and broad keyword mentions to conversation, not prop actions', () => {
@@ -491,6 +604,20 @@ describe('deterministic Talking Owl speech map', () => {
     expect(interpretOwlSpeech('What happens if I mix berry and mint?')).toMatchObject({ kind: 'conversation' });
     expect(interpretOwlSpeech('Tell me about the potion of life')).toMatchObject({ kind: 'conversation' });
     expect(interpretOwlSpeech('Potion of life')).toMatchObject({ kind: 'conversation' });
+    expect(interpretOwlSpeech('Tell me about mixing potions')).toMatchObject({ kind: 'conversation' });
+    expect(interpretOwlSpeech("I don't want to mix potions")).toMatchObject({ kind: 'conversation' });
+    expect(interpretOwlSpeech("I don't want to try mixing potions"))
+      .toMatchObject({ kind: 'conversation' });
+    expect(interpretOwlSpeech('Can we not try mixing potions?'))
+      .toMatchObject({ kind: 'conversation' });
+    expect(interpretOwlSpeech('How do you mix potions?'))
+      .toMatchObject({ kind: 'conversation' });
+    expect(interpretOwlSpeech('berry and mint'))
+      .toMatchObject({ kind: 'conversation' });
+    expect(interpretOwlSpeech('What happens with berry and mint?', 0, 'en-US', 'lab'))
+      .toMatchObject({ kind: 'conversation' });
+    expect(interpretOwlSpeech('berry and berry', 0, 'en-US', 'lab'))
+      .toMatchObject({ kind: 'conversation' });
     expect(interpretOwlSpeech('eat a cookie')).toMatchObject({ kind: 'action', action: 'eat' });
     expect(interpretOwlSpeech('tickle')).toMatchObject({ kind: 'action', action: 'tickle' });
     expect(interpretOwlSpeech('tickle him')).toMatchObject({ kind: 'action', action: 'tickle' });
@@ -528,6 +655,22 @@ describe('deterministic Talking Owl speech map', () => {
     });
   });
 
+  it('maps direct menu requests without capturing ordinary questions about a menu', () => {
+    for (const spoken of ['menu', 'show menu', 'show me the menu', 'help',
+      'what can you do', 'list commands', 'show reactions', 'what emotions can you show',
+      'Show me what you can do', 'What animations do you have',
+      'Can I see all your reactions', 'Show me all your reactions',
+      'Open the reactions menu']) {
+      expect(interpretOwlSpeech(spoken)).toMatchObject({ kind: 'action', action: 'menu' });
+    }
+    expect(interpretOwlSpeech('What is on the dinner menu?')).toMatchObject({ kind: 'conversation' });
+    expect(interpretOwlSpeech('Tell me about the menu')).toMatchObject({ kind: 'conversation' });
+    expect(interpretOwlSpeech("Don't show me what you can do"))
+      .toMatchObject({ kind: 'conversation' });
+    expect(interpretOwlSpeech("Please don't open the reactions menu"))
+      .toMatchObject({ kind: 'conversation' });
+  });
+
   it('maps Portuguese reactions and instructions without using English TTS lines', () => {
     const cases: [string, OwlAction][] = [
       ['sim', 'yes'], ['não', 'no'], ['ria', 'laugh'], ['acene', 'wave'],
@@ -550,6 +693,22 @@ describe('deterministic Talking Owl speech map', () => {
       .toMatchObject({ action: 'mix', reagents: ['mint', 'amber'] });
     expect(interpretOwlSpeech('misture âmbar e morango', 0, 'pt-BR'))
       .toMatchObject({ action: 'mix', reagents: ['amber', 'berry'] });
+    expect(interpretOwlSpeech('misture Moonberry e Mossdrop', 0, 'pt-BR'))
+      .toMatchObject({ action: 'mix', reagents: ['berry', 'mint'] });
+    expect(interpretOwlSpeech('frutas vermelhas e hortelã', 0, 'pt-BR', 'lab'))
+      .toMatchObject({ action: 'mix', reagents: ['berry', 'mint'] });
+    expect(interpretOwlSpeech('Moonberry e Mossdrop', 0, 'pt-BR', 'lab'))
+      .toMatchObject({ action: 'mix', reagents: ['berry', 'mint'] });
+    expect(interpretOwlSpeech('frutas vermelhas e hortelã', 0, 'pt-BR'))
+      .toMatchObject({ kind: 'conversation' });
+    expect(interpretOwlSpeech('vamos misturar poções', 0, 'pt-BR'))
+      .toMatchObject({ kind: 'lab_prompt' });
+    expect(interpretOwlSpeech('quero tentar misturar poções', 0, 'pt-BR'))
+      .toMatchObject({ kind: 'lab_prompt' });
+    expect(interpretOwlSpeech('mostre o menu', 0, 'pt-BR'))
+      .toMatchObject({ kind: 'action', action: 'menu' });
+    expect(interpretOwlSpeech('mostre o que você pode fazer', 0, 'pt-BR'))
+      .toMatchObject({ kind: 'action', action: 'menu' });
     expect(interpretOwlSpeech('não dance', 0, 'pt-BR')).toMatchObject({ kind: 'conversation' });
     expect(interpretOwlSpeech('Quem é você?', 0, 'pt-BR'))
       .toMatchObject({ kind: 'conversation' });

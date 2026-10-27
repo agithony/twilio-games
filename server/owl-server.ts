@@ -158,7 +158,8 @@ export class OwlRoom {
     };
     if (action === 'lab') this.roomModeValue = 'lab';
     if (action === 'study') this.roomModeValue = 'study';
-    if (!['call', 'listen', 'hangup'].includes(action)) this.interactionCountValue++;
+    // Opening the command list is guidance, not an owl reaction.
+    if (!['call', 'listen', 'hangup', 'menu'].includes(action)) this.interactionCountValue++;
     this.lastEventValue = event;
     return cloneEvent(event) as OwlActionEvent;
   }

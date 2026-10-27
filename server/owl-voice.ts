@@ -2,7 +2,7 @@ import { DEFAULT_LOCALE, resolveLocale, type SupportedLocale } from '../shared/i
 import { normalizeForMatching } from '../shared/i18n/translate';
 import { isExplicitSpokenName, parseFirstName } from '../shared/spoken-name';
 import { speechSafeText } from '../shared/speech-text';
-import type { OwlAction, OwlActionEvent, OwlReagent, OwlState } from '../shared/owl-protocol';
+import type { OwlAction, OwlActionEvent, OwlReagent, OwlRoomMode, OwlState } from '../shared/owl-protocol';
 import { parseCrMessage } from './conversation-relay';
 import type { LlmClient, LlmTurn } from './llm';
 
@@ -35,6 +35,7 @@ export interface OwlVoiceDeps {
 
 export type OwlSpeechIntent =
   | { kind: 'action'; action: OwlAction; line: string; reagents?: readonly [OwlReagent, OwlReagent] }
+  | { kind: 'lab_prompt'; line: string }
   | { kind: 'help'; line: string }
   | { kind: 'goodbye'; line: string }
   | { kind: 'conversation'; text: string };
@@ -55,6 +56,7 @@ const ACTION_LINES: Record<OwlAction, readonly string[]> = {
   lab: ['Ah. Now we are talking chemistry.'],
   study: ['Back to the study.'],
   mix: ['A fascinating reaction!'],
+  menu: ['Here are my tricks on the screen. Pick a reaction, or ask me to mix a potion.'],
   yes: ['Yes.', 'I suppose so.', 'If you insist.'],
   no: ['No.', 'Absolutely not.', 'Ask again when I have finished reading.'],
   laugh: ['Heh heh heh.', 'That is absurd. I like it.', 'Ha! Unexpected.'],
@@ -92,6 +94,7 @@ const ACTION_LINES_PT: Record<OwlAction, readonly string[]> = {
   lab: ['Ah, agora vamos ao laboratório.'],
   study: ['De volta à sala de leitura.'],
   mix: ['Que reação fascinante!'],
+  menu: ['Meus truques estão na tela. Escolha uma reação ou peça para misturar uma poção.'],
   yes: ['Sim.', 'Acho que sim.', 'Se você insiste.'],
   no: ['Não.', 'De jeito nenhum.', 'Pergunte depois do jornal.'],
   laugh: ['Ha, ha, ha!', 'Essa foi boa.'],
@@ -127,7 +130,8 @@ const VOICE_COPY = {
     keypadHelp: 'Press 1 for yes, 2 for no, 3 for a laugh, 4 for a wave, 9 for help, or just talk to me.',
     help: 'Talk to me. Try “wave”, “laugh”, “sing”, “dance”, “read the newspaper”, or “go to the lab”. Ask me anything, or say “repeat after me, hello little owl”. Press 1 for yes, 2 for no, 3 for a laugh, 4 for a wave, 9 for help, or pound to say goodbye.',
     goodbye: 'Hoo hoo. Goodbye for now.',
-    missingIngredients: 'Name two ingredients for my potion: berry, mint, or amber.',
+    missingIngredients: 'We are in the lab. Name two ingredients for my potion: berry, mint, or amber.',
+    studyOnlyAction: 'That is back in my study. Say back to study, then ask me again.',
     aiRetry: 'My thoughts tangled in my feathers for a moment. Could you ask me again?',
   },
   'pt-BR': {
@@ -143,7 +147,8 @@ const VOICE_COPY = {
     keypadHelp: 'Aperte 1 para sim, 2 para não, 3 para uma risada, 4 para um aceno, 9 para ajuda, ou fale comigo.',
     help: 'Fale comigo. Diga acene, ria, cante, dance, leia o jornal, ou vá ao laboratório. Pergunte o que quiser, ou diga repita depois de mim, olá corujinha. Aperte 1 para sim, 2 para não, 3 para rir, 4 para acenar, 9 para ajuda, ou jogo da velha para sair.',
     goodbye: 'Hu hu. Até logo.',
-    missingIngredients: 'Escolha dois ingredientes para a poção: frutas vermelhas, hortelã ou âmbar.',
+    missingIngredients: 'Estamos no laboratório. Escolha dois ingredientes para a poção: frutas vermelhas, hortelã ou âmbar.',
+    studyOnlyAction: 'Isso fica na sala de leitura. Diga volte para a sala de leitura e peça de novo.',
     aiRetry: 'Meus pensamentos se enrolaram nas penas por um instante. Pode perguntar de novo?',
   },
 } as const;
@@ -213,6 +218,10 @@ const DTMF_ACTIONS: Readonly<Record<string, OwlAction>> = {
   '1': 'yes', '2': 'no', '3': 'laugh', '4': 'wave', '5': 'ponder',
   '6': 'gasp', '7': 'dance', '8': 'sing', '0': 'burp',
 };
+
+const STUDY_ONLY_ACTIONS: ReadonlySet<OwlAction> = new Set([
+  'newspaper', 'poke', 'tickle', 'eat', 'sip', 'burp', 'portrait', 'lamp',
+]);
 
 /** One Twilio ConversationRelay socket. The room remains authoritative across socket replacement. */
 export class OwlVoiceSession {
@@ -399,7 +408,7 @@ export class OwlVoiceSession {
     }
     this.executeIntent(answeringOwlQuestion
       ? { kind: 'conversation', text: spoken }
-      : interpretOwlSpeech(spoken, state.interactionCount, this.commandLocale), spoken);
+      : interpretOwlSpeech(spoken, state.interactionCount, this.commandLocale, state.roomMode), spoken);
   }
 
   private handleDtmf(digit: string): void {
@@ -411,7 +420,7 @@ export class OwlVoiceSession {
       return;
     }
     if (digit === '9') {
-      this.speak(VOICE_COPY[this.commandLocale].help);
+      this.executeIntent({ kind: 'action', action: 'menu', line: this.nextLine('menu') });
       return;
     }
     if (digit === '#') {
@@ -441,6 +450,22 @@ export class OwlVoiceSession {
       return;
     }
     const state = this.deps.snapshot(this.code);
+    if (intent.kind === 'lab_prompt') {
+      const action = state?.roomMode === 'lab' ? 'talk' : 'lab';
+      const event = this.deps.action(this.code, this.callSid, action, intent.line);
+      if (!event) { this.onStateChanged(); return; }
+      this.speak(event.line);
+      if (spoken) this.rememberTurn(spoken, event.line);
+      return;
+    }
+    if (state?.roomMode === 'lab' && STUDY_ONLY_ACTIONS.has(intent.action)) {
+      const event = this.deps.action(this.code, this.callSid, 'talk',
+        VOICE_COPY[this.commandLocale].studyOnlyAction);
+      if (!event) { this.onStateChanged(); return; }
+      this.speak(event.line);
+      if (spoken) this.rememberTurn(spoken, event.line);
+      return;
+    }
     if (intent.action === 'mix' && state?.roomMode !== 'lab') {
       const enteringLab = this.deps.action(this.code, this.callSid, 'lab', this.nextLine('lab'));
       if (enteringLab) this.speak(enteringLab.line);
@@ -554,7 +579,7 @@ export class OwlVoiceSession {
 
 /** Only explicit game commands bypass conversation. */
 export function interpretOwlSpeech(spoken: string, _turnNumber = 0,
-  locale: SupportedLocale = DEFAULT_LOCALE): OwlSpeechIntent {
+  locale: SupportedLocale = DEFAULT_LOCALE, roomMode: OwlRoomMode = 'study'): OwlSpeechIntent {
   const safe = speechSafeText(spoken, 180, locale);
   const normalized = normalizeForMatching(safe, locale);
   const pt = locale === 'pt-BR';
@@ -562,10 +587,9 @@ export function interpretOwlSpeech(spoken: string, _turnNumber = 0,
   const actionLines = pt ? ACTION_LINES_PT : ACTION_LINES;
   const patterns = pt ? ACTION_PATTERNS_PT : ACTION_PATTERNS;
   if (!normalized) return { kind: 'help', line: copy.help };
-  if (pt
-    ? /^(?:ajuda|o que (?:voce|eu) (?:pode|posso) fazer|lista de comandos|como jogar|como eu jogo)$/.test(normalized)
-    : /^(?:help|what can (?:you|i) do|list (?:the )?commands|how (?:do i|to) play)$/.test(normalized)) {
-    return { kind: 'help', line: copy.help };
+  const command = commandBody(normalized, locale);
+  if (isMenuCommand(command, locale)) {
+    return { kind: 'action', action: 'menu', line: actionLines.menu[0]! };
   }
   if (pt
     ? /^(?:por favor )?(?:repita(?: depois de mim)?|repete|diga exatamente|fale exatamente)$/.test(normalized)
@@ -586,24 +610,16 @@ export function interpretOwlSpeech(spoken: string, _turnNumber = 0,
     : /^(?:please )?(?:goodbye|bye bye|bye|hang up|end (?:the |this )?call|see you later|say goodbye)[.! ]*$/.test(normalized))) {
     return { kind: 'goodbye', line: copy.goodbye };
   }
-  const command = commandBody(normalized, locale);
-  if (pt
-    ? /^(?:misture|misturar|combine|combinar|faca (?:uma )?pocao)(?:\b|$)/.test(command)
-      || command === 'pocao'
-    : /^(?:mix|combine|brew|make (?:a |me a )?potion)(?:\b|$)/.test(command)
-      || command === 'potion') {
+  if (isPotionCommand(command, locale)) {
     const reagents = orderedReagents(command, locale);
     if (reagents.length >= 2) {
-      const picked = [reagents[0]!, reagents[1]!] as const;
-      const labels = pt ? { berry: 'frutas vermelhas', mint: 'hortelã', amber: 'âmbar' } : {
-        berry: 'berry', mint: 'mint', amber: 'amber',
-      };
-      return { kind: 'action', action: 'mix', reagents: picked,
-        line: pt
-          ? `Vamos misturar ${labels[picked[0]]} e ${labels[picked[1]]}. Veja esse brilho!`
-          : `Let's mix ${labels[picked[0]]} and ${labels[picked[1]]}. Look at that glow!` };
+      return mixIntent([reagents[0]!, reagents[1]!], locale);
     }
-    return { kind: 'action', action: 'talk', line: copy.missingIngredients };
+    return { kind: 'lab_prompt', line: copy.missingIngredients };
+  }
+  if (roomMode === 'lab') {
+    const reagents = bareReagentPair(command, locale);
+    if (reagents) return mixIntent(reagents, locale);
   }
   if (pt
     ? /^(?:(?:va|vamos|ir|entre|visite|abra)\s+(?:(?:ao?|para o|no)\s+)?(?:lab|laboratorio)|lab|laboratorio)$/.test(command)
@@ -631,9 +647,34 @@ export function interpretOwlSpeech(spoken: string, _turnNumber = 0,
 
 function commandBody(normalized: string, locale: SupportedLocale): string {
   const withoutPrefix = locale === 'pt-BR'
-    ? normalized.replace(/^(?:(?:por favor|coruja|voce pode|voce poderia|pode|poderia|quero que voce|eu quero que voce|vamos)\s+)+/, '')
-    : normalized.replace(/^(?:(?:please|hey owl|owl|can you|could you|would you|will you|i want you to|lets)\s+)+/, '');
+    ? normalized.replace(/^(?:(?:por favor|coruja|voce pode|voce poderia|pode|poderia|podemos|quero que voce|eu quero que voce|eu quero|quero|eu gostaria de|gostaria de|vamos|bora)\s+)+/, '')
+    : normalized.replace(/^(?:(?:please|hey owl|owl|can you|could you|would you|will you|can we|could we|shall we|i want you to|i want to|i would like to|i'd like to|we should|let'?s|lets)\s+)+/, '');
   return withoutPrefix.replace(/\s+(?:please|por favor)$/, '').trim();
+}
+
+function isMenuCommand(command: string, locale: SupportedLocale): boolean {
+  if (locale === 'pt-BR') {
+    return /^(?:ajuda|menu|o que (?:voce|eu) (?:pode|posso) fazer|como jogar|como eu jogo|lista de comandos|(?:mostre|mostra|mostrar|abra|ver)(?: me)? (?:o |seu )?menu|(?:mostre|mostra|liste|lista)(?: todas?)? (?:as |suas )?(?:reacoes|emocoes|animacoes|comandos|truques)|quais (?:reacoes|emocoes|animacoes|comandos|truques) voce (?:faz|tem))$/.test(command)
+      || /^(?:mostre o que voce pode fazer|posso ver todas? as suas (?:reacoes|emocoes|animacoes)|abra o menu de (?:reacoes|emocoes|animacoes))$/.test(command);
+  }
+  return /^(?:help|menu|what can (?:you|i) do|tell me what you can do|how (?:do i|to) play|list (?:the )?commands|(?:show|open|see|display)(?: me)? (?:the |your )?(?:menu|command list)|(?:show|list) (?:all )?(?:your |the )?(?:reactions|animations|emotions|tricks|commands)|what (?:reactions|animations|emotions|tricks) can you (?:show|do))$/.test(command)
+    || /^(?:show me what you can do|what (?:reactions|animations|emotions|tricks) do you have|(?:show me|can i see) (?:all )?(?:your |the )?(?:reactions|animations|emotions|tricks)|open (?:the )?(?:reactions|animations|emotions|tricks) menu)$/.test(command);
+}
+
+function isPotionCommand(command: string, locale: SupportedLocale): boolean {
+  if (locale === 'pt-BR') {
+    const request = command.replace(/^(?:tente|tentar)\s+/, '');
+    return /^(?:misture|misturar|misturando|combine|combinar|prepare|preparar)(?:\s|$)/.test(request)
+      || /^(?:faca|fazer|crie|criar)(?: (?:uma|umas|algumas|a))? poc(?:ao|oes)(?:\s|$)/.test(request)
+      || /^(?:pocao|pocoes|mistura de pocoes|(?:faca|fazer) mistura de pocoes)$/.test(request)
+      || /^leve (?:me|nos) (?:ao|para o) laboratorio para (?:misturar|fazer|preparar)(?:\s|$)/.test(command);
+  }
+  const request = command.replace(/^(?:try|start|begin)\s+/, '');
+  return (/^(?:mix|mixing|combine|brew)(?:\s|$)/.test(request)
+    && !/^mixing potions? (?:is|sounds|seems|was|can)\b/.test(request))
+    || /^(?:make|create|prepare)(?: (?:me )?(?:a|some|the))? potions?(?:\s|$)/.test(request)
+    || /^(?:potion|potions|potion mixing|do potion mixing)$/.test(request)
+    || /^take (?:me|us) to (?:the )?(?:lab|laboratory) to (?:mix|combine|brew|make)(?:\s|$)/.test(command);
 }
 
 function isBareYesNo(normalized: string, locale: SupportedLocale): boolean {
@@ -674,19 +715,42 @@ function owlSystemPrompt(state: OwlState, locale: SupportedLocale): string {
       + `Do not repeat the caller's words, invent actions, or use markdown, emoji, or backstage instructions.`;
 }
 
+const REAGENT_ALIASES: Record<SupportedLocale, Record<OwlReagent, string>> = {
+  'en-US': {
+    berry: 'berry|berries|blueberry|strawberry|moon ?berry',
+    mint: 'mint|peppermint|moss ?drop',
+    amber: 'amber|golden|gold|sun ?fizz',
+  },
+  'pt-BR': {
+    berry: 'frutas? (?:vermelhas?|silvestres?)|morango|amora|berry|moon ?berry',
+    mint: 'hortela|menta|mint|moss ?drop',
+    amber: 'ambar|amarelo|dourado|ouro|amber|sun ?fizz',
+  },
+};
+
+function mixIntent(reagents: readonly [OwlReagent, OwlReagent], locale: SupportedLocale): OwlSpeechIntent {
+  const pt = locale === 'pt-BR';
+  const labels = pt ? { berry: 'frutas vermelhas', mint: 'hortelã', amber: 'âmbar' } : {
+    berry: 'berry', mint: 'mint', amber: 'amber',
+  };
+  return { kind: 'action', action: 'mix', reagents,
+    line: pt
+      ? `Vamos misturar ${labels[reagents[0]]} e ${labels[reagents[1]]}. Veja esse brilho!`
+      : `Let's mix ${labels[reagents[0]]} and ${labels[reagents[1]]}. Look at that glow!` };
+}
+
+function bareReagentPair(command: string, locale: SupportedLocale): readonly [OwlReagent, OwlReagent] | null {
+  const alias = `(?:${Object.values(REAGENT_ALIASES[locale]).join('|')})`;
+  const connector = locale === 'pt-BR' ? 'e|com|mais' : 'and|with|plus';
+  if (!new RegExp(`^${alias} (?:(?:${connector}) )?${alias}$`).test(command)) return null;
+  const reagents = orderedReagents(command, locale);
+  return reagents.length === 2 ? [reagents[0]!, reagents[1]!] : null;
+}
+
 function orderedReagents(normalized: string, locale: SupportedLocale): OwlReagent[] {
   const found: { reagent: OwlReagent; at: number }[] = [];
-  const patterns = locale === 'pt-BR' ? [
-    ['berry', /\b(?:frutas? (?:vermelhas?|silvestres?)|morango|amora|berry)\b/g],
-    ['mint', /\b(?:hortela|menta|mint)\b/g],
-    ['amber', /\b(?:ambar|amarelo|dourado|ouro|amber)\b/g],
-  ] as const : [
-    ['berry', /\b(?:berry|berries|blueberry|strawberry)\b/g],
-    ['mint', /\b(?:mint|peppermint)\b/g],
-    ['amber', /\b(?:amber|golden|gold)\b/g],
-  ] as const;
-  for (const [reagent, expression] of patterns) {
-    const match = expression.exec(normalized);
+  for (const reagent of ['berry', 'mint', 'amber'] as const) {
+    const match = new RegExp(`\\b(?:${REAGENT_ALIASES[locale][reagent]})\\b`).exec(normalized);
     if (match?.index !== undefined) found.push({ reagent, at: match.index });
   }
   return found.sort((a, b) => a.at - b.at).map(item => item.reagent);

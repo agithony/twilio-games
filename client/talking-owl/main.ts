@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import QRCode from 'qrcode';
 import { DEFAULT_ROOM } from '../../shared/constants';
-import type { OwlActionEvent, OwlEvent, OwlState, OwlReagent, OwlRoomMode } from '../../shared/owl-protocol';
+import type { OwlAction, OwlActionEvent, OwlEvent, OwlState, OwlReagent, OwlRoomMode } from '../../shared/owl-protocol';
 import { locale } from '../i18n';
 import { createStationDisplay } from '../station-display';
 import { rejectDisplayToken, watchVoiceNumber } from '../station-client';
@@ -23,6 +23,12 @@ const sceneName = required<HTMLElement>('#scene-name');
 const callPanel = required<HTMLElement>('#call-panel');
 const callStatus = required<HTMLElement>('#call-status');
 const labPanel = required<HTMLElement>('#lab-panel');
+const labDescription = required<HTMLElement>('.lab-panel .prop-panel__description');
+const labVoiceNote = required<HTMLElement>('#lab-voice-note');
+const labVoiceNoteTitle = required<HTMLElement>('#lab-voice-note-title');
+const labVoiceNoteAliases = required<HTMLElement>('#lab-voice-note-aliases');
+const labVoiceNoteExample = required<HTMLElement>('#lab-voice-note-example');
+const labVoiceNoteReturn = required<HTMLElement>('#lab-voice-note-return');
 const labResult = document.querySelector<HTMLElement>('#lab-result');
 const labInspectButton = required<HTMLButtonElement>('#lab-inspect-button');
 const labInspectName = required<HTMLElement>('#lab-inspect-name');
@@ -31,8 +37,22 @@ const hangupButton = required<HTMLButtonElement>('#hangup-button');
 const sayInput = document.querySelector<HTMLInputElement>('#say-input');
 const sayButton = document.querySelector<HTMLButtonElement>('#say-button');
 const sayForm = document.querySelector<HTMLFormElement>('#say-form');
-const recordIndicator = required<HTMLElement>('#record-indicator');
-const recordTime = required<HTMLElement>('#record-time');
+const studyReactionDock = required<HTMLElement>('.action-dock__reactions--study');
+const labReactionDock = required<HTMLElement>('.action-dock__reactions--lab');
+const menuTipText = required<HTMLElement>('#menu-tip-text');
+const commandMenu = required<HTMLElement>('#command-menu');
+const commandMenuBackdrop = required<HTMLElement>('#command-menu-backdrop');
+const commandMenuClose = required<HTMLButtonElement>('#command-menu-close');
+const commandMenuScroll = required<HTMLElement>('.command-menu__scroll');
+const commandMenuTitle = required<HTMLElement>('#command-menu-title');
+const commandMenuEyebrow = required<HTMLElement>('.command-menu__eyebrow');
+const commandMenuIntro = required<HTMLElement>('#command-menu-intro');
+const commandMenuContent = required<HTMLElement>('#command-menu-content');
+const menuVoiceCue = required<HTMLElement>('#menu-voice-cue');
+const commandMenuButtons = [
+  required<HTMLButtonElement>('#menu-button'),
+  required<HTMLButtonElement>('#menu-button-mobile'),
+];
 const toast = required<HTMLElement>('#toast');
 const loadingScreen = document.querySelector<HTMLElement>('#loading-screen');
 const fullscreenButton = document.querySelector<HTMLButtonElement>('#fullscreen-button');
@@ -96,6 +116,112 @@ const liveCopy = isPortuguese ? {
   askOnPhone: 'Ask Owl over the phone.', pairingError: 'This display needs to be paired with the station again.',
   result: (name: string, count: number) => `${name} made Owl react ${count} ${count === 1 ? 'time' : 'times'}.`,
 };
+
+type VoiceMenuItem = { action: OwlAction; label: string; phrase: string };
+type VoiceMenuCatalogRow = readonly [OwlAction, string, string, string, string];
+
+// The phrases here are deliberately accepted by the voice command parser.
+// Keeping the complete list in one place makes the on-screen guide honest.
+const studyMenuCatalog = [
+  ['newspaper', 'Read the paper', 'read the newspaper', 'Ler o jornal', 'ler o jornal'],
+  ['poke', 'Poke Owl', 'poke the owl', 'Cutucar o Owl', 'cutuque'],
+  ['tickle', 'Tickle Owl', 'tickle the owl', 'Fazer cócegas', 'faça cócegas na coruja'],
+  ['eat', 'Share a cookie', 'eat a cookie', 'Dar um biscoito', 'coma um biscoito'],
+  ['sip', 'Offer tea', 'sip your tea', 'Tomar chá', 'beba chá'],
+  ['burp', 'Burp', 'burp', 'Arrotar', 'arrote'],
+  ['portrait', 'Inspect the portrait', 'look at the portrait', 'Ver o retrato', 'olhe o retrato'],
+  ['lamp', 'Light the room', 'turn on the lamp', 'Acender a luz', 'acenda a luz'],
+] as const satisfies readonly VoiceMenuCatalogRow[];
+
+const expressionMenuCatalog = [
+  ['yes', 'Agree', 'say yes', 'Concordar', 'diga sim'],
+  ['no', 'Disagree', 'say no', 'Discordar', 'diga não'],
+  ['laugh', 'Laugh', 'laugh', 'Rir', 'ria'],
+  ['wave', 'Wave', 'wave', 'Acenar', 'acene'],
+  ['ponder', 'Think', 'ponder', 'Pensar', 'pense'],
+  ['gasp', 'Gasp', 'gasp', 'Surpreender-se', 'surpreenda'],
+  ['dance', 'Dance', 'dance', 'Dançar', 'dance'],
+  ['snooze', 'Doze', 'take a nap', 'Cochilar', 'durma'],
+  ['sing', 'Sing', 'sing a song', 'Cantar', 'cante uma música'],
+  ['wink', 'Wink', 'wink', 'Piscar', 'pisque'],
+  ['shrug', 'Shrug', 'shrug', 'Dar de ombros', 'encolha os ombros'],
+  ['salute', 'Salute', 'salute', 'Fazer continência', 'continência'],
+  ['scratch', 'Preen feathers', 'preen', 'Arrumar as penas', 'arrume as penas'],
+  ['yawn', 'Yawn', 'yawn', 'Bocejar', 'boceje'],
+  ['hush', 'Whisper', 'whisper a secret', 'Falar baixinho', 'fale baixo'],
+  ['cheer', 'Cheer', 'cheer', 'Comemorar', 'comemore'],
+  ['shiver', 'Shiver', 'shiver', 'Tremer', 'trema'],
+  ['bow', 'Take a bow', 'take a bow', 'Fazer reverência', 'faça uma reverência'],
+  ['sneeze', 'Sneeze', 'sneeze', 'Espirrar', 'espirre'],
+] as const satisfies readonly VoiceMenuCatalogRow[];
+
+const voiceMenuCopy = isPortuguese ? {
+  eyebrow: 'Guia de voz', title: 'O livrinho de truques do Owl',
+  intro: 'Durante a ligação, diga um comando abaixo ou converse livremente com o Owl.',
+  studyHeading: 'Na sala de leitura', studyIntro: 'O jornal, o lanche e a própria sala respondem.',
+  labHeading: 'No laboratório', labIntro: 'Escolha dois: frutas vermelhas (Moonberry), hortelã (Mossdrop) ou âmbar (Sun Fizz).',
+  expressionHeading: 'Humores e gestos', expressionIntro: 'Cada frase provoca uma animação diferente.',
+  conversationHeading: 'Converse do seu jeito',
+  freeTalkLabel: 'Pergunte qualquer coisa', freeTalkPhrase: 'o que você está lendo?',
+  repeatLabel: 'Peça para repetir', repeatPhrase: 'repita depois de mim: olá, corujinha',
+  helpLabel: 'Reabra este guia', helpPhrase: 'mostre o menu',
+  switchStudyLabel: 'Voltar à sala de leitura', switchStudyPhrase: 'volte para a sala de leitura',
+  switchLabLabel: 'Ir misturar poções', switchLabPhrase: 'misture poções',
+  labStartLabel: 'Comece uma poção', labStartPhrase: 'misture poções',
+  keypadStudy: 'Teclas: 1 sim · 2 não · 3 rir · 4 acenar · 5 pensar · 6 surpresa · 7 dançar · 8 cantar · 9 menu · 0 arrotar',
+  keypadLab: 'Teclas: 1 sim · 2 não · 3 rir · 4 acenar · 5 pensar · 6 surpresa · 7 dançar · 8 cantar · 9 menu',
+  tipStudy: 'Diga “mostre o menu” para ver todos os truques.',
+  tipLab: 'Diga “misture poções” ou “mostre o menu”.',
+  labPanelLocal: 'Escolha duas gotas para o frasco do Owl.',
+  labPanelLive: 'Diga os dois ingredientes ao telefone para misturar.',
+  labVoiceTitle: 'Diga uma receita na ligação',
+  labVoiceAliases: 'Moonberry = frutas vermelhas · Mossdrop = hortelã · Sun Fizz = âmbar',
+  labVoiceExample: '“Misture frutas vermelhas e hortelã”',
+  labVoiceReturn: 'Diga “volte para a sala de leitura” quando terminar.',
+  closeLabel: 'Fechar o menu de comandos', showLabel: 'Mostrar todos os comandos do Owl. Diga “mostre o menu” na ligação.',
+  scrollLabel: 'Comandos de voz; use as setas para rolar',
+  mobileCue: 'Diga “mostre o menu”',
+  recipeLabels: ['Frutas + Hortelã', 'Frutas + Âmbar', 'Hortelã + Âmbar'] as const,
+  recipePhrases: ['misture frutas vermelhas e hortelã', 'misture frutas vermelhas e âmbar', 'misture hortelã e âmbar'] as const,
+  reagentVoiceHints: ['“frutas vermelhas”', '“hortelã”', '“âmbar”'] as const,
+} : {
+  eyebrow: 'Voice guide', title: "Owl's little book of tricks",
+  intro: 'Say a command below during your call, or just chat naturally with Owl.',
+  studyHeading: 'In the study', studyIntro: 'The paper, the snacks, and even the room respond.',
+  labHeading: 'In the lab', labIntro: 'Choose two: berry (Moonberry), mint (Mossdrop), or amber (Sun Fizz).',
+  expressionHeading: 'Moods and gestures', expressionIntro: 'Each phrase brings a different animation.',
+  conversationHeading: 'Talk your own way',
+  freeTalkLabel: 'Ask anything', freeTalkPhrase: 'what are you reading?',
+  repeatLabel: 'Ask Owl to echo you', repeatPhrase: 'repeat after me: hello, little owl',
+  helpLabel: 'Open this guide again', helpPhrase: 'show menu',
+  switchStudyLabel: 'Return to the study', switchStudyPhrase: 'back to study',
+  switchLabLabel: 'Go mix potions', switchLabPhrase: 'mix potions',
+  labStartLabel: 'Start a potion', labStartPhrase: 'mix potions',
+  keypadStudy: 'Keypad: 1 yes · 2 no · 3 laugh · 4 wave · 5 think · 6 gasp · 7 dance · 8 sing · 9 menu · 0 burp',
+  keypadLab: 'Keypad: 1 yes · 2 no · 3 laugh · 4 wave · 5 think · 6 gasp · 7 dance · 8 sing · 9 menu',
+  tipStudy: 'Say “show menu” on the phone to see every trick.',
+  tipLab: 'Say “mix potions” or “show menu” on the phone.',
+  labPanelLocal: "Choose two drops for the owl's flask.",
+  labPanelLive: 'Name two ingredients on your call to mix a potion.',
+  labVoiceTitle: 'Say a recipe on your call',
+  labVoiceAliases: 'Moonberry = berry · Mossdrop = mint · Sun Fizz = amber',
+  labVoiceExample: '“Mix berry and mint”',
+  labVoiceReturn: 'Say “back to study” when you are done.',
+  closeLabel: 'Close command menu', showLabel: 'Show all Owl commands. Say “show menu” on the phone.',
+  scrollLabel: 'Voice commands; use arrow keys to scroll',
+  mobileCue: 'Say “show menu”',
+  recipeLabels: ['Berry + Mint', 'Berry + Amber', 'Mint + Amber'] as const,
+  recipePhrases: ['mix berry and mint', 'mix berry and amber', 'mix mint and amber'] as const,
+  reagentVoiceHints: ['say “berry”', 'say “mint”', 'say “amber”'] as const,
+};
+
+function menuItems(catalog: readonly VoiceMenuCatalogRow[]): VoiceMenuItem[] {
+  return catalog.map(([action, enLabel, enPhrase, ptLabel, ptPhrase]) => ({
+    action,
+    label: isPortuguese ? ptLabel : enLabel,
+    phrase: isPortuguese ? ptPhrase : enPhrase,
+  }));
+}
 
 let renderer: THREE.WebGLRenderer;
 try {
@@ -186,10 +312,7 @@ let pendingPropSpeech: { action: 'eat' | 'sip'; line: string } | null = null;
 let labRevealTimer: number | undefined;
 let speechTimer: number | undefined;
 let toastTimer: number | undefined;
-let recordingStarted = 0;
-let recorder: MediaRecorder | null = null;
-let recordingStream: MediaStream | null = null;
-let recordingChunks: Blob[] = [];
+let menuFocusReturn: HTMLElement | null = null;
 const chosenReagents: string[] = [];
 const pointer = new THREE.Vector2();
 const raycaster = new THREE.Raycaster();
@@ -291,6 +414,146 @@ function notice(message: string, duration = 2800): void {
   toastTimer = window.setTimeout(() => { toast.hidden = true; }, duration);
 }
 
+function appendVoiceMenuSection(kind: string, title: string, description: string,
+  items: readonly { label: string; phrase: string; action?: OwlAction }[]): void {
+  const section = document.createElement('section');
+  section.className = 'command-menu__section';
+  section.dataset.kind = kind;
+  const heading = document.createElement('div');
+  heading.className = 'command-menu__section-heading';
+  const name = document.createElement('h3');
+  name.textContent = title;
+  const detail = document.createElement('p');
+  detail.textContent = description;
+  heading.append(name, detail);
+  const list = document.createElement('ul');
+  list.className = 'command-menu__list';
+  for (const item of items) {
+    const row = document.createElement('li');
+    row.className = 'command-menu__item';
+    if (item.action) row.dataset.voiceAction = item.action;
+    const label = document.createElement('span');
+    label.className = 'command-menu__item-label';
+    label.textContent = item.label;
+    const phrase = document.createElement('span');
+    phrase.className = 'command-menu__item-phrase';
+    phrase.textContent = `“${item.phrase}”`;
+    row.append(label, phrase);
+    list.append(row);
+  }
+  section.append(heading, list);
+  commandMenuContent.append(section);
+}
+
+function renderCommandMenu(): void {
+  commandMenuEyebrow.textContent = `✦ ${voiceMenuCopy.eyebrow}`;
+  commandMenuTitle.textContent = voiceMenuCopy.title;
+  commandMenuIntro.textContent = voiceMenuCopy.intro;
+  commandMenuClose.setAttribute('aria-label', voiceMenuCopy.closeLabel);
+  commandMenuClose.title = voiceMenuCopy.closeLabel;
+  commandMenuScroll.setAttribute('aria-label', voiceMenuCopy.scrollLabel);
+  commandMenuContent.replaceChildren();
+  if (room === 'study') {
+    appendVoiceMenuSection('scene', voiceMenuCopy.studyHeading, voiceMenuCopy.studyIntro, [
+      ...menuItems(studyMenuCatalog),
+      { action: 'lab', label: voiceMenuCopy.switchLabLabel, phrase: voiceMenuCopy.switchLabPhrase },
+    ]);
+  } else {
+    const recipes: VoiceMenuItem[] = voiceMenuCopy.recipeLabels.map((label, index) => ({
+      action: 'mix', label, phrase: voiceMenuCopy.recipePhrases[index]!,
+    }));
+    appendVoiceMenuSection('scene', voiceMenuCopy.labHeading, voiceMenuCopy.labIntro, [
+      { action: 'lab', label: voiceMenuCopy.labStartLabel, phrase: voiceMenuCopy.labStartPhrase },
+      ...recipes,
+      { action: 'study', label: voiceMenuCopy.switchStudyLabel, phrase: voiceMenuCopy.switchStudyPhrase },
+    ]);
+  }
+  appendVoiceMenuSection('expressions', voiceMenuCopy.expressionHeading,
+    voiceMenuCopy.expressionIntro, menuItems(expressionMenuCatalog));
+  appendVoiceMenuSection('conversation', voiceMenuCopy.conversationHeading, '', [
+    { label: voiceMenuCopy.freeTalkLabel, phrase: voiceMenuCopy.freeTalkPhrase },
+    { label: voiceMenuCopy.repeatLabel, phrase: voiceMenuCopy.repeatPhrase },
+    { action: 'menu', label: voiceMenuCopy.helpLabel, phrase: voiceMenuCopy.helpPhrase },
+  ]);
+  const keypad = document.createElement('p');
+  keypad.className = 'command-menu__keypad';
+  keypad.textContent = room === 'lab' ? voiceMenuCopy.keypadLab : voiceMenuCopy.keypadStudy;
+  commandMenuContent.append(keypad);
+}
+
+function setCommandMenuOpen(open: boolean, options: { restoreFocus?: boolean } = {}): void {
+  if (open === !commandMenu.hidden) return;
+  if (open) {
+    menuFocusReturn = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    renderCommandMenu();
+    commandMenu.hidden = false;
+    commandMenuBackdrop.hidden = false;
+    document.body.classList.add('is-command-menu-open');
+    for (const button of commandMenuButtons) {
+      button.setAttribute('aria-expanded', 'true');
+      button.setAttribute('aria-label', voiceMenuCopy.closeLabel);
+    }
+    commandMenuClose.focus({ preventScroll: true });
+  } else {
+    const focusWasInMenu = commandMenu.contains(document.activeElement);
+    const focusReturn = menuFocusReturn;
+    commandMenu.hidden = true;
+    commandMenuBackdrop.hidden = true;
+    document.body.classList.remove('is-command-menu-open');
+    for (const button of commandMenuButtons) {
+      button.setAttribute('aria-expanded', 'false');
+      button.setAttribute('aria-label', voiceMenuCopy.showLabel);
+    }
+    if (focusWasInMenu) {
+      const restoreVisibleFocus = () => {
+        if (!commandMenu.hidden) return;
+        const isVisible = (element: HTMLElement | null): element is HTMLElement => !!element
+          && element.isConnected
+          && element.getClientRects().length > 0
+          && getComputedStyle(element).visibility === 'visible';
+        const previous = options.restoreFocus !== false && isVisible(focusReturn) && focusReturn.matches('a[href],button,input,select,textarea,[tabindex]')
+          ? focusReturn : null;
+        const target = previous ?? commandMenuButtons.find(isVisible);
+        target?.focus({ preventScroll: true });
+      };
+      if (options.restoreFocus === false) window.requestAnimationFrame(restoreVisibleFocus);
+      else restoreVisibleFocus();
+    }
+    menuFocusReturn = null;
+  }
+}
+
+function renderDockScene(): void {
+  studyReactionDock.hidden = room !== 'study';
+  labReactionDock.hidden = room !== 'lab';
+  menuTipText.textContent = room === 'lab' ? voiceMenuCopy.tipLab : voiceMenuCopy.tipStudy;
+  menuVoiceCue.textContent = voiceMenuCopy.mobileCue;
+  commandMenuButtons[1]!.title = voiceMenuCopy.mobileCue;
+  if (commandMenu.hidden) {
+    for (const button of commandMenuButtons) button.setAttribute('aria-label', voiceMenuCopy.showLabel);
+  }
+  const liveLab = room === 'lab' && displayMode && remoteCall;
+  labDescription.textContent = liveLab ? voiceMenuCopy.labPanelLive : voiceMenuCopy.labPanelLocal;
+  labVoiceNote.hidden = !liveLab;
+  labVoiceNoteTitle.textContent = voiceMenuCopy.labVoiceTitle;
+  labVoiceNoteAliases.textContent = voiceMenuCopy.labVoiceAliases;
+  labVoiceNoteExample.textContent = voiceMenuCopy.labVoiceExample;
+  labVoiceNoteReturn.textContent = voiceMenuCopy.labVoiceReturn;
+  for (const [index, button] of [...labPanel.querySelectorAll<HTMLButtonElement>('[data-reagent]')].entries()) {
+    button.querySelector<HTMLElement>('.reagent__hint')!.textContent = voiceMenuCopy.reagentVoiceHints[index]!;
+  }
+  for (const [index, button] of [...labReactionDock.querySelectorAll<HTMLButtonElement>('[data-recipe]')].entries()) {
+    button.querySelector<HTMLElement>('.toy-button__label')!.textContent = voiceMenuCopy.recipeLabels[index]!;
+    button.dataset.defaultTitle = voiceMenuCopy.recipePhrases[index]!;
+    button.title = button.dataset.defaultTitle;
+  }
+  for (const button of commandMenuButtons) {
+    if (commandMenu.hidden) button.setAttribute('aria-label', voiceMenuCopy.showLabel);
+    button.title = voiceMenuCopy.showLabel;
+  }
+  renderCommandMenu();
+}
+
 function setCallTab(tab: CallTab): void {
   callPanel.dataset.activeTab = tab;
   for (const button of document.querySelectorAll<HTMLButtonElement>('[data-call-tab]')) {
@@ -310,14 +573,17 @@ function setCallControlsEnabled(enabled: boolean): void {
 }
 
 function syncDockAvailability(): void {
-  for (const button of document.querySelectorAll<HTMLButtonElement>('.action-dock__reactions [data-action]')) {
+  for (const button of document.querySelectorAll<HTMLButtonElement>('.action-dock__reactions button')) {
     const action = button.dataset.action ?? '';
     const unavailable = (displayMode && remoteCall)
       || callState === 'ringing' || (callState === 'connected' && callPropActions.has(action));
     button.setAttribute('aria-disabled', String(unavailable));
     button.dataset.defaultTitle ??= button.title;
+    const voiceTip = button.dataset.recipe
+      ? isPortuguese ? `Diga “${button.dataset.defaultTitle}” ao telefone` : `Say “${button.dataset.defaultTitle}” on the phone`
+      : liveCopy.askOnPhone;
     button.title = unavailable
-      ? remoteCall ? liveCopy.askOnPhone : callState === 'ringing' ? 'Let Talking Owl answer first' : 'Available after the call'
+      ? remoteCall ? voiceTip : callState === 'ringing' ? 'Let Talking Owl answer first' : 'Available after the call'
       : button.dataset.defaultTitle;
   }
   for (const button of document.querySelectorAll<HTMLButtonElement>('[data-action="lab"]')) {
@@ -338,6 +604,7 @@ function stowReceiverForSpeakerphone(): void {
 }
 
 function setRoom(next: Room, options: { remote?: boolean; silent?: boolean } = {}): void {
+  if (!commandMenu.hidden) setCommandMenuOpen(false, { restoreFocus: false });
   if (callState !== 'idle' && !options.remote) endCall();
   if (next === 'lab' && options.remote) stowReceiverForSpeakerphone();
   window.clearTimeout(labRevealTimer);
@@ -347,7 +614,9 @@ function setRoom(next: Room, options: { remote?: boolean; silent?: boolean } = {
   world.setMode(next);
   labPanel.hidden = next !== 'lab';
   labInspectButton.hidden = true;
-  sceneName.textContent = next === 'lab' ? 'The lab' : 'The study';
+  sceneName.textContent = next === 'lab'
+    ? isPortuguese ? 'O laboratório' : 'The lab'
+    : isPortuguese ? 'A sala de leitura' : 'The study';
   for (const button of document.querySelectorAll<HTMLButtonElement>('[data-action="lab"]')) {
     button.setAttribute('aria-pressed', String(next === 'lab'));
     button.setAttribute('aria-expanded', String(next === 'lab'));
@@ -364,12 +633,16 @@ function setRoom(next: Room, options: { remote?: boolean; silent?: boolean } = {
     chosenReagents.length = 0;
     renderReagents();
   }
+  renderDockScene();
+  syncDockAvailability();
 }
 
 function startCall(interruptedReading = false, source: 'preview' | 'live' = 'preview'): void {
+  if (!commandMenu.hidden) setCommandMenuOpen(false, { restoreFocus: false });
   if (room === 'lab') setRoom('study');
   if (callState !== 'idle') return;
   remoteCall = source === 'live';
+  renderDockScene();
   remoteSpeakerphone = false;
   callState = 'ringing';
   deskReceiverLifted = false;
@@ -415,6 +688,7 @@ function completeCallPickup(): void {
 
 function endCall(): void {
   if (callState === 'idle') return;
+  if (!commandMenu.hidden) setCommandMenuOpen(false, { restoreFocus: false });
   const wasRemote = remoteCall;
   callReadyAt = 0;
   callReactionEndAt = undefined;
@@ -424,6 +698,7 @@ function endCall(): void {
   remoteSpeakerphone = false;
   remoteNameConfirmed = false;
   remoteActionQueue = [];
+  renderDockScene();
   syncDockAvailability();
   document.body.classList.remove('is-calling', 'is-live-call');
   callPanel.hidden = true;
@@ -483,6 +758,16 @@ function chooseReagent(reagent: string): void {
   renderReagents();
 }
 
+function mixQuickRecipe(value: string): void {
+  if (displayMode && remoteCall) { notice(liveCopy.askOnPhone); return; }
+  const reagents = value.split(',');
+  if (reagents.length !== 2 || !reagents[0] || !reagents[1]) return;
+  if (room !== 'lab') setRoom('lab');
+  chosenReagents.splice(0, chosenReagents.length, reagents[0], reagents[1]);
+  renderReagents();
+  mix();
+}
+
 function mix(reagents?: readonly [OwlReagent, OwlReagent], spokenLine?: string): void {
   if (displayMode && remoteCall && !reagents) { notice(liveCopy.askOnPhone); return; }
   if (reagents) {
@@ -522,76 +807,13 @@ function mix(reagents?: readonly [OwlReagent, OwlReagent], spokenLine?: string):
   renderReagents();
 }
 
-function startRecording(): void {
-  if (!('captureStream' in canvas) || !('MediaRecorder' in window)) {
-    notice('Video capture is unavailable in this browser.');
-    return;
-  }
-  const mimeType = [
-    'video/webm;codecs=vp9',
-    'video/webm;codecs=vp8',
-    'video/webm',
-    'video/mp4',
-  ].find(type => MediaRecorder.isTypeSupported(type));
-  try {
-    recordingStream = canvas.captureStream(30);
-    recorder = new MediaRecorder(recordingStream, mimeType ? { mimeType } : undefined);
-  } catch {
-    recordingStream?.getTracks().forEach(track => track.stop());
-    recordingStream = null;
-    notice('Could not start a video capture.');
-    return;
-  }
-  recordingChunks = [];
-  recorder.addEventListener('dataavailable', event => {
-    if (event.data.size) recordingChunks.push(event.data);
-  });
-  recorder.addEventListener('stop', () => {
-    recordIndicator.hidden = true;
-    document.body.classList.remove('is-recording');
-    for (const button of document.querySelectorAll<HTMLButtonElement>('[data-action="record"]')) {
-      button.setAttribute('aria-pressed', 'false');
-      button.setAttribute('aria-label', 'Record a clip');
-    }
-    recordingStream?.getTracks().forEach(track => track.stop());
-    recordingStream = null;
-    const clip = new Blob(recordingChunks, { type: recorder?.mimeType || 'video/webm' });
-    recordingChunks = [];
-    if (!clip.size) { notice('The recording was empty.'); return; }
-    const url = URL.createObjectURL(clip);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `talking-owl-scene-${new Date().toISOString().slice(0, 10)}.${clip.type.includes('mp4') ? 'mp4' : 'webm'}`;
-    link.style.display = 'none';
-    document.body.append(link);
-    link.click();
-    link.remove();
-    window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
-    notice('Your scene clip is ready.');
-  }, { once: true });
-  recorder.start();
-  recordingStarted = performance.now();
-  recordIndicator.hidden = false;
-  document.body.classList.add('is-recording');
-  for (const button of document.querySelectorAll<HTMLButtonElement>('[data-action="record"]')) {
-    button.setAttribute('aria-pressed', 'true');
-    button.setAttribute('aria-label', 'Stop recording and save clip');
-  }
-  notice('Recording the scene. Select Record again to save it.');
-}
-
-function toggleRecording(): void {
-  if (recorder?.state === 'recording') { recorder.stop(); return; }
-  startRecording();
-}
-
 function act(action: string): void {
   if (displayMode && action === 'call') {
     liveCardOpen = !liveCardOpen;
     renderLiveCallUI();
     return;
   }
-  if (displayMode && remoteCall && action !== 'record' && action !== 'lamp') {
+  if (displayMode && remoteCall && action !== 'lamp') {
     notice(liveCopy.askOnPhone);
     return;
   }
@@ -605,13 +827,13 @@ function act(action: string): void {
   }
   // A new character action replaces the held treat or mug. Put the table prop
   // back immediately so interruptions never leave a duplicate or empty table.
-  if (action !== 'record' && action !== 'lamp') {
+  if (action !== 'lamp') {
     pendingPropAction = null;
     pendingPropSpeech = null;
     world.cancelPropActions();
   }
   const interruptedReading = paperOpen;
-  if (action !== 'newspaper' && paperOpen && action !== 'record' && action !== 'lab') {
+  if (action !== 'newspaper' && paperOpen && action !== 'lab') {
     paperOpen = false;
     owl.trigger('newspaper');
     world.trigger('newspaper');
@@ -664,9 +886,6 @@ function act(action: string): void {
       break;
     case 'lab':
       setRoom(room === 'study' ? 'lab' : 'study');
-      break;
-    case 'record':
-      toggleRecording();
       break;
     case 'yes':
     case 'no':
@@ -875,6 +1094,13 @@ function remoteLine(event: OwlActionEvent, fallback: string): void {
 function applyRemoteAction(event: OwlActionEvent): void {
   if (!remoteCall && event.action !== 'hangup') ensureRemoteCall(latestOwlState?.roomMode ?? 'study');
   const action = event.action;
+  if (action === 'menu') {
+    setCommandMenuOpen(true);
+    remoteLine(event, 'Here are all my tricks. Pick one to try!');
+    remoteNextActionAt = elapsed + 0.45;
+    return;
+  }
+  if (!commandMenu.hidden) setCommandMenuOpen(false, { restoreFocus: false });
   if (action === 'listen') {
     remoteNameConfirmed = true;
     if (!remoteSpeakerphone) owl.trigger('listen');
@@ -985,7 +1211,8 @@ function receiveOwlState(state: OwlState): void {
     lastOwlSequence = 0;
     remoteActionQueue = [];
   }
-  if (awaitingRoomSnapshot) {
+  const initialSnapshot = awaitingRoomSnapshot;
+  if (initialSnapshot) {
     awaitingRoomSnapshot = false;
     lastOwlSequence = Math.max(lastOwlSequence, state.lastEvent?.sequence ?? 0);
   }
@@ -1000,6 +1227,8 @@ function receiveOwlState(state: OwlState): void {
   } else if (remoteCall) {
     endCall();
   }
+  if (initialSnapshot && callerConnected && state.lastEvent?.type === 'action'
+    && state.lastEvent.action === 'menu') setCommandMenuOpen(true);
   renderLiveCallUI();
   maybeMarkStationReady();
 }
@@ -1053,6 +1282,32 @@ for (const button of document.querySelectorAll<HTMLButtonElement>('[data-action]
 for (const button of document.querySelectorAll<HTMLButtonElement>('[data-reagent]')) {
   button.addEventListener('click', () => chooseReagent(button.dataset.reagent ?? ''));
 }
+for (const button of document.querySelectorAll<HTMLButtonElement>('[data-recipe]')) {
+  button.addEventListener('click', () => mixQuickRecipe(button.dataset.recipe ?? ''));
+}
+for (const button of commandMenuButtons) {
+  button.addEventListener('click', () => setCommandMenuOpen(commandMenu.hidden));
+}
+commandMenuClose.addEventListener('click', () => setCommandMenuOpen(false));
+commandMenuBackdrop.addEventListener('click', () => setCommandMenuOpen(false));
+commandMenuScroll.addEventListener('keydown', event => {
+  const page = Math.max(120, commandMenuScroll.clientHeight - 64);
+  const next = (() => {
+    switch (event.key) {
+      case 'ArrowDown': return commandMenuScroll.scrollTop + 64;
+      case 'ArrowUp': return commandMenuScroll.scrollTop - 64;
+      case 'PageDown': return commandMenuScroll.scrollTop + page;
+      case 'PageUp': return commandMenuScroll.scrollTop - page;
+      case 'Home': return 0;
+      case 'End': return commandMenuScroll.scrollHeight;
+      case ' ': return commandMenuScroll.scrollTop + (event.shiftKey ? -page : page);
+      default: return null;
+    }
+  })();
+  if (next === null) return;
+  event.preventDefault();
+  commandMenuScroll.scrollTop = next;
+});
 for (const button of document.querySelectorAll<HTMLButtonElement>('[data-call-tab]')) {
   const tab = button.dataset.callTab as CallTab;
   if (!callTabs.includes(tab)) continue;
@@ -1072,7 +1327,8 @@ mixButton.addEventListener('click', () => mix());
 labInspectButton.addEventListener('click', () => {
   labInspectButton.hidden = true;
   labPanel.hidden = false;
-  labPanel.querySelector<HTMLButtonElement>('[data-reagent]')?.focus();
+  if (displayMode && remoteCall) required<HTMLElement>('#lab-title').focus();
+  else labPanel.querySelector<HTMLButtonElement>('[data-reagent]')?.focus();
 });
 hangupButton.addEventListener('click', endCall);
 liveCallChip.addEventListener('click', () => {
@@ -1099,7 +1355,20 @@ document.addEventListener('fullscreenchange', () => {
   fullscreenButton.setAttribute('aria-label', document.fullscreenElement ? 'Exit fullscreen' : 'Enter fullscreen');
 });
 document.addEventListener('keydown', event => {
+  if (!commandMenu.hidden && event.key === 'Tab') {
+    event.preventDefault();
+    const focusables = [commandMenuClose, commandMenuScroll];
+    const currentIndex = focusables.indexOf(document.activeElement as HTMLElement);
+    const direction = event.shiftKey ? -1 : 1;
+    focusables[(currentIndex + direction + focusables.length) % focusables.length]?.focus();
+    return;
+  }
   if (event.key !== 'Escape') return;
+  if (!commandMenu.hidden) {
+    event.preventDefault();
+    setCommandMenuOpen(false);
+    return;
+  }
   if (displayMode && remoteCall) {
     if (liveCardOpen) { liveCardOpen = false; renderLiveCallUI(); }
     return;
@@ -1165,6 +1434,7 @@ new ResizeObserver(resize).observe(canvas);
 resize();
 world.setMode('study');
 renderReagents();
+renderDockScene();
 syncDockAvailability();
 if (displayMode) {
   liveCallCard.hidden = false;
@@ -1244,10 +1514,6 @@ function frame(): void {
     camera.position.x = cameraDrift.x;
     camera.position.y = 3.45 + cameraDrift.y;
     camera.lookAt(cameraDrift.x * 0.12, 1.65, 0);
-  }
-  if (recorder?.state === 'recording') {
-    const seconds = Math.floor((performance.now() - recordingStarted) / 1000);
-    recordTime.textContent = `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
   }
   renderer.render(scene, camera);
   if (firstFrame) {

@@ -5,7 +5,7 @@ import { isSupportedLocale } from './i18n/locales';
 export const OWL_ACTIONS = [
   'call', 'listen', 'talk', 'hangup',
   'newspaper', 'poke', 'tickle', 'eat', 'sip', 'burp', 'portrait', 'lamp',
-  'lab', 'study', 'mix',
+  'lab', 'study', 'mix', 'menu',
   'yes', 'no', 'laugh', 'wave', 'ponder', 'gasp', 'dance', 'snooze',
   'sing', 'wink', 'shrug', 'salute', 'scratch', 'yawn', 'hush',
   'cheer', 'shiver', 'bow', 'sneeze',

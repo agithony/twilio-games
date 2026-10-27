@@ -119,6 +119,15 @@ describe('Talking Owl authoritative room', () => {
     expect(server.voiceAction('LAB', 'CA-a', 'sneeze', 'Achoo!')).toBeNull();
     expect(server.voiceAction('LAB', 'CA-b', 'sneeze', 'Achoo!')).toBeNull();
   });
+
+  it('streams a requested command menu without counting it as a reaction', () => {
+    const server = makeOwl();
+    server.voiceJoin('MENU', 'Ada', 'CA-menu', 'en-US', false, true);
+    expect(server.voiceAction('MENU', 'CA-menu', 'menu', 'Here are my tricks.')?.action).toBe('menu');
+    expect(server.snapshot('MENU')).toMatchObject({ interactionCount: 0, lastEvent: { action: 'menu' } });
+    expect(server.voiceAction('MENU', 'CA-menu', 'wave', 'Hello!')?.action).toBe('wave');
+    expect(server.snapshot('MENU')).toMatchObject({ interactionCount: 1 });
+  });
 });
 
 describe('Talking Owl display protocol', () => {
@@ -156,6 +165,9 @@ describe('Talking Owl display protocol', () => {
     server.voiceAction('NEST', 'CA-a', 'wave', 'Hello from the phone.');
     expect(frames.some(frame => frame.type === 'owl_events'
       && frame.events.some((event: Record<string, unknown>) => event.action === 'wave'))).toBe(true);
+    server.voiceAction('NEST', 'CA-a', 'menu', 'Here are my tricks.');
+    expect(frames.some(frame => frame.type === 'owl_events'
+      && frame.events.some((event: Record<string, unknown>) => event.action === 'menu'))).toBe(true);
     socket.clientSend({ type: 'clock_sync', clientSentAtMs: 123 });
     expect(frames.some(frame => frame.type === 'clock_sync' && frame.clientSentAtMs === 123)).toBe(true);
   });
