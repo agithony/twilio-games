@@ -5,6 +5,7 @@ import path from 'node:path';
 import WebSocket from 'ws';
 import type { ArcadeApi } from '../server/arcade-api';
 import type { StationMatchParticipantsChangedHandler } from '../server/arcade-station-runtime';
+import type { LlmClient } from '../server/llm';
 import { GoogleAnalyticsAuth } from '../server/google-analytics-auth';
 import {
   HttpServer,
@@ -37,6 +38,7 @@ async function harness(options: {
   route?: StationVoiceRoute;
   routeError?: Error;
   standaloneVoiceEnabled?: boolean;
+  llm?: LlmClient;
   voiceAvailable?: boolean;
   authToken?: string;
   additionalAuthTokens?: readonly string[];
@@ -94,6 +96,7 @@ async function harness(options: {
     analyticsAuth: options.analyticsAuth,
     arcadeApi,
     standaloneVoiceEnabled: options.standaloneVoiceEnabled ?? false,
+    llm: options.llm,
     fighterDisplayToken: DISPLAY_TOKEN,
     analyticsPath: path.join(directory, 'analytics.json'),
     manifestPath: path.join(directory, 'manifest.json'),
@@ -1234,6 +1237,7 @@ describe('Arcade Voice routing', () => {
     const callSid = 'CA-owl-standalone';
     const xml = await (await incomingCall(port, { callSid })).text();
     expect(xml).toContain('<Parameter name="game" value="owl"');
+    expect(xml).toContain('voice="r1KmysJdVYZjJCm4mL3b-flash_v2"');
     expect(xml).toContain('dance');
     const { voice, spoken } = await connectChessVoice(port, callSid, {
       game: 'owl', roomCode: '4821', locale: 'en-US',
@@ -1248,6 +1252,13 @@ describe('Arcade Voice routing', () => {
       const closed = new Promise<void>(resolve => voice.once('close', () => resolve()));
       voice.close();
       await closed;
+      const retry = await fetch(`http://127.0.0.1:${port}/voice/session-ended`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ CallSid: callSid, SessionStatus: 'failed', CallStatus: 'in-progress' }),
+      });
+      expect(retry.status).toBe(200);
+      expect(await retry.text()).toContain('voice="r1KmysJdVYZjJCm4mL3b-flash_v2"');
       const ended = await fetch(`http://127.0.0.1:${port}/voice/session-ended`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -1256,6 +1267,40 @@ describe('Arcade Voice routing', () => {
       expect(ended.status).toBe(200);
       await vi.waitFor(() => expect(states.some(state =>
         state.phase === 'finished' && state.result?.interactionCount === 1)).toBe(true), { timeout: 2_000 });
+    } finally {
+      voice.close();
+      display.close();
+    }
+  });
+
+  it('speaks an AI answer to Owl conversation and keeps animation commands immediate', async () => {
+    const respond = vi.fn(async () => ({ say: 'Moonlight is sunlight bouncing off the moon. Hoo!', toolCalls: [] }));
+    const { port } = await harness({
+      active: false, standaloneVoiceEnabled: true, llm: { enabled: true, respond },
+    });
+    const { display, states, events } = await connectOwlDisplay(port, '4821');
+    const callSid = 'CA-owl-conversation';
+    expect(await (await incomingCall(port, { callSid })).text())
+      .toContain('voice="r1KmysJdVYZjJCm4mL3b-flash_v2"');
+    const { voice, spoken } = await connectChessVoice(port, callSid, {
+      game: 'owl', roomCode: '4821', locale: 'en-US',
+    });
+    try {
+      await vi.waitFor(() => expect(spoken.join(' ')).toContain('first name'), { timeout: 2_000 });
+      voice.send(JSON.stringify({ type: 'prompt', voicePrompt: 'My name is Ada', last: true }));
+      await vi.waitFor(() => expect(states.some(state =>
+        state.phase === 'playing' && state.caller?.name === 'Ada')).toBe(true), { timeout: 2_000 });
+      voice.send(JSON.stringify({ type: 'prompt', voicePrompt: 'Why is the moon bright?', last: true }));
+      await vi.waitFor(() => expect(spoken.join(' ')).toContain('Moonlight is sunlight'), { timeout: 2_000 });
+      await vi.waitFor(() => expect(events.some(event => event.action === 'talk'
+        && event.line.includes('Moonlight is sunlight'))).toBe(true), { timeout: 2_000 });
+      expect(respond).toHaveBeenCalledWith(expect.stringContaining('cute, clever'),
+        expect.arrayContaining([{ role: 'user', content: 'Why is the moon bright?' }]), [],
+        expect.objectContaining({ timeoutMs: 5_000 }));
+
+      voice.send(JSON.stringify({ type: 'prompt', voicePrompt: 'Please dance', last: true }));
+      await vi.waitFor(() => expect(events.some(event => event.action === 'dance')).toBe(true), { timeout: 2_000 });
+      expect(respond).toHaveBeenCalledTimes(1);
     } finally {
       voice.close();
       display.close();
@@ -1342,6 +1387,7 @@ describe('Arcade Voice routing', () => {
     const { display, states } = await connectOwlDisplay(port, roomCode, true);
     const xml = await (await incomingCall(port, { callSid })).text();
     expect(xml).toContain('<Parameter name="game" value="owl"');
+    expect(xml).toContain('voice="r1KmysJdVYZjJCm4mL3b-flash_v2"');
     const { voice, spoken } = await connectChessVoice(port, callSid, {
       game: 'owl', roomCode, readyEntryId: 'ready-owl', matchId: 'match-owl',
       launchGeneration: 2, locale: 'en-US',

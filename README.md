@@ -18,7 +18,7 @@ The current games are:
 | Voice Karaoke | One-singer 3D rhythm performance with falling lyric words and a live band | Song number or title, then sing each word on its authored beat and pitch |
 | Voice Trivia | Eight-question shared-screen quiz for 1-4 callers | Category names or numbers; answers as `A`-`D`, `1`-`4`, or the full choice phrase |
 | Voice Chess | One caller versus the computer, or two human callers, on a 3D board | Name a piece and square, then `confirm` or `cancel` |
-| Talking Owl | One caller chats with an animated 3D owl in its study and potion lab | Ask its name or a question, say `wave`, `laugh`, `dance`, `read the newspaper`, or `mix berry and mint` |
+| Talking Owl | One caller chats with an animated 3D owl in its study and potion lab | Ask an open-ended question or say `wave`, `laugh`, `dance`, `read the newspaper`, or `mix berry and mint` |
 
 All seven games support a shared display, phone callers, spoken guidance, and reconnectable WebSocket sessions. Karaoke browser controls are deliberately demo-only because production scores come from authenticated caller audio; the Trivia display never accepts answers, and the Chess display never accepts moves. The signed `POST /sms` webhook owns deterministic SMS and WhatsApp commands and immediate replies. Conversation Orchestrator and Twilio Agent Connect (TAC) only enrich Conversation Memory; a separate durable outbox sends proactive station notices through the Twilio Messaging REST API.
 
@@ -208,7 +208,7 @@ The display animates captures and plays the user-supplied *The Marble Gambit* mu
 
 ### Talking Owl
 
-Select **Talking Owl** on the home page or open <http://localhost:5173/talking-owl.html?display=1&room=4821>. Its game card has a looping GIF preview. The display shows the configured Voice number and a `tel:` QR code. After you call, the owl asks for your first name; station callers keep the name they gave when joining the station. Ask a yes or no question, tell it to repeat your words, or request reactions such as `wave`, `laugh`, `dance`, `sing`, `read the newspaper`, `tickle`, `eat a cookie`, or `burp`. Say `go to the lab` and `mix berry and mint` to see a colored potion. The phone speaks the reply while the screen animates the same action.
+Select **Talking Owl** on the home page or open <http://localhost:5173/talking-owl.html?display=1&room=4821>. Its game card has a looping GIF preview. The display shows the configured Voice number and a `tel:` QR code. After you call, the owl asks for your first name; station callers keep the name they gave when joining the station. Talk to the owl or ask an open-ended question and it will answer in character. It repeats your words only when you explicitly ask it to. Direct requests such as `wave`, `laugh`, `dance`, `sing`, `read the newspaper`, `tickle`, `eat a cookie`, and `burp` still trigger immediate reactions. Say `go to the lab` and `mix berry and mint` to see a colored potion. The phone speaks the reply while the screen animates the same action.
 
 The server owns the one-caller room, name, action sequence, and call lifecycle. The browser observes `/ws/owl` and cannot submit voice actions. A station session runs for up to two minutes and records the number of reactions; a standalone session ends when the caller says goodbye or hangs up. A dropped Relay WebSocket can reconnect with the same call SID.
 
@@ -338,11 +338,12 @@ The application runs locally without Twilio, OpenAI, or Deepgram credentials. Co
 | `TWILIO_VALIDATE_SIGNATURES` | Explicitly enables or disables webhook signature validation | Enabled when an Auth Token is set or `NODE_ENV=production` |
 | `GAME_PHONE_NUMBER` | Legacy Voice fallback used for both locales only while neither operator-configured locale number exists | Placeholder or unavailable state when unset |
 | `VOICE_RELAY_TOKEN` | Dedicated bearer token for Conversation Relay setup frames | Required and separate from `TWILIO_AUTH_TOKEN` in production |
-| `CR_TTS_VOICE` | English ElevenLabs voice ID used by every game's Conversation Relay talk-back | `SA7eD52NRr8WAehitVt1` |
+| `CR_TTS_VOICE` | English ElevenLabs voice ID for Conversation Relay games other than Talking Owl | `SA7eD52NRr8WAehitVt1` |
+| `CR_TTS_VOICE_OWL` | Separate English ElevenLabs voice for Talking Owl | Jessica on Flash v2 (`r1KmysJdVYZjJCm4mL3b-flash_v2`) |
 | `CR_TTS_VOICE_PT_BR` | Optional Brazilian Portuguese ElevenLabs voice ID | Relay's `pt-BR` default voice |
 | `ELEVENLABS_API_KEY` | Optional server-side key for Harry, Ron, and Hermione's Wizard Chess voices on the shared display; separate from Conversation Relay phone audio | Unset; the scene continues with captions and a visible voice retry control |
 | `DEFAULT_LOCALE` | Call locale when no localized game display is connected | `en-US` |
-| `OPENAI_API_KEY` | Enables phase-bound semantic interpretation for Racer through Chess; Talking Owl uses deterministic conversational reactions | Required by deployment; local runs without it retain deterministic commands |
+| `OPENAI_API_KEY` | Enables phase-bound semantic interpretation for Racer through Chess and in-character free conversation for Talking Owl | Required by deployment; local runs without it retain direct Owl commands |
 | `OPENAI_MODEL` | OpenAI model used by the optional host | Server default |
 | `DEEPGRAM_API_KEY` | Opens the direct Nova-3 streaming lyric recognizer for Voice Karaoke | Optional for local acoustic fallback; required by production startup and deployment |
 | `KARAOKE_CALIBRATION_OFFSET_MS` | Signed measured caller/carrier offset applied to authoritative Media Stream scoring | `0`; integer from `-5000` to `5000` |

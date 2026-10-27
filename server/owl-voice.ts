@@ -4,11 +4,14 @@ import { isExplicitSpokenName, parseFirstName } from '../shared/spoken-name';
 import { speechSafeText } from '../shared/speech-text';
 import type { OwlAction, OwlActionEvent, OwlReagent, OwlState } from '../shared/owl-protocol';
 import { parseCrMessage } from './conversation-relay';
+import type { LlmClient, LlmTurn } from './llm';
 
 const MAX_RELAY_FRAME_LENGTH = 16 * 1024;
 const MAX_TRANSCRIPT_LENGTH = 800;
 const FINAL_DUPLICATE_MS = 300;
 const END_SPEECH_TIMEOUT_MS = 12_000;
+const CONVERSATION_TIMEOUT_MS = 5_000;
+const MAX_DIALOGUE_HISTORY = 8;
 
 export interface OwlVoiceEndHandoff {
   type: 'end';
@@ -16,6 +19,7 @@ export interface OwlVoiceEndHandoff {
 }
 
 export interface OwlVoiceDeps {
+  llm?: LlmClient;
   bind(roomCode: string, name: string, callSid: string, locale: SupportedLocale,
     stationManaged: boolean, nameConfirmed: boolean): { playerId: string; resumed: boolean } | null;
   confirmName(roomCode: string, callSid: string, name: string): boolean;
@@ -32,7 +36,8 @@ export interface OwlVoiceDeps {
 export type OwlSpeechIntent =
   | { kind: 'action'; action: OwlAction; line: string; reagents?: readonly [OwlReagent, OwlReagent] }
   | { kind: 'help'; line: string }
-  | { kind: 'goodbye'; line: string };
+  | { kind: 'goodbye'; line: string }
+  | { kind: 'conversation'; text: string };
 
 const ACTION_LINES: Record<OwlAction, readonly string[]> = {
   call: ['Who could that be?'],
@@ -120,14 +125,10 @@ const VOICE_COPY = {
     askNameRetry: 'I missed that. What is your first name?',
     firstNameBeforeDtmf: 'First, tell me your first name.',
     keypadHelp: 'Press 1 for yes, 2 for no, 3 for a laugh, 4 for a wave, 9 for help, or just talk to me.',
-    help: 'Talk to me. Try “wave”, “laugh”, “sing”, “dance”, “read the newspaper”, or “go to the lab”. Ask a yes or no question, or say “repeat after me”. Press 1 for yes, 2 for no, 3 for a laugh, 4 for a wave, 9 for help, or pound to say goodbye.',
+    help: 'Talk to me. Try “wave”, “laugh”, “sing”, “dance”, “read the newspaper”, or “go to the lab”. Ask me anything, or say “repeat after me, hello little owl”. Press 1 for yes, 2 for no, 3 for a laugh, 4 for a wave, 9 for help, or pound to say goodbye.',
     goodbye: 'Hoo hoo. Goodbye for now.',
-    noAction: 'All right. I will stay right here.',
     missingIngredients: 'Name two ingredients for my potion: berry, mint, or amber.',
-    identity: 'I am Talking Owl. Hoo are you?',
-    wellbeing: 'Quite well, thank you. My newspaper was excellent.',
-    place: 'Right here in my cozy study, by the old lamp.',
-    mystery: 'That is one of the great mysteries of the study.',
+    aiRetry: 'My thoughts tangled in my feathers for a moment. Could you ask me again?',
   },
   'pt-BR': {
     timeout: 'Nosso tempo acabou. Gostei da conversa. Hu hu, até logo.',
@@ -140,76 +141,72 @@ const VOICE_COPY = {
     askNameRetry: 'Não entendi. Qual é seu primeiro nome?',
     firstNameBeforeDtmf: 'Primeiro, diga seu nome.',
     keypadHelp: 'Aperte 1 para sim, 2 para não, 3 para uma risada, 4 para um aceno, 9 para ajuda, ou fale comigo.',
-    help: 'Fale comigo. Diga acene, ria, cante, dance, leia o jornal, ou vá ao laboratório. Faça uma pergunta de sim ou não, ou diga repita depois de mim. Aperte 1 para sim, 2 para não, 3 para rir, 4 para acenar, 9 para ajuda, ou jogo da velha para sair.',
+    help: 'Fale comigo. Diga acene, ria, cante, dance, leia o jornal, ou vá ao laboratório. Pergunte o que quiser, ou diga repita depois de mim, olá corujinha. Aperte 1 para sim, 2 para não, 3 para rir, 4 para acenar, 9 para ajuda, ou jogo da velha para sair.',
     goodbye: 'Hu hu. Até logo.',
-    noAction: 'Tudo bem. Vou ficar quietinho aqui.',
     missingIngredients: 'Escolha dois ingredientes para a poção: frutas vermelhas, hortelã ou âmbar.',
-    identity: 'Eu sou a Coruja Falante. E você?',
-    wellbeing: 'Muito bem, obrigado. O jornal estava ótimo.',
-    place: 'Aqui na minha sala de leitura, perto do abajur.',
-    mystery: 'Esse é um dos grandes mistérios da minha sala.',
+    aiRetry: 'Meus pensamentos se enrolaram nas penas por um instante. Pode perguntar de novo?',
   },
 } as const;
 
-/** Narrow command phrases are tested before general questions and the playful echo fallback. */
+/** Full imperative phrases only. A mention of a prop inside a story remains conversation. */
 const ACTION_PATTERNS: readonly { action: OwlAction; pattern: RegExp }[] = [
-  { action: 'newspaper', pattern: /\b(?:newspaper|read (?:the |your )?paper|open (?:the |your )?paper|close (?:the |your )?paper)\b/ },
-  { action: 'poke', pattern: /\b(?:poke|tap (?:your |the )?(?:beak|owl|head)|touch (?:your |the )?(?:beak|owl|head))\b/ },
-  { action: 'tickle', pattern: /\b(?:tickle|feather tickle)\b/ },
-  { action: 'eat', pattern: /\b(?:eat|snack|biscuit|cookie|feed (?:you|the owl))\b/ },
-  { action: 'sip', pattern: /\b(?:sip|drink|tea|coffee|mug)\b/ },
-  { action: 'burp', pattern: /\b(?:burp|belch)\b/ },
-  { action: 'portrait', pattern: /\b(?:portrait|painting|picture on the wall)\b/ },
-  { action: 'lamp', pattern: /\b(?:lamp|turn (?:on|off) the light|change the light)\b/ },
-  { action: 'yes', pattern: /^(?:yes|yeah|yep|say yes|nod|agree|affirmative)[.! ]*$/ },
-  { action: 'no', pattern: /^(?:no|nope|nah|say no|shake your head|disagree|negative)[.! ]*$/ },
-  { action: 'laugh', pattern: /\b(?:laugh|chuckle|giggle|tell (?:me )?a joke|funny)\b/ },
-  { action: 'wave', pattern: /\b(?:wave|say hello|greet me)\b/ },
-  { action: 'ponder', pattern: /\b(?:ponder|think (?:about|it over)|thinking face)\b/ },
-  { action: 'gasp', pattern: /\b(?:gasp|act surprised|be surprised|look shocked)\b/ },
-  { action: 'dance', pattern: /\b(?:dance|boogie|bust a move)\b/ },
-  { action: 'snooze', pattern: /\b(?:snooze|sleep|take a nap|doze off)\b/ },
-  { action: 'sing', pattern: /\b(?:sing|song|hoot a tune|sing a tune)\b/ },
-  { action: 'wink', pattern: /\b(?:wink|give me a wink)\b/ },
-  { action: 'shrug', pattern: /\b(?:shrug|look confused)\b/ },
-  { action: 'salute', pattern: /\b(?:salute|stand to attention)\b/ },
-  { action: 'scratch', pattern: /\b(?:scratch|preen|itch)\b/ },
-  { action: 'yawn', pattern: /\b(?:yawn|act tired)\b/ },
-  { action: 'hush', pattern: /\b(?:hush|shush|shh|be quiet|whisper a secret)\b/ },
-  { action: 'cheer', pattern: /\b(?:cheer|hooray|celebrate)\b/ },
-  { action: 'shiver', pattern: /\b(?:shiver|brr|act cold)\b/ },
-  { action: 'bow', pattern: /\b(?:take a bow|bow for me|bow down|bow)\b/ },
-  { action: 'sneeze', pattern: /\b(?:sneeze|achoo)\b/ },
+  { action: 'newspaper', pattern: /^(?:newspaper|(?:read|open|close|fold|pick up|put down) (?:the |your )?(?:newspaper|paper))$/ },
+  { action: 'poke', pattern: /^(?:poke(?: (?:me|you|him|the owl))?|(?:tap|touch) (?:your |the )?(?:beak|owl|head))$/ },
+  { action: 'tickle', pattern: /^(?:tickle(?: (?:me|you|him|yourself|the owl|your feathers))?|i want to tickle (?:you|him|the owl)|feather tickle)$/ },
+  { action: 'eat', pattern: /^(?:eat|cookie|biscuit|snack|(?:eat|have|take a bite of) (?:a |the |your )?(?:cookie|biscuit|snack)|feed (?:you|the owl)(?: (?:a |the )?(?:cookie|biscuit))?)$/ },
+  { action: 'sip', pattern: /^(?:sip|drink|tea|coffee|mug|(?:sip|drink|have) (?:some |a |the |your )?(?:tea|coffee|water|drink)|take a sip(?: of (?:your |the )?(?:tea|coffee|mug))?)$/ },
+  { action: 'burp', pattern: /^(?:burp|belch)(?: for me)?$/ },
+  { action: 'portrait', pattern: /^(?:portrait|painting|picture on the wall|(?:look at|show me|touch) (?:the |your )?(?:portrait|painting|picture))$/ },
+  { action: 'lamp', pattern: /^(?:lamp|(?:turn (?:on|off)|change) (?:the |your )?(?:lamp|light))$/ },
+  { action: 'yes', pattern: /^(?:yes|yeah|yep|say yes|nod|agree|affirmative)$/ },
+  { action: 'no', pattern: /^(?:no|nope|nah|say no|shake your head|disagree|negative)$/ },
+  { action: 'laugh', pattern: /^(?:(?:laugh|chuckle|giggle)(?: for me)?|make me laugh)$/ },
+  { action: 'wave', pattern: /^(?:wave|wave (?:at|to) me|give me a wave|say hello|greet me)$/ },
+  { action: 'ponder', pattern: /^(?:ponder|think|think it over|make your thinking face)$/ },
+  { action: 'gasp', pattern: /^(?:gasp|act surprised|be surprised|look shocked)$/ },
+  { action: 'dance', pattern: /^(?:dance|do a dance|boogie|bust a move)$/ },
+  { action: 'snooze', pattern: /^(?:snooze|sleep|take a nap|doze off)$/ },
+  { action: 'sing', pattern: /^(?:sing|song|sing (?:a |me a )?song|hoot a tune|sing a tune)$/ },
+  { action: 'wink', pattern: /^(?:wink|give me a wink)$/ },
+  { action: 'shrug', pattern: /^(?:shrug|look confused)$/ },
+  { action: 'salute', pattern: /^(?:salute|stand to attention)$/ },
+  { action: 'scratch', pattern: /^(?:scratch|scratch (?:your |the )?(?:head|feathers)|preen|itch)$/ },
+  { action: 'yawn', pattern: /^(?:yawn|act tired)$/ },
+  { action: 'hush', pattern: /^(?:hush|shush|shh|be quiet|whisper a secret)$/ },
+  { action: 'cheer', pattern: /^(?:cheer|hooray|celebrate)$/ },
+  { action: 'shiver', pattern: /^(?:shiver|brr|act cold)$/ },
+  { action: 'bow', pattern: /^(?:take a bow|bow for me|bow down|bow)$/ },
+  { action: 'sneeze', pattern: /^(?:sneeze|achoo)$/ },
 ];
 
 const ACTION_PATTERNS_PT: readonly { action: OwlAction; pattern: RegExp }[] = [
-  { action: 'newspaper', pattern: /\b(?:jornal|leia|ler o jornal|abra o jornal|feche o jornal)\b/ },
-  { action: 'poke', pattern: /\b(?:cutuque|cutucar|toque na coruja|encoste na coruja)\b/ },
-  { action: 'tickle', pattern: /\b(?:cocegas|faca cocegas)\b/ },
-  { action: 'eat', pattern: /\b(?:biscoito|bolacha|lanche|comer|coma|alimente)\b/ },
-  { action: 'sip', pattern: /\b(?:beba|beber|gole|cha|cafe|caneca)\b/ },
-  { action: 'burp', pattern: /\b(?:arroto|arrote|arrotar)\b/ },
-  { action: 'portrait', pattern: /\b(?:retrato|quadro|pintura)\b/ },
-  { action: 'lamp', pattern: /\b(?:abajur|lampada|acenda a luz|apague a luz)\b/ },
-  { action: 'yes', pattern: /^(?:sim|diga sim|concorde|balance a cabeca)[.! ]*$/ },
-  { action: 'no', pattern: /^(?:nao|diga nao|discorde|negativo)[.! ]*$/ },
-  { action: 'laugh', pattern: /\b(?:ria|rir|risada|gargalhe|gargalhada|conte uma piada)\b/ },
-  { action: 'wave', pattern: /\b(?:acene|acenar|aceno|diga oi|de oi)\b/ },
-  { action: 'ponder', pattern: /\b(?:pense|pensar|reflita|reflitir)\b/ },
-  { action: 'gasp', pattern: /\b(?:surpreso|surpresa|assustado|espanto|surpreenda)\b/ },
-  { action: 'dance', pattern: /\b(?:dance|dancar|danca)\b/ },
-  { action: 'snooze', pattern: /\b(?:durma|dormir|soneca|cochile)\b/ },
-  { action: 'sing', pattern: /\b(?:cante|cantar|cancao|musica)\b/ },
-  { action: 'wink', pattern: /\b(?:pisque|piscar|piscadinha)\b/ },
-  { action: 'shrug', pattern: /\b(?:encolha os ombros|de de ombros|nao sei)\b/ },
-  { action: 'salute', pattern: /\b(?:continencia|saudacao|saude militar)\b/ },
-  { action: 'scratch', pattern: /\b(?:coce|cocar|arrume as penas|limpe as penas)\b/ },
-  { action: 'yawn', pattern: /\b(?:boceje|bocejar|bocejo)\b/ },
-  { action: 'hush', pattern: /\b(?:psiu|silencio|segredo|fale baixo)\b/ },
-  { action: 'cheer', pattern: /\b(?:comemore|comemorar|viva|torca)\b/ },
-  { action: 'shiver', pattern: /\b(?:trema|tremer|arrepie|frio|brr)\b/ },
-  { action: 'bow', pattern: /\b(?:reverencia|faca uma reverencia|curve-se)\b/ },
-  { action: 'sneeze', pattern: /\b(?:espirre|espirrar|atchim)\b/ },
+  { action: 'newspaper', pattern: /^(?:jornal|leia|ler o jornal|abra o jornal|feche o jornal|dobre o jornal)$/ },
+  { action: 'poke', pattern: /^(?:cutuque|cutucar|toque na coruja|encoste na coruja)$/ },
+  { action: 'tickle', pattern: /^(?:cocegas|faca cocegas|faca cocegas (?:em mim|na coruja))$/ },
+  { action: 'eat', pattern: /^(?:biscoito|bolacha|lanche|comer|coma|coma (?:um |o )?(?:biscoito|bolacha)|alimente(?: a coruja)?)$/ },
+  { action: 'sip', pattern: /^(?:beba|beber|gole|cha|cafe|caneca|(?:beba|tome) (?:um |o |seu )?(?:gole|cha|cafe))$/ },
+  { action: 'burp', pattern: /^(?:arroto|arrote|arrotar)$/ },
+  { action: 'portrait', pattern: /^(?:retrato|quadro|pintura|olhe (?:o|para o) (?:retrato|quadro))$/ },
+  { action: 'lamp', pattern: /^(?:abajur|lampada|acenda a luz|apague a luz)$/ },
+  { action: 'yes', pattern: /^(?:sim|diga sim|concorde|balance a cabeca)$/ },
+  { action: 'no', pattern: /^(?:nao|diga nao|discorde|negativo)$/ },
+  { action: 'laugh', pattern: /^(?:ria|rir|risada|gargalhe|gargalhada)$/ },
+  { action: 'wave', pattern: /^(?:acene|acenar|aceno|diga oi|de oi)$/ },
+  { action: 'ponder', pattern: /^(?:pense|pensar|reflita|reflitir)$/ },
+  { action: 'gasp', pattern: /^(?:surpreso|surpresa|assustado|espanto|surpreenda)$/ },
+  { action: 'dance', pattern: /^(?:dance|dancar|danca)$/ },
+  { action: 'snooze', pattern: /^(?:durma|dormir|soneca|cochile)$/ },
+  { action: 'sing', pattern: /^(?:cante|cantar|cancao|musica|cante uma musica)$/ },
+  { action: 'wink', pattern: /^(?:pisque|piscar|piscadinha)$/ },
+  { action: 'shrug', pattern: /^(?:encolha os ombros|de de ombros)$/ },
+  { action: 'salute', pattern: /^(?:continencia|saudacao|saude militar)$/ },
+  { action: 'scratch', pattern: /^(?:coce|cocar|arrume as penas|limpe as penas)$/ },
+  { action: 'yawn', pattern: /^(?:boceje|bocejar|bocejo)$/ },
+  { action: 'hush', pattern: /^(?:psiu|silencio|fale baixo)$/ },
+  { action: 'cheer', pattern: /^(?:comemore|comemorar|viva|torca)$/ },
+  { action: 'shiver', pattern: /^(?:trema|tremer|arrepie|frio|brr)$/ },
+  { action: 'bow', pattern: /^(?:reverencia|faca uma reverencia|curve-se)$/ },
+  { action: 'sneeze', pattern: /^(?:espirre|espirrar|atchim)$/ },
 ];
 
 const DTMF_ACTIONS: Readonly<Record<string, OwlAction>> = {
@@ -231,6 +228,9 @@ export class OwlVoiceSession {
   private terminalAnnouncedGeneration: number | null = null;
   private lastFinal: { text: string; atMs: number } | null = null;
   private readonly lineCursors = new Map<OwlAction, number>();
+  private dialogueHistory: LlmTurn[] = [];
+  private awaitingConversationalAnswer = false;
+  private pendingConversation: AbortController | null = null;
   private readonly pendingSpeech = new Set<Promise<unknown>>();
 
   constructor(private readonly deps: OwlVoiceDeps) {}
@@ -254,21 +254,21 @@ export class OwlVoiceSession {
     }
     if (!this.code || !this.callSid || message.type === 'unknown' || message.type === 'error') return;
     if (message.type === 'interrupt') {
-      this.turnEpoch++;
+      this.invalidateTurn();
       this.lastFinal = null;
       return;
     }
     if (message.type === 'prompt' && !message.last) {
-      this.turnEpoch++;
+      this.invalidateTurn();
       return;
     }
     if (message.type === 'dtmf') {
-      this.turnEpoch++;
+      this.invalidateTurn();
+      this.awaitingConversationalAnswer = false;
       this.handleDtmf(message.digit);
       return;
     }
     if (message.type === 'prompt') {
-      this.turnEpoch++;
       this.handleFinalPrompt(message.voicePrompt);
     }
   }
@@ -277,8 +277,10 @@ export class OwlVoiceSession {
     if (!this.active || !this.code || !this.callSid) return;
     const state = this.deps.snapshot(this.code);
     if (!state || state.phase !== 'finished' || this.terminalAnnouncedGeneration === state.generation) return;
+    this.invalidateTurn();
     this.terminalAnnouncedGeneration = state.generation;
     this.awaitingName = false;
+    this.awaitingConversationalAnswer = false;
     const copy = VOICE_COPY[this.commandLocale];
     const line = state.result?.reason === 'timeout'
       ? copy.timeout : state.result?.reason === 'station_stop'
@@ -294,20 +296,20 @@ export class OwlVoiceSession {
   handleClose(): void {
     if (!this.active) return;
     this.active = false;
-    this.turnEpoch++;
+    this.invalidateTurn();
     if (this.code && this.callSid) this.deps.disconnect(this.code, this.callSid);
   }
 
   /** An old socket was superseded by a new Relay socket for this same CallSid. */
   handleReplaced(): void {
     this.active = false;
-    this.turnEpoch++;
+    this.invalidateTurn();
   }
 
   /** Twilio's call-status callback confirms the phone call itself ended. */
   handleCallEnded(): void {
     this.active = false;
-    this.turnEpoch++;
+    this.invalidateTurn();
     if (this.code && this.callSid) this.deps.leave(this.code, this.callSid, 'hangup');
   }
 
@@ -367,6 +369,10 @@ export class OwlVoiceSession {
     const now = Date.now();
     if (this.lastFinal?.text === normalized && now - this.lastFinal.atMs < FINAL_DUPLICATE_MS) return;
     this.lastFinal = { text: normalized, atMs: now };
+    this.invalidateTurn();
+    const answeringOwlQuestion = this.awaitingConversationalAnswer
+      && isBareYesNo(normalized, this.commandLocale);
+    this.awaitingConversationalAnswer = false;
     const state = this.deps.snapshot(this.code);
     if (!state) return;
     if (state.phase === 'finished') { this.onStateChanged(); return; }
@@ -374,7 +380,7 @@ export class OwlVoiceSession {
       const possibleCommand = interpretOwlSpeech(spoken, 0, this.commandLocale);
       const explicit = isExplicitSpokenName(spoken, this.commandLocale);
       const bareName = !/\s/u.test(spoken.trim())
-        && possibleCommand.kind === 'action' && possibleCommand.action === 'talk';
+        && possibleCommand.kind === 'conversation';
       const name = explicit || bareName
         ? parseFirstName(spoken, this.commandLocale) : null;
       if (!name) {
@@ -391,7 +397,9 @@ export class OwlVoiceSession {
         : `Nice to meet you, ${name}. Ask me a question, or tell me to wave, laugh, sing, dance, or mix a potion.`);
       return;
     }
-    this.executeIntent(interpretOwlSpeech(spoken, state.interactionCount, this.commandLocale));
+    this.executeIntent(answeringOwlQuestion
+      ? { kind: 'conversation', text: spoken }
+      : interpretOwlSpeech(spoken, state.interactionCount, this.commandLocale), spoken);
   }
 
   private handleDtmf(digit: string): void {
@@ -418,8 +426,9 @@ export class OwlVoiceSession {
     this.executeIntent({ kind: 'action', action, line: this.nextLine(action) });
   }
 
-  private executeIntent(intent: OwlSpeechIntent): void {
+  private executeIntent(intent: OwlSpeechIntent, spoken?: string): void {
     if (!this.code || !this.callSid) return;
+    if (intent.kind === 'conversation') { void this.converse(intent.text); return; }
     if (intent.kind === 'help') { this.speak(intent.line); return; }
     if (intent.kind === 'goodbye') {
       const state = this.deps.snapshot(this.code);
@@ -444,6 +453,70 @@ export class OwlVoiceSession {
       return;
     }
     this.speak(event.line);
+    if (spoken) this.rememberTurn(spoken, event.line);
+  }
+
+  private invalidateTurn(): void {
+    this.turnEpoch++;
+    this.pendingConversation?.abort();
+    this.pendingConversation = null;
+  }
+
+  /** Model replies are plain dialogue: only the room may turn one into an animated talk event. */
+  private async converse(spoken: string): Promise<void> {
+    const code = this.code, callSid = this.callSid, playerId = this.playerId;
+    if (!code || !callSid || !playerId) return;
+    const initial = this.deps.snapshot(code);
+    if (!initial || initial.phase !== 'playing' || !initial.caller?.nameConfirmed) return;
+    const epoch = this.turnEpoch, generation = initial.generation;
+    const controller = new AbortController();
+    this.pendingConversation = controller;
+    const current = () => this.active && this.turnEpoch === epoch
+      && this.pendingConversation === controller && this.code === code
+      && this.callSid === callSid && this.playerId === playerId
+      && (() => {
+        const state = this.deps.snapshot(code);
+        return state?.generation === generation && state.phase === 'playing'
+          && state.caller?.playerId === playerId && state.caller.connected;
+      })();
+    const history: LlmTurn[] = [...this.dialogueHistory.slice(-MAX_DIALOGUE_HISTORY),
+      { role: 'user', content: spoken }];
+    let answer = '';
+    if (this.deps.llm?.enabled) {
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      try {
+        const timeout = new Promise<null>(resolve => {
+          timer = setTimeout(() => { controller.abort(); resolve(null); }, CONVERSATION_TIMEOUT_MS);
+          timer.unref?.();
+        });
+        const reply = await Promise.race([
+          this.deps.llm.respond(owlSystemPrompt(initial, this.commandLocale), history, [],
+            { signal: controller.signal, timeoutMs: CONVERSATION_TIMEOUT_MS }),
+          timeout,
+        ]);
+        answer = reply?.say ?? '';
+      } catch {
+        answer = '';
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+    }
+    if (!current()) return;
+    const cleaned = shortSpokenReply(answer, this.commandLocale);
+    const echoed = normalizedEcho(cleaned, spoken, this.commandLocale);
+    const line = cleaned && !echoed ? cleaned : VOICE_COPY[this.commandLocale].aiRetry;
+    const event = this.deps.action(code, callSid, 'talk', line);
+    if (!event || !current()) return;
+    this.awaitingConversationalAnswer = Boolean(cleaned && !echoed && /\?\s*$/.test(event.line));
+    this.rememberTurn(spoken, event.line);
+    this.speak(event.line, current);
+  }
+
+  private rememberTurn(user: string, assistant: string): void {
+    this.dialogueHistory.push({ role: 'user', content: user }, { role: 'assistant', content: assistant });
+    if (this.dialogueHistory.length > MAX_DIALOGUE_HISTORY) {
+      this.dialogueHistory = this.dialogueHistory.slice(-MAX_DIALOGUE_HISTORY);
+    }
   }
 
   private async finishAfterSpokenEnd(reasonCode: string): Promise<void> {
@@ -464,13 +537,14 @@ export class OwlVoiceSession {
     return variants[index % variants.length] ?? variants[0] ?? 'Hoo.';
   }
 
-  private speak(raw: string): void {
+  private speak(raw: string, extraGuard?: () => boolean): void {
     if (!this.active) return;
     const line = speechSafeText(raw, 250, this.commandLocale);
     if (!line) return;
     const epoch = this.turnEpoch;
     let result: void | Promise<unknown>;
-    try { result = this.deps.say(line, () => this.active && this.turnEpoch === epoch); }
+    try { result = this.deps.say(line, () => this.active && this.turnEpoch === epoch
+      && (!extraGuard || extraGuard())); }
     catch { return; }
     const settled = Promise.resolve(result).catch(() => {});
     this.pendingSpeech.add(settled);
@@ -478,8 +552,8 @@ export class OwlVoiceSession {
   }
 }
 
-/** A bounded deterministic interpreter. Unmatched speech is echoed, like the toy that inspired it. */
-export function interpretOwlSpeech(spoken: string, turnNumber = 0,
+/** Only explicit game commands bypass conversation. */
+export function interpretOwlSpeech(spoken: string, _turnNumber = 0,
   locale: SupportedLocale = DEFAULT_LOCALE): OwlSpeechIntent {
   const safe = speechSafeText(spoken, 180, locale);
   const normalized = normalizeForMatching(safe, locale);
@@ -489,8 +563,13 @@ export function interpretOwlSpeech(spoken: string, turnNumber = 0,
   const patterns = pt ? ACTION_PATTERNS_PT : ACTION_PATTERNS;
   if (!normalized) return { kind: 'help', line: copy.help };
   if (pt
-    ? /\b(?:ajuda|o que (?:voce|eu) (?:pode|posso) fazer|lista de comandos|como jogar|como eu jogo)\b/.test(normalized)
-    : /\b(?:help|what can (?:you|i) do|list (?:the )?commands|how (?:do i|to) play)\b/.test(normalized)) {
+    ? /^(?:ajuda|o que (?:voce|eu) (?:pode|posso) fazer|lista de comandos|como jogar|como eu jogo)$/.test(normalized)
+    : /^(?:help|what can (?:you|i) do|list (?:the )?commands|how (?:do i|to) play)$/.test(normalized)) {
+    return { kind: 'help', line: copy.help };
+  }
+  if (pt
+    ? /^(?:por favor )?(?:repita(?: depois de mim)?|repete|diga exatamente|fale exatamente)$/.test(normalized)
+    : /^(?:please )?(?:repeat after me|repeat|say this|say exactly)$/.test(normalized)) {
     return { kind: 'help', line: copy.help };
   }
   const repeat = pt
@@ -507,10 +586,13 @@ export function interpretOwlSpeech(spoken: string, turnNumber = 0,
     : /^(?:please )?(?:goodbye|bye bye|bye|hang up|end (?:the |this )?call|see you later|say goodbye)[.! ]*$/.test(normalized))) {
     return { kind: 'goodbye', line: copy.goodbye };
   }
+  const command = commandBody(normalized, locale);
   if (pt
-    ? /\b(?:mistur\w*|pocao|ingredientes|combine)\b/.test(normalized)
-    : /\b(?:mix|potion|ingredients|combine)\b/.test(normalized)) {
-    const reagents = orderedReagents(normalized, locale);
+    ? /^(?:misture|misturar|combine|combinar|faca (?:uma )?pocao)(?:\b|$)/.test(command)
+      || command === 'pocao'
+    : /^(?:mix|combine|brew|make (?:a |me a )?potion)(?:\b|$)/.test(command)
+      || command === 'potion') {
+    const reagents = orderedReagents(command, locale);
     if (reagents.length >= 2) {
       const picked = [reagents[0]!, reagents[1]!] as const;
       const labels = pt ? { berry: 'frutas vermelhas', mint: 'hortelã', amber: 'âmbar' } : {
@@ -524,31 +606,14 @@ export function interpretOwlSpeech(spoken: string, turnNumber = 0,
     return { kind: 'action', action: 'talk', line: copy.missingIngredients };
   }
   if (pt
-    ? /\b(?:va|vamos|ir|entre|visite|abra)\s+(?:ao?|para o|no)?\s*(?:lab|laboratorio)\b/.test(normalized)
-      || normalized === 'lab' || normalized === 'laboratorio'
-    : /\b(?:go to|open|visit|enter|show me)\s+(?:the\s+)?(?:lab|laboratory)\b/.test(normalized)
-      || normalized === 'lab' || normalized === 'laboratory') {
+    ? /^(?:(?:va|vamos|ir|entre|visite|abra)\s+(?:(?:ao?|para o|no)\s+)?(?:lab|laboratorio)|lab|laboratorio)$/.test(command)
+    : /^(?:(?:go to|open|visit|enter|show me)\s+(?:the\s+)?(?:lab|laboratory)|lab|laboratory)$/.test(command)) {
     return { kind: 'action', action: 'lab', line: actionLines.lab[0]! };
   }
   if (pt
-    ? /\b(?:volte|voltar|vamos|va|ir)\s+(?:para|ao?|a)\s+(?:a |o )?(?:sala de leitura|escritorio|estudo)\b/.test(normalized)
-      || ['escritorio', 'sala de leitura', 'estudo'].includes(normalized)
-    : /\b(?:go back to|return to|back to|go to|show me)\s+(?:the\s+)?study\b/.test(normalized)
-      || normalized === 'study') {
+    ? /^(?:(?:volte|voltar|vamos|va|ir)\s+(?:para|ao?|a)\s+(?:a |o )?(?:sala de leitura|escritorio|estudo)|escritorio|sala de leitura|estudo)$/.test(command)
+    : /^(?:(?:go back to|return to|back to|go to|show me)\s+(?:the\s+)?study|study)$/.test(command)) {
     return { kind: 'action', action: 'study', line: actionLines.study[0]! };
-  }
-  if (pt
-    ? /\b(?:qual (?:e )?(?:o )?seu nome|quem (?:e )?voce|como voce se chama)\b/.test(normalized)
-    : /\b(?:(?:what|whats|who) (?:is|are)? ?(?:your|you) name|what should i call you|who are you)\b/.test(normalized)) {
-    return { kind: 'action', action: 'talk', line: copy.identity };
-  }
-  if (pt ? /\b(?:como (?:voce )?esta|tudo bem)\b/.test(normalized)
-    : /\bhow are you\b/.test(normalized)) {
-    return { kind: 'action', action: 'talk', line: copy.wellbeing };
-  }
-  if (pt ? /\b(?:onde voce esta|onde fica sua sala)\b/.test(normalized)
-    : /\b(?:where are you|where do you live)\b/.test(normalized)) {
-    return { kind: 'action', action: 'talk', line: copy.place };
   }
   if (pt ? /^(?:oi|ola|bom dia|boa tarde|boa noite)[.! ]*$/.test(normalized)
     : /^(?:hi|hello|hey|good morning|good evening)[.! ]*$/.test(normalized)) {
@@ -558,38 +623,55 @@ export function interpretOwlSpeech(spoken: string, turnNumber = 0,
     : /^(?:thank you|thanks)[.! ]*$/.test(normalized)) {
     return { kind: 'action', action: 'bow', line: actionLines.bow[0]! };
   }
-  const negatedAction = pt
-    ? /\b(?:nao|nunca|pare de)\b/.test(normalized)
-    : /\b(?:do not|dont|don't|never|stop)\b/.test(normalized);
-  if (negatedAction && patterns.some(({ pattern }) => pattern.test(normalized))
-    && !['nao', 'nao sei'].includes(normalized)) {
-    return { kind: 'action', action: 'talk', line: copy.noAction };
-  }
-  const isCommandQuestion = pt
-    ? /^(?:voce (?:pode|consegue|poderia)|pode|consegue|poderia)\b/.test(normalized)
-    : /^(?:can|could|would|will) you\b/.test(normalized);
-  const isOrdinaryQuestion = pt
-    ? /^(?:voce|sera|devo|e|tem|esta|qual|quem|como|onde|quando|por que|porque|o que)\b/.test(normalized)
-    : /^(?:do|does|did|is|are|am|have|has|was|were|what|who|why|where|when|how)\b/.test(normalized);
-  if (isOrdinaryQuestion && !isCommandQuestion) return answerQuestion(normalized, turnNumber, locale);
   for (const { action, pattern } of patterns) {
-    if (pattern.test(normalized)) return { kind: 'action', action, line: actionLines[action][0]! };
+    if (pattern.test(command)) return { kind: 'action', action, line: actionLines[action][0]! };
   }
-  if (/\?$/.test(safe) || isCommandQuestion) return answerQuestion(normalized, turnNumber, locale);
-  return { kind: 'action', action: 'talk', line: safe.slice(0, 120) };
+  return { kind: 'conversation', text: safe };
 }
 
-function answerQuestion(normalized: string, turnNumber: number, locale: SupportedLocale): OwlSpeechIntent {
-  const pt = locale === 'pt-BR';
-  if (pt ? /^(?:qual|quem|como|onde|quando|por que|porque|o que)\b/.test(normalized)
-    : /^(?:what|who|why|where|when|how)\b/.test(normalized)) {
-    return { kind: 'action', action: 'talk', line: VOICE_COPY[locale].mystery };
-  }
-  const options: readonly OwlAction[] = ['yes', 'no', 'ponder'];
-  const hash = [...normalized].reduce((value, char) => ((value * 31) + char.charCodeAt(0)) >>> 0, turnNumber >>> 0);
-  const action = options[hash % options.length]!;
-  return { kind: 'action', action,
-    line: (pt ? ACTION_LINES_PT : ACTION_LINES)[action][0]! };
+function commandBody(normalized: string, locale: SupportedLocale): string {
+  const withoutPrefix = locale === 'pt-BR'
+    ? normalized.replace(/^(?:(?:por favor|coruja|voce pode|voce poderia|pode|poderia|quero que voce|eu quero que voce|vamos)\s+)+/, '')
+    : normalized.replace(/^(?:(?:please|hey owl|owl|can you|could you|would you|will you|i want you to|lets)\s+)+/, '');
+  return withoutPrefix.replace(/\s+(?:please|por favor)$/, '').trim();
+}
+
+function isBareYesNo(normalized: string, locale: SupportedLocale): boolean {
+  return locale === 'pt-BR'
+    ? /^(?:sim|nao)$/.test(normalized)
+    : /^(?:yes|yeah|yep|no|nope|nah)$/.test(normalized);
+}
+
+function normalizedEcho(answer: string, spoken: string, locale: SupportedLocale): boolean {
+  const heard = normalizeForMatching(spoken, locale);
+  return Boolean(heard) && normalizeForMatching(answer, locale) === heard;
+}
+
+function shortSpokenReply(answer: string, locale: SupportedLocale): string {
+  const safe = speechSafeText(answer, 600, locale);
+  if (safe.length <= 155) return safe;
+  const firstSentence = safe.match(/^.+?[.!?](?=\s|$)/)?.[0];
+  if (firstSentence && firstSentence.length <= 155) return firstSentence;
+  const clipped = speechSafeText(safe, 154, locale);
+  return /[.!?]$/.test(clipped) ? clipped : `${clipped}.`;
+}
+
+function owlSystemPrompt(state: OwlState, locale: SupportedLocale): string {
+  const name = state.caller?.name ?? (locale === 'pt-BR' ? 'visitante' : 'friend');
+  const lastAction = state.lastEvent?.type === 'action' ? state.lastEvent.action : 'none';
+  return locale === 'pt-BR'
+    ? `Você é Talking Owl, uma coruja de desenho animado fofa, esperta e um pouco travessa. `
+      + `Converse naturalmente em português do Brasil com ${JSON.stringify(name)} pelo telefone. `
+      + `Você está na sala ${JSON.stringify(state.roomCode)}, no cenário ${state.roomMode}. `
+      + `Sua última ação visível foi ${lastAction}. Responda à fala mais recente, incluindo perguntas e comentários. `
+      + `Seja útil e preciso; se não souber, diga isso com gentileza. Use uma ou duas frases curtas, até 35 palavras. `
+      + `Não repita a fala da pessoa, não invente ações e não use markdown, emoji ou instruções de bastidores.`
+    : `You are Talking Owl, a cute, clever, slightly mischievous cartoon owl. `
+      + `Talk naturally by phone with ${JSON.stringify(name)}. `
+      + `You are in room ${JSON.stringify(state.roomCode)}, currently in the ${state.roomMode}. `
+      + `Your last visible action was ${lastAction}. Reply to the latest utterance, including questions and comments. `
+      + `Be helpful and accurate; if unsure, say so gently. Use one or two short spoken sentences, at most 35 words. `
+      + `Do not repeat the caller's words, invent actions, or use markdown, emoji, or backstage instructions.`;
 }
 
 function orderedReagents(normalized: string, locale: SupportedLocale): OwlReagent[] {

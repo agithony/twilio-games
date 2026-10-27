@@ -95,12 +95,13 @@ For a deployed environment, configure the same `POST /voice/incoming` webhook ag
 | `GAME_PHONE_NUMBER` | Optional | Legacy lobby fallback until locale-specific voice numbers are saved in Arcade runtime settings. |
 | `TWILIO_SMS_NUMBER` | Required by production deployment | SMS-capable sender/receiver registered with TAC and used by the join chooser and outbound notices. |
 | `PORT` | No | HTTP and WebSocket port. Defaults to `8080`. |
-| `CR_TTS_VOICE` | No | English ElevenLabs voice ID for every game's Conversation Relay talk-back. Defaults to `SA7eD52NRr8WAehitVt1`; deployment pins that value. |
+| `CR_TTS_VOICE` | No | English ElevenLabs voice ID for Conversation Relay games other than Talking Owl. Defaults to `SA7eD52NRr8WAehitVt1`; deployment pins that value. |
+| `CR_TTS_VOICE_OWL` | No | Talking Owl's English ElevenLabs voice ID. Defaults to Twilio-listed Jessica on Flash v2 (`r1KmysJdVYZjJCm4mL3b-flash_v2`); a GitHub repository variable can override it for deployment. |
 | `CR_TTS_VOICE_PT_BR` | No | Optional Brazilian Portuguese ElevenLabs voice ID. Empty uses Relay's `pt-BR` default. |
 | `DEFAULT_LOCALE` | No | Fallback when the dialed `To` number does not identify one locale and the selected display does not provide one. Defaults to `en-US`. |
 | `ARCADE_STANDALONE_VOICE_ENABLED` | No | Set to `true` to permit standalone routing to an eligible open shared display. It does not make a game callable without a display. Production sets this to `true`. |
 | `VOICE_RELAY_TOKEN` | Required by production deployment | Independent token of at least 32 characters that authenticates the Conversation Relay `setup` frame. The generated TwiML passes it to Twilio automatically; do not reuse `TWILIO_AUTH_TOKEN`. |
-| `OPENAI_API_KEY` | Required for production | Enables phase-bound semantic interpretation for Racer through Chess in both locales. Talking Owl uses deterministic reactions and echoing; local runs without the key retain deterministic commands. |
+| `OPENAI_API_KEY` | Required for production | Enables phase-bound semantic interpretation for Racer through Chess and Talking Owl's open-ended in-character replies in both locales. Direct Owl animation commands remain deterministic. |
 | `OPENAI_MODEL` | No | Overrides the OpenAI model when `OPENAI_API_KEY` is set. |
 | `DEEPGRAM_API_KEY` | Required in production | Direct monolingual Nova-3 streaming lyric recognition with chart keyterms for Voice Karaoke. Production startup and deployment fail closed when missing because Karaoke is enabled by default. |
 | `KARAOKE_CALIBRATION_OFFSET_MS` | No | Measured signed handset/carrier scoring offset from `-5000` to `5000`; defaults to `0`. Positive maps observations later and negative maps them earlier. |
@@ -298,7 +299,7 @@ The server validates moves and chooses computer replies only in solo mode. Its d
 
 Talking Owl is the seventh playable title and fixed station or Messaging option `7`. Select its animated GIF card on the home page to open `/talking-owl.html?display=1&room=4821`. The standalone display shows the locale-specific Voice number and a `tel:` QR code; it registers as a display on `/ws/owl?display=1` before a call can route to it. The same existing Twilio numbers, signed `/voice/incoming` webhook, Conversation Relay WebSocket, and `/voice/session-ended` callback serve Owl. No separate Twilio number or webhook is required.
 
-One caller joins the server-owned Owl room. In standalone play, the phone asks for a first name before interactions start; in station play the already registered name is passed from the authoritative station assignment. The owl answers yes/no questions, repeats a short line, and responds to voice or keypad prompts with newspaper, wing, face, snack, mug, lab, and potion animations. For example say `wave`, `laugh`, `read the newspaper`, `go to the lab`, or `mix berry and mint`. Portuguese calls use the same locale routing and localized Owl prompts. The display receives ordered action events and state snapshots but cannot submit the caller's actions.
+One caller joins the server-owned Owl room. In standalone play, the phone asks for a first name before interactions start; in station play the already registered name is passed from the authoritative station assignment. The owl answers ordinary questions and follows up in character through the configured AI host. It repeats a caller's words only for an explicit request such as `repeat after me, hello little owl`. Direct voice or keypad commands still trigger newspaper, wing, face, snack, mug, lab, and potion animations promptly; for example say `wave`, `laugh`, `read the newspaper`, `go to the lab`, or `mix berry and mint`. Portuguese calls use the same locale routing and localized Owl prompts. The display receives ordered action events and state snapshots but cannot submit the caller's actions.
 
 Station play starts a two-minute session when the named caller binds. It reports a completed one-player result with the number of reactions and the elapsed time, then yields the station to the next round. A dropped Relay socket can reconnect with the same call SID during the grace window; a completed call, `goodbye`, or the station timer ends the session. Standalone play remains open until goodbye or hangup. The owl uses Conversation Relay transcription and speech synthesis, with no separate audio stream or recording.
 
@@ -429,9 +430,9 @@ Confirm the returned TwiML contains `partialPrompts="true"`, `speechModel="flux"
 
 Inspect the returned TwiML for `interruptible="any"`, `welcomeGreetingInterruptible="any"`, `reportInputDuringAgentSpeech="any"`, `interruptSensitivity="high"`, and `ignoreBackchannel="false"`. Relay should send an `interrupt` frame when speech or keypad input cuts off TTS. Check live handset behavior in the actual booth environment because room noise can affect recognition.
 
-### Menus are quiet without an OpenAI key
+### Conversation and commands without an OpenAI key
 
-All seven games keep fast deterministic commands without OpenAI. `OPENAI_API_KEY` adds a bounded semantic fallback for Racer through Chess; Talking Owl uses its own deterministic conversational and repeat-after-me mapping in both supported locales. The model receives only current actions and visible choices, and the game server validates the result before changing state. Trivia still reads only its validated question bank, and Chess still uses local rules and computer search.
+All seven games keep fast deterministic commands without OpenAI. `OPENAI_API_KEY` adds a bounded semantic fallback for Racer through Chess and gives Talking Owl open-ended, in-character answers with short conversation history. Owl's direct animation commands and explicit `repeat after me, [words]` request remain available without the key; ordinary speech no longer echoes back by default. Trivia still reads only its validated question bank, and Chess still uses local rules and computer search.
 
 ### The displayed phone number is missing
 

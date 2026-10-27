@@ -55,7 +55,7 @@ import {
   type TriviaBoardId,
 } from '../shared/trivia-leaderboard-store';
 import { speechSafeText } from '../shared/speech-text';
-import { relayVoiceForLocale } from './relay-voice';
+import { owlRelayVoiceForLocale, relayVoiceForLocale } from './relay-voice';
 import { SmsConcierge, type ConciergeRoom } from './sms-concierge';
 import { OpenAiClient, NullLlmClient, type LlmClient } from './llm';
 import { matchChoice, clearSelectionIndex, type HostContext } from './game-host';
@@ -321,8 +321,9 @@ export class HttpServer {
   private readonly gamePhoneNumber: string;
   private readonly smsNumber: string;
   private readonly whatsappNumber: string;
-  /** ElevenLabs voice IDs for every game's Conversation Relay session. */
+  /** Shared English, Owl English, and Portuguese Conversation Relay voices. */
   private readonly crVoice: string;
+  private readonly crOwlVoice: string;
   private readonly crVoicePtBr: string;
   private readonly voiceRelayToken: string;
   private readonly karaokeCalibrationOffsetMs: number;
@@ -451,6 +452,7 @@ export class HttpServer {
     arcadeTacGateway?: ArcadeTacGateway;
     standaloneVoiceEnabled?: boolean;
     voiceRelayToken?: string;
+    llm?: LlmClient;
     deepgramApiKey?: string;
     wizardChessAudio?: WizardChessAudioService;
     karaokeCalibrationOffsetMs?: number;
@@ -519,6 +521,7 @@ export class HttpServer {
     this.bundledFighterMapsPath = opts.bundledFighterMapsPath ?? 'assets/fighters/maps/maps.json';
     this.fighterPreviewDir = opts.fighterPreviewDir ?? 'data/fighter-previews';
     this.crVoice = relayVoiceForLocale('en-US');
+    this.crOwlVoice = owlRelayVoiceForLocale('en-US');
     this.crVoicePtBr = relayVoiceForLocale('pt-BR');
     this.prewarmWizardChessAudio = !opts.wizardChessAudio && process.env.NODE_ENV === 'production';
     this.wizardChessAudio = opts.wizardChessAudio
@@ -531,13 +534,13 @@ export class HttpServer {
     );
     this.defaultLocale = resolveLocale(process.env.DEFAULT_LOCALE, DEFAULT_LOCALE);
     this.standaloneVoiceEnabled = opts.standaloneVoiceEnabled ?? process.env.NODE_ENV !== 'production';
-    // The model maps conversational speech to currently legal actions. Local deterministic
-    // commands continue to work when the key is unavailable.
+    // The model handles Owl conversation and maps other games' speech to legal actions.
+    // Local deterministic commands continue to work when the key is unavailable.
     const configuredOpenAiKey = (process.env.OPENAI_API_KEY ?? '').trim();
     const openaiKey = configuredOpenAiKey === 'disabled' ? '' : configuredOpenAiKey;
-    this.llm = openaiKey
+    this.llm = opts.llm ?? (openaiKey
       ? new OpenAiClient({ apiKey: openaiKey, model: (process.env.OPENAI_MODEL ?? '').trim() || undefined })
-      : new NullLlmClient();
+      : new NullLlmClient());
     if (this.llm.enabled) console.log(`[LLM] conversational host ENABLED (model=${process.env.OPENAI_MODEL || 'default'})`);
     this.server = http.createServer((req, res) => {
       this.onRequest(req, res).catch((err) => {
@@ -2578,6 +2581,7 @@ export class HttpServer {
         if (binding?.activeSession === session) this.owlVoiceCallBindings.delete(callSid.trim());
         this.owl.voiceLeave(code, callSid, reason);
       },
+      llm: this.llm,
       say,
       requestEnd: handoff => { sendRelayHandoff(ws, handoff); },
     });
@@ -4714,9 +4718,10 @@ export class HttpServer {
         wsUrl: `${this.publicBaseUrl.replace(/^http/, 'ws')}/voice`,
         sessionEndedUrl: `${this.publicBaseUrl}/voice/session-ended`,
         roomCode,
-        // English uses the selected ElevenLabs voice; Portuguese keeps its own voice setting.
+        // Owl has its own English voice; Portuguese keeps its locale-specific voice.
         ttsProvider: 'ElevenLabs',
-        voice: voiceLocale === 'pt-BR' ? this.crVoicePtBr : this.crVoice,
+        voice: voiceLocale === 'pt-BR' ? this.crVoicePtBr
+          : voiceGame === 'owl' ? this.crOwlVoice : this.crVoice,
         game: voiceGame === 'battle' ? 'monsters' : voiceGame,
         karaokeMode: voiceGame === 'karaoke' ? 'setup' : undefined,
         readyEntryId: stationRoute?.readyEntryId ?? undefined,
@@ -4881,7 +4886,8 @@ export class HttpServer {
             wsUrl: `${this.publicBaseUrl.replace(/^http/, 'ws')}/voice`,
             sessionEndedUrl: `${this.publicBaseUrl}/voice/session-ended`,
             roomCode, ttsProvider: 'ElevenLabs',
-            voice: locale === 'pt-BR' ? this.crVoicePtBr : this.crVoice,
+            voice: locale === 'pt-BR' ? this.crVoicePtBr
+              : game === 'owl' ? this.crOwlVoice : this.crVoice,
             game, readyEntryId: station?.readyEntryId, matchId: station?.matchId,
             launchGeneration: station?.launchGeneration, locale,
             karaokeMode: game === 'karaoke' && karaoke?.completed ? 'result' : game === 'karaoke' ? 'setup' : undefined,

@@ -3,6 +3,7 @@ import { OwlServer, type OwlServerOptions } from '../server/owl-server';
 import { OwlVoiceSession, interpretOwlSpeech,
   type OwlVoiceDeps, type OwlVoiceEndHandoff } from '../server/owl-voice';
 import type { OwlAction, OwlEvent } from '../shared/owl-protocol';
+import type { LlmClient, LlmReply, LlmTurn } from '../server/llm';
 
 let server: OwlServer | null = null;
 
@@ -12,13 +13,14 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-function fixture(options: OwlServerOptions = {}) {
+function fixture(options: OwlServerOptions = {}, llm?: LlmClient) {
   server = new OwlServer(options);
   const heard: string[] = [];
   const events: OwlEvent[] = [];
   const ends: OwlVoiceEndHandoff[] = [];
   let session!: OwlVoiceSession;
   session = new OwlVoiceSession({
+    llm,
     bind: (code, name, sid, locale, station, confirmed) =>
       server!.voiceJoin(code, name, sid, locale, station, confirmed),
     confirmName: (code, sid, name) => server!.voiceConfirmName(code, sid, name),
@@ -64,7 +66,7 @@ describe('Talking Owl ConversationRelay session', () => {
     expect(heard.at(-1)).toMatch(/rhythm|flap/i);
   });
 
-  it('skips the name prompt for a station identity and handles reactions, lab mixtures, and natural questions', () => {
+  it('skips the name prompt for a station identity and handles reactions and lab mixtures', () => {
     const { server: owl, session, heard, events, setup, prompt } = fixture();
     session.setStationManaged(true);
     session.setAuthoritativeName('Mira');
@@ -72,8 +74,6 @@ describe('Talking Owl ConversationRelay session', () => {
     expect(owl.snapshot('NEST')).toMatchObject({ phase: 'playing', stationManaged: true,
       caller: { name: 'Mira', nameConfirmed: true }, endsAtMs: expect.any(Number) });
     expect(heard.some(line => /first name/i.test(line))).toBe(false);
-    prompt('Do you like the moon?');
-    expect(['yes', 'no', 'ponder']).toContain(actions(events).at(-1));
     prompt('repeat after me: good morning, owl');
     expect(actions(events).at(-1)).toBe('talk');
     expect(heard.at(-1)).toBe('good morning, owl');
@@ -81,7 +81,7 @@ describe('Talking Owl ConversationRelay session', () => {
     expect(actions(events).slice(-2)).toEqual(['lab', 'mix']);
     expect([...events].reverse().find(event => event.type === 'action' && event.action === 'mix'))
       .toMatchObject({ reagents: ['amber', 'mint'] });
-    expect(owl.snapshot('NEST')).toMatchObject({ roomMode: 'lab', interactionCount: 4 });
+    expect(owl.snapshot('NEST')).toMatchObject({ roomMode: 'lab', interactionCount: 3 });
     prompt('return to the study');
     expect(actions(events).at(-1)).toBe('study');
   });
@@ -221,6 +221,241 @@ describe('Talking Owl ConversationRelay session', () => {
     expect(heard.slice(-2)).toEqual(['Sim.', 'Não.']);
     expect(owl.snapshot('NINHO')?.phase).toBe('playing');
   });
+
+  it('answers ordinary speech with the model and gives it bounded follow-up context', async () => {
+    const requests: { system: string; history: LlmTurn[]; tools: unknown[];
+      timeoutMs: number | undefined; signal: AbortSignal | undefined }[] = [];
+    const replies = [
+      'Mostly mice and insects. My favorite imaginary snack is a moonberry biscuit.',
+      'In winter, many owls hunt the same small animals, even under snow.',
+    ];
+    const llm: LlmClient = { enabled: true, respond: async (system, history, tools, options) => {
+      requests.push({ system, history, tools, timeoutMs: options?.timeoutMs, signal: options?.signal });
+      return { say: replies[requests.length - 1] ?? '', toolCalls: [] };
+    } };
+    const { heard, events, setup, prompt } = fixture({}, llm);
+    setup();
+    prompt('Ada');
+    prompt('What do owls eat?');
+    await vi.waitFor(() => expect(heard.at(-1)).toBe(replies[0]));
+    expect(actions(events).at(-1)).toBe('talk');
+    prompt('What about in winter?');
+    await vi.waitFor(() => expect(heard.at(-1)).toBe(replies[1]));
+    expect(requests).toHaveLength(2);
+    expect(requests[0]?.system).toContain('Ada');
+    expect(requests[0]?.system).toContain('study');
+    expect(requests[0]?.history).toEqual([{ role: 'user', content: 'What do owls eat?' }]);
+    expect(requests[1]?.history).toEqual([
+      { role: 'user', content: 'What do owls eat?' },
+      { role: 'assistant', content: replies[0] },
+      { role: 'user', content: 'What about in winter?' },
+    ]);
+    expect(requests[0]?.tools).toEqual([]);
+    expect(requests[0]?.timeoutMs).toBeGreaterThanOrEqual(4_000);
+    expect(requests[0]?.timeoutMs).toBeLessThanOrEqual(6_000);
+    expect(requests[0]?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('forgets older dialogue after several exchanges', async () => {
+    const histories: LlmTurn[][] = [];
+    const llm: LlmClient = { enabled: true, respond: async (_system, history) => {
+      histories.push(history);
+      return { say: `Answer ${histories.length}.`, toolCalls: [] };
+    } };
+    const { heard, setup, prompt } = fixture({}, llm);
+    setup();
+    prompt('Ada');
+    for (let turn = 1; turn <= 6; turn++) {
+      prompt(`Question ${turn}?`);
+      await vi.waitFor(() => expect(heard.at(-1)).toBe(`Answer ${turn}.`));
+    }
+    expect(histories[5]?.length).toBeLessThanOrEqual(9);
+    expect(histories[5]).not.toContainEqual({ role: 'user', content: 'Question 1?' });
+    expect(histories[5]?.at(-1)).toEqual({ role: 'user', content: 'Question 6?' });
+  });
+
+  it('keeps explicit repeat-after-me literal without consulting the model', async () => {
+    const respond = vi.fn(async (): Promise<LlmReply> => ({ say: 'not used', toolCalls: [] }));
+    const { heard, events, setup, prompt } = fixture({}, { enabled: true, respond });
+    setup();
+    prompt('Ada');
+    prompt('repeat after me: good morning, owl');
+    expect(heard.at(-1)).toBe('good morning, owl');
+    expect(actions(events).at(-1)).toBe('talk');
+    expect(respond).not.toHaveBeenCalled();
+  });
+
+  it('uses an in-character retry when the model has no answer instead of echoing the caller', async () => {
+    const llm: LlmClient = { enabled: true,
+      respond: async () => ({ say: '', toolCalls: [] }) };
+    const { heard, events, setup, prompt } = fixture({}, llm);
+    setup();
+    prompt('Ada');
+    prompt('Tell me why the sky is blue');
+    await vi.waitFor(() => expect(actions(events).at(-1)).toBe('talk'));
+    expect(heard.at(-1)).toMatch(/feathers|thoughts|ask me again/i);
+    expect(heard.at(-1)).not.toMatch(/sky is blue/i);
+  });
+
+  it('does not speak a model reply that only parrots the caller', async () => {
+    const llm: LlmClient = { enabled: true, respond: async () => ({
+      say: 'The purple moon is beautiful.', toolCalls: [],
+    }) };
+    const { heard, setup, prompt } = fixture({}, llm);
+    setup();
+    prompt('Ada');
+    prompt('The purple moon is beautiful.');
+    await vi.waitFor(() => expect(heard.at(-1)).toMatch(/feathers|ask me again/i));
+    expect(heard.at(-1)).not.toBe('The purple moon is beautiful.');
+  });
+
+  it('rejects a model echo of a short freeform utterance', async () => {
+    const llm: LlmClient = { enabled: true, respond: async () => ({
+      say: 'Moon flowers.', toolCalls: [],
+    }) };
+    const { heard, setup, prompt } = fixture({}, llm);
+    setup();
+    prompt('Ada');
+    prompt('Moon flowers');
+    await vi.waitFor(() => expect(heard.at(-1)).not.toMatch(/Nice to meet/i));
+    expect(heard.at(-1)).toMatch(/feathers|ask me again/i);
+    expect(heard.at(-1)).not.toBe('Moon flowers.');
+  });
+
+  it('treats bare yes and no as answers when the Owl just asked a question', async () => {
+    const histories: LlmTurn[][] = [];
+    const replies = [
+      'Would you like to hear a tiny owl story?',
+      'Shall I start with the moonlit forest?',
+      'Then I will tell you about the old lamp instead.',
+    ];
+    const llm: LlmClient = { enabled: true, respond: async (_system, history) => {
+      histories.push(history);
+      return { say: replies[histories.length - 1] ?? '', toolCalls: [] };
+    } };
+    const { heard, events, setup, prompt } = fixture({}, llm);
+    setup();
+    prompt('Ada');
+    prompt('Tell me a story');
+    await vi.waitFor(() => expect(heard.at(-1)).toBe(replies[0]));
+    prompt('yes');
+    await vi.waitFor(() => expect(heard.at(-1)).toBe(replies[1]));
+    prompt('no');
+    await vi.waitFor(() => expect(heard.at(-1)).toBe(replies[2]));
+    expect(actions(events).slice(-3)).toEqual(['talk', 'talk', 'talk']);
+    expect(histories[1]?.slice(-3)).toEqual([
+      { role: 'user', content: 'Tell me a story' },
+      { role: 'assistant', content: replies[0] },
+      { role: 'user', content: 'yes' },
+    ]);
+    expect(histories[2]?.at(-1)).toEqual({ role: 'user', content: 'no' });
+  });
+
+  it('keeps explicit yes and no gestures and keypad commands after an Owl question', async () => {
+    let modelCalls = 0;
+    const llm: LlmClient = { enabled: true, respond: async () => {
+      modelCalls++;
+      return { say: 'Would you like another story?', toolCalls: [] };
+    } };
+    const { events, setup, prompt, send } = fixture({}, llm);
+    setup();
+    prompt('Ada');
+    prompt('Tell me a story');
+    await vi.waitFor(() => expect(actions(events).at(-1)).toBe('talk'));
+    prompt('say yes');
+    expect(actions(events).at(-1)).toBe('yes');
+    send({ type: 'dtmf', digit: '2' });
+    expect(actions(events).at(-1)).toBe('no');
+    expect(modelCalls).toBe(1);
+    prompt('yes');
+    expect(actions(events).at(-1)).toBe('yes');
+  });
+
+  it('keeps a complete sentence when a model reply is too long for the spoken action', async () => {
+    const llm: LlmClient = { enabled: true, respond: async () => ({
+      say: 'Owls fly almost silently. ' + 'Their specialized feathers soften the rush of air. '.repeat(5),
+      toolCalls: [],
+    }) };
+    const { heard, setup, prompt } = fixture({}, llm);
+    setup();
+    prompt('Ada');
+    prompt('How do owls fly?');
+    await vi.waitFor(() => expect(heard.at(-1)).toMatch(/Owls fly/));
+    expect(heard.at(-1)).toBe('Owls fly almost silently.');
+  });
+
+  it('ends a stalled model turn within five seconds and gives a spoken retry', async () => {
+    vi.useFakeTimers();
+    let requestedSignal: AbortSignal | undefined;
+    const llm: LlmClient = { enabled: true, respond: async (_system, _history, _tools, options) => {
+      requestedSignal = options?.signal;
+      return new Promise<LlmReply>(() => {});
+    } };
+    const { heard, events, setup, prompt } = fixture({}, llm);
+    setup();
+    prompt('Ada');
+    prompt('Why is the moon so bright?');
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(requestedSignal?.aborted).toBe(true);
+    expect(actions(events).at(-1)).toBe('talk');
+    expect(heard.at(-1)).toMatch(/feathers|ask me again/i);
+  });
+
+  it('drops a stale model answer after a new action and aborts its request', async () => {
+    let resolveModel!: (reply: LlmReply) => void;
+    let requestedSignal: AbortSignal | undefined;
+    const llm: LlmClient = { enabled: true, respond: async (_system, _history, _tools, options) => {
+      requestedSignal = options?.signal;
+      return new Promise<LlmReply>(resolve => { resolveModel = resolve; });
+    } };
+    const { heard, events, setup, prompt } = fixture({}, llm);
+    setup();
+    prompt('Ada');
+    prompt('How do owls fly so quietly?');
+    expect(requestedSignal?.aborted).toBe(false);
+    prompt('tickle');
+    expect(requestedSignal?.aborted).toBe(true);
+    expect(actions(events).at(-1)).toBe('tickle');
+    resolveModel({ say: 'This answer arrived too late.', toolCalls: [] });
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(heard).not.toContain('This answer arrived too late.');
+    expect(actions(events)).not.toContain('talk');
+  });
+
+  it('drops a model answer when the phone socket closes', async () => {
+    let resolveModel!: (reply: LlmReply) => void;
+    let requestedSignal: AbortSignal | undefined;
+    const llm: LlmClient = { enabled: true, respond: async (_system, _history, _tools, options) => {
+      requestedSignal = options?.signal;
+      return new Promise<LlmReply>(resolve => { resolveModel = resolve; });
+    } };
+    const { heard, events, session, setup, prompt } = fixture({}, llm);
+    setup();
+    prompt('Ada');
+    prompt('Tell me about stars');
+    session.handleClose();
+    expect(requestedSignal?.aborted).toBe(true);
+    resolveModel({ say: 'The stars are bright.', toolCalls: [] });
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(heard).not.toContain('The stars are bright.');
+    expect(actions(events)).not.toContain('talk');
+  });
+
+  it('answers Portuguese conversation in Portuguese while preserving deterministic reactions', async () => {
+    let systemPrompt = '';
+    const llm: LlmClient = { enabled: true, respond: async (system) => {
+      systemPrompt = system;
+      return { say: 'Minhas penas me ajudam a voar em silêncio.', toolCalls: [] };
+    } };
+    const { heard, events, setup, prompt } = fixture({}, llm);
+    setup('CORUJA', 'CA-pt', 'pt-BR');
+    prompt('Meu nome é Lia');
+    prompt('Como você voa tão silenciosamente?');
+    await vi.waitFor(() => expect(heard.at(-1)).toBe('Minhas penas me ajudam a voar em silêncio.'));
+    expect(systemPrompt).toMatch(/portugu[eê]s|Portuguese|pt-BR/i);
+    prompt('faça cócegas');
+    expect(actions(events).at(-1)).toBe('tickle');
+  });
 });
 
 describe('deterministic Talking Owl speech map', () => {
@@ -244,15 +479,53 @@ describe('deterministic Talking Owl speech map', () => {
     expect(interpretOwlSpeech('mix some potion')).toMatchObject({ action: 'talk' });
   });
 
-  it('handles negation and echoes unmatched speech instead of executing a guessed gesture', () => {
-    expect(interpretOwlSpeech("Don't dance")).toMatchObject({ action: 'talk' });
+  it('routes ordinary speech and broad keyword mentions to conversation, not prop actions', () => {
+    expect(interpretOwlSpeech("Don't dance")).toMatchObject({ kind: 'conversation' });
     expect(interpretOwlSpeech("Don't hang up").kind).not.toBe('goodbye');
-    expect(interpretOwlSpeech('the purple moon is beautiful')).toMatchObject({ action: 'talk' });
-    expect(interpretOwlSpeech('What is your name?')).toMatchObject({ action: 'talk', line: expect.stringContaining('Talking Owl') });
-    expect(interpretOwlSpeech('Do you like cookies?')).not.toMatchObject({ kind: 'action', action: 'eat' });
-    expect(interpretOwlSpeech('Who are you?')).toMatchObject({ action: 'talk', line: expect.stringContaining('Talking Owl') });
+    expect(interpretOwlSpeech('the purple moon is beautiful')).toMatchObject({ kind: 'conversation' });
+    expect(interpretOwlSpeech('What is your name?')).toMatchObject({ kind: 'conversation' });
+    expect(interpretOwlSpeech('Do you like cookies?')).toMatchObject({ kind: 'conversation' });
+    expect(interpretOwlSpeech('Who are you?')).toMatchObject({ kind: 'conversation' });
+    expect(interpretOwlSpeech('I ate a cookie')).toMatchObject({ kind: 'conversation' });
+    expect(interpretOwlSpeech('tell me about tea')).toMatchObject({ kind: 'conversation' });
+    expect(interpretOwlSpeech('What happens if I mix berry and mint?')).toMatchObject({ kind: 'conversation' });
+    expect(interpretOwlSpeech('Tell me about the potion of life')).toMatchObject({ kind: 'conversation' });
+    expect(interpretOwlSpeech('Potion of life')).toMatchObject({ kind: 'conversation' });
+    expect(interpretOwlSpeech('eat a cookie')).toMatchObject({ kind: 'action', action: 'eat' });
+    expect(interpretOwlSpeech('tickle')).toMatchObject({ kind: 'action', action: 'tickle' });
+    expect(interpretOwlSpeech('tickle him')).toMatchObject({ kind: 'action', action: 'tickle' });
+    expect(interpretOwlSpeech('can you dance?')).toMatchObject({ kind: 'action', action: 'dance' });
     expect(interpretOwlSpeech('repeat after me: goodbye')).toMatchObject({ kind: 'action', action: 'talk', line: 'goodbye' });
     expect(interpretOwlSpeech('What does goodbye mean?').kind).not.toBe('goodbye');
+  });
+
+  it('recognizes natural direct reaction requests without treating stories as commands', () => {
+    const direct: [string, OwlAction][] = [
+      ['Can you laugh for me?', 'laugh'],
+      ['Can you burp for me?', 'burp'],
+      ['Give me a wave', 'wave'],
+      ['I want to tickle you', 'tickle'],
+    ];
+    for (const [spoken, action] of direct) {
+      expect(interpretOwlSpeech(spoken)).toMatchObject({ kind: 'action', action });
+    }
+    for (const spoken of [
+      'I heard an owl laugh for me',
+      'Burps can be funny',
+      'I want to tell you about a wave',
+      'I want to tickle you with a story about feathers',
+    ]) {
+      expect(interpretOwlSpeech(spoken)).toMatchObject({ kind: 'conversation' });
+    }
+  });
+
+  it('explains how to supply words when asked to repeat without a phrase', () => {
+    expect(interpretOwlSpeech('repeat after me')).toMatchObject({
+      kind: 'help', line: expect.stringContaining('repeat after me, hello little owl'),
+    });
+    expect(interpretOwlSpeech('repita depois de mim', 0, 'pt-BR')).toMatchObject({
+      kind: 'help', line: expect.stringContaining('repita depois de mim, olá corujinha'),
+    });
   });
 
   it('maps Portuguese reactions and instructions without using English TTS lines', () => {
@@ -277,9 +550,13 @@ describe('deterministic Talking Owl speech map', () => {
       .toMatchObject({ action: 'mix', reagents: ['mint', 'amber'] });
     expect(interpretOwlSpeech('misture âmbar e morango', 0, 'pt-BR'))
       .toMatchObject({ action: 'mix', reagents: ['amber', 'berry'] });
-    expect(interpretOwlSpeech('não dance', 0, 'pt-BR')).toMatchObject({ action: 'talk' });
+    expect(interpretOwlSpeech('não dance', 0, 'pt-BR')).toMatchObject({ kind: 'conversation' });
     expect(interpretOwlSpeech('Quem é você?', 0, 'pt-BR'))
-      .toMatchObject({ action: 'talk', line: expect.stringContaining('Coruja Falante') });
+      .toMatchObject({ kind: 'conversation' });
+    expect(interpretOwlSpeech('Eu comi um biscoito', 0, 'pt-BR'))
+      .toMatchObject({ kind: 'conversation' });
+    expect(interpretOwlSpeech('me conte sobre chá', 0, 'pt-BR'))
+      .toMatchObject({ kind: 'conversation' });
     expect(interpretOwlSpeech('repita depois de mim: tchau', 0, 'pt-BR'))
       .toMatchObject({ kind: 'action', action: 'talk', line: 'tchau' });
     expect(interpretOwlSpeech('O que significa tchau?', 0, 'pt-BR').kind).not.toBe('goodbye');

@@ -33,14 +33,20 @@ describe('NullLlmClient', () => {
 describe('OpenAiClient', () => {
   it('posts to the completions endpoint with auth + returns the parsed reply', async () => {
     let seenUrl = '', seenAuth = '';
+    let seenBody: Record<string, unknown> | undefined;
     const fakeFetch = (async (url: string, init: RequestInit) => {
       seenUrl = String(url); seenAuth = String((init.headers as Record<string, string>)['Authorization']);
+      seenBody = JSON.parse(String(init.body)) as Record<string, unknown>;
       return { ok: true, json: async () => ({ choices: [{ message: { content: 'Hi racer!' } }] }) } as Response;
     }) as unknown as typeof fetch;
     const c = new OpenAiClient({ apiKey: 'sk-test', model: 'gpt-x', fetchImpl: fakeFetch });
     const r = await c.respond('sys', [{ role: 'user', content: 'hello' }], []);
     expect(seenUrl).toContain('/chat/completions');
     expect(seenAuth).toBe('Bearer sk-test');
+    expect(seenBody?.messages).toEqual([
+      { role: 'system', content: 'sys' }, { role: 'user', content: 'hello' },
+    ]);
+    expect(seenBody).not.toHaveProperty('tool_choice');
     expect(r.say).toBe('Hi racer!');
   });
   it('requires the declared resolver tool for a semantic game command', async () => {

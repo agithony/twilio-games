@@ -11,10 +11,13 @@ const packageManifest = JSON.parse(readFileSync(new URL('../package.json', impor
 };
 
 describe('deployment rollback safety', () => {
-  it('pins the requested English Relay voice while keeping Portuguese independently localized', () => {
+  it('pins separate English Relay voices for Owl and other games while keeping Portuguese localized', () => {
     expect(workflow).toContain('CR_TTS_VOICE: SA7eD52NRr8WAehitVt1');
+    expect(workflow).toContain("CR_TTS_VOICE_OWL: ${{ vars.CR_TTS_VOICE_OWL || 'r1KmysJdVYZjJCm4mL3b-flash_v2' }}");
     expect(workflow).toContain('CR_TTS_VOICE_PT_BR: ${{ vars.CR_TTS_VOICE_PT_BR }}');
     expect(containerApp).toContain('value: "${CR_TTS_VOICE}"');
+    expect(containerApp).toContain('value: "${CR_TTS_VOICE_OWL}"');
+    expect(workflow).toContain('${CR_TTS_VOICE} ${CR_TTS_VOICE_OWL} ${CR_TTS_VOICE_PT_BR}');
   });
 
   it('requires the semantic interpreter key before deploying conversational voice games', () => {

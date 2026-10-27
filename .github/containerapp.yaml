@@ -177,10 +177,13 @@ properties:
           # Direct signed webhooks own SMS/WhatsApp game commands; TAC enriches Conversation Memory.
           - name: ARCADE_TAC_ENABLED
             value: "true"
-          # English ElevenLabs voiceId shared by every game's Conversation Relay session.
-          # The deployment workflow pins the requested voice; local runs can override CR_TTS_VOICE.
+          # English ElevenLabs voice for Conversation Relay games other than Talking Owl.
+          # The deployment workflow pins this voice; local runs can override CR_TTS_VOICE.
           - name: CR_TTS_VOICE
             value: "${CR_TTS_VOICE}"
+          # Talking Owl's separate English voice leaves the other games unchanged.
+          - name: CR_TTS_VOICE_OWL
+            value: "${CR_TTS_VOICE_OWL}"
           # Optional Portuguese-specific ElevenLabs voice. Empty uses Relay's pt-BR default.
           - name: CR_TTS_VOICE_PT_BR
             value: "${CR_TTS_VOICE_PT_BR}"
