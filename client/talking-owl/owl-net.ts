@@ -19,6 +19,7 @@ export class OwlConnection {
   private backoffMs = 500;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private clockTimer: ReturnType<typeof setInterval> | null = null;
+  private roomAckTimer: ReturnType<typeof setTimeout> | null = null;
   private stateListener?: (state: OwlState) => void;
   private eventsListener?: (events: readonly OwlEvent[]) => void;
   private errorListener?: (code: string, message: string) => void;
@@ -42,8 +43,10 @@ export class OwlConnection {
     this.stopped = true;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     if (this.clockTimer) clearInterval(this.clockTimer);
+    if (this.roomAckTimer) clearTimeout(this.roomAckTimer);
     this.reconnectTimer = null;
     this.clockTimer = null;
+    this.roomAckTimer = null;
     try { this.socket?.close(); } catch { /* The socket may already be closed. */ }
     this.connectionListener?.('closed');
   }
@@ -52,6 +55,7 @@ export class OwlConnection {
     if (this.stopped) return;
     const generation = ++this.generation;
     const socket = this.socket = new WebSocket(withDisplaySession(this.url));
+    let roomAcknowledged = false;
     this.connectionListener?.(generation === 1 ? 'connecting' : 'reconnecting');
     socket.onopen = () => {
       if (this.stopped || generation !== this.generation) return;
@@ -62,7 +66,12 @@ export class OwlConnection {
       this.send(socket, { type: 'spectate', roomCode: this.roomCode, locale: this.locale });
       if (this.clockTimer) clearInterval(this.clockTimer);
       this.clockTimer = setInterval(() => this.send(socket, { type: 'clock_sync', clientSentAtMs: Date.now() }), 30_000);
-      this.connectionListener?.('connected');
+      // A raw socket can be open while the server has not accepted spectate. Keep the call
+      // card offline until the authoritative room snapshot arrives, and retry a lost subscribe.
+      if (this.roomAckTimer) clearTimeout(this.roomAckTimer);
+      this.roomAckTimer = setTimeout(() => {
+        if (!roomAcknowledged && socket.readyState === WebSocket.OPEN) socket.close(4000, 'room subscription timed out');
+      }, 8_000);
     };
     socket.onmessage = messageEvent => {
       if (this.stopped || generation !== this.generation) return;
@@ -71,7 +80,14 @@ export class OwlConnection {
       catch { this.errorListener?.('bad_json', 'Talking Owl sent an unreadable response.'); return; }
       if (!value || typeof value !== 'object' || !('type' in value)) return;
       const message = value as OwlServerMessage;
-      if (message.type === 'owl_state' && message.roomCode === this.roomCode) {
+      if (message.type === 'owl_state'
+        && message.roomCode.trim().toUpperCase() === this.roomCode.trim().toUpperCase()) {
+        if (!roomAcknowledged) {
+          roomAcknowledged = true;
+          if (this.roomAckTimer) clearTimeout(this.roomAckTimer);
+          this.roomAckTimer = null;
+          this.connectionListener?.('connected');
+        }
         this.stateListener?.(message);
       } else if (message.type === 'owl_events' && Array.isArray(message.events)) {
         this.eventsListener?.(message.events);
@@ -82,7 +98,9 @@ export class OwlConnection {
     socket.onclose = event => {
       if (this.stopped || generation !== this.generation) return;
       if (this.clockTimer) clearInterval(this.clockTimer);
+      if (this.roomAckTimer) clearTimeout(this.roomAckTimer);
       this.clockTimer = null;
+      this.roomAckTimer = null;
       if (event.code === 4001) {
         this.connectionListener?.('closed');
         return;

@@ -61,7 +61,7 @@ describe('Arcade browser UI', () => {
     expect(homeScript).toContain("if(standaloneMode){renderStandaloneLauncher();show('standalone');}");
     expect(homeScript).toContain('orderByConfiguredIds(PLAYABLE_ARCADE_GAMES,standaloneGameOrder)');
     for (const video of ['vr-demo.mp4','vm-demo.mp4','vf-demo.mp4']) expect(homeScript).toContain(video);
-    expect(homeScript).toContain('vo-demo.gif');
+    expect(homeScript).toContain('vo-demo.mp4');
     expect(homeScript).not.toContain('Arcade station mode is off');
     expect(homeScript).not.toContain('Joining unavailable');
     const standaloneRenderer=/function renderStandaloneLauncher\(\)[\s\S]*?\n}\n/.exec(homeScript)?.[0]??'';

@@ -2129,8 +2129,10 @@ export class HttpServer {
     const live = this.eligibleStandaloneVoiceConnections(roomCode);
     if (!live.length) return null;
     if (live.length === 1) return live[0]!.game;
-    // Multiple accepted displays are one handoff only when they identify the same tab.
-    // Separate tabs stay ambiguous even if both happen to show the same game.
+    // Owl displays are spectators of one authoritative room with one caller. Several Owl tabs
+    // can safely show that same call even when each tab has its own session ID.
+    if (live[0]!.game === 'owl' && live.every(candidate => candidate.game === 'owl')) return 'owl';
+    // Different games are one handoff only when they identify the same tab.
     const sessionId = live[0]!.sessionId;
     if (!sessionId || live.some(candidate => candidate.sessionId !== sessionId)) return null;
     return live.reduce((latest, candidate) => candidate.order > latest.order ? candidate : latest).game;
@@ -2278,6 +2280,7 @@ export class HttpServer {
       let completed = false;
       let settled = !initial;
       let expectedNavigationSession: string | null = null;
+      let expectedNavigationGame: MountedVoiceGame | null = null;
       let settleTimer: ReturnType<typeof setTimeout> | null = null;
       let timeout: ReturnType<typeof setTimeout>;
       const startedAtMs = Date.now();
@@ -2289,16 +2292,26 @@ export class HttpServer {
         this.standaloneVoiceRouteWaiters.delete(check);
         resolve(game);
       };
+      const rememberNavigation = (pending: { sessionId: string | null } | null) => {
+        if (!pending?.sessionId || expectedNavigationSession) return;
+        expectedNavigationSession = pending.sessionId;
+        expectedNavigationGame = this.standaloneNavigationIntents.get(pending.sessionId)?.game ?? null;
+      };
       const gameForExpectedSession = (): MountedVoiceGame | null => {
         const game = this.recentVoiceGame(roomCode);
         if (!game || !expectedNavigationSession) return game;
         const accepted = this.eligibleStandaloneVoiceConnections(roomCode);
-        return accepted.length && accepted.every(candidate => candidate.sessionId === expectedNavigationSession)
-          ? game : null;
+        if (!accepted.length) return null;
+        if (accepted.every(candidate => candidate.sessionId === expectedNavigationSession)) return game;
+        // All Owl tabs see the same voice-owned room. If one Owl tab drops during its
+        // reload, another accepted Owl spectator can still serve this call.
+        return game === 'owl' && expectedNavigationGame === 'owl'
+          && accepted.every(candidate => candidate.game === 'owl')
+          ? 'owl' : null;
       };
       const check = () => {
         const pendingNavigationSession = this.pendingStandaloneNavigationSession(roomCode);
-        if (pendingNavigationSession?.sessionId) expectedNavigationSession ??= pendingNavigationSession.sessionId;
+        rememberNavigation(pendingNavigationSession);
         const game = gameForExpectedSession();
         if (!settled && game === initial) return;
         if (game && !this.hasNewerUnboundStandaloneDisplay(roomCode)
@@ -2306,7 +2319,7 @@ export class HttpServer {
       };
       const onDeadline = () => {
         const pendingNavigationSession = this.pendingStandaloneNavigationSession(roomCode);
-        if (pendingNavigationSession?.sessionId) expectedNavigationSession ??= pendingNavigationSession.sessionId;
+        rememberNavigation(pendingNavigationSession);
         const game = gameForExpectedSession();
         if (game && !this.hasNewerUnboundStandaloneDisplay(roomCode)
           && !pendingNavigationSession) {
@@ -4677,7 +4690,9 @@ export class HttpServer {
         ? stationRoute.game === 'monsters' ? 'battle' : stationRoute.game
         : await this.waitForStandaloneVoiceGame(roomCode);
       if(!voiceGame){
-        console.warn(`[voice] no unambiguous standalone display for room=${roomCode}`);
+        const accepted = this.eligibleStandaloneVoiceConnections(roomCode);
+        const games = [...new Set(accepted.map(display => display.game))].join(',') || 'none';
+        console.warn(`[voice] no unambiguous standalone display for room=${roomCode}; accepted=${accepted.length}; games=${games}`);
         res.writeHead(200,VOICE_XML_HEADERS).end(unavailableXml);
         return;
       }
@@ -4962,6 +4977,32 @@ export class HttpServer {
         ?? this.concierge.handle({ from, body: smsBody, messageSid })
       ));
       res.writeHead(200, { 'Content-Type': 'text/xml' }).end(twimlMessage(reply));
+      return;
+    }
+    // The Owl call card uses the same accepted-display rules as /voice/incoming. A WebSocket
+    // opening is not enough: the display must have completed its room subscription and the
+    // shared line must resolve to Owl without an active game handoff.
+    if (path === '/api/voice/standalone-status' && req.method === 'GET') {
+      const query = new URL(req.url ?? path, 'http://localhost').searchParams;
+      const roomCode = (query.get('room') ?? DEFAULT_ROOM).trim().toUpperCase();
+      if (query.get('game') !== 'owl' || roomCode !== DEFAULT_ROOM) {
+        res.writeHead(400, { 'Cache-Control': 'no-store' }).end('invalid standalone game or room');
+        return;
+      }
+      const available = this.standaloneVoiceEnabled
+        && !(this.arcadeApi?.requiresStationVoiceAssignment() ?? false)
+        && this.arcadeApi?.standaloneVoiceAvailable?.() !== false
+        && this.arcadeApi?.standaloneGameEnabled?.('owl') !== false;
+      const accepted = available ? this.eligibleStandaloneVoiceConnections(roomCode) : [];
+      const selectedGame = accepted.length ? this.recentVoiceGame(roomCode) : null;
+      const reason = !available ? 'voice_unavailable'
+        : !accepted.length ? 'display_offline'
+          : !selectedGame ? 'multiple_games'
+            : selectedGame !== 'owl' ? 'another_game'
+              : this.hasNewerUnboundStandaloneDisplay(roomCode)
+                || this.pendingStandaloneNavigationSession(roomCode) ? 'switching' : 'ready';
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+      res.end(JSON.stringify({ ready: reason === 'ready', reason }));
       return;
     }
     // ---- client bootstrap config (public, unauthenticated): the phone number to call to join, so

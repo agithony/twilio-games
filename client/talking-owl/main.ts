@@ -63,6 +63,12 @@ document.body.dataset.displayMode = String(displayMode);
 
 const liveCopy = isPortuguese ? {
   eyebrow: 'Jogo por telefone ao vivo', connecting: 'Conectando…', connected: 'Ao vivo', reconnecting: 'Reconectando…', closed: 'Sem conexão',
+  lineBusy: 'Outra partida aberta', lineWaiting: 'Preparando…',
+  preparingTitle: 'Preparando a ligação', unavailableTitle: 'Ligação indisponível',
+  preparingDescription: 'O QR aparece quando a tela do Owl estiver pronta para receber a ligação.',
+  multipleGamesDescription: 'Há outro jogo aberto nesta linha. Feche as outras telas de jogo e tente novamente.',
+  anotherGameDescription: 'Outro jogo está usando esta linha. Feche a tela dele para ligar para o Owl.',
+  voiceUnavailableDescription: 'O jogo por telefone está indisponível agora.',
   waitingTitle: 'Ligue para o Talking Owl', waitingDescription: 'Escaneie para ligar. O Owl vai perguntar seu nome.',
   namingTitle: 'Quem está ligando?', namingDescription: 'O Owl está pedindo seu nome pelo telefone.',
   playingTitle: 'A conversa começou', playingDescription: 'Fale, faça perguntas e peça ao Owl para reagir.',
@@ -74,6 +80,12 @@ const liveCopy = isPortuguese ? {
   result: (name: string, count: number) => `${name} fez o Owl reagir ${count} ${count === 1 ? 'vez' : 'vezes'}.`,
 } : {
   eyebrow: 'A live phone game', connecting: 'Connecting…', connected: 'Live', reconnecting: 'Reconnecting…', closed: 'Offline',
+  lineBusy: 'Another game open', lineWaiting: 'Getting ready…',
+  preparingTitle: 'Getting Owl ready', unavailableTitle: 'Call unavailable',
+  preparingDescription: 'The QR code appears when Owl is ready to take your call.',
+  multipleGamesDescription: 'Another live game is open on this line. Close other game displays, then call Owl.',
+  anotherGameDescription: 'Another game is using this phone line. Close its display to call Owl.',
+  voiceUnavailableDescription: 'Phone play is unavailable right now.',
   waitingTitle: 'Call Talking Owl', waitingDescription: 'Scan to call. Owl will ask your name.',
   namingTitle: 'Who is calling?', namingDescription: 'Owl is asking your name on the phone.',
   playingTitle: 'The conversation is live', playingDescription: 'Talk, ask questions, and invite Owl to react.',
@@ -151,12 +163,16 @@ let remoteNextActionAt = 0;
 let latestOwlState: OwlState | null = null;
 let owlConnection: OwlConnection | null = null;
 let owlConnectionState: OwlConnectionState = 'connecting';
+type OwlLineReason = 'checking' | 'ready' | 'voice_unavailable' | 'display_offline'
+  | 'multiple_games' | 'another_game' | 'switching';
+let owlLineReason: OwlLineReason = 'checking';
 let liveTransportError = '';
 let lastOwlGeneration = -1;
 let lastOwlSequence = 0;
 let phoneNumber = '';
 let phoneQrGeneration = 0;
 let stopVoiceNumberUpdates: (() => void) | null = null;
+let stopOwlLineUpdates: (() => void) | null = null;
 let liveCardOpen = true;
 let liveVisualPhase: 'waiting' | 'naming' | 'playing' | 'finished' | null = null;
 let hasRenderedFirstFrame = false;
@@ -712,6 +728,51 @@ function updateVoiceNumber(number: string): void {
   });
 }
 
+function watchOwlLine(): () => void {
+  let stopped = false;
+  let pending = false;
+  let activeRequest: AbortController | null = null;
+  const knownReasons = new Set<OwlLineReason>([
+    'ready', 'voice_unavailable', 'display_offline', 'multiple_games', 'another_game', 'switching',
+  ]);
+  const refresh = async () => {
+    if (stopped || pending) return;
+    pending = true;
+    const controller = activeRequest = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 5_000);
+    let next: OwlLineReason = 'checking';
+    try {
+      const query = new URLSearchParams({ game: 'owl', room: roomCode });
+      const response = await fetch(`/api/voice/standalone-status?${query}`, {
+        cache: 'no-store', signal: controller.signal,
+      });
+      if (response.ok) {
+        const status = await response.json() as { ready?: unknown; reason?: unknown };
+        if (typeof status.reason === 'string' && knownReasons.has(status.reason as OwlLineReason)) {
+          next = status.reason as OwlLineReason;
+          if (next === 'ready' && status.ready !== true) next = 'checking';
+        }
+      }
+    } catch { /* A transient request failure is retried by the poll below. */ }
+    finally {
+      window.clearTimeout(timeout);
+      activeRequest = null;
+      pending = false;
+    }
+    if (!stopped && next !== owlLineReason) {
+      owlLineReason = next;
+      renderLiveCallUI();
+    }
+  };
+  void refresh();
+  const polling = window.setInterval(() => void refresh(), 2_000);
+  return () => {
+    stopped = true;
+    window.clearInterval(polling);
+    activeRequest?.abort();
+  };
+}
+
 function visualLivePhase(): 'waiting' | 'naming' | 'playing' | 'finished' {
   if (latestOwlState?.phase === 'finished') return 'finished';
   if (latestOwlState?.caller?.connected && !latestOwlState.caller.nameConfirmed) return 'naming';
@@ -724,6 +785,8 @@ function visualLivePhase(): 'waiting' | 'naming' | 'playing' | 'finished' {
 function renderLiveCallUI(): void {
   if (!displayMode) return;
   const phase = visualLivePhase();
+  const lineReady = stationManaged || (owlConnectionState === 'connected' && owlLineReason === 'ready');
+  const lineBusy = owlLineReason === 'multiple_games' || owlLineReason === 'another_game';
   if (liveVisualPhase !== phase) {
     liveVisualPhase = phase;
     liveCardOpen = stationManaged ? phase === 'naming' || phase === 'finished' : phase !== 'playing';
@@ -731,14 +794,17 @@ function renderLiveCallUI(): void {
   const caller = latestOwlState?.caller;
   const name = caller?.nameConfirmed ? caller.name : null;
   liveCallCard.dataset.phase = phase;
-  liveCallCard.dataset.connection = owlConnectionState;
+  liveCallCard.dataset.connection = !stationManaged && lineBusy ? 'closed' : owlConnectionState;
   liveCallCard.hidden = !liveCardOpen;
   liveCallChip.hidden = !stationManaged && phase !== 'playing';
-  liveConnection.textContent = liveCopy[owlConnectionState];
+  liveConnection.textContent = !stationManaged && lineBusy ? liveCopy.lineBusy
+    : !stationManaged && owlConnectionState === 'connected' && !lineReady
+      ? liveCopy.lineWaiting : liveCopy[owlConnectionState];
   liveCallEyebrow.textContent = liveCopy.eyebrow;
   liveCallNumberLabel.textContent = liveCopy.numberLabel;
-  liveCallDial.hidden = stationManaged || phase === 'naming' || phase === 'playing' || !!liveTransportError;
-  liveCallSteps.hidden = stationManaged || phase !== 'waiting' || !!liveTransportError;
+  liveCallDial.hidden = stationManaged || phase === 'naming' || phase === 'playing'
+    || !!liveTransportError || !lineReady;
+  liveCallSteps.hidden = stationManaged || phase !== 'waiting' || !!liveTransportError || !lineReady;
   liveCallResult.hidden = phase !== 'finished' || !latestOwlState?.result;
   if (latestOwlState?.result && phase === 'finished') {
     liveCallResult.textContent = liveCopy.result(latestOwlState.result.name, latestOwlState.result.interactionCount);
@@ -748,6 +814,13 @@ function renderLiveCallUI(): void {
     liveCallDescription.textContent = liveTransportError;
     liveCallCard.hidden = false;
     liveCallChip.hidden = true;
+  } else if (!stationManaged && !lineReady && (phase === 'waiting' || phase === 'finished')) {
+    liveCallTitle.textContent = owlLineReason === 'voice_unavailable'
+      ? liveCopy.unavailableTitle : liveCopy.preparingTitle;
+    liveCallDescription.textContent = owlLineReason === 'multiple_games' ? liveCopy.multipleGamesDescription
+      : owlLineReason === 'another_game' ? liveCopy.anotherGameDescription
+        : owlLineReason === 'voice_unavailable' ? liveCopy.voiceUnavailableDescription
+          : liveCopy.preparingDescription;
   } else if (phase === 'naming') {
     liveCallTitle.textContent = liveCopy.namingTitle;
     liveCallDescription.textContent = liveCopy.namingDescription;
@@ -1103,7 +1176,10 @@ if (displayMode) {
       if (step?.lastChild) step.lastChild.textContent = ` ${label}`;
     }
   }
-  if (!stationManaged) stopVoiceNumberUpdates = watchVoiceNumber(locale, updateVoiceNumber);
+  if (!stationManaged) {
+    stopVoiceNumberUpdates = watchVoiceNumber(locale, updateVoiceNumber);
+    stopOwlLineUpdates = watchOwlLine();
+  }
   connectLiveRoom();
   renderLiveCallUI();
 }
@@ -1111,6 +1187,7 @@ if (displayMode) {
 addEventListener('pagehide', () => {
   phoneQrGeneration += 1;
   stopVoiceNumberUpdates?.();
+  stopOwlLineUpdates?.();
   owlConnection?.close();
 }, { once: true });
 

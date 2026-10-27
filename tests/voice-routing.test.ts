@@ -202,8 +202,11 @@ function stationChessRoute(roomCode: string): NonNullable<StationVoiceRoute> {
   };
 }
 
-async function connectOwlDisplay(port: number, roomCode: string, authenticated = false) {
-  const display = new WebSocket(`ws://127.0.0.1:${port}/ws/owl?display=1`, {
+async function connectOwlDisplay(port: number, roomCode: string, authenticated = false,
+  displaySessionId?: string) {
+  const url = new URL(`ws://127.0.0.1:${port}/ws/owl?display=1`);
+  if (displaySessionId) url.searchParams.set('displaySessionId', displaySessionId);
+  const display = new WebSocket(url, {
     headers: { Origin: 'http://localhost' },
   });
   const states: Array<Record<string, any>> = [];
@@ -802,6 +805,10 @@ describe('Arcade Voice routing', () => {
     const racer = await connectDisplay('game', 'lobby', '11111111-1111-4111-8111-111111111111');
     const monsters = await connectDisplay('battle', 'battle_state', '22222222-2222-4222-8222-222222222222');
     try {
+      const status = await (await fetch(
+        `http://127.0.0.1:${port}/api/voice/standalone-status?game=owl&room=4821`,
+      )).json();
+      expect(status).toMatchObject({ ready: false, reason: 'multiple_games' });
       const xml = await (await incomingCall(port, { callSid: 'CA-distinct-displays' })).text();
       expect(xml).toContain('voice play is unavailable');
       expect(xml).not.toContain('<ConversationRelay');
@@ -1254,6 +1261,77 @@ describe('Arcade Voice routing', () => {
       display.close();
     }
   });
+
+  it('routes two separate Owl display tabs to their shared room and reports when the line is ready', async () => {
+    const { port } = await harness({ active: false, standaloneVoiceEnabled: true });
+    const statusUrl = `http://127.0.0.1:${port}/api/voice/standalone-status?game=owl&room=4821`;
+    expect(await (await fetch(statusUrl)).json()).toMatchObject({ ready: false, reason: 'display_offline' });
+    const first = await connectOwlDisplay(port, '4821', false,
+      '11111111-1111-4111-8111-111111111111');
+    const second = await connectOwlDisplay(port, '4821', false,
+      '22222222-2222-4222-8222-222222222222');
+    try {
+      expect(await (await fetch(statusUrl)).json()).toMatchObject({ ready: true, reason: 'ready' });
+      const xml = await (await incomingCall(port, { callSid: 'CA-two-owl-displays' })).text();
+      expect(xml).toContain('<Parameter name="game" value="owl"');
+      expect(xml).toContain('<ConversationRelay');
+    } finally {
+      first.display.close();
+      second.display.close();
+    }
+  });
+
+  it('keeps an Owl call routable while one of two Owl display tabs reloads', async () => {
+    const { port } = await harness({ active: false, standaloneVoiceEnabled: true });
+    const firstId = '11111111-1111-4111-8111-111111111111';
+    const secondId = '22222222-2222-4222-8222-222222222222';
+    await mkdir(path.join(directory!, 'client'), { recursive: true });
+    await writeFile(path.join(directory!, 'client', 'talking-owl.html'), '<!doctype html><title>Owl</title>');
+    const first = await connectOwlDisplay(port, '4821', false, firstId);
+    const second = await connectOwlDisplay(port, '4821', false, secondId);
+    let reloaded: WebSocket | null = null;
+    try {
+      const page = await fetch(`http://127.0.0.1:${port}/talking-owl.html?display=1&room=4821&displaySessionId=${firstId}`);
+      expect(page.status).toBe(200);
+      const call = incomingCall(port, { callSid: 'CA-owl-during-reload' });
+      await new Promise(resolve => setTimeout(resolve, 40));
+      reloaded = (await connectOwlDisplay(port, '4821', false, firstId)).display;
+      const xml = await (await call).text();
+      expect(xml).toContain('<Parameter name="game" value="owl"');
+    } finally {
+      first.display.close();
+      second.display.close();
+      reloaded?.close();
+    }
+  }, 15_000);
+
+  it('routes an Owl call through a surviving tab when a reloading tab disconnects', async () => {
+    const { port } = await harness({ active: false, standaloneVoiceEnabled: true });
+    const firstId = '11111111-1111-4111-8111-111111111111';
+    const secondId = '22222222-2222-4222-8222-222222222222';
+    await mkdir(path.join(directory!, 'client'), { recursive: true });
+    await writeFile(path.join(directory!, 'client', 'talking-owl.html'), '<!doctype html><title>Owl</title>');
+    const first = await connectOwlDisplay(port, '4821', false, firstId);
+    const second = await connectOwlDisplay(port, '4821', false, secondId);
+    try {
+      const page = await fetch(`http://127.0.0.1:${port}/talking-owl.html?display=1&room=4821&displaySessionId=${firstId}`);
+      expect(page.status).toBe(200);
+      const call = incomingCall(port, { callSid: 'CA-owl-reload-disconnected' });
+      await new Promise(resolve => setTimeout(resolve, 40));
+      const closed = new Promise<void>(resolve => first.display.once('close', () => resolve()));
+      first.display.close();
+      await closed;
+      const status = await (await fetch(
+        `http://127.0.0.1:${port}/api/voice/standalone-status?game=owl&room=4821`,
+      )).json();
+      expect(status).toMatchObject({ ready: true, reason: 'ready' });
+      const xml = await (await call).text();
+      expect(xml).toContain('<Parameter name="game" value="owl"');
+    } finally {
+      first.display.close();
+      second.display.close();
+    }
+  }, 15_000);
 
   it('starts and completes a station Owl match using its registered caller name', async () => {
     const roomCode = 'OWL-STATION';

@@ -137,19 +137,24 @@ describe('home preview media and standalone catalog', () => {
     expect(html).not.toContain('/video/vc-demo.mp4');
   });
 
-  it('ships an animated Talking Owl card preview captured from the game', () => {
-    const animated = readFileSync(new URL('../client/public/video/vo-demo.gif', import.meta.url));
-    const still = readFileSync(new URL('../client/public/video/vo-poster.png', import.meta.url));
-    expect(animated.subarray(0, 6).toString()).toBe('GIF89a');
-    expect(animated.readUInt16LE(6)).toBe(512);
-    expect(animated.readUInt16LE(8)).toBe(288);
-    expect((animated.toString('hex').match(/21f904/g) ?? []).length).toBeGreaterThan(10);
-    expect(animated.length).toBeLessThan(2 * 1024 * 1024);
-    expect(still.subarray(1, 4).toString()).toBe('PNG');
-    expect(still.readUInt32BE(16)).toBe(512);
-    expect(still.readUInt32BE(20)).toBe(288);
-    expect(home).toContain("owl: { animated: '/video/vo-demo.gif', still: '/video/vo-poster.png' }");
-    expect(home).toContain('data-poster="${image.still}"');
+  it('ships a full-resolution Talking Owl card video with a compact poster', () => {
+    const animated = readFileSync(new URL('../client/public/video/vo-demo.mp4', import.meta.url));
+    const still = readFileSync(new URL('../client/public/video/vo-poster.webp', import.meta.url));
+    const boxes = mp4TopLevelBoxes(animated);
+    expect(boxes.indexOf('moov')).toBeLessThan(boxes.indexOf('mdat'));
+    const metadata = mp4VideoMetadata(animated);
+    expect(metadata).toMatchObject({ codec: 'avc1', width: 1280, height: 692 });
+    expect(metadata.framesPerSecond).toBeCloseTo(24, 3);
+    expect(metadata.handlers).not.toContain('soun');
+    expect(animated.length).toBeLessThan(3 * 1024 * 1024);
+    expect(still.subarray(0, 4).toString()).toBe('RIFF');
+    expect(still.subarray(8, 16).toString()).toBe('WEBPVP8 ');
+    expect(still.readUInt16LE(26) & 0x3fff).toBe(1280);
+    expect(still.readUInt16LE(28) & 0x3fff).toBe(692);
+    expect(still.length).toBeLessThan(140 * 1024);
+    expect(home).toContain("owl: '/video/vo-demo.mp4'");
+    expect(home).toContain("owl: '/video/vo-poster.webp'");
+    expect(home).toContain('poster="${poster}"');
     expect(home).toContain('previewConnection?.saveData');
   });
 
