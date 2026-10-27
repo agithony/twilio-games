@@ -1,6 +1,6 @@
 # Activation Analytics
 
-The private `/analytics` dashboard reports engagement for all six playable titles: Voice Racer, Voice Monsters, Voice Fighter, Voice Karaoke, Voice Trivia, and Voice Chess. It provides summary metrics, UTC daily trends, per-game performance, popular selections, generated takeaways, and downloadable PDF reports.
+The private `/analytics` dashboard reports engagement for all seven playable titles: Voice Racer, Voice Monsters, Voice Fighter, Voice Karaoke, Voice Trivia, Voice Chess, and Talking Owl. It provides summary metrics, UTC daily trends, per-game performance, popular selections, generated takeaways, and downloadable PDF reports.
 
 ## Authentication Setup
 
@@ -85,7 +85,7 @@ The store hashes participant-slot keys with SHA-256 and a server-side salt befor
 
 A Trivia session starts when a positive loading generation has a selected category and first reaches `loading`, `countdown`, `question`, or `reveal`. Its active play time therefore begins at the first observed qualifying phase, normally `loading`, not at the first answer. Results for that same generation record one completed session. Replacing a live generation or observing it leave those phases without matching results records one abandoned session; explicit station/room abort follows the same rule. A loading retry abandons the prior generation and starts the replacement generation. A temporary caller disconnect does not itself finish the session, and repeated state or abort notifications remain idempotent. Legacy prompt/cue phase values remain recognized for compatibility but normal room flow does not emit them.
 
-Each tracked generation increments `selections.categories` once, including abandoned generations and each side of a loading retry. Concrete and `mixed` category IDs are retained as aggregate counts. The `game=trivia` dashboard/API/PDF filter applies to summary, trend, selection, and insight calculations, while the report's `games` object still contains all six titles for the requested dates.
+Each tracked generation increments `selections.categories` once, including abandoned generations and each side of a loading retry. Concrete and `mixed` category IDs are retained as aggregate counts. The `game=trivia` dashboard/API/PDF filter applies to summary, trend, selection, and insight calculations, while the report's `games` object still contains all seven titles for the requested dates.
 
 Trivia `voiceCommands` counts only accepted semantic mutations: a required name confirmation, each accepted category vote or revision, each accepted final answer, and explicit play-again from results. Help, rejected or interim recognition, question prompts, browser/display messages, and automatic phase changes do not count. Question text, choices, submitted answers, correctness events, scores, transcripts, and recognition payloads are not passed to `AnalyticsStore` or persisted.
 
@@ -98,6 +98,10 @@ A Chess session starts when a connected caller's room first reaches `playing` or
 Chess `voiceCommands` counts accepted piece or square selection, legal move proposals, confirmation, cancellation, help, and standalone restart. Rejected speech, interim recognition, computer moves, display messages, and animations do not count. Analytics records no move list, captured piece, check, result score, transcript, phone number, or leaderboard row. The authoritative station result retains the caller's win, loss, or draw for the active event.
 
 The active session's in-memory participant key uses the caller's call SID. `AnalyticsStore` hashes that key with its server-side salt before persistence, so two callers who play successive matches in the same room count separately without storing their call SIDs or display names. The `game=chess` dashboard/API/PDF filter applies to summary, trends, and per-game metrics; Chess contributes no selections.
+
+### Talking Owl collection
+
+A Talking Owl session starts when the named caller enters `playing`. Finishing the call, saying goodbye, or reaching the station timer records one completed session; an operator abort of a live room records an abandoned session. The room counts accepted reactions, excluding automatic call pickup and name cues. Analytics stores only the hashed caller key, session timing, and counts, without the first name, transcript, spoken reply, or potion ingredients.
 
 ## Retention
 

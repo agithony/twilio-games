@@ -31,6 +31,7 @@ export class AnalyticsObserver {
   private karaokeActive = new Map<string, ActiveMatch>();
   private triviaActive = new Map<string, ActiveMatch>();
   private chessActive = new Map<string, ActiveMatch>();
+  private owlActive = new Map<string, ActiveMatch>();
 
   constructor(private readonly store: AnalyticsStore, private readonly now: () => number = Date.now) {}
 
@@ -182,6 +183,43 @@ export class AnalyticsObserver {
     if (active) this.finish('chess', roomCode, active, false);
   }
 
+  owlState(roomCode: string, state: {
+    phase: 'waiting' | 'playing' | 'finished';
+    generation: number;
+    caller: { playerId: string } | null;
+    startedAtMs: number | null;
+    result: { completedAtMs: number } | null;
+  }): void {
+    const active = this.owlActive.get(roomCode);
+    const key = String(state.generation);
+    if (state.phase === 'playing' && state.caller && state.startedAtMs !== null) {
+      if (!active || active.key !== key) {
+        if (active) this.finish('owl', roomCode, active, false);
+        this.owlActive.set(roomCode, {
+          key,
+          startedAt: state.startedAtMs,
+          participants: [`owl:${roomCode}:${state.caller.playerId}`],
+          characters: [],
+        });
+      }
+      return;
+    }
+    if (active && state.phase === 'finished' && state.result && active.key === key) {
+      this.finish('owl', roomCode, active, true, state.result.completedAtMs);
+    }
+  }
+
+  owlBound(roomCode: string, callSid: string): void {
+    const active = this.owlActive.get(roomCode);
+    const sid = callSid.trim();
+    if (active && sid) active.participants = [`owl:call:${sid}`];
+  }
+
+  owlAborted(roomCode: string): void {
+    const active = this.owlActive.get(roomCode);
+    if (active) this.finish('owl', roomCode, active, false);
+  }
+
   /** Counts an authoritative accepted command; no command text or recognition payload is accepted. */
   voiceCommand(game: Exclude<AnalyticsGame, 'karaoke'>): void {
     this.store.recordVoiceCommand(game, this.now());
@@ -200,7 +238,7 @@ export class AnalyticsObserver {
   }
 
   private finish(
-    game: 'monsters' | 'fighter' | 'karaoke' | 'trivia' | 'chess',
+    game: 'monsters' | 'fighter' | 'karaoke' | 'trivia' | 'chess' | 'owl',
     roomCode: string,
     match: ActiveMatch,
     completed: boolean,
@@ -214,6 +252,7 @@ export class AnalyticsObserver {
       case 'karaoke': this.karaokeActive.delete(roomCode); break;
       case 'trivia': this.triviaActive.delete(roomCode); break;
       case 'chess': this.chessActive.delete(roomCode); break;
+      case 'owl': this.owlActive.delete(roomCode); break;
     }
   }
 }

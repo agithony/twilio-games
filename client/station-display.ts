@@ -235,6 +235,7 @@ function renderResultsFallback(root:HTMLElement,results:PublicStation['results']
   const eyebrow=document.createElement('p');eyebrow.className='station-results-eyebrow';eyebrow.textContent=locale==='pt-BR'?'RESULTADOS FINAIS':'FINAL RESULTS';
   const title=document.createElement('h1');title.textContent=game==='chess'
     ?locale==='pt-BR'?'Resultado do duelo':'Duel result'
+    :game==='owl' ? locale==='pt-BR'?'Sessão com a coruja':'Owl session'
     :locale==='pt-BR'?'Placar':'Scoreboard';root.append(eyebrow,title);
   if(!results.length){
     const unavailable=document.createElement('div');unavailable.className='station-results-unavailable';
@@ -254,7 +255,9 @@ function renderResultsFallback(root:HTMLElement,results:PublicStation['results']
           :result.won===false?(locale==='pt-BR'?'Derrota':'Defeat')
             :(locale==='pt-BR'?'Empate':'Draw');
     }else{
-      metric.textContent=result.score!==null?`${result.score.toLocaleString(locale)} pts`
+      metric.textContent=game==='owl' && result.score!==null
+        ?`${result.score.toLocaleString(locale)} ${locale==='pt-BR'?'reações':'reactions'}`
+        :result.score!==null?`${result.score.toLocaleString(locale)} pts`
         :result.durationSeconds!==null&&result.durationSeconds>0?`${result.durationSeconds.toFixed(2)}s`
           :result.completed?(locale==='pt-BR'?'Concluído':'Complete'):'DNF';
     }

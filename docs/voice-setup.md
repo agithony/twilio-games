@@ -1,6 +1,6 @@
 # Voice Setup
 
-This guide configures the locale-specific Twilio numbers used by Voice Racer, Voice Monsters, Voice Fighter, Voice Karaoke, Voice Trivia, and Voice Chess. For the project overview and general development setup, see the [README](../README.md).
+This guide configures the locale-specific Twilio numbers used by Voice Racer, Voice Monsters, Voice Fighter, Voice Karaoke, Voice Trivia, Voice Chess, and Talking Owl. For the project overview and general development setup, see the [README](../README.md).
 
 ## How Calls Are Routed
 
@@ -24,14 +24,15 @@ In station mode, the server resolves the caller to one persisted admitted player
 | Voice Karaoke | `http://localhost:5173/karaoke.html?display=1&room=4821` | `/karaoke` and `/karaoke-media` |
 | Voice Trivia | `http://localhost:5173/trivia.html?display=1&room=4821` | `/trivia` |
 | Voice Chess | `http://localhost:5173/chess.html?display=1&room=4821` | `/chess` |
+| Talking Owl | `http://localhost:5173/talking-owl.html?display=1&room=4821` | `/ws/owl` |
 
 Room `4821` is the standalone room only. Active station matches use generated 12-character engine room codes.
 
 For standalone testing, pause the event, open the intended shared display before placing the call, and close unused game displays. An eligible display must belong to an operator-enabled game, connect as `display=1`, join the call's room, and remain open. A connected socket that has not joined the room cannot claim the call. Standalone room `4821` does not use operator pairing or validate the station display token, so expose standalone routing only in a controlled deployment. Generated station rooms are different: their display must inherit the authenticated `ARCADE_DISPLAY_TOKEN` capability installed by `/operator`. Multiple independent eligible display tabs are ambiguous even when they show the same game and receive unavailable TwiML; navigating one tab to another game can hand off its display binding.
 
-The selected game is passed to `/voice` as a Conversation Relay custom parameter and remains fixed for that call. `POST /voice/join` is a legacy alias: it uses a posted `Digits` value when present and otherwise uses `4821`. Non-default Trivia and Chess rooms require a room-authenticated display; the stock standalone pages use `4821`. Do not configure new numbers to use `/voice/join`.
+The selected game is passed to `/voice` as a Conversation Relay custom parameter and remains fixed for that call. `POST /voice/join` is a legacy alias: it uses a posted `Digits` value when present and otherwise uses `4821`. Non-default Trivia, Chess, and Talking Owl rooms require a room-authenticated display; the stock standalone pages use `4821`. Do not configure new numbers to use `/voice/join`.
 
-When Conversation Relay ends a session, Twilio calls `POST /voice/session-ended`. The server uses the call SID to recover or clean up all six games.
+When Conversation Relay ends a session, Twilio calls `POST /voice/session-ended`. The server uses the call SID to recover or clean up all seven games.
 
 ## Requirements
 
@@ -99,7 +100,7 @@ For a deployed environment, configure the same `POST /voice/incoming` webhook ag
 | `DEFAULT_LOCALE` | No | Fallback when the dialed `To` number does not identify one locale and the selected display does not provide one. Defaults to `en-US`. |
 | `ARCADE_STANDALONE_VOICE_ENABLED` | No | Set to `true` to permit standalone routing to an eligible open shared display. It does not make a game callable without a display. Production sets this to `true`. |
 | `VOICE_RELAY_TOKEN` | Required by production deployment | Independent token of at least 32 characters that authenticates the Conversation Relay `setup` frame. The generated TwiML passes it to Twilio automatically; do not reuse `TWILIO_AUTH_TOKEN`. |
-| `OPENAI_API_KEY` | Required for production | Enables phase-bound semantic interpretation of conversational commands in all six games, including Portuguese. Local runs without it retain deterministic commands. |
+| `OPENAI_API_KEY` | Required for production | Enables phase-bound semantic interpretation for Racer through Chess in both locales. Talking Owl uses deterministic reactions and echoing; local runs without the key retain deterministic commands. |
 | `OPENAI_MODEL` | No | Overrides the OpenAI model when `OPENAI_API_KEY` is set. |
 | `DEEPGRAM_API_KEY` | Required in production | Direct monolingual Nova-3 streaming lyric recognition with chart keyterms for Voice Karaoke. Production startup and deployment fail closed when missing because Karaoke is enabled by default. |
 | `KARAOKE_CALIBRATION_OFFSET_MS` | No | Measured signed handset/carrier scoring offset from `-5000` to `5000`; defaults to `0`. Positive maps observations later and negative maps them earlier. |
@@ -293,6 +294,14 @@ Say a complete move such as `pawn from E two to E four`, or select a piece first
 
 The server validates moves and chooses computer replies only in solo mode. Its default search settings aim for an approachable 800–1200 Elo feel, which has not been measured as a formal rating. The shared display animates moves and captures, plays the supplied *The Marble Gambit* track with a gesture retry for blocked autoplay, and never submits a move. Drag the board to rotate the camera, right-drag or use two fingers to pan, scroll or pinch to zoom, and double-click to reset the view. Voice Chess has private activation metrics and station results, but no leaderboard.
 
+## Talking Owl
+
+Talking Owl is the seventh playable title and fixed station or Messaging option `7`. Select its animated GIF card on the home page to open `/talking-owl.html?display=1&room=4821`. The standalone display shows the locale-specific Voice number and a `tel:` QR code; it registers as a display on `/ws/owl?display=1` before a call can route to it. The same existing Twilio numbers, signed `/voice/incoming` webhook, Conversation Relay WebSocket, and `/voice/session-ended` callback serve Owl. No separate Twilio number or webhook is required.
+
+One caller joins the server-owned Owl room. In standalone play, the phone asks for a first name before interactions start; in station play the already registered name is passed from the authoritative station assignment. The owl answers yes/no questions, repeats a short line, and responds to voice or keypad prompts with newspaper, wing, face, snack, mug, lab, and potion animations. For example say `wave`, `laugh`, `read the newspaper`, `go to the lab`, or `mix berry and mint`. Portuguese calls use the same locale routing and localized Owl prompts. The display receives ordered action events and state snapshots but cannot submit the caller's actions.
+
+Station play starts a two-minute session when the named caller binds. It reports a completed one-player result with the number of reactions and the elapsed time, then yields the station to the next round. A dropped Relay socket can reconnect with the same call SID during the grace window; a completed call, `goodbye`, or the station timer ends the session. Standalone play remains open until goodbye or hangup. The owl uses Conversation Relay transcription and speech synthesis, with no separate audio stream or recording.
+
 ## Voice Karaoke
 
 Voice Karaoke admits one singer. Conversation Relay owns setup and results, while the same call transitions to a signed, one-use Twilio Media Stream during the 45-second performance.
@@ -410,7 +419,7 @@ Confirm `KARAOKE_TIMINGS_PATH` resolves through `/app/data` to Azure Files and t
 
 ### The caller hears the right game but cannot join
 
-Voice Racer may already have two players. Voice Monsters may have two occupied slots. Voice Fighter may have two players or may already be past fighter selection. Voice Karaoke may already have its one microphone slot occupied. Voice Trivia may already have four callers or may be past `lobby`. Voice Chess admits one or two controlling callers according to the selected mode. End stale calls or reset the shared display before retrying.
+Voice Racer may already have two players. Voice Monsters may have two occupied slots. Voice Fighter may have two players or may already be past fighter selection. Voice Karaoke may already have its one microphone slot occupied. Voice Trivia may already have four callers or may be past `lobby`. Voice Chess admits one or two controlling callers according to the selected mode. Talking Owl admits one caller; end an old call before retrying a busy owl room. End stale calls or reset the shared display before retrying.
 
 ### Speech works only after the caller finishes talking
 
@@ -422,7 +431,7 @@ Inspect the returned TwiML for `interruptible="any"`, `welcomeGreetingInterrupti
 
 ### Menus are quiet without an OpenAI key
 
-All six games keep fast deterministic commands without OpenAI. `OPENAI_API_KEY` adds a bounded semantic fallback for accents, paraphrases, and conversational requests in the current game phase in both supported locales. The model receives only current actions and visible choices, and the game server validates the result before changing state. Trivia still reads only its validated question bank, and Chess still uses local rules and computer search.
+All seven games keep fast deterministic commands without OpenAI. `OPENAI_API_KEY` adds a bounded semantic fallback for Racer through Chess; Talking Owl uses its own deterministic conversational and repeat-after-me mapping in both supported locales. The model receives only current actions and visible choices, and the game server validates the result before changing state. Trivia still reads only its validated question bank, and Chess still uses local rules and computer search.
 
 ### The displayed phone number is missing
 

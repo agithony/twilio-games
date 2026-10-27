@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#112736" />
+  <meta name="description" content="Spend a curious evening with Talking Owl, a charming little owl in a moonlit study." />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Ccircle%20cx%3D%2232%22%20cy%3D%2232%22%20r%3D%2231%22%20fill%3D%22%23d6a957%22%2F%3E%3Cpath%20d%3D%22M10%2026C10%2020%207%2013%208%208c6%202%2012%205%2016%209a30%2030%200%200%201%2016%200c4-4%2010-7%2016-9%201%205-2%2012-2%2018%204%206%203%2016-1%2023-4%207-11%2011-21%2011S15%2056%2011%2049C7%2042%206%2032%2010%2026Z%22%20fill%3D%22%23794b31%22%2F%3E%3Cellipse%20cx%3D%2222%22%20cy%3D%2234%22%20rx%3D%2212%22%20ry%3D%2214%22%20fill%3D%22%23f8ebd0%22%2F%3E%3Cellipse%20cx%3D%2242%22%20cy%3D%2234%22%20rx%3D%2212%22%20ry%3D%2214%22%20fill%3D%22%23f8ebd0%22%2F%3E%3Ccircle%20cx%3D%2222%22%20cy%3D%2235%22%20r%3D%225%22%20fill%3D%22%23284147%22%2F%3E%3Ccircle%20cx%3D%2242%22%20cy%3D%2235%22%20r%3D%225%22%20fill%3D%22%23284147%22%2F%3E%3Cpath%20d%3D%22M28%2042q4%202%208%200l-4%207Z%22%20fill%3D%22%23e9ad50%22%2F%3E%3C%2Fsvg%3E" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&amp;family=Nunito:wght@500;600;700;800&amp;display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./talking-owl/talking-owl.css" />
+  <title>Talking Owl · Twilio Games</title>
+</head>
+<body>
+  <div class="game-shell">
+    <canvas id="scene-canvas" aria-label="Talking Owl in a moonlit study" role="img"></canvas>
+    <div class="scene-vignette" aria-hidden="true"></div>
+    <div class="scene-glow" aria-hidden="true"></div>
+
+    <header class="topbar">
+      <div class="topbar__identity">
+        <a class="home-link game-home" href="/" aria-label="Back to Twilio Games" title="Back to games">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m13.5 5-7 7 7 7M7.5 12H21" /></svg>
+          <span>Games</span>
+        </a>
+        <span class="topbar__divider" aria-hidden="true"></span>
+        <div class="brand" aria-label="Talking Owl">
+          <span class="brand__mark" aria-hidden="true">
+            <svg class="owl-emblem" viewBox="0 0 64 64"><path class="owl-emblem__head" d="M10 26C10 20 7 13 8 8c6 2 12 5 16 9a30 30 0 0 1 16 0c4-4 10-7 16-9 1 5-2 12-2 18 4 6 3 16-1 23-4 7-11 11-21 11S15 56 11 49C7 42 6 32 10 26Z" /><ellipse class="owl-emblem__disc" cx="22" cy="34" rx="12" ry="14" /><ellipse class="owl-emblem__disc" cx="42" cy="34" rx="12" ry="14" /><circle class="owl-emblem__eye" cx="22" cy="35" r="4.6" /><circle class="owl-emblem__eye" cx="42" cy="35" r="4.6" /><circle class="owl-emblem__glint" cx="20.8" cy="33.7" r="1.4" /><circle class="owl-emblem__glint" cx="40.8" cy="33.7" r="1.4" /><path class="owl-emblem__beak" d="M28 42q4 2 8 0l-4 7Z" /></svg>
+          </span>
+          <span class="brand__words"><strong>Talking Owl</strong><small>a curious evening</small></span>
+        </div>
+      </div>
+      <div class="topbar__scene">
+        <div class="scene-plaque" aria-label="Current scene">
+          <span class="scene-plaque__star" aria-hidden="true">✦</span>
+          <span id="scene-name">The study</span>
+        </div>
+        <button id="fullscreen-button" class="fullscreen-button" type="button" aria-label="Enter fullscreen" title="Enter fullscreen">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5" /></svg>
+        </button>
+      </div>
+    </header>
+
+    <section id="live-call-card" class="live-call-card" data-phase="waiting" aria-labelledby="live-call-title" hidden>
+      <div class="live-call-card__top">
+        <span class="live-call-card__eyebrow"><span class="live-call-card__signal" aria-hidden="true"></span><span id="live-call-eyebrow">A live phone game</span></span>
+        <span id="live-connection" class="live-call-card__connection">Connecting…</span>
+      </div>
+      <div class="live-call-card__headline">
+        <span class="live-call-card__icon" aria-hidden="true"><svg viewBox="0 0 28 28"><path d="M7.2 5.5c-.8.7-1.1 1.9-.9 2.9 1.5 6.1 5.6 10.2 11.7 11.7 1 .2 2.2-.1 2.9-.9l1.1-1.1a1.6 1.6 0 0 0-.2-2.5l-2.9-1.7a1.6 1.6 0 0 0-1.9.2l-1.1 1.1a12.7 12.7 0 0 1-4.8-4.8l1.1-1.1a1.6 1.6 0 0 0 .2-1.9l-1.7-2.9a1.6 1.6 0 0 0-2.5-.2Z" /></svg></span>
+        <div><h2 id="live-call-title">Call Talking Owl</h2><p id="live-call-description">Scan to call. Owl will ask your name.</p></div>
+      </div>
+      <div id="live-call-dial" class="live-call-card__dial">
+        <div class="live-call-card__qr-frame">
+          <img id="live-call-qr" alt="QR code to call Talking Owl" hidden />
+          <span id="live-call-qr-fallback" class="live-call-card__qr-fallback">Finding the number…</span>
+        </div>
+        <div class="live-call-card__number-block">
+          <span id="live-call-number-label">Or dial</span>
+          <a id="live-call-number" href="" aria-label="Call Talking Owl" hidden></a>
+          <span id="live-call-number-fallback">Finding the number…</span>
+        </div>
+      </div>
+      <div id="live-call-steps" class="live-call-card__steps"><span><b>1</b> Call the owl</span><span><b>2</b> Say your name</span><span><b>3</b> Talk and play</span></div>
+      <p id="live-call-result" class="live-call-card__result" hidden></p>
+    </section>
+    <button id="live-call-chip" class="live-call-chip" type="button" aria-label="Show call details" aria-controls="live-call-card" aria-expanded="false" hidden><span class="live-call-chip__light" aria-hidden="true"></span><span id="live-call-chip-text">The owl is listening</span></button>
+
+    <main class="playfield" aria-label="Play with Talking Owl">
+      <div class="scene-filigree scene-filigree--left" aria-hidden="true">✧</div>
+      <div class="scene-filigree scene-filigree--right" aria-hidden="true">✧</div>
+      <div class="speech-bubble" aria-live="polite" aria-atomic="true">
+        <span class="speech-bubble__speaker"><span class="speech-bubble__sparkle" aria-hidden="true">✦</span> Owl says</span>
+        <p id="speech-text">Oh. A visitor.</p>
+        <svg class="speech-bubble__tail" viewBox="0 0 42 38" preserveAspectRatio="none" aria-hidden="true"><path d="M2 2 C10 16 20 25 39 33 C25 35 10 31 2 21Z" /></svg>
+      </div>
+    </main>
+
+    <div id="record-indicator" class="record-indicator" role="status" aria-live="polite" hidden>
+      <span class="record-indicator__light" aria-hidden="true"></span>
+      <span>Recording</span>
+      <span id="record-time">00:00</span>
+    </div>
+
+    <section id="lab-panel" class="prop-panel lab-panel" role="dialog" aria-labelledby="lab-title" hidden>
+      <div class="prop-panel__top">
+        <span class="prop-panel__eyebrow"><span aria-hidden="true">✦</span> The owl's little lab</span>
+        <button id="lab-close-button" class="panel-close" type="button" aria-label="Close the lab" title="Close the lab">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5 19 19M19 5 5 19" /></svg>
+        </button>
+      </div>
+      <h2 id="lab-title">A dash of mischief</h2>
+      <p class="prop-panel__description">Choose two drops for the owl's flask.</p>
+      <div class="reagent-list" role="group" aria-label="Potion ingredients">
+        <button class="reagent" type="button" data-reagent="berry" aria-pressed="false">
+          <span class="reagent__vial reagent__vial--berry" aria-hidden="true"><span></span></span>
+          <span class="reagent__name">Moonberry</span>
+          <span class="reagent__hint">sweet &amp; strange</span>
+        </button>
+        <button class="reagent" type="button" data-reagent="mint" aria-pressed="false">
+          <span class="reagent__vial reagent__vial--mint" aria-hidden="true"><span></span></span>
+          <span class="reagent__name">Mossdrop</span>
+          <span class="reagent__hint">fresh &amp; fizzy</span>
+        </button>
+        <button class="reagent" type="button" data-reagent="amber" aria-pressed="false">
+          <span class="reagent__vial reagent__vial--amber" aria-hidden="true"><span></span></span>
+          <span class="reagent__name">Sun Fizz</span>
+          <span class="reagent__hint">warm &amp; wild</span>
+        </button>
+      </div>
+      <output id="lab-result" class="lab-result" aria-live="polite" hidden></output>
+      <button id="mix-button" class="prop-panel__primary mix-button" type="button"><span aria-hidden="true">✧</span> Mix the potion <span aria-hidden="true">✧</span></button>
+    </section>
+
+    <button id="lab-inspect-button" class="lab-inspect-button" type="button" aria-label="Show lab controls to mix another potion" hidden>
+      <span class="lab-inspect-button__swatch" aria-hidden="true"></span>
+      <span class="lab-inspect-button__copy"><strong id="lab-inspect-name">A curious mixture</strong><small>Mix another potion</small></span>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7" /></svg>
+    </button>
+
+    <section id="call-panel" class="prop-panel call-panel" role="dialog" aria-labelledby="call-title" hidden>
+      <div class="prop-panel__top">
+        <span class="prop-panel__eyebrow"><span class="call-panel__ring" aria-hidden="true"></span> Playful call preview</span>
+        <button id="call-close-button" class="panel-close" type="button" aria-label="Close the call preview" title="Close the call preview">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5 19 19M19 5 5 19" /></svg>
+        </button>
+      </div>
+      <div class="call-panel__portrait" aria-hidden="true"><span>✦</span><svg class="owl-emblem" viewBox="0 0 64 64"><path class="owl-emblem__head" d="M10 26C10 20 7 13 8 8c6 2 12 5 16 9a30 30 0 0 1 16 0c4-4 10-7 16-9 1 5-2 12-2 18 4 6 3 16-1 23-4 7-11 11-21 11S15 56 11 49C7 42 6 32 10 26Z" /><ellipse class="owl-emblem__disc" cx="22" cy="34" rx="12" ry="14" /><ellipse class="owl-emblem__disc" cx="42" cy="34" rx="12" ry="14" /><circle class="owl-emblem__eye" cx="22" cy="35" r="4.6" /><circle class="owl-emblem__eye" cx="42" cy="35" r="4.6" /><circle class="owl-emblem__glint" cx="20.8" cy="33.7" r="1.4" /><circle class="owl-emblem__glint" cx="40.8" cy="33.7" r="1.4" /><path class="owl-emblem__beak" d="M28 42q4 2 8 0l-4 7Z" /></svg></div>
+      <h2 id="call-title">The owl's on the line</h2>
+      <p id="call-status">Finding the receiver…</p>
+      <div class="call-panel__wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+      <form id="say-form" class="call-panel__say">
+        <label for="say-input">Say something</label>
+        <div>
+          <input id="say-input" type="text" maxlength="90" autocomplete="off" placeholder="Hello, Owl…" aria-describedby="call-helper" />
+          <button id="say-button" type="submit">Say it</button>
+        </div>
+        <small id="call-helper">Try a reply or gesture to see the owl react.</small>
+      </form>
+      <div class="call-panel__prompts">
+        <div class="call-panel__tabs" role="tablist" aria-label="Call choices">
+          <button id="call-tab-replies" type="button" role="tab" data-call-tab="replies" aria-selected="true" aria-controls="call-replies" tabindex="0">Replies</button>
+          <button id="call-tab-reactions" type="button" role="tab" data-call-tab="reactions" aria-selected="false" aria-controls="call-reactions" tabindex="-1">Play</button>
+          <button id="call-tab-gestures" type="button" role="tab" data-call-tab="gestures" aria-selected="false" aria-controls="call-gestures" tabindex="-1">Gestures</button>
+          <button id="call-tab-faces" type="button" role="tab" data-call-tab="faces" aria-selected="false" aria-controls="call-faces" tabindex="-1">Faces</button>
+        </div>
+        <div class="call-panel__choices">
+          <div id="call-replies" class="call-panel__choice-grid" data-call-panel="replies" role="tabpanel" aria-labelledby="call-tab-replies">
+            <button type="button" data-action="yes">Say yes</button>
+            <button type="button" data-action="no">Say no</button>
+            <button type="button" data-action="laugh">Laugh</button>
+          </div>
+          <div id="call-reactions" class="call-panel__choice-grid" data-call-panel="reactions" role="tabpanel" aria-labelledby="call-tab-reactions" hidden>
+            <button type="button" data-action="wave">Wave</button>
+            <button type="button" data-action="ponder">Ponder</button>
+            <button type="button" data-action="gasp">Gasp</button>
+            <button type="button" data-action="dance">Dance</button>
+            <button type="button" data-action="snooze">Snooze</button>
+            <button type="button" data-action="sing">Hoot</button>
+          </div>
+          <div id="call-gestures" class="call-panel__choice-grid" data-call-panel="gestures" role="tabpanel" aria-labelledby="call-tab-gestures" hidden>
+            <button type="button" data-action="shrug">Shrug</button>
+            <button type="button" data-action="salute">Salute</button>
+            <button type="button" data-action="scratch">Preen</button>
+            <button type="button" data-action="hush">Shh</button>
+            <button type="button" data-action="cheer">Cheer</button>
+            <button type="button" data-action="bow">Bow</button>
+          </div>
+          <div id="call-faces" class="call-panel__choice-grid" data-call-panel="faces" role="tabpanel" aria-labelledby="call-tab-faces" hidden>
+            <button type="button" data-action="wink">Wink</button>
+            <button type="button" data-action="yawn">Yawn</button>
+            <button type="button" data-action="shiver">Shiver</button>
+            <button type="button" data-action="sneeze">Sneeze</button>
+          </div>
+        </div>
+      </div>
+      <button id="hangup-button" class="hangup-button" type="button">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 15.5c5.2-4.6 11.8-4.6 17 0l-2.1 3.2a1.6 1.6 0 0 1-1.8.6l-2.8-.8a1.6 1.6 0 0 1-1.2-1.5v-.9a12 12 0 0 0-1.2 0v.9a1.6 1.6 0 0 1-1.2 1.5l-2.8.8a1.6 1.6 0 0 1-1.8-.6Z" /></svg>
+        Hang up
+      </button>
+    </section>
+
+    <section class="action-dock" aria-label="Things to try with Talking Owl">
+      <div class="action-dock__edge action-dock__edge--left" aria-hidden="true"></div>
+      <div class="action-dock__reactions" role="group" aria-label="Playful reactions">
+        <button class="toy-button" type="button" data-action="newspaper" aria-label="Read the newspaper" title="Read the newspaper">
+          <span class="toy-button__face"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M7 5h18v21a2 2 0 0 1-2 2H8a3 3 0 0 1-3-3V9h2m4 1h10M11 14h10M11 18h4m3 0h3M11 22h10" /></svg></span>
+          <span class="toy-button__label">Paper</span>
+        </button>
+        <button class="toy-button" type="button" data-action="poke" aria-label="Poke the owl" title="Poke the owl">
+          <span class="toy-button__face"><svg class="toy-icon toy-icon--poke" viewBox="0 0 32 32" aria-hidden="true"><path class="toy-icon__spark" d="M10.5 5.4 8.7 3.3M20.8 5.7l1.8-2.1M24.2 10.2l2.5-.7" /><path class="toy-icon__skin" d="M11.7 27.1c-1.2-1.5-3-3.9-5.2-6.7a2.4 2.4 0 0 1 .4-3.4 2.4 2.4 0 0 1 3.3.5l2.5 3.1V8.4a2.8 2.8 0 0 1 5.6 0v8.2a2.4 2.4 0 0 1 3.4.5 2.4 2.4 0 0 1 3.5 1.5 2.4 2.4 0 0 1 3.4 2.4l-.5 2.9c-.5 3.1-3.1 5.4-6.3 5.4h-5.5a6 6 0 0 1-4.6-2.2Z" /><path class="toy-icon__crease" d="M18.3 16.6v2.5m3.4-2v2.7m3.5-1.2v2.4M13 20.5l1.1 1.4" /><path class="toy-icon__nail" d="M14.4 7.1c0-.8.5-1.3 1.2-1.3s1.3.5 1.3 1.3v2.1h-2.5Z" /></svg></span>
+          <span class="toy-button__label">Poke</span>
+        </button>
+        <button class="toy-button" type="button" data-action="tickle" aria-label="Tickle the owl" title="Tickle the owl">
+          <span class="toy-button__face"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M8 27c7-9 16-14 17-21-5 1-16 6-17 15-.3 2 .2 4 .8 6ZM10 23c4-1 8-3 11-6M14 18l-2-5m8 3 1-5" /></svg></span>
+          <span class="toy-button__label">Tickle</span>
+        </button>
+        <button class="toy-button" type="button" data-action="snack" aria-label="Give the owl a snack" title="Give the owl a snack">
+          <span class="toy-button__face"><svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="10" /><path d="M11.5 11.5h.01m8.5-.5h.01M15.2 16h.01m-4.5 4.5h.01m9.4.8h.01m4-5.8h.01" /></svg></span>
+          <span class="toy-button__label">Snack</span>
+        </button>
+        <button class="toy-button" type="button" data-action="drink" aria-label="Offer the owl a drink" title="Offer the owl a drink">
+          <span class="toy-button__face"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M7 9h15v12a5 5 0 0 1-5 5h-5a5 5 0 0 1-5-5V9Zm15 2h2a4 4 0 0 1 0 8h-2M10 5c1.4-1.4 2.7-1.4 4.1 0m3.1 0c1.4-1.4 2.7-1.4 4.1 0" /></svg></span>
+          <span class="toy-button__label">Drink</span>
+        </button>
+        <button class="toy-button" type="button" data-action="burp" aria-label="Make the owl burp" title="Make the owl burp">
+          <span class="toy-button__face"><svg class="toy-icon toy-icon--burp" viewBox="0 0 32 32" aria-hidden="true"><path class="toy-icon__head" d="M4.2 15.5c0-4.6 3.2-8.1 7.9-8.5l1.4-2.1 2.2 2.1c4.7.4 7.9 3.9 7.9 8.5 0 5.8-4 10-9.7 10S4.2 21.3 4.2 15.5Z" /><path class="toy-icon__eyes" d="M7.5 14.2c1.2 1 2.7 1 3.9 0m5.3 0c1.2 1 2.7 1 3.9 0" /><ellipse class="toy-icon__mouth" cx="14" cy="20.1" rx="2.8" ry="3.5" /><path class="toy-icon__puff" d="M23.2 17.2c2.7-1.2 4.9-.3 5.4 1.6.4 1.8-1.1 3.1-3.3 2.8M25.4 11.6c2-1.2 3.4-.6 3.8.6" /><circle class="toy-icon__bubble" cx="27.2" cy="25.6" r="1.1" /></svg></span>
+          <span class="toy-button__label">Burp</span>
+        </button>
+      </div>
+      <span class="action-dock__divider" aria-hidden="true"></span>
+      <div class="action-dock__features" role="group" aria-label="Special activities">
+        <button class="feature-button feature-button--call" type="button" data-action="call" aria-label="Preview a call with Talking Owl" aria-expanded="false" aria-controls="call-panel">
+          <span class="feature-button__icon"><svg viewBox="0 0 28 28" aria-hidden="true"><path d="M5.6 5.5c-.8.9-1.2 2.2-.9 3.4 1.7 7.5 6.4 12.2 13.9 13.9 1.2.3 2.5-.1 3.4-.9l1.8-1.8a1.8 1.8 0 0 0-.3-2.8l-3.2-1.9a1.8 1.8 0 0 0-2.1.2l-1.2 1.2a15.8 15.8 0 0 1-5.8-5.8l1.2-1.2a1.8 1.8 0 0 0 .2-2.1l-1.9-3.2a1.8 1.8 0 0 0-2.8-.3Z" /></svg></span>
+          <span class="feature-button__label">Call</span>
+        </button>
+        <button class="feature-button feature-button--lab" type="button" data-action="lab" aria-label="Open the owl's lab" aria-pressed="false" aria-controls="lab-panel">
+          <span class="feature-button__icon"><svg viewBox="0 0 28 28" aria-hidden="true"><path d="M10 3h8m-6 0v8L5 22a2 2 0 0 0 1.7 3h14.6a2 2 0 0 0 1.7-3l-7-11V3M8 18h12M12 22h.01M17 21h.01" /></svg></span>
+          <span class="feature-button__label" data-action-label>Lab</span>
+        </button>
+        <button class="feature-button feature-button--record" type="button" data-action="record" aria-label="Record a clip" aria-pressed="false">
+          <span class="feature-button__icon"><span class="feature-button__record-dot" aria-hidden="true"></span></span>
+          <span class="feature-button__label">Record</span>
+        </button>
+      </div>
+      <div class="action-dock__edge action-dock__edge--right" aria-hidden="true"></div>
+    </section>
+
+    <div id="toast" class="toast" role="status" aria-live="polite" aria-atomic="true" hidden></div>
+
+    <div id="loading-screen" class="loading-screen" role="status" aria-live="polite">
+      <div class="loading-screen__mark" aria-hidden="true"><span>✦</span><svg class="owl-emblem" viewBox="0 0 64 64"><path class="owl-emblem__head" d="M10 26C10 20 7 13 8 8c6 2 12 5 16 9a30 30 0 0 1 16 0c4-4 10-7 16-9 1 5-2 12-2 18 4 6 3 16-1 23-4 7-11 11-21 11S15 56 11 49C7 42 6 32 10 26Z" /><ellipse class="owl-emblem__disc" cx="22" cy="34" rx="12" ry="14" /><ellipse class="owl-emblem__disc" cx="42" cy="34" rx="12" ry="14" /><circle class="owl-emblem__eye" cx="22" cy="35" r="4.6" /><circle class="owl-emblem__eye" cx="42" cy="35" r="4.6" /><circle class="owl-emblem__glint" cx="20.8" cy="33.7" r="1.4" /><circle class="owl-emblem__glint" cx="40.8" cy="33.7" r="1.4" /><path class="owl-emblem__beak" d="M28 42q4 2 8 0l-4 7Z" /></svg></div>
+      <strong>Talking Owl</strong>
+      <p>Waking up the study…</p>
+      <div class="loading-screen__dots" aria-hidden="true"><i></i><i></i><i></i></div>
+    </div>
+  </div>
+  <script type="module" src="./talking-owl/main.ts"></script>
+</body>
+</html>

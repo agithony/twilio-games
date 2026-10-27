@@ -98,6 +98,24 @@ export default defineConfig(({ mode }) => {
             });
           },
         },
+        '/ws/owl': {
+          target: gameServer,
+          ws: true,
+          bypass: bypassNonWebSocket,
+          configure(proxy) {
+            proxy.on('proxyReqWs', (proxyRequest, request) => {
+              const origin = request.headers.origin;
+              const forwardedOrigin = forwardedGameServerOrigin(
+                origin,
+                request.headers.host,
+                expectedGameServerOrigin,
+              );
+              if (forwardedOrigin !== undefined && forwardedOrigin !== origin) {
+                proxyRequest.setHeader('origin', forwardedOrigin);
+              }
+            });
+          },
+        },
         '/karaoke': { target: gameServer, ws: true, bypass: bypassNonWebSocket },
         '/trivia': {
           target: gameServer,
@@ -137,6 +155,8 @@ export default defineConfig(({ mode }) => {
           play: resolve(__dirname, 'play.html'),                    // the racer
           monsters: resolve(__dirname, 'monsters.html'),           // Voice Monsters (the battler)
           fighter: resolve(__dirname, 'fighter.html'),              // Voice Fighter gameplay prototype
+          talkingOwl: resolve(__dirname, 'talking-owl.html'),       // Talking Owl voice game
+          bramble: resolve(__dirname, 'bramble.html'),             // legacy preview redirect
           karaoke: resolve(__dirname, 'karaoke.html'),              // Voice Karaoke
           trivia: resolve(__dirname, 'trivia.html'),                // Voice Trivia display
           chess: resolve(__dirname, 'chess.html'),                  // Voice Chess display

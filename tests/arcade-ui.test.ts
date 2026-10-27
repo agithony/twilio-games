@@ -55,21 +55,22 @@ describe('Arcade browser UI', () => {
     ]) expect(script).toContain(endpoint);
   });
 
-  it('restores a clean video-card launcher when station mode is off', () => {
+  it('restores a clean media-card launcher when station mode is off', () => {
     expect(home).toContain('id="standaloneView"');
     expect(homeScript).toContain("show('standalone')");
     expect(homeScript).toContain("if(standaloneMode){renderStandaloneLauncher();show('standalone');}");
     expect(homeScript).toContain('orderByConfiguredIds(PLAYABLE_ARCADE_GAMES,standaloneGameOrder)');
     for (const video of ['vr-demo.mp4','vm-demo.mp4','vf-demo.mp4']) expect(homeScript).toContain(video);
+    expect(homeScript).toContain('vo-demo.gif');
     expect(homeScript).not.toContain('Arcade station mode is off');
     expect(homeScript).not.toContain('Joining unavailable');
     const standaloneRenderer=/function renderStandaloneLauncher\(\)[\s\S]*?\n}\n/.exec(homeScript)?.[0]??'';
     expect(standaloneRenderer).not.toMatch(/playNow|keepPriority|currentReadyCount/);
   });
 
-  it('renders selection as a stable video-backed vote display with automatic fallback copy', () => {
+  it('renders selection as a stable media-backed vote display with automatic fallback copy', () => {
     expect(stationClient).toContain('choices: number');
-    expect(homeScript).toContain('racer: 1, monsters: 2, fighter: 3, karaoke: 4, trivia: 5, chess: 6');
+    expect(homeScript).toContain('racer: 1, monsters: 2, fighter: 3, karaoke: 4, trivia: 5, chess: 6, owl: 7');
     expect(homeScript).toContain('impact.choices');
     expect(homeScript).toContain('Ready players: text the number shown or the game name.');
     expect(homeScript).not.toContain('In a browser, choose on your player page.');
@@ -116,6 +117,7 @@ describe('Arcade browser UI', () => {
     expect(stationGameSelect).toContain('value="fighter"');
     expect(stationGameSelect).toContain('value="karaoke"');
     expect(stationGameSelect).toContain('value="trivia"');
+    expect(stationGameSelect).toContain('value="owl"');
     expect(script).toContain("show('recruiting-control',!paused&&phase==='RECRUITING')");
     expect(script).toContain("show('selection-control',!paused&&phase==='GAME_SELECTION')");
     expect(script).toContain("show('playing-control',!paused&&phase==='PLAYING')");
@@ -335,10 +337,11 @@ describe('Arcade browser UI', () => {
     expect(html).toMatch(/data-game-choice="chess"><span>6<\/span><b>Voice Chess<\/b>/);
     expect(stationGameSelect).toContain('<option value="chess">Voice Chess · up to 2 players</option>');
     expect(html).toContain('id="admin-game-chess"');
-    const prioritySelects = [...html.matchAll(/<select id="admin-game-priority-[1-6]"[^>]*>[\s\S]*?<\/select>/g)]
+    const prioritySelects = [...html.matchAll(/<select id="admin-game-priority-[1-7]"[^>]*>[\s\S]*?<\/select>/g)]
       .map(match => match[0]);
-    expect(prioritySelects).toHaveLength(6);
-    for (const select of prioritySelects) expect(select).toContain('<option value="chess">Voice Chess</option>');
+    expect(prioritySelects).toHaveLength(7);
+    expect(script).toContain('select.replaceChildren(...PLAYABLE_GAMES.map(game =>');
+    expect(script).toContain('option.textContent = gameTitle(resolvedLocale, game)');
     const leaderboardSelect = /<select id="leaderboard-reset-game">[\s\S]*?<\/select>/.exec(html)?.[0] ?? '';
     expect(leaderboardSelect).not.toContain('value="chess"');
   });
@@ -653,17 +656,17 @@ describe('Arcade browser UI', () => {
     expect(script).toContain('payload.games.find(item=>item.game===game)??{game,resettable:false,maps:[]}');
   });
 
-  it('renders all six priority positions and score-based station fallback results', () => {
-    const prioritySelects = [...html.matchAll(/<select id="admin-game-priority-[1-6]"[^>]*>[\s\S]*?<\/select>/g)].map(match => match[0]);
-    expect(prioritySelects).toHaveLength(6);
-    for (const select of prioritySelects) expect(select).toContain('<option value="trivia">Voice Trivia</option>');
+  it('renders all seven priority positions and score-based station fallback results', () => {
+    const prioritySelects = [...html.matchAll(/<select id="admin-game-priority-[1-7]"[^>]*>[\s\S]*?<\/select>/g)].map(match => match[0]);
+    expect(prioritySelects).toHaveLength(7);
+    expect(script).toContain('select.replaceChildren(...PLAYABLE_GAMES.map(game =>');
     expect(stationDisplay).toContain('result.score!==null');
     expect(stationDisplay).toContain('result.score.toLocaleString(locale)');
     expect(stationDisplay).toContain("className='station-result-metric'");
     expect(stationDisplayCss).toContain('.station-result-metric{font-family:');
   });
 
-  it('shows and saves the six-game display order under every selection policy', () => {
+  it('shows and saves the seven-game display order under every selection policy', () => {
     expect(html).toContain('id="selection-policy-field"');
     expect(html).toContain('id="game-order-label"');
     expect(html).toContain('id="game-order-help"');

@@ -97,7 +97,7 @@ Open **Settings > Secrets and variables > Actions > Secrets** and configure:
 | `GOOGLE_OAUTH_CLIENT_ID` | Required for Google private-access login | Stored as Container App secret `google-oauth-client-id`; Google OAuth web client ID |
 | `GOOGLE_OAUTH_CLIENT_SECRET` | Required for Google private-access login | Stored as Container App secret `google-oauth-client-secret`; Google OAuth web client secret |
 | `ANALYTICS_ADMIN_PIN` | Required when Google is unset | 6-64 character alternative login for analytics and operator access; stored as Container App secret `analytics-admin-pin` |
-| `OPENAI_API_KEY` | Required for production | Enables bounded conversational command interpretation in all six games and both locales; local runs without it use deterministic commands |
+| `OPENAI_API_KEY` | Required for production | Enables bounded conversational command interpretation for Racer through Chess in both locales; Talking Owl has its own deterministic interpreter |
 | `DEEPGRAM_API_KEY` | Yes | Enables direct 8 kHz inbound caller-audio lyric verification for Voice Karaoke; production fails closed without it because Karaoke is enabled by default |
 | `DUB_API_KEY` | No | Enables shortening of eligible challenge portal URLs when paired with `DUB_SHORT_DOMAIN`; empty preserves the original application URL |
 | `DUB_FOLDER_ID` | No | Optional Dub folder for created challenge links; it has no effect without an enabled Dub shortener |
@@ -142,7 +142,7 @@ Open **Settings > Secrets and variables > Actions > Variables** and configure as
 | `TWILIO_MESSAGING_SERVICE_SID` | Required for WhatsApp Phone CTA and out-of-session notices | Messaging Service SID containing the approved WhatsApp sender |
 | `ARCADE_OUTBOUND_MESSAGING_ENABLED` | No | Set to literal `true` only after REST credentials, senders, callbacks, and templates are ready; defaults off. The operator console reports whether proactive delivery is effectively enabled separately from inbound onboarding. |
 | `TWILIO_WHATSAPP_CONTENT_SID_STATION_{ADMITTED,OVERFLOW,CALL_NOW,RESULTS,NEXT_GAME}_{EN_US,PT_BR}` | Call-now required for Phone CTA; others required out of session | Ten approved Content SIDs covering five station notice kinds in English and Brazilian Portuguese |
-| `CR_TTS_VOICE` | No | English ElevenLabs voice ID for all six games; deployment pins `SA7eD52NRr8WAehitVt1` |
+| `CR_TTS_VOICE` | No | English ElevenLabs voice ID for all seven games; deployment pins `SA7eD52NRr8WAehitVt1` |
 | `CR_TTS_VOICE_PT_BR` | No | Optional Brazilian Portuguese ElevenLabs voice ID; empty uses Relay's `pt-BR` default |
 | `DEFAULT_LOCALE` | No | Fallback when the dialed number and selected display do not identify a locale; defaults to `en-US` |
 | `OPENAI_MODEL` | No | OpenAI model name; empty defaults to `gpt-4o-mini` |
@@ -223,7 +223,7 @@ The workflow is create-if-missing for supporting infrastructure, not a full decl
 
 ## Configure Twilio, Orchestrator, and Memory
 
-After deployment, use the App URL printed by the workflow. The same output prints the Voice Trivia and Voice Chess displays at `/trivia.html` and `/chess.html`.
+After deployment, use the App URL printed by the workflow. The same output prints the Voice Trivia, Voice Chess, and Talking Owl displays at `/trivia.html`, `/chess.html`, and `/talking-owl.html`.
 
 Configure both accounts' incoming Voice webhooks:
 
@@ -308,7 +308,7 @@ curl --fail "https://${FQDN}/livez"
 curl --fail "https://${FQDN}/healthz" | jq -e \
   '.status == "ok" and .triviaContent.state == "ready" and .triviaContent.questionCount == 200 and .triviaLeaderboard.state == "ready"'
 
-for route in / /instructions /join /player /karaoke.html /trivia.html /chess.html /analytics; do
+for route in / /instructions /join /player /karaoke.html /trivia.html /chess.html /talking-owl.html /analytics; do
   curl --fail --silent --show-error --output /dev/null "https://${FQDN}${route}"
 done
 
@@ -317,7 +317,7 @@ test "$(curl --silent --show-error --output /dev/null \
   = "302 https://${FQDN}/analytics?returnTo=%2Foperator"
 ```
 
-`/healthz` is dependency-aware and returns 503 for repairable station/TAC/configuration degradation or a non-ready Trivia content/leaderboard store. Trivia loads before the HTTP listener: invalid bundled or live questions, a failed first seed write, or corrupt leaderboard storage prevents `/livez` from becoming reachable. ACA startup, readiness, and liveness probes call process-only `/livez`, so a later Twilio outage does not restart the process. The workflow verifies `/trivia.html` and `/chess.html`, not their `/trivia` and `/chess` WebSocket upgrades; those require protocol-aware clients. The deployment workflow does not perform live Twilio, Memory, Azure Files write, or WebSocket gameplay tests.
+`/healthz` is dependency-aware and returns 503 for repairable station/TAC/configuration degradation or a non-ready Trivia content/leaderboard store. Trivia loads before the HTTP listener: invalid bundled or live questions, a failed first seed write, or corrupt leaderboard storage prevents `/livez` from becoming reachable. ACA startup, readiness, and liveness probes call process-only `/livez`, so a later Twilio outage does not restart the process. The workflow verifies `/trivia.html`, `/chess.html`, and `/talking-owl.html`, not their WebSocket upgrades; those require protocol-aware clients. The deployment workflow does not perform live Twilio, Memory, Azure Files write, or WebSocket gameplay tests.
 
 There is no safe existing persistent-store write probe. Every public write endpoint changes real editor, Arcade, or messaging state, so the workflow intentionally does not call one. Do not substitute an unauthenticated or production-data mutation. A future persistent write smoke should use an authenticated, idempotent endpoint designed to create and remove a disposable probe record.
 
@@ -332,7 +332,7 @@ Keep runtime mode `off` during provisioning. After item 1 passes, open the event
 3. In the primary account, send `JOIN` by SMS and confirm exactly one reply, one Conversation, and one Memory profile. Send `ENTRAR` by SMS and confirm it is durably rejected with guidance to use WhatsApp or the lead-capture browser fallback; legacy `LANG` commands remain supported.
 4. Send `ENTRAR` through WhatsApp and confirm it resolves to the same profile for the same phone identity.
 5. In lead-capture mode, register through `/player` once in English and once in Portuguese. Confirm both players can join immediately without an OTP and that `/join` presents browser registration below the preferred Messaging actions.
-6. Run a paid two-player game. Confirm all six games are enabled in operator settings. Move Chess to the first display position, save, and confirm its home card moves while its vote remains option `6`; restore the desired event order afterward. Check that selection shows Chess alongside the other games; vote by SMS with `1` or `RACER`, change the vote with `5` or `TRIVIA`, and confirm the browser player can vote from `/player`. Confirm the shared display shows looping gameplay previews, including Chess, and live totals. When gameplay starts, confirm one coin is redeemed from each admitted player and an overflow player's coin remains reserved.
+6. Run a paid two-player game. Confirm all seven games are enabled in operator settings. Move Chess to the first display position, save, and confirm its home card moves while its vote remains option `6`; restore the desired event order afterward. Check that selection shows Chess alongside the other games; vote by SMS with `1` or `RACER`, change the vote with `5` or `TRIVIA`, and confirm the browser player can vote from `/player`. Confirm the shared display shows looping gameplay previews, including Chess, and live totals. When gameplay starts, confirm one coin is redeemed from each admitted player and an overflow player's coin remains reserved.
 7. Switch the event to free play and confirm no wallet grants, reservations, or redemptions are created.
 8. Call the English number and confirm either configured Voice Auth Token can validate the request, the English `To` number selects English recognition/TTS, and the call reaches its assigned generated room.
 9. Call the Portuguese number and confirm either configured Voice Auth Token can validate the request, the Portuguese `To` number selects `pt-BR`, and free-form OpenAI help remains disabled.
@@ -342,8 +342,9 @@ Keep runtime mode `off` during provisioning. After item 1 passes, open the event
 13. For station-managed play, authenticate at `/operator` in the intended booth tab and select **Pair this tab as the big screen**. Confirm the same tab returns to `/`, display access is held only in `sessionStorage`, and no credential appears in the URL. During a station launch, verify an absent or rejected display session links to the authenticated operator flow instead of showing a secret field or a stuck countdown. Separately pause the event, open standalone Karaoke, Trivia, and Chess displays for room `4821`, and confirm none requires display pairing. Karaoke still requires audio preflight; Trivia and Chess reject browser-player admission.
 14. Admit four players, select Voice Trivia, and confirm the station launches `/trivia.html` with all four calls bound to the generated room. Have callers cast and revise votes so one concrete category wins, complete all eight questions by voice, and confirm answers are absent before reveal. Verify one completed result in the operator console and the four redacted test rows on the all-time and selected-category leaderboards, then reset that test category through the operator score controls.
 15. Select Voice Chess and confirm option `6` launches `/chess.html` for one caller against the computer. Confirm the caller is assigned White or Black, a spoken move waits for `confirm`, and the phone announces the computer's reply and any capture. Check the animated board, music control, and operator result. In private `/analytics`, filter to Chess and verify one completed match, its accepted voice actions, and the PDF report; confirm there is no Chess leaderboard.
-16. Open `/editor?game=trivia`, authenticate with `EDITOR_TOKEN`, and confirm the protected 200-question bank loads. Make and save one factually harmless prompt change, reload it, restore the original prompt using the new ETag, and reload again. A stale second tab must receive `412` rather than overwrite the newer bank. Do not run this test without a current Azure Files snapshot.
-17. Restart the Container App, sign in again because sessions are process-local, and confirm the Trivia question edit/revert, Trivia leaderboard, event recovery, wallet balances, and Memory-linked messaging persist.
+16. Select Talking Owl by its GIF card and confirm the display shows the configured call number and `tel:` QR. Call, give a first name, and ask for `wave`, `read the newspaper`, `go to the lab`, and `mix berry and mint`; verify each phone reply matches the owl animation. Repeat once on the Portuguese Voice number. Confirm option `7` launches the paired station display for one caller and records a completed reaction count in operator results and `/analytics`.
+17. Open `/editor?game=trivia`, authenticate with `EDITOR_TOKEN`, and confirm the protected 200-question bank loads. Make and save one factually harmless prompt change, reload it, restore the original prompt using the new ETag, and reload again. A stale second tab must receive `412` rather than overwrite the newer bank. Do not run this test without a current Azure Files snapshot.
+18. Restart the Container App, sign in again because sessions are process-local, and confirm the Trivia question edit/revert, Trivia leaderboard, event recovery, wallet balances, and Memory-linked messaging persist.
 
 ## Persistent storage operations
 

@@ -1,7 +1,7 @@
 import type { SupportedLocale } from '../shared/i18n/locales';
 import './result-tech.css';
 
-export type ResultTechGame = 'racer' | 'monsters' | 'fighter' | 'karaoke' | 'trivia' | 'chess' | 'arcade';
+export type ResultTechGame = 'racer' | 'monsters' | 'fighter' | 'karaoke' | 'trivia' | 'chess' | 'owl' | 'arcade';
 
 interface ResultTechCopy {
   heading: string;
@@ -53,6 +53,7 @@ const COPY: Record<SupportedLocale, ResultTechCopy> = {
       karaoke: 'After consent, an authenticated Twilio Media Stream carries singing for timing and pitch, with Deepgram lyric recognition when available.',
       trivia: 'A spoken answer is tied to the current timed question, then the answer reveal and score update together.',
       chess: 'A move or castle request is checked for legality before the board changes.',
+      owl: 'Your voice selects a reaction, and the owl performs it on the shared screen while the phone call stays connected.',
       arcade: 'A caller’s words travel through Conversation Relay. The game server checks the current state and updates the shared screen.',
     },
     deeperHeading: 'Behind the turn',
@@ -86,6 +87,7 @@ const COPY: Record<SupportedLocale, ResultTechCopy> = {
       karaoke: 'Após consentir, um Twilio Media Stream autenticado leva o canto para medir tempo e afinação, com reconhecimento da letra pela Deepgram quando disponível.',
       trivia: 'Sua resposta é ligada à pergunta com tempo marcado; depois, a revelação da resposta e a pontuação mudam juntas.',
       chess: 'Sua jogada ou pedido de roque é conferido com as regras antes de o tabuleiro mudar.',
+      owl: 'Sua voz escolhe uma reação, e a coruja a faz na tela compartilhada enquanto a ligação continua.',
       arcade: 'A fala chega pelo Conversation Relay. O servidor confere o estado atual do jogo e atualiza a tela compartilhada.',
     },
     deeperHeading: 'Por trás da jogada',

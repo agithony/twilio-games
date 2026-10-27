@@ -67,6 +67,7 @@ const copy = locale === 'pt-BR' ? {
   karaokeBlurb: 'Escolha a música e cante cada palavra no tempo certo.',
   triviaBlurb: 'Responda em voz alta a perguntas rápidas e marque pontos antes dos rivais.',
   chessBlurb: 'Jogue xadrez por voz contra o computador ou outra pessoa.',
+  owlBlurb: 'Ligue para a coruja, converse e veja suas reações curiosas.',
   freeDescription: 'Escaneie, entre pelo WhatsApp e responda PRONTO quando estiver pronto na tela.',
   freeStep: 'Responda PRONTO na tela',
   vote: 'voto', votes: 'votos', leader: 'Na liderança', tiedLeader: 'Líder empatado', textCommand: 'Envie',
@@ -108,6 +109,7 @@ const copy = locale === 'pt-BR' ? {
   karaokeBlurb: 'Pick a song and sing every word on the beat.',
   triviaBlurb: 'Answer quick-fire questions out loud and score before your rivals.',
   chessBlurb: 'Play voice chess against the computer or another caller.',
+  owlBlurb: 'Call the owl, talk, and watch its curious reactions.',
   freeDescription: 'Scan, join, and reply READY when you are at the screen.',
   freeStep: 'Reply READY at the screen',
   vote: 'vote', votes: 'votes', leader: 'Leading', tiedLeader: 'Tied lead', textCommand: 'Text',
@@ -144,8 +146,11 @@ const selectionVideos: Partial<Record<PlayableArcadeGame, string>> = {
   racer: '/video/vr-demo.mp4', monsters: '/video/vm-demo.mp4', fighter: '/video/vf-demo.mp4',
   karaoke: '/video/vk-demo.mp4', trivia: '/video/vt-demo.mp4', chess: '/video/vc-demo.mp4',
 };
+const selectionImages: Partial<Record<PlayableArcadeGame, { animated: string; still: string }>> = {
+  owl: { animated: '/video/vo-demo.gif', still: '/video/vo-poster.png' },
+};
 const gameCommands: Readonly<Record<PlayableArcadeGame, number>> = {
-  racer: 1, monsters: 2, fighter: 3, karaoke: 4, trivia: 5, chess: 6,
+  racer: 1, monsters: 2, fighter: 3, karaoke: 4, trivia: 5, chess: 6, owl: 7,
 };
 const gameBlurbs: Readonly<Record<PlayableArcadeGame, string>> = {
   racer: copy.racerBlurb,
@@ -154,6 +159,7 @@ const gameBlurbs: Readonly<Record<PlayableArcadeGame, string>> = {
   karaoke: copy.karaokeBlurb,
   trivia: copy.triviaBlurb,
   chess: copy.chessBlurb,
+  owl: copy.owlBlurb,
 };
 
 interface PreviewConnection {
@@ -229,7 +235,8 @@ function buildGameCard(impact: PublicStation['games'][number]): HTMLElement {
   card.className = 'game-card';
   card.dataset.game = impact.id;
   const preview = selectionVideos[impact.id];
-  card.innerHTML = `<div class="game-card-media"><span class="game-media-fallback" role="img" aria-label="${gameCommands[impact.id]}, ${title}"><strong>${gameCommands[impact.id]}</strong><b>${title}</b></span>${preview ? `<video data-src="${preview}" preload="none" loop muted playsinline aria-hidden="true"></video>` : ''}
+  const image = selectionImages[impact.id];
+  card.innerHTML = `<div class="game-card-media"><span class="game-media-fallback" role="img" aria-label="${gameCommands[impact.id]}, ${title}"><strong>${gameCommands[impact.id]}</strong><b>${title}</b></span>${preview ? `<video data-src="${preview}" preload="none" loop muted playsinline aria-hidden="true"></video>` : ''}${image ? `<img class="game-preview-image" data-src="${image.animated}" data-poster="${image.still}" alt="" aria-hidden="true" decoding="async" />` : ''}
       <span class="game-command"><small>${copy.textCommand}</small><strong>${gameCommands[impact.id]}</strong></span></div>
     <div class="game-card-body"><div class="game-card-meta"><span data-role="vote-count"></span><b data-role="leader" hidden></b></div>
       <h2>${title}</h2>
@@ -237,6 +244,9 @@ function buildGameCard(impact: PublicStation['games'][number]): HTMLElement {
       <div class="capacity"><b data-role="play-now"></b><b data-role="overflow"></b></div></div>`;
   card.querySelector<HTMLVideoElement>('video')?.addEventListener(
     'error', () => card.classList.add('game-card-video-unavailable'), { once: true },
+  );
+  card.querySelector<HTMLImageElement>('.game-preview-image')?.addEventListener(
+    'error', () => card.classList.add('game-card-media-unavailable'), { once: true },
   );
   return card;
 }
@@ -255,8 +265,8 @@ function renderStandaloneLauncher(): void {
     const url = new URL(game.route, location.origin);
     url.searchParams.set('display', '1');url.searchParams.set('room', '4821');url.searchParams.set('locale', locale);
     link.href=url.toString();link.className='standalone-game';link.dataset.game=game.id;
-    const preview=selectionVideos[game.id];
-    link.innerHTML=`${preview?`<video data-src="${preview}" preload="none" loop muted playsinline aria-hidden="true"></video>`:''}<span>${gameTitle(locale,game.id)}</span><p>${gameBlurbs[game.id]}</p>${game.humanCapacity > 1 ? `<small class="standalone-mode-hint">${copy.choosePlayerCount}</small>` : ''}`;
+    const preview=selectionVideos[game.id],image=selectionImages[game.id];
+    link.innerHTML=`${preview?`<video data-src="${preview}" preload="none" loop muted playsinline aria-hidden="true"></video>`:''}${image?`<img class="game-preview-image" data-src="${image.animated}" data-poster="${image.still}" alt="" aria-hidden="true" decoding="async" />`:''}<span>${gameTitle(locale,game.id)}</span><p>${gameBlurbs[game.id]}</p>${game.humanCapacity > 1 ? `<small class="standalone-mode-hint">${copy.choosePlayerCount}</small>` : ''}`;
     if (game.humanCapacity > 1) {
       link.setAttribute('aria-label', `${gameTitle(locale, game.id)}. ${copy.choosePlayerCount}`);
       link.addEventListener('click', event => {
@@ -321,6 +331,7 @@ function renderStandalonePage(nextPage=standalonePageIndex): void {
     const placeholder=document.createElement('span');placeholder.className='standalone-page-placeholder';placeholder.setAttribute('aria-hidden','true');return placeholder;
   }));
   standaloneGameRegion.classList.toggle('is-paginated',paginated);
+  standaloneGameRegion.classList.toggle('is-single-card-page',paginated&&visibleCount===1);
   standalonePreviousPage.hidden=!paginated;standaloneNextPage.hidden=!paginated;standalonePageStatus.hidden=!paginated;
   standalonePreviousPage.disabled=standalonePageIndex===0;
   standaloneNextPage.disabled=standalonePageIndex>=pageCount-1;
@@ -350,6 +361,12 @@ function syncPreviewPlayback(): void {
     const source=video.dataset.src;
     if(source&&!video.getAttribute('src'))video.src=source;
     if (video.paused) void video.play().catch(() => undefined);
+  });
+  document.querySelectorAll<HTMLImageElement>('.station-view .game-preview-image').forEach(preview => {
+    const hiddenStandaloneCard = preview.closest<HTMLElement>('.standalone-game')?.hidden === true;
+    const animated = playbackAllowed && activeView.contains(preview) && !hiddenStandaloneCard;
+    const source = animated ? preview.dataset.src : preview.dataset.poster;
+    if (source && preview.getAttribute('src') !== source) preview.src = source;
   });
 }
 

@@ -137,6 +137,22 @@ describe('home preview media and standalone catalog', () => {
     expect(html).not.toContain('/video/vc-demo.mp4');
   });
 
+  it('ships an animated Talking Owl card preview captured from the game', () => {
+    const animated = readFileSync(new URL('../client/public/video/vo-demo.gif', import.meta.url));
+    const still = readFileSync(new URL('../client/public/video/vo-poster.png', import.meta.url));
+    expect(animated.subarray(0, 6).toString()).toBe('GIF89a');
+    expect(animated.readUInt16LE(6)).toBe(512);
+    expect(animated.readUInt16LE(8)).toBe(288);
+    expect((animated.toString('hex').match(/21f904/g) ?? []).length).toBeGreaterThan(10);
+    expect(animated.length).toBeLessThan(2 * 1024 * 1024);
+    expect(still.subarray(1, 4).toString()).toBe('PNG');
+    expect(still.readUInt32BE(16)).toBe(512);
+    expect(still.readUInt32BE(20)).toBe(288);
+    expect(home).toContain("owl: { animated: '/video/vo-demo.gif', still: '/video/vo-poster.png' }");
+    expect(home).toContain('data-poster="${image.still}"');
+    expect(home).toContain('previewConnection?.saveData');
+  });
+
   it('uses exact Conversation Relay product copy in fallback and both locales', () => {
     const english = 'Powered by Twilio Conversation Relay. Your voice is the controller.';
     const portuguese = 'Com tecnologia Twilio ConversationRelay. Sua voz é o controle.';
@@ -146,11 +162,11 @@ describe('home preview media and standalone catalog', () => {
     expect(`${html}\n${home}`).not.toContain('Choose a game on the shared screen. Players call from any phone and use their voices as controllers.');
   });
 
-  it('removes the Trivia coming-soon surface and assigns stable playable options through Chess at 6', () => {
+  it('removes the Trivia coming-soon surface and assigns stable playable options through Owl at 7', () => {
     expect(html).not.toContain('id="standaloneFuture"');
     expect(html).not.toContain('id="futureTrivia"');
     expect(home).not.toContain('renderComingSoon');
-    expect(home).toContain('racer: 1, monsters: 2, fighter: 3, karaoke: 4, trivia: 5, chess: 6');
+    expect(home).toContain('racer: 1, monsters: 2, fighter: 3, karaoke: 4, trivia: 5, chess: 6, owl: 7');
     expect(css).toContain('[hidden] { display:none !important; }');
   });
 

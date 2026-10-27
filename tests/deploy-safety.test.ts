@@ -18,7 +18,7 @@ describe('deployment rollback safety', () => {
   });
 
   it('requires the semantic interpreter key before deploying conversational voice games', () => {
-    expect(workflow).toContain('OPENAI_API_KEY is required for conversational voice commands in all six production games.');
+    expect(workflow).toContain('OPENAI_API_KEY is required for conversational voice commands in production.');
     expect(workflow.match(/"openai-api-key=\$\{OPENAI_API_KEY:-disabled\}"/g)).toHaveLength(2);
     expect(containerApp).toContain('secretRef: openai-api-key');
     expect(serverIndex).toContain("throw new Error('OPENAI_API_KEY is required in production for conversational voice commands')");
@@ -129,13 +129,14 @@ describe('deployment rollback safety', () => {
       .toBeLessThan(workflow.indexOf('--revision-weight "${NEW_REVISION}=100"'));
   });
 
-  it('validates Trivia and smokes both Trivia and Chess before publishing their URLs', () => {
+  it('validates Trivia and smokes the game pages before publishing their URLs', () => {
     expect(packageManifest.scripts['validate:trivia-bank']).toBe('tsx tools/validate-trivia-bank.ts');
     expect(packageManifest.scripts['smoke:trivia']).toBe('node tools/smoke-trivia.mjs');
     expect(workflow).toContain('npm run validate:trivia-bank');
-    expect(workflow).toContain('/karaoke.html /trivia.html /chess.html /analytics');
+    expect(workflow).toContain('/karaoke.html /trivia.html /chess.html /talking-owl.html /analytics');
     expect(workflow).toContain('Voice Trivia:   https://${FQDN}/trivia.html');
     expect(workflow).toContain('Voice Chess:    https://${FQDN}/chess.html');
+    expect(workflow).toContain('Talking Owl:    https://${FQDN}/talking-owl.html');
     expect(workflow.indexOf('https://${REVISION_FQDN}${route}'))
       .toBeLessThan(workflow.indexOf('--revision-weight "${NEW_REVISION}=100"'));
   });

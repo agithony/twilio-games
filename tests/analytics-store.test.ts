@@ -117,7 +117,7 @@ describe('activation analytics', () => {
     expect(report.summary).toMatchObject({ participants: 3, sessions: 2, completed: 1, abandoned: 1, playSeconds: 136, voiceCommands: 1 });
     expect(report.games.racer.completionRate).toBe(1);
     expect(report.games.karaoke.sessions).toBe(0);
-    expect(ANALYTICS_GAMES).toEqual(['racer', 'monsters', 'fighter', 'karaoke', 'trivia', 'chess']);
+    expect(ANALYTICS_GAMES).toEqual(['racer', 'monsters', 'fighter', 'karaoke', 'trivia', 'chess', 'owl']);
     expect(report.selections.maps.map(item => item.name)).toEqual(['neon-city', 'rain']);
     expect(JSON.stringify(await import('node:fs/promises').then(fs => fs.readFile(file, 'utf8')))).not.toContain('room:p1');
   });

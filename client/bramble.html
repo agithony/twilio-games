@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#112736" />
+  <meta http-equiv="refresh" content="0; url=./talking-owl.html" />
+  <title>Talking Owl · Twilio Games</title>
+  <script>
+    const destination = new URL('./talking-owl.html', location.href);
+    destination.search = location.search;
+    destination.hash = location.hash;
+    location.replace(destination.href);
+  </script>
+  <style>
+    body { display: grid; min-height: 100vh; place-items: center; margin: 0; padding: 24px; color: #fff6e8; background: #112736; font: 600 18px/1.4 system-ui, sans-serif; text-align: center; }
+    a { color: #f1cb85; }
+  </style>
+</head>
+<body>
+  <p>Talking Owl has moved. <a href="./talking-owl.html">Open Talking Owl</a>.</p>
+</body>
+</html>

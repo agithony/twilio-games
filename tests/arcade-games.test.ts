@@ -9,7 +9,7 @@ import {
 describe('Arcade game registry', () => {
   it('defines the approved playable capacities from one source', () => {
     expect(PLAYABLE_ARCADE_GAMES.map(game => [game.id, game.humanCapacity])).toEqual([
-      ['racer', 2], ['monsters', 2], ['fighter', 2], ['karaoke', 1], ['trivia', 4], ['chess', 2],
+      ['racer', 2], ['monsters', 2], ['fighter', 2], ['karaoke', 1], ['trivia', 4], ['chess', 2], ['owl', 1],
     ]);
     expect(arcadeGameDefinition('racer').route).toBe('/play.html');
     expect(arcadeGameDefinition('karaoke')).toMatchObject({
@@ -32,5 +32,12 @@ describe('Arcade game registry', () => {
       route: '/chess.html', humanCapacity: 2, minimumHumans: 1, aiFallback: true, playable: true,
     });
     expect(isPlayableArcadeGame('chess')).toBe(true);
+  });
+
+  it('routes one caller to Talking Owl', () => {
+    expect(arcadeGameDefinition('owl')).toMatchObject({
+      route: '/talking-owl.html', humanCapacity: 1, minimumHumans: 1, aiFallback: false, playable: true,
+    });
+    expect(isPlayableArcadeGame('owl')).toBe(true);
   });
 });

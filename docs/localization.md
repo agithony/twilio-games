@@ -1,6 +1,6 @@
 # Localization
 
-Twilio Games supports US English (`en-US`) and Brazilian Portuguese (`pt-BR`) across the home page, all six playable game displays, deterministic voice commands, Conversation Relay transcription, and spoken responses.
+Twilio Games supports US English (`en-US`) and Brazilian Portuguese (`pt-BR`) across the home page, all seven playable game displays, deterministic voice commands, Conversation Relay transcription, and spoken responses.
 
 Station entry channels are also localized. English visitors may enter through configured SMS or WhatsApp channels. Portuguese visitors use WhatsApp rather than SMS, and the server rejects Portuguese SMS even if a visitor bypasses the chooser. Lead-capture mode offers localized browser registration to both locales as a visually secondary fallback; messaging remains the preferred path. A phone identity that selected Portuguese on WhatsApp cannot switch to SMS unless it explicitly selects English.
 
@@ -140,7 +140,7 @@ Use Unicode normalization rather than ASCII-only regular expressions. Keep trans
 | Runtime `channels.voiceNumbers.en-US` and `.pt-BR` | Locale-specific public voice numbers used by lobbies and dialed-number locale detection |
 | `GAME_PHONE_NUMBER` | Legacy fallback only when neither runtime locale number is configured; a shared fallback cannot identify one locale uniquely |
 | `DEFAULT_LOCALE` | Call fallback when neither the dialed number nor the routed display identifies a locale; defaults to `en-US` |
-| `CR_TTS_VOICE` | English ElevenLabs voice ID for all six games; defaults to `SA7eD52NRr8WAehitVt1` and deployment pins that value |
+| `CR_TTS_VOICE` | English ElevenLabs voice ID for all seven games; defaults to `SA7eD52NRr8WAehitVt1` and deployment pins that value |
 | `CR_TTS_VOICE_PT_BR` | Brazilian Portuguese ElevenLabs voice ID; empty uses Relay's `pt-BR` default |
 
 The Azure deployment reads the environment values from GitHub repository variables. Operators manage `channels.voiceNumbers` in runtime Arcade settings. Validate provider language, model, voice, and number availability before enabling a new locale in production.

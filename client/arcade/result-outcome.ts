@@ -17,6 +17,7 @@ export function describeStationParticipantOutcome(
     if (participant.won === false) return 'defeat';
     return 'draw';
   }
+  if (game === 'owl') return participant.completed ? 'completed' : 'did not finish';
   return participant.won ? 'winner'
     : participant.rank ? `place ${participant.rank}`
       : participant.completed ? 'completed' : 'did not finish';

@@ -365,6 +365,60 @@ describe('Arcade station outbound outbox', () => {
   });
 
   it.each([
+    { locale: 'en-US', from: '+14155550821', name: 'Ada', terms: 'YES', coin: 'COIN',
+      expected: 'You shared 7 reactions with Owl.', forbidden: 'finished #1', gameName: 'Talking Owl' },
+    { locale: 'pt-BR', from: '+551155555821', name: 'Bia', terms: 'SIM', coin: 'MOEDA',
+      expected: 'Você compartilhou 7 interações com a coruja.', forbidden: '1º lugar', gameName: 'Coruja Falante' },
+  ])('sends Owl reactions instead of a solo placement in $locale', async row => {
+    const h = await harness();
+    await inbound(h.service, `OWL-${row.locale}-JOIN`, `JOIN ARCADE-01 LANG ${row.locale}`, row.from, 'whatsapp');
+    await inbound(h.service, `OWL-${row.locale}-NAME`, row.name, row.from, 'whatsapp');
+    await inbound(h.service, `OWL-${row.locale}-TERMS`, row.terms, row.from, 'whatsapp');
+    await inbound(h.service, `OWL-${row.locale}-COIN`, row.coin, row.from, 'whatsapp');
+    const recruiting = await h.service.getStation('ARCADE-01');
+    const selecting = await h.service.closeStationRecruiting({
+      stationId: 'ARCADE-01', expectedRevision: recruiting!.station.revision,
+      idempotencyKey: `owl-${row.locale}-close`, authorization: AUTHORIZATION,
+    });
+    const locked = await h.service.selectStationGame({
+      stationId: 'ARCADE-01', expectedRevision: selecting.station.revision,
+      game: 'owl', engineRoomCode: `OWL-${row.locale}`, idempotencyKey: `owl-${row.locale}-select`,
+      authorization: AUTHORIZATION,
+    });
+    const launching = await h.service.requestStationLaunch({
+      stationId: 'ARCADE-01', expectedRevision: locked.station.revision,
+      idempotencyKey: `owl-${row.locale}-launch`, authorization: AUTHORIZATION,
+    });
+    const displayReady = await h.service.markStationDisplayReady({
+      stationId: 'ARCADE-01', expectedRevision: launching.station.revision,
+      matchId: launching.match!.id, launchGeneration: launching.match!.launchGeneration,
+      idempotencyKey: `owl-${row.locale}-display`, authorization: AUTHORIZATION,
+    });
+    const readyEntryId = displayReady.match!.participantReadyEntryIds[0]!;
+    const enginePlayerId = `visitor-${row.locale}`;
+    const playing = await h.service.startStationMatch({
+      stationId: 'ARCADE-01', expectedRevision: displayReady.station.revision,
+      idempotencyKey: `owl-${row.locale}-start`, authorization: AUTHORIZATION,
+      enginePlayerIdsByReadyEntryId: { [readyEntryId]: enginePlayerId },
+    });
+    await h.service.completeStationMatch({
+      stationId: 'ARCADE-01', expectedRevision: playing.station.revision,
+      idempotencyKey: `owl-${row.locale}-complete`, authorization: AUTHORIZATION,
+      resultSource: 'ENGINE',
+      engineResults: [{
+        enginePlayerId, rank: 1, completed: true, won: null, score: 7, durationSeconds: null,
+      }],
+    });
+
+    const result = Object.values(h.store.snapshot().outboundNotifications)
+      .find(item => item.kind === 'STATION_RESULTS')!;
+    expect(result.locale).toBe(row.locale);
+    expect(result.body).toContain(row.expected);
+    expect(result.body).not.toContain(row.forbidden);
+    expect(result.templateVariables).toEqual({ '1': row.gameName });
+  });
+
+  it.each([
     { locale: 'en-US', outcome: 'win', from: '+14155550811', language: 'en-US', terms: 'YES', coin: 'COIN', won: true,
       expected: 'You won the wizard duel.', gameName: 'Voice Chess' },
     { locale: 'pt-BR', outcome: 'loss', from: '+551155555811', language: 'pt-BR', terms: 'SIM', coin: 'MOEDA', won: false,

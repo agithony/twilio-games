@@ -63,6 +63,14 @@ const state: {
 
 const notice = el('notice'), modeBadge = el('mode-badge'), heroBalance = el('hero-balance');
 const PLAYABLE_GAMES: readonly PlayableGame[] = PLAYABLE_ARCADE_GAMES.map(game => game.id);
+for (const select of document.querySelectorAll<HTMLSelectElement>('[data-game-priority]')) {
+  select.replaceChildren(...PLAYABLE_GAMES.map(game => {
+    const option = document.createElement('option');
+    option.value = game;
+    option.textContent = gameTitle(resolvedLocale, game);
+    return option;
+  }));
+}
 const operatorView = location.pathname === '/operator' || location.pathname === '/operator/';
 const OPERATOR_TABS:readonly OperatorTab[]=['operator-overview','live-event','messages','setup'];
 const playerPortuguese = !operatorView && resolvedLocale === 'pt-BR';
@@ -1349,7 +1357,10 @@ function matchOutcome(view:OperatorStationView):string{
   return result.participants.map(participant=>{
     const name=view.readyEntries.find(entry=>entry.id===participant.readyEntryId)?.displayName??'Player';
     const outcome=describeStationParticipantOutcome(view.match!.game,participant);
-    return `${name}: ${outcome}${participant.score===null?'':`, score ${participant.score}`}`;
+    const score = participant.score===null ? ''
+      : view.match!.game==='owl' ? `, ${participant.score} ${participant.score===1?'reaction':'reactions'}`
+        : `, score ${participant.score}`;
+    return `${name}: ${outcome}${score}`;
   }).join(' · ');
 }
 

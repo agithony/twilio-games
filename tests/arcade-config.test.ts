@@ -48,20 +48,21 @@ describe('Twilio Games runtime configuration', () => {
         karaoke: { enabled: true },
         trivia: { enabled: true },
         chess: { enabled: true },
+        owl: { enabled: true },
       },
       comingSoon: {
         trivia: { enabled: false },
       },
       automaticSelection: {
         policy: 'best_fit_rotation',
-        order: ['racer', 'monsters', 'fighter', 'karaoke', 'trivia', 'chess'],
+        order: ['racer', 'monsters', 'fighter', 'karaoke', 'trivia', 'chess', 'owl'],
       },
       qrRail: 'auto',
     });
     expect(DEFAULT_ARCADE_CONFIG.coins).toMatchObject({
       startingBalance: 1,
       defaultGameCost: 1,
-      gameCosts: { racer: 1, monsters: 1, fighter: 1, karaoke: 1, trivia: 1, chess: 1 },
+      gameCosts: { racer: 1, monsters: 1, fighter: 1, karaoke: 1, trivia: 1, chess: 1, owl: 1 },
       chargePolicy: 'per_player',
       consumeWhen: 'match_start',
     });
@@ -92,16 +93,16 @@ describe('Twilio Games runtime configuration', () => {
     expect(DEFAULT_ARCADE_CONFIG.intelligence.enabled).toBe(false);
   });
 
-  it('enables Chess in new configs and requires it in each station game list', () => {
+  it('enables Owl in new configs and requires it in each station game list', () => {
     const config = rawConfig();
-    expect(config.schemaVersion).toBe(8);
-    expect(config.station.games.chess).toEqual({ enabled: true });
+    expect(config.schemaVersion).toBe(9);
+    expect(config.station.games.owl).toEqual({ enabled: true });
     expect(config.station.automaticSelection.order).toEqual([
-      'racer', 'monsters', 'fighter', 'karaoke', 'trivia', 'chess',
+      'racer', 'monsters', 'fighter', 'karaoke', 'trivia', 'chess', 'owl',
     ]);
-    expect(config.coins.gameCosts.chess).toBe(1);
+    expect(config.coins.gameCosts.owl).toBe(1);
 
-    delete config.station.games.chess;
+    delete config.station.games.owl;
     expectInvalid(config);
   });
 
@@ -199,7 +200,7 @@ describe('Twilio Games runtime configuration', () => {
 
   it('requires exact station game settings and an enabled game while arcade mode is on', () => {
     const allDisabled = rawConfig();
-    for (const game of ['racer', 'monsters', 'fighter', 'karaoke', 'trivia', 'chess']) allDisabled.station.games[game].enabled = false;
+    for (const game of ['racer', 'monsters', 'fighter', 'karaoke', 'trivia', 'chess', 'owl']) allDisabled.station.games[game].enabled = false;
     expect(parseArcadeConfig(allDisabled).station.games.racer.enabled).toBe(false);
 
     allDisabled.arcade.mode = 'coin_only';
@@ -231,10 +232,10 @@ describe('Twilio Games runtime configuration', () => {
     policy => {
       const candidate = rawConfig();
       candidate.station.automaticSelection.policy = policy;
-      candidate.station.automaticSelection.order = ['trivia', 'fighter', 'racer', 'monsters', 'karaoke', 'chess'];
+      candidate.station.automaticSelection.order = ['trivia', 'fighter', 'racer', 'monsters', 'karaoke', 'chess', 'owl'];
       expect(parseArcadeConfig(candidate).station.automaticSelection).toEqual({
         policy,
-        order: ['trivia', 'fighter', 'racer', 'monsters', 'karaoke', 'chess'],
+        order: ['trivia', 'fighter', 'racer', 'monsters', 'karaoke', 'chess', 'owl'],
       });
     },
   );
@@ -510,6 +511,7 @@ describe('Twilio Games runtime configuration', () => {
     ['gameCosts', 'fighter', 1.5],
     ['gameCosts', 'karaoke', 2],
     ['gameCosts', 'trivia', 2],
+    ['gameCosts', 'owl', 2],
   ])('rejects non-one station coin cost %s.%s = %s', (field, game, value) => {
     const candidate = rawConfig();
     if (game === null) candidate.coins[field] = value;

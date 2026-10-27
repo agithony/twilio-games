@@ -1,6 +1,6 @@
 # Deployment
 
-Twilio Games deploys six playable titles, Voice Racer, Voice Monsters, Voice Fighter, Voice Karaoke, Voice Trivia, and Voice Chess, to one Azure Container App. The Node process serves the built browser clients, APIs, static assets, Twilio webhooks, game WebSockets, and Karaoke Media Streams.
+Twilio Games deploys seven playable titles, Voice Racer, Voice Monsters, Voice Fighter, Voice Karaoke, Voice Trivia, Voice Chess, and Talking Owl, to one Azure Container App. The Node process serves the built browser clients, APIs, static assets, Twilio webhooks, game WebSockets, and Karaoke Media Streams.
 
 For project setup and local development, see the [README](../README.md). For the one-time Azure and GitHub setup, see [Infrastructure setup](./INFRA_SETUP.md).
 
@@ -89,7 +89,7 @@ These default paths persist:
 |---|---|---|
 | `data/leaderboard.json` | Racer leaderboard | Created on the first completed race |
 | `data/karaoke-leaderboard.json` | Per-song Voice Karaoke leaderboard | Created on the first completed Karaoke performance |
-| `data/analytics.json` | Anonymous daily activation rollups for all six games | Created when the first match or accepted voice command is recorded; the 730-day age cutoff can retain 731 inclusive UTC date buckets |
+| `data/analytics.json` | Anonymous daily activation rollups for all seven games | Created when the first match or accepted voice command is recorded; the 730-day age cutoff can retain 731 inclusive UTC date buckets |
 | `data/maps.json` | Live Racer level catalog | Seeded from `assets/maps/maps.json` when missing, blank, or corrupt; a valid live file is not overwritten |
 | `data/arena.json` | Live Voice Monsters arena configuration | Read from the bundled `assets/arena/arena.json` fallback until the editor first saves a live copy |
 | `data/fighter-maps.json` | Live Fighter map catalog | Seeded from `assets/fighters/maps/maps.json` when the live catalog cannot be parsed |
@@ -141,11 +141,11 @@ The deployed specification currently sets these variables:
 | `TWILIO_MESSAGING_SERVICE_SID` | GitHub repository variable | Messaging Service used for approved WhatsApp Content Templates |
 | `ARCADE_OUTBOUND_MESSAGING_ENABLED` | GitHub repository variable | Explicit outbound station-notification kill switch; only literal `true` enables enqueue and REST delivery |
 | `TWILIO_WHATSAPP_CONTENT_SID_STATION_{ADMITTED,OVERFLOW,CALL_NOW,RESULTS,NEXT_GAME}_{EN_US,PT_BR}` | Ten GitHub repository variables | Approved localized WhatsApp templates; call-now uses a static Phone CTA inside and outside the 24-hour window, while other configured templates are selected outside it |
-| `CR_TTS_VOICE` | Pinned to `SA7eD52NRr8WAehitVt1` by deployment | English ElevenLabs Conversation Relay voice for all six games; the server selects Flash v2 for supported Twilio-name phonemes |
+| `CR_TTS_VOICE` | Pinned to `SA7eD52NRr8WAehitVt1` by deployment | English ElevenLabs Conversation Relay voice for all seven games; the server selects Flash v2 for supported Twilio-name phonemes |
 | `CR_TTS_VOICE_PT_BR` | GitHub repository variable | Optional Brazilian Portuguese ElevenLabs voice ID; empty uses Relay's `pt-BR` default |
 | `ELEVENLABS_API_KEY` | Optional Container App secret `elevenlabs-api-key` populated from the matching GitHub repository secret | Synthesizes only missing fixed Wizard Chess scene lines for the shared display using the selected Hermione, Ron, and Harry voices. Already-downloaded lines still play without the key; uncached lines use captions. Conversation Relay phone TTS is independent. |
 | `DEFAULT_LOCALE` | GitHub repository variable | Fallback when the dialed number and selected display do not identify a locale; empty defaults to `en-US` |
-| `OPENAI_API_KEY` | Required Container App secret populated from the matching GitHub secret | Enables bounded conversational command interpretation in all six games and both locales; the deployment check rejects an unset key |
+| `OPENAI_API_KEY` | Required Container App secret populated from the matching GitHub secret | Enables bounded conversational command interpretation for Racer through Chess in both locales; Talking Owl has its own deterministic interpreter; the deployment check rejects an unset key |
 | `OPENAI_MODEL` | GitHub repository variable | OpenAI model; empty defaults to `gpt-4o-mini` |
 | `DEEPGRAM_API_KEY` | Required Container App secret `deepgram-api-key` populated from the matching GitHub secret | Enables direct Nova-3 streaming lyric verification with chart keyterms for Voice Karaoke; production startup and deploy validation fail closed when missing |
 | `KARAOKE_CALIBRATION_OFFSET_MS` | Optional repository variable, default `0` | Applies the measured handset/carrier offset to authoritative Karaoke scoring; accepted range is `-5000..5000` ms, positive maps observations later, and negative maps them earlier |
@@ -196,6 +196,7 @@ Replace `<base>` with `https://<app-fqdn>`.
 | Standalone Voice Karaoke shared display | `<base>/karaoke.html?display=1&room=4821` with the event paused and Karaoke enabled; no display pairing is required |
 | Standalone Voice Trivia shared display | `<base>/trivia.html?display=1&room=4821` with the event paused and Trivia enabled; callers only, with no browser-player admission or display pairing |
 | Standalone Voice Chess shared display | `<base>/chess.html?display=1&room=4821` with the event paused and Chess enabled; one caller against the computer, with no browser moves or display pairing |
+| Standalone Talking Owl shared display | `<base>/talking-owl.html?display=1&room=4821` with the event paused and Owl enabled; one caller, with voice-owned reactions and no display pairing |
 | Voice Karaoke local keyboard acceptance | Open `http://localhost:5173/karaoke.html`, press hidden `P`, then use mouse/keyboard controls; public and production origins reject browser singers |
 | Standalone Voice Racer browser player | `<base>/play.html?room=4821&name=Ada` |
 | Challenge portal | `<base>/challenge/` with the signed 15-minute token in the URL fragment; messaging supplies the complete link |
@@ -217,7 +218,7 @@ Replace `<base>` with `https://<app-fqdn>`.
 
 Room `4821` belongs only to standalone play. Station launches use the selected game's route with a generated 12-character room code, match ID, and launch generation from the authenticated display projection; operators should not construct station launch URLs manually.
 
-The Fighter browser page is `/fighter.html`; `/fighter` is the Fighter WebSocket upgrade endpoint and is not an HTTP page. Voice Karaoke, Voice Trivia, and Voice Chess follow the same split with `/karaoke.html` plus `/karaoke`, `/trivia.html` plus `/trivia`, and `/chess.html` plus `/chess`. Browser URLs do not accept `hostToken` or display credentials. Only station-managed launches inherit the booth access installed from `/operator`; standalone displays do not pair. `FIGHTER_DISPLAY_TOKEN` remains only a server-side override for custom standalone integrations.
+The Fighter browser page is `/fighter.html`; `/fighter` is the Fighter WebSocket upgrade endpoint and is not an HTTP page. Voice Karaoke, Voice Trivia, Voice Chess, and Talking Owl follow the same split with `/karaoke.html` plus `/karaoke`, `/trivia.html` plus `/trivia`, `/chess.html` plus `/chess`, and `/talking-owl.html` plus `/ws/owl`. Browser URLs do not accept `hostToken` or display credentials. Only station-managed launches inherit the booth access installed from `/operator`; standalone displays do not pair. `FIGHTER_DISPLAY_TOKEN` remains only a server-side override for custom standalone integrations.
 
 WebSocket endpoints are `/game`, `/battle`, `/fighter`, `/karaoke`, `/trivia`, `/chess`, `/karaoke-media`, and `/voice`. `/trivia` and `/chess` accept same-origin display upgrades and are not HTTP smoke targets. `/karaoke-media` accepts only signed, query-free Twilio upgrades and one-use call-bound attempt tokens. The same Node server also serves `/api/*`, `/assets/*`, `/fighter-previews/*`, `/audio/*`, `/video/*`, `/brand/*`, and `/fonts/*`. The six home-card gameplay previews, including Chess, are bundled with the built client.
 
@@ -253,11 +254,11 @@ Inactive anonymous messaging players and incomplete drafts become cleanup candid
 
 ### Arcade Configuration V8 and State V11
 
-Configuration schema v8 adds Chess to the six-game station enablement, automatic-selection order, and one-coin game-cost maps. Fresh and migrated settings enable Chess. A strict v7 configuration keeps its existing game settings and order, then appends Chess; persisted bytes and audit hashes stay intact until the next authenticated update writes a v8 record. Earlier migrations still apply, including the v6-to-v7 Trivia migration that adds Trivia disabled and retains `station.comingSoon.trivia.enabled=false` as a compatibility tombstone.
+Configuration schema v9 adds Talking Owl as the seventh station game in enablement, automatic-selection order, and one-coin game-cost maps. Fresh and migrated settings enable Owl. A strict v8 configuration keeps its existing game settings and order, then appends Owl; historical persisted bytes and audit hashes stay intact until the next authenticated update writes a v9 record. Earlier migrations still apply, including v7-to-v8 Chess and v6-to-v7 Trivia.
 
 State schema v11 permits Trivia and Chess identities in persisted station votes, assignments, matches, and results. Valid schema-v1 through v10 state is promoted in memory and written as v11 on the next transaction. A file labeled v10 but already containing Trivia station identity fails closed rather than being misinterpreted as pre-promotion data.
 
-Older application revisions can reject v8 configuration or Chess-bearing state. Activate the new writer only after the rollback release can read its data, or retain the pre-rollout Azure Files snapshot for a stop-the-writer rollback. Never edit a schema version by hand or restore a snapshot after the candidate may have accepted public interactions or produced Twilio side effects.
+Older application revisions can reject v9 configuration or Owl-bearing state. Activate the new writer only after the rollback release can read its data, or retain the pre-rollout Azure Files snapshot for a stop-the-writer rollback. Never edit a schema version by hand or restore a snapshot after the candidate may have accepted public interactions or produced Twilio side effects.
 
 ## Editor writes
 

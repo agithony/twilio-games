@@ -37,6 +37,10 @@ export const ARCADE_GAME_DEFINITIONS: Readonly<Record<ArcadeGame, ArcadeGameDefi
     id: 'chess', route: '/chess.html', humanCapacity: 2, minimumHumans: 1,
     aiFallback: true, playable: true,
   }),
+  owl: Object.freeze({
+    id: 'owl', route: '/talking-owl.html', humanCapacity: 1, minimumHumans: 1,
+    aiFallback: false, playable: true,
+  }),
 });
 
 export const PLAYABLE_ARCADE_GAMES = Object.freeze(

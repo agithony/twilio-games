@@ -13,6 +13,8 @@ import { KaraokeServer } from './karaoke-server';
 import { TriviaServer, type TriviaServerOptions } from './trivia-server';
 import { ChessServer } from './chess-server';
 import { ChessVoiceSession } from './chess-voice';
+import { OwlServer } from './owl-server';
+import { OwlVoiceSession } from './owl-voice';
 import { WizardChessAudioError, WizardChessAudioService } from './wizard-chess-audio';
 import { TriviaVoiceSession, type TriviaVoiceSnapshot } from './trivia-voice';
 import { TriviaContentStore } from './trivia-content-store';
@@ -254,7 +256,14 @@ interface ChessVoiceCallBinding {
   activeSession: ChessVoiceSession | null;
   leaveTimer: ReturnType<typeof setTimeout> | null;
 }
-type MountedVoiceGame = 'racer' | 'battle' | 'fighter' | 'karaoke' | 'trivia' | 'chess';
+interface OwlVoiceCallBinding {
+  code: string;
+  playerId: string;
+  locale: SupportedLocale;
+  stationManaged: boolean;
+  activeSession: OwlVoiceSession | null;
+}
+type MountedVoiceGame = 'racer' | 'battle' | 'fighter' | 'karaoke' | 'trivia' | 'chess' | 'owl';
 const STANDALONE_GAME_PAGES = new Map<string, MountedVoiceGame>(PLAYABLE_ARCADE_GAMES.map(game => [
   game.route, game.id === 'monsters' ? 'battle' : game.id,
 ]));
@@ -267,6 +276,7 @@ export class HttpServer {
   private karaoke: KaraokeServer;
   private trivia: TriviaServer;
   private chess: ChessServer;
+  private owl: OwlServer;
   private readonly triviaContent: TriviaContentStore;
   private readonly triviaLeaderboard: TriviaLeaderboardStore;
   private karaokeMedia: KaraokeMediaRuntime;
@@ -356,6 +366,8 @@ export class HttpServer {
   private triviaVoiceCallBindings = new Map<string, TriviaVoiceCallBinding>();
   private chessVoice = new Map<string, Set<ChessVoiceSession>>();
   private chessVoiceCallBindings = new Map<string, ChessVoiceCallBinding>();
+  private owlVoice = new Map<string, Set<OwlVoiceSession>>();
+  private owlVoiceCallBindings = new Map<string, OwlVoiceCallBinding>();
   private readonly triviaResultPersistence = new Map<string, Promise<void>>();
   private karaokeFailureLocales = new Map<string, { locale: SupportedLocale; timer: ReturnType<typeof setTimeout> }>();
   private karaokeHandoffResponses = new Map<string, { xml: string; expiresAtMs: number }>();
@@ -377,6 +389,7 @@ export class HttpServer {
   private readonly standaloneVoiceRouteWaiters = new Set<() => void>();
   private readonly standaloneTriviaDisplayCandidates = new WeakSet<WebSocket>();
   private readonly standaloneChessDisplayCandidates = new WeakSet<WebSocket>();
+  private readonly standaloneOwlDisplayCandidates = new WeakSet<WebSocket>();
   private readonly authenticatedTriviaDisplays = new WeakSet<WebSocket>();
   private readonly publicTriviaDisplays = new Set<WebSocket>();
   private readonly pendingTriviaDisplays = new Map<WebSocket, ReturnType<typeof setTimeout>>();
@@ -386,7 +399,7 @@ export class HttpServer {
   private readonly fighterPreviewDir: string;
   private readonly activeStationEngines = new Set<string>();
   private readonly voiceSockets = new Map<WebSocket, () => { game: PlayableArcadeGame; roomCode: string } | null>();
-  /** Phase-bound semantic command interpreter for all six games, with deterministic parsing when
+  /** Phase-bound semantic command interpreter for Racer through Chess, with deterministic parsing when
    *  OPENAI_API_KEY is unset. Model output is revalidated by each authoritative game server. */
   private llm: LlmClient;
 
@@ -424,6 +437,7 @@ export class HttpServer {
     karaokeDisplayToken?: string;
     triviaDisplayToken?: string;
     chessDisplayToken?: string;
+    owlDisplayToken?: string;
     triviaIdentificationTimeoutMs?: number;
     triviaServerOptions?: Omit<TriviaServerOptions, 'bank' | 'contentRevision' | 'displayToken' | 'server'>;
     analyticsPath?: string;
@@ -547,6 +561,9 @@ export class HttpServer {
     this.chess = new ChessServer({
       displayToken: opts.chessDisplayToken ?? opts.fighterDisplayToken,
     });
+    this.owl = new OwlServer({
+      displayToken: opts.owlDisplayToken ?? opts.fighterDisplayToken,
+    });
     this.karaokeMediaWss = new WebSocketServer({
       noServer: true,
       maxPayload: 16 * 1024,
@@ -667,6 +684,14 @@ export class HttpServer {
           this.voiceReconnectAttempts.delete(callSid);
         }
         this.chess.reconcileStationMatch(roomCode, count >= 2 ? 2 : 1);
+      } else if (game === 'owl') {
+        const retained = new Set(activeEnginePlayerIds);
+        for (const [callSid, binding] of this.owlVoiceCallBindings) {
+          if (binding.code !== roomCode || retained.has(binding.playerId)) continue;
+          this.endOwlVoiceCall(callSid);
+          this.stationVoiceReconnectRoutes.delete(callSid);
+          this.voiceReconnectAttempts.delete(callSid);
+        }
       } else assertNever(game);
     });
     this.arcadeApi?.setPlayerResetCleanupHandler?.(context => this.cleanupResetPlayerHistory(context));
@@ -693,6 +718,10 @@ export class HttpServer {
     this.chess.setDisplayAuthenticationRequirement(roomCode => (
       roomCode.trim().toUpperCase() !== DEFAULT_ROOM || !allowBrowserPlayer(roomCode)
     ));
+    this.owl.setBrowserPlayerAdmission(() => false);
+    this.owl.setDisplayAuthenticationRequirement(roomCode => (
+      roomCode.trim().toUpperCase() !== DEFAULT_ROOM || !allowBrowserPlayer(roomCode)
+    ));
     // Standalone candidates are registered from ?display=1 upgrades below. Routing checks
     // their actual accepted room binding, so an upgraded but unbound socket is never presence.
     this.trivia.setOnDisplayAuthenticated(ws => {
@@ -716,6 +745,11 @@ export class HttpServer {
     this.chess.setOnDisplayRegistered(ws => {
       if (this.standaloneChessDisplayCandidates.has(ws)) {
         this.registerStandaloneDisplay('chess', ws);
+      }
+    });
+    this.owl.setOnDisplayRegistered(ws => {
+      if (this.standaloneOwlDisplayCandidates.has(ws)) {
+        this.registerStandaloneDisplay('owl', ws);
       }
     });
     // Feed newly-created rooms the selectable cars (manifest) + maps (maps.json). Reads are async
@@ -922,6 +956,31 @@ export class HttpServer {
       await Promise.allSettled([...(this.chessVoice.get(roomCode) ?? [])]
         .map(session => session.whenSpeechSettled()));
     });
+    this.owl.setOnRoomState(roomCode => {
+      const state = this.owl.findRoom(roomCode)?.state();
+      if (!state) return;
+      this.analyticsObserver.owlState(roomCode, state);
+      for (const session of this.owlVoice.get(roomCode) ?? []) session.onStateChanged();
+      const result = state.result;
+      this.updateStationEngineLifecycle(
+        'owl', roomCode, state.phase, ['playing'], ['finished'],
+        result ? [{
+          enginePlayerId: result.playerId,
+          rank: 1,
+          completed: true,
+          won: null,
+          score: result.interactionCount,
+          durationSeconds: result.durationSeconds,
+        }] : [],
+      );
+    });
+    this.owl.setOnRoomEvents((roomCode, events) => {
+      for (const event of events) {
+        if (event.type === 'action' && !['call', 'listen', 'hangup'].includes(event.action)) {
+          this.analyticsObserver.voiceCommand('owl');
+        }
+      }
+    });
     // SMS concierge: resolves a room code to a live Room wrapped as a ConciergeRoom (adds car names).
     this.concierge = new SmsConcierge({ findRoom: (code) => this.conciergeRoom(code) });
     this.voiceWss = new WebSocketServer({ noServer: true });
@@ -965,13 +1024,13 @@ export class HttpServer {
         });
         this.notifyStandaloneVoiceRouteWaiters();
       };
-      if ((path === '/karaoke' || path === '/trivia' || path === '/chess')
+      if ((path === '/karaoke' || path === '/trivia' || path === '/chess' || path === '/ws/owl')
         && req.headers.origin !== new URL(this.publicBaseUrl).origin) {
         socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
         socket.destroy();
         return;
       }
-      if ((path === '/trivia' || path === '/chess')
+      if ((path === '/trivia' || path === '/chess' || path === '/ws/owl')
         && (displayValues.length !== 1 || displayValues[0] !== '1')) {
         socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
         socket.destroy();
@@ -1044,6 +1103,13 @@ export class HttpServer {
           if (standaloneDisplay) {
             rememberDisplaySession('chess', ws);
             this.standaloneChessDisplayCandidates.add(ws);
+          }
+        });
+      } else if (path === '/ws/owl') {
+        this.owl.handleUpgrade(req, socket, head, ws => {
+          if (standaloneDisplay) {
+            rememberDisplaySession('owl', ws);
+            this.standaloneOwlDisplayCandidates.add(ws);
           }
         });
       } else if (path === '/karaoke-media') {
@@ -1171,6 +1237,14 @@ export class HttpServer {
       }
       this.analyticsObserver.chessAborted(roomCode);
       this.chess.abortRoom(roomCode);
+    } else if (game === 'owl') {
+      for (const session of [...(this.owlVoice.get(roomCode) ?? [])]) session.handleReplaced();
+      this.owlVoice.delete(roomCode);
+      for (const [callSid, binding] of this.owlVoiceCallBindings) {
+        if (binding.code === roomCode) this.owlVoiceCallBindings.delete(callSid);
+      }
+      this.analyticsObserver.owlAborted(roomCode);
+      this.owl.abortRoom(roomCode);
     } else assertNever(game);
     for(const [callSid,route] of this.stationVoiceReconnectRoutes){
       if(route.game!==game||route.roomCode!==roomCode)continue;
@@ -1274,6 +1348,17 @@ export class HttpServer {
         }
         this.analyticsObserver.chessAborted(roomCode);
         this.chess.abortRoom(roomCode);
+      } else if (game === 'owl') {
+        for (const session of [...(this.owlVoice.get(roomCode) ?? [])]) session.handleReplaced();
+        this.owlVoice.delete(roomCode);
+        for (const [callSid, binding] of this.owlVoiceCallBindings) {
+          if (binding.code !== roomCode) continue;
+          this.owlVoiceCallBindings.delete(callSid);
+          this.stationVoiceReconnectRoutes.delete(callSid);
+          this.voiceReconnectAttempts.delete(callSid);
+        }
+        this.analyticsObserver.owlAborted(roomCode);
+        this.owl.abortRoom(roomCode);
       } else assertNever(game);
       this.activeStationEngines.delete(`${game}:${roomCode}`);
     };
@@ -1291,6 +1376,10 @@ export class HttpServer {
       void Promise.race([settled, sleep(RELAY_SPEECH_SETTLE_TIMEOUT_MS)]).then(finalize);
     } else if (game === 'chess') {
       const settled = Promise.all([...this.chessVoice.get(roomCode) ?? []]
+        .map(session => session.whenSpeechSettled()));
+      void Promise.race([settled, sleep(RELAY_SPEECH_SETTLE_TIMEOUT_MS)]).then(finalize);
+    } else if (game === 'owl') {
+      const settled = Promise.all([...this.owlVoice.get(roomCode) ?? []]
         .map(session => session.whenSpeechSettled()));
       void Promise.race([settled, sleep(RELAY_SPEECH_SETTLE_TIMEOUT_MS)]).then(finalize);
     } else if (game === 'karaoke') {
@@ -1583,6 +1672,7 @@ export class HttpServer {
       else if (racer.game === 'karaoke') this.karaoke.anonymizePlayer(racer.roomCode,racer.enginePlayerId);
       else if (racer.game === 'trivia') this.trivia.anonymizePlayer(racer.roomCode,racer.enginePlayerId);
       else if (racer.game === 'chess') continue;
+      else if (racer.game === 'owl') continue;
       else assertNever(racer.game);
     }
     if (!targets.size && !enginePlayerIds.size && !karaokeEnginePlayerIds.size && !context.racers.some(racer => racer.game === 'trivia')) return Promise.resolve();
@@ -1720,7 +1810,7 @@ export class HttpServer {
       },
     });
 
-    // One voice WebSocket serves all six games. The setup frame supplies the station's
+    // One voice WebSocket serves every arcade game. The setup frame supplies the station's
     // authoritative game, or standalone routing finds one accepted display for this room.
     // Fix the route for the rest of the call so later screen changes cannot move the caller.
     let route: MountedVoiceGame | null = null;
@@ -1729,6 +1819,7 @@ export class HttpServer {
     let karaoke: KaraokeVoiceSession | null = null;
     let trivia: TriviaVoiceSession | null = null;
     let chess: ChessVoiceSession | null = null;
+    let owl: OwlVoiceSession | null = null;
     let relayCallSid = '';
     let stationCallSid = '';
     let stationReadyEntryId = '';
@@ -1745,6 +1836,7 @@ export class HttpServer {
       if (route === 'karaoke') return karaoke?.boundRoomCode ? { game: 'karaoke', roomCode: karaoke.boundRoomCode } : null;
       if (route === 'trivia') return trivia?.boundRoomCode ? { game: 'trivia', roomCode: trivia.boundRoomCode } : null;
       if (route === 'chess') return chess?.boundRoomCode ? { game: 'chess', roomCode: chess.boundRoomCode } : null;
+      if (route === 'owl') return owl?.boundRoomCode ? { game: 'owl', roomCode: owl.boundRoomCode } : null;
       if (route === 'racer') return adapter.boundRoomCode ? { game: 'racer', roomCode: adapter.boundRoomCode } : null;
       return assertNever(route);
     });
@@ -1838,6 +1930,11 @@ export class HttpServer {
         chess.setStationManaged(stationManaged);
         if (stationManaged) chess.setStationAssignment(stationParticipantIndex, stationParticipantCount);
         chess.handleMessage(raw);
+      } else if (route === 'owl') {
+        if (!owl) owl = this.makeOwlSession(sayOutcome, ws);
+        owl.setAuthoritativeName(stationFirstName);
+        owl.setStationManaged(stationManaged);
+        owl.handleMessage(raw);
       } else if (route === 'racer') {
         adapter.setAuthoritativeName(stationFirstName);
         adapter.setStationManaged(stationManaged);
@@ -1854,6 +1951,7 @@ export class HttpServer {
               : route === 'karaoke' ? karaoke?.boundPlayerId
                 : route === 'trivia' ? trivia?.boundPlayerId
                 : route === 'chess' ? chess?.boundPlayerId
+                : route === 'owl' ? owl?.boundPlayerId
                 : route === 'racer' ? adapter.boundPlayerId : null;
           if (bound && readyEntryId) {
             this.arcadeApi?.stationVoiceParticipantConnected(String(setup.callSid ?? ''), readyEntryId, bound, stationConnectionId);
@@ -1930,6 +2028,8 @@ export class HttpServer {
                   ? this.hasResumableTriviaVoiceCall(stationCallSid, assignedRoom)
                 : assignedGame === 'chess'
                   ? this.hasResumableChessVoiceCall(stationCallSid, assignedRoom)
+                : assignedGame === 'owl'
+                  ? this.hasResumableOwlVoiceCall(stationCallSid, assignedRoom)
                 : this.hasResumableRacerVoiceCall(stationCallSid, assignedRoom);
           if ((identity.terminal || racerPhase === 'finished' || racerPhase === 'results') && !resumable) {
             ws.close(1008, 'finished station assignment');
@@ -1973,6 +2073,10 @@ export class HttpServer {
         this.unregisterChessVoiceSession(chess);
         chess.handleClose();
       }
+      else if (owl) {
+        this.unregisterOwlVoiceSession(owl);
+        owl.handleClose();
+      }
       else if (karaoke) {
         const binding = relayCallSid ? this.karaokeVoiceCallBindings.get(relayCallSid) : undefined;
         const phase = karaoke.boundRoomCode
@@ -2015,6 +2119,7 @@ export class HttpServer {
       if (g === 'karaoke' || g === 'sing') return 'karaoke';
       if (g === 'trivia' || g === 'quiz') return 'trivia';
       if (g === 'chess') return 'chess';
+      if (g === 'owl' || g === 'talking owl') return 'owl';
       if (g === 'racer' || g === 'race') return 'racer';
     } catch { /* fall through to auto-detect */ }
     return this.recentVoiceGame(roomCode) ?? (this.eligibleStandaloneVoiceConnections(roomCode).length ? null : 'racer');
@@ -2088,6 +2193,7 @@ export class HttpServer {
       case 'karaoke': return this.karaoke.hasStandaloneDisplay(ws, roomCode);
       case 'trivia': return this.trivia.hasStandaloneDisplay(ws, roomCode);
       case 'chess': return this.chess.hasStandaloneDisplay(ws, roomCode);
+      case 'owl': return this.owl.hasStandaloneDisplay(ws, roomCode);
       default: return assertNever(game);
     }
   }
@@ -2256,6 +2362,7 @@ export class HttpServer {
     if (game === 'karaoke' && this.karaoke.connectionCount > 0) return this.karaoke.preferredLocale(roomCode, this.defaultLocale);
     if (game === 'trivia' && this.trivia.connectionCount > 0) return this.trivia.preferredLocale(roomCode, this.defaultLocale);
     if (game === 'chess' && this.chess.connectionCount > 0) return this.chess.preferredLocale(roomCode, this.defaultLocale);
+    if (game === 'owl' && this.owl.connectionCount > 0) return this.owl.preferredLocale(roomCode, this.defaultLocale);
     return this.defaultLocale;
   }
 
@@ -2322,6 +2429,11 @@ export class HttpServer {
         ? [`coluna ${file}`, `na coluna ${file}`]
         : [`${file} file`, `on ${file}`]);
       return voiceHintList(commands, squares, filePhrases);
+    }
+    if (game === 'owl') {
+      return voiceHintList(locale === 'pt-BR'
+        ? ['coruja', 'olá', 'sim', 'não', 'talvez', 'repita', 'imitar', 'rir', 'rir alto', 'piar', 'cantar', 'dançar', 'acenar', 'jornal', 'ler', 'telefone', 'biscoito', 'comer', 'chá', 'beber', 'arrotar', 'cutucar', 'fazer cócegas', 'laboratório', 'misturar', 'poção', 'frutas vermelhas', 'hortelã', 'âmbar', 'vermelho', 'azul', 'verde', 'dourado', 'ajuda', 'adeus']
+        : ['owl', 'hello', 'yes', 'no', 'maybe', 'repeat', 'copy me', 'laugh', 'giggle', 'hoot', 'sing', 'dance', 'wave', 'newspaper', 'read', 'phone', 'cookie', 'eat', 'tea', 'drink', 'burp', 'poke', 'tickle', 'lab', 'mix', 'potion', 'berry', 'mint', 'amber', 'red', 'blue', 'green', 'gold', 'help', 'goodbye']);
     }
     const commands = locale === 'pt-BR'
       ? ['esquerda', 'direita', 'acelerar', 'acelere', 'acelera', 'vai', 'frear', 'freie', 'freia', 'devagar', 'reduzir', 'reduza', 'desacelerar', 'desacelere', 'parar', 'nitro', 'turbo', 'poder', 'começar', 'iniciar', 'próximo', 'próxima', 'corrida', 'correr', 'revanche', 'sim']
@@ -2418,6 +2530,90 @@ export class HttpServer {
       say,
     });
     return session;
+  }
+
+  private makeOwlSession(
+    say: (text: string, isCurrent?: () => boolean) => Promise<RelaySpeechOutcome>,
+    ws: WebSocket,
+  ): OwlVoiceSession {
+    let session: OwlVoiceSession;
+    session = new OwlVoiceSession({
+      bind: (rawCode, name, callSid, locale, stationManaged, nameConfirmed) => {
+        const code = rawCode.trim().toUpperCase();
+        const previous = this.owlVoiceCallBindings.get(callSid.trim());
+        if (previous && previous.code !== code) this.endOwlVoiceCall(callSid);
+        const joined = this.owl.voiceJoin(code, name, callSid, locale, stationManaged, nameConfirmed);
+        if (!joined) return null;
+        this.rememberOwlVoiceCall(callSid, code, joined.playerId, locale, stationManaged, session);
+        this.analyticsObserver.owlBound(code, callSid);
+        this.registerOwlVoiceSession(code, session);
+        return joined;
+      },
+      confirmName: (code, callSid, name) => this.owl.voiceConfirmName(code, callSid, name),
+      action: (code, callSid, action, line, reagents) =>
+        this.owl.voiceAction(code, callSid, action, line, reagents),
+      snapshot: code => this.owl.snapshot(code),
+      disconnect: (code, callSid) => {
+        this.unregisterOwlVoiceSession(session);
+        const binding = this.owlVoiceCallBindings.get(callSid.trim());
+        if (binding && binding.activeSession === session) binding.activeSession = null;
+        this.owl.voiceDisconnect(code, callSid);
+      },
+      leave: (code, callSid, reason) => {
+        this.unregisterOwlVoiceSession(session);
+        const binding = this.owlVoiceCallBindings.get(callSid.trim());
+        if (binding?.activeSession === session) this.owlVoiceCallBindings.delete(callSid.trim());
+        this.owl.voiceLeave(code, callSid, reason);
+      },
+      say,
+      requestEnd: handoff => { sendRelayHandoff(ws, handoff); },
+    });
+    return session;
+  }
+
+  private registerOwlVoiceSession(code: string, session: OwlVoiceSession): void {
+    let sessions = this.owlVoice.get(code);
+    if (!sessions) {
+      sessions = new Set();
+      this.owlVoice.set(code, sessions);
+    }
+    sessions.add(session);
+  }
+
+  private unregisterOwlVoiceSession(session: OwlVoiceSession): void {
+    for (const [code, sessions] of this.owlVoice) {
+      if (sessions.delete(session) && sessions.size === 0) this.owlVoice.delete(code);
+    }
+  }
+
+  private rememberOwlVoiceCall(
+    callSid: string, code: string, playerId: string, locale: SupportedLocale,
+    stationManaged: boolean, session: OwlVoiceSession,
+  ): void {
+    const sid = callSid.trim();
+    const previous = this.owlVoiceCallBindings.get(sid);
+    if (previous?.activeSession && previous.activeSession !== session) {
+      this.unregisterOwlVoiceSession(previous.activeSession);
+      previous.activeSession.handleReplaced();
+    }
+    this.owlVoiceCallBindings.set(sid, { code, playerId, locale, stationManaged, activeSession: session });
+  }
+
+  private hasResumableOwlVoiceCall(callSid: string, code: string): boolean {
+    const binding = this.owlVoiceCallBindings.get(callSid.trim());
+    return Boolean(binding && binding.code === code && this.owl.hasVoiceBinding(code, callSid));
+  }
+
+  private endOwlVoiceCall(callSid: string): void {
+    const sid = callSid.trim();
+    const binding = this.owlVoiceCallBindings.get(sid);
+    if (!binding) return;
+    if (binding.activeSession) {
+      this.unregisterOwlVoiceSession(binding.activeSession);
+      binding.activeSession.handleReplaced();
+    }
+    this.owlVoiceCallBindings.delete(sid);
+    this.owl.voiceLeave(binding.code, sid);
   }
 
   private registerChessVoiceSession(code: string, session: ChessVoiceSession): void {
@@ -4647,6 +4843,8 @@ export class HttpServer {
                       ?this.hasResumableKaraokeVoiceCall(callSid,station.roomCode)
                       :station.game==='chess'
                         ?this.hasResumableChessVoiceCall(callSid,station.roomCode)
+                      :station.game==='owl'
+                        ?this.hasResumableOwlVoiceCall(callSid,station.roomCode)
                       :this.hasResumableTriviaVoiceCall(callSid,station.roomCode);
               if(!terminalBinding){this.stationVoiceReconnectRoutes.delete(callSid);station=undefined;}
             }
@@ -4658,9 +4856,10 @@ export class HttpServer {
         const karaoke = this.karaokeVoiceCallBindings.get(callSid);
         const trivia = this.triviaVoiceCallBindings.get(callSid);
         const chess = this.chessVoiceCallBindings.get(callSid);
-        const game = station?.game ?? (battle ? 'monsters' : fighter ? 'fighter' : karaoke ? 'karaoke' : trivia ? 'trivia' : chess ? 'chess' : racer ? 'racer' : null);
-        const roomCode = station?.roomCode ?? battle?.code ?? fighter?.code ?? karaoke?.code ?? trivia?.code ?? chess?.code ?? racer?.code;
-        const locale = station?.locale ?? battle?.locale ?? fighter?.locale ?? karaoke?.locale ?? trivia?.locale ?? chess?.locale ?? racer?.locale ?? this.defaultLocale;
+        const owl = this.owlVoiceCallBindings.get(callSid);
+        const game = station?.game ?? (battle ? 'monsters' : fighter ? 'fighter' : karaoke ? 'karaoke' : trivia ? 'trivia' : chess ? 'chess' : owl ? 'owl' : racer ? 'racer' : null);
+        const roomCode = station?.roomCode ?? battle?.code ?? fighter?.code ?? karaoke?.code ?? trivia?.code ?? chess?.code ?? owl?.code ?? racer?.code;
+        const locale = station?.locale ?? battle?.locale ?? fighter?.locale ?? karaoke?.locale ?? trivia?.locale ?? chess?.locale ?? owl?.locale ?? racer?.locale ?? this.defaultLocale;
         if (game && roomCode) {
           this.voiceReconnectAttempts.set(callSid, attempts + 1);
           const xml = twimlConnectRelay({
@@ -4684,6 +4883,7 @@ export class HttpServer {
       this.endRacerVoiceCall(callSid); this.endBattleVoiceCall(callSid); this.endFighterVoiceCall(callSid);
       this.endTriviaVoiceCall(callSid);
       this.endChessVoiceCall(callSid);
+      this.endOwlVoiceCall(callSid);
       const karaokeBinding = this.karaokeVoiceCallBindings.get(callSid);
       if (karaokeBinding && this.karaoke.findRoom(karaokeBinding.code)?.state().phase !== 'results') {
         this.failKaraokeCall(callSid);
@@ -5491,6 +5691,8 @@ export class HttpServer {
         binding.activeSession?.handleReplaced();
       }
       this.chessVoiceCallBindings.clear(); this.chessVoice.clear();
+      for (const binding of this.owlVoiceCallBindings.values()) binding.activeSession?.handleReplaced();
+      this.owlVoiceCallBindings.clear(); this.owlVoice.clear();
       this.karaokeHandoffResponses.clear();
       for (const failure of this.karaokeFailureLocales.values()) clearTimeout(failure.timer);
       this.karaokeFailureLocales.clear();
@@ -5508,6 +5710,7 @@ export class HttpServer {
       this.karaoke.stopLoopOnly();
       this.trivia.stopLoopOnly();
       this.chess.stopLoopOnly();
+      this.owl.stopLoopOnly();
       for (const socket of this.voiceSockets.keys()) {
         disposeRelayQueue(socket);
         socket.terminate();
@@ -5872,6 +6075,7 @@ export function contentType(name: string): string {
     case '.png': return 'image/png';
     case '.jpg': case '.jpeg': return 'image/jpeg';
     case '.webp': return 'image/webp';
+    case '.gif': return 'image/gif';
     case '.mp4': return 'video/mp4';
     case '.woff2': return 'font/woff2';
     case '.woff': return 'font/woff';

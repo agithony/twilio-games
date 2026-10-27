@@ -202,6 +202,36 @@ function stationChessRoute(roomCode: string): NonNullable<StationVoiceRoute> {
   };
 }
 
+async function connectOwlDisplay(port: number, roomCode: string, authenticated = false) {
+  const display = new WebSocket(`ws://127.0.0.1:${port}/ws/owl?display=1`, {
+    headers: { Origin: 'http://localhost' },
+  });
+  const states: Array<Record<string, any>> = [];
+  const events: Array<Record<string, any>> = [];
+  display.on('message', data => {
+    const frame = JSON.parse(data.toString()) as Record<string, any>;
+    if (frame.type === 'owl_state' && frame.roomCode === roomCode) states.push(frame);
+    if (frame.type === 'owl_events') events.push(...(frame.events ?? []));
+  });
+  await new Promise<void>((resolve, reject) => {
+    display.once('open', resolve);
+    display.once('error', reject);
+  });
+  if (authenticated) display.send(JSON.stringify({
+    type: 'display_auth', roomCode, token: DISPLAY_TOKEN,
+  }));
+  display.send(JSON.stringify({ type: 'spectate', roomCode }));
+  await vi.waitFor(() => expect(states.length).toBeGreaterThan(0), { timeout: 2_000 });
+  return { display, states, events };
+}
+
+function stationOwlRoute(roomCode: string): NonNullable<StationVoiceRoute> {
+  return {
+    game: 'owl', roomCode, matchId: 'match-owl', launchGeneration: 2,
+    admitted: true, readyEntryId: 'ready-owl', participantIndex: 0, participantCount: 1,
+  };
+}
+
 describe('Arcade Voice routing', () => {
   it('keeps hidden Karaoke browser testing loopback-only and out of production', () => {
     expect(karaokeBrowserTestingAllowed('development', 'http://localhost:8081')).toBe(true);
@@ -1189,5 +1219,75 @@ describe('Arcade Voice routing', () => {
     expect(await response.text()).toBe('invalid signature');
     expect(voiceLocaleForNumber).not.toHaveBeenCalled();
     expect(stationVoiceRoute).not.toHaveBeenCalled();
+  });
+
+  it('routes a standalone Owl call, asks for a name, and drives the display through Relay', async () => {
+    const { port } = await harness({ active: false, standaloneVoiceEnabled: true });
+    const { display, states, events } = await connectOwlDisplay(port, '4821');
+    const callSid = 'CA-owl-standalone';
+    const xml = await (await incomingCall(port, { callSid })).text();
+    expect(xml).toContain('<Parameter name="game" value="owl"');
+    expect(xml).toContain('dance');
+    const { voice, spoken } = await connectChessVoice(port, callSid, {
+      game: 'owl', roomCode: '4821', locale: 'en-US',
+    });
+    try {
+      await vi.waitFor(() => expect(spoken.join(' ')).toContain('first name'), { timeout: 2_000 });
+      voice.send(JSON.stringify({ type: 'prompt', voicePrompt: 'My name is Ada', last: true }));
+      await vi.waitFor(() => expect(states.some(state =>
+        state.phase === 'playing' && state.caller?.name === 'Ada')).toBe(true), { timeout: 2_000 });
+      voice.send(JSON.stringify({ type: 'prompt', voicePrompt: 'Please dance', last: true }));
+      await vi.waitFor(() => expect(events.some(event => event.action === 'dance')).toBe(true), { timeout: 2_000 });
+      const closed = new Promise<void>(resolve => voice.once('close', () => resolve()));
+      voice.close();
+      await closed;
+      const ended = await fetch(`http://127.0.0.1:${port}/voice/session-ended`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ CallSid: callSid, SessionStatus: 'completed', CallStatus: 'completed' }),
+      });
+      expect(ended.status).toBe(200);
+      await vi.waitFor(() => expect(states.some(state =>
+        state.phase === 'finished' && state.result?.interactionCount === 1)).toBe(true), { timeout: 2_000 });
+    } finally {
+      voice.close();
+      display.close();
+    }
+  });
+
+  it('starts and completes a station Owl match using its registered caller name', async () => {
+    const roomCode = 'OWL-STATION';
+    const callSid = 'CA-owl-station';
+    const { port, stationEngineStarted, stationEngineCompleted } = await harness({
+      active: true, route: stationOwlRoute(roomCode), stationRoomCode: roomCode,
+    });
+    const { display, states } = await connectOwlDisplay(port, roomCode, true);
+    const xml = await (await incomingCall(port, { callSid })).text();
+    expect(xml).toContain('<Parameter name="game" value="owl"');
+    const { voice, spoken } = await connectChessVoice(port, callSid, {
+      game: 'owl', roomCode, readyEntryId: 'ready-owl', matchId: 'match-owl',
+      launchGeneration: 2, locale: 'en-US',
+    });
+    try {
+      await vi.waitFor(() => expect(states.some(state =>
+        state.phase === 'playing' && state.caller?.name === 'Ada')).toBe(true), { timeout: 2_000 });
+      expect(spoken.join(' ')).not.toContain('first name');
+      expect(stationEngineStarted).toHaveBeenCalledWith('owl', roomCode);
+      const closed = new Promise<void>(resolve => voice.once('close', () => resolve()));
+      voice.close();
+      await closed;
+      const ended = await fetch(`http://127.0.0.1:${port}/voice/session-ended`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ CallSid: callSid, SessionStatus: 'completed', CallStatus: 'completed' }),
+      });
+      expect(ended.status).toBe(200);
+      await vi.waitFor(() => expect(stationEngineCompleted).toHaveBeenCalledWith('owl', roomCode,
+        expect.arrayContaining([expect.objectContaining({ enginePlayerId: 'o1', completed: true })])),
+      { timeout: 2_000 });
+    } finally {
+      voice.close();
+      display.close();
+    }
   });
 });

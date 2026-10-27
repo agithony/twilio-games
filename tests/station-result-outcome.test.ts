@@ -16,4 +16,10 @@ describe('operator station result wording', () => {
       completed: true, won: false, rank: 2,
     })).toBe('place 2');
   });
+
+  it('describes Owl as an unranked visit', () => {
+    expect(describeStationParticipantOutcome('owl', {
+      completed: true, won: null, rank: 1,
+    })).toBe('completed');
+  });
 });

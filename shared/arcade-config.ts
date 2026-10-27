@@ -1,9 +1,9 @@
-// Activate v8 writes only after every rollback target can read v8. Promotion is intentionally one-way;
+// Activate v9 writes only after every rollback target can read v9. Promotion is intentionally one-way;
 // deployment must provide the staged compatibility gate rather than relying on a lossy downmigration.
-export const ARCADE_CONFIG_SCHEMA_VERSION = 8 as const;
+export const ARCADE_CONFIG_SCHEMA_VERSION = 9 as const;
 
 export type ArcadeMode = 'off' | 'coin_only' | 'lead_capture';
-export type ArcadeGame = 'racer' | 'monsters' | 'fighter' | 'karaoke' | 'trivia' | 'chess';
+export type ArcadeGame = 'racer' | 'monsters' | 'fighter' | 'karaoke' | 'trivia' | 'chess' | 'owl';
 export type RegistrationFieldKey =
   | 'firstName'
   | 'lastName'
@@ -219,7 +219,7 @@ const CONFIG_KEYS = [
 const SETTINGS_KEYS = [
   'arcade', 'station', 'registration', 'coins', 'earning', 'queue', 'channels', 'postGame', 'intelligence',
 ] as const;
-export const STATION_GAMES: readonly StationGame[] = Object.freeze(['racer', 'monsters', 'fighter', 'karaoke', 'trivia', 'chess']);
+export const STATION_GAMES: readonly StationGame[] = Object.freeze(['racer', 'monsters', 'fighter', 'karaoke', 'trivia', 'chess', 'owl']);
 const HOME_CONCEPTS: readonly HomeConcept[] = ['trivia'];
 const REGISTRATION_FIELD_KEYS: readonly RegistrationFieldKey[] = [
   'firstName', 'lastName', 'workEmail', 'companyName', 'phoneNumber', 'countryCode',
@@ -499,6 +499,7 @@ function parseStation(value: unknown, mode: ArcadeMode): StationSettings {
     karaoke: parseStationGame(gameInput.karaoke, '$.station.games.karaoke'),
     trivia: parseStationGame(gameInput.trivia, '$.station.games.trivia'),
     chess: parseStationGame(gameInput.chess, '$.station.games.chess'),
+    owl: parseStationGame(gameInput.owl, '$.station.games.owl'),
   };
   if (mode !== 'off' && !STATION_GAMES.some(game => games[game].enabled)) {
     invalid('$.station.games', 'at least one game must be enabled when arcade mode is not off');
@@ -640,6 +641,7 @@ function parseCoins(value: unknown): CoinSettings {
       karaoke: stationGameCostAt(costs.karaoke, '$.coins.gameCosts.karaoke'),
       trivia: stationGameCostAt(costs.trivia, '$.coins.gameCosts.trivia'),
       chess: stationGameCostAt(costs.chess, '$.coins.gameCosts.chess'),
+      owl: stationGameCostAt(costs.owl, '$.coins.gameCosts.owl'),
     },
     chargePolicy,
     consumeWhen: enumAt(object.consumeWhen, ['match_start'], '$.coins.consumeWhen'),
@@ -1036,13 +1038,14 @@ const DEFAULT_CONFIG_INPUT = {
       karaoke: { enabled: true },
       trivia: { enabled: true },
       chess: { enabled: true },
+      owl: { enabled: true },
     },
     comingSoon: {
       trivia: { enabled: false },
     },
     automaticSelection: {
       policy: 'best_fit_rotation',
-      order: ['racer', 'monsters', 'fighter', 'karaoke', 'trivia', 'chess'],
+      order: ['racer', 'monsters', 'fighter', 'karaoke', 'trivia', 'chess', 'owl'],
     },
     qrRail: 'auto',
   },
@@ -1062,7 +1065,7 @@ const DEFAULT_CONFIG_INPUT = {
   coins: {
     startingBalance: 1,
     defaultGameCost: 1,
-    gameCosts: { racer: 1, monsters: 1, fighter: 1, karaoke: 1, trivia: 1, chess: 1 },
+    gameCosts: { racer: 1, monsters: 1, fighter: 1, karaoke: 1, trivia: 1, chess: 1, owl: 1 },
     chargePolicy: 'per_player',
     consumeWhen: 'match_start',
     expiresAfterHours: null,

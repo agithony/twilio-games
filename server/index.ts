@@ -176,6 +176,7 @@ const srv = new HttpServer({
   karaokeDisplayToken: process.env.ARCADE_DISPLAY_TOKEN ?? process.env.FIGHTER_DISPLAY_TOKEN,
   triviaDisplayToken: process.env.ARCADE_DISPLAY_TOKEN ?? process.env.FIGHTER_DISPLAY_TOKEN,
   chessDisplayToken: process.env.ARCADE_DISPLAY_TOKEN ?? process.env.FIGHTER_DISPLAY_TOKEN,
+  owlDisplayToken: process.env.ARCADE_DISPLAY_TOKEN ?? process.env.FIGHTER_DISPLAY_TOKEN,
   // The number players call to join (shown + QR-encoded on the lobby screen). Unset → placeholder.
   gamePhoneNumber: process.env.GAME_PHONE_NUMBER,
   smsNumber: smsNumber ?? undefined,

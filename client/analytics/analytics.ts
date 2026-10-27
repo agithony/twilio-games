@@ -91,7 +91,7 @@ function renderTrend(report: AnalyticsReport): void {
 }
 
 function renderGames(report: AnalyticsReport): void {
-  const labels: Record<AnalyticsGame,string> = { racer:'Racer', monsters:'Monsters', fighter:'Fighter', karaoke:'Karaoke', trivia:'Trivia', chess:'Chess' };
+  const labels: Record<AnalyticsGame,string> = { racer:'Racer', monsters:'Monsters', fighter:'Fighter', karaoke:'Karaoke', trivia:'Trivia', chess:'Chess', owl:'Talking Owl' };
   const max = Math.max(1, ...Object.values(report.games).map(value => value.sessions));
   el('games').innerHTML = (Object.entries(report.games) as [AnalyticsGame, AnalyticsReport['games'][AnalyticsGame]][]).map(([game,value]) =>
     `<div class="game-row"><span class="game-name">${labels[game]}</span><span class="bar"><i style="width:${value.sessions/max*100}%"></i></span><span class="game-value">${number(value.sessions)}<small>${Math.round(value.completionRate*100)}% complete | ${number(value.abandoned)} abandoned | ${duration(value.playSeconds)} active</small></span></div>`).join('');

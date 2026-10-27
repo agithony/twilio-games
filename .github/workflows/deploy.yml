@@ -139,7 +139,7 @@ jobs:
             exit 1
           fi
           if [ -z "$OPENAI_API_KEY" ] || [ "$OPENAI_API_KEY" = "disabled" ]; then
-            echo "OPENAI_API_KEY is required for conversational voice commands in all six production games." >&2
+             echo "OPENAI_API_KEY is required for conversational voice commands in production." >&2
             exit 1
           fi
           if [[ ! "$TWILIO_ACCOUNT_SID" =~ ^AC[0-9A-Fa-f]{32}$ ]] \
@@ -941,7 +941,7 @@ jobs:
           SMOKE_OK=false
           for attempt in $(seq 1 30); do
             FAILED_ROUTES=()
-            for route in /livez /healthz / /how-it-works.html /instructions /join /player /karaoke.html /trivia.html /chess.html /analytics /operator; do
+            for route in /livez /healthz / /how-it-works.html /instructions /join /player /karaoke.html /trivia.html /chess.html /talking-owl.html /analytics /operator; do
               RESULT=$(curl --silent --show-error --output /dev/null --write-out '%{http_code} %{redirect_url}' \
                 --connect-timeout 5 --max-time 20 "https://${REVISION_FQDN}${route}" || true)
               CODE=${RESULT%% *}
@@ -1032,6 +1032,7 @@ jobs:
           echo "  Voice Karaoke:  https://${FQDN}/karaoke.html"
           echo "  Voice Trivia:   https://${FQDN}/trivia.html"
           echo "  Voice Chess:    https://${FQDN}/chess.html"
+          echo "  Talking Owl:    https://${FQDN}/talking-owl.html"
           echo "  Editor:         https://${FQDN}/editor"
           echo "  Garage:         https://${FQDN}/garage"
           echo "  Voice webhook:  https://${FQDN}/voice/incoming"

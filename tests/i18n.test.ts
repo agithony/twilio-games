@@ -52,6 +52,8 @@ describe('locale foundations', () => {
     expect(gameTitle('pt-BR', 'fighter')).toBe('Luta por Voz');
     expect(gameTitle('pt-BR', 'trivia')).toBe('Quiz por Voz');
     expect(gameTitle('pt-BR', 'karaoke')).toBe('Karaokê por Voz');
+    expect(gameTitle('en-US', 'owl')).toBe('Talking Owl');
+    expect(gameTitle('pt-BR', 'owl')).toBe('Coruja Falante');
     expect(COMMON_MESSAGES['pt-BR']['attribution.builtBy']).toBe('Criado pelo Mago da Twilio');
     expect(carName('pt-BR', 'Batmobile')).toBe('Batmóvel');
     expect(trackName('pt-BR', 'Silver Lake')).toBe('Lago Prateado');

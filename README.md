@@ -4,7 +4,7 @@
   <img src="docs/assets/twilio-games-icon.png" alt="Twilio Games: Play together. Talk to play." width="460">
 </p>
 
-Twilio Games is a shared-screen platform for six voice-controlled games. In an active station, English players enter through SMS or WhatsApp, with a browser fallback in lead-capture mode; Portuguese players use WhatsApp or the same lead-capture browser fallback. Messaging is always presented as the preferred path. Players then enter the ready pool and call the locale-specific Twilio number when admitted. Conversation Relay handles setup and talk-back; Voice Karaoke hands its performance phase to a timestamped Twilio Media Stream for local acoustic analysis and direct Deepgram lyric verification.
+Twilio Games is a shared-screen platform for seven voice-controlled games. In an active station, English players enter through SMS or WhatsApp, with a browser fallback in lead-capture mode; Portuguese players use WhatsApp or the same lead-capture browser fallback. Messaging is always presented as the preferred path. Players then enter the ready pool and call the locale-specific Twilio number when admitted. Conversation Relay handles setup and talk-back; Voice Karaoke hands its performance phase to a timestamped Twilio Media Stream for local acoustic analysis and direct Deepgram lyric verification.
 
 ![CI](https://img.shields.io/github/actions/workflow/status/anthonyplusAI/twilio-games/ci.yml) ![Top language](https://img.shields.io/github/languages/top/anthonyplusAI/twilio-games) ![Last commit](https://img.shields.io/github/last-commit/anthonyplusAI/twilio-games) ![Twilio](https://img.shields.io/badge/Twilio-EF223A?logo=twilio&logoColor=white)
 
@@ -18,10 +18,11 @@ The current games are:
 | Voice Karaoke | One-singer 3D rhythm performance with falling lyric words and a live band | Song number or title, then sing each word on its authored beat and pitch |
 | Voice Trivia | Eight-question shared-screen quiz for 1-4 callers | Category names or numbers; answers as `A`-`D`, `1`-`4`, or the full choice phrase |
 | Voice Chess | One caller versus the computer, or two human callers, on a 3D board | Name a piece and square, then `confirm` or `cancel` |
+| Talking Owl | One caller chats with an animated 3D owl in its study and potion lab | Ask its name or a question, say `wave`, `laugh`, `dance`, `read the newspaper`, or `mix berry and mint` |
 
-All six games support a shared display, phone callers, spoken guidance, and reconnectable WebSocket sessions. Karaoke browser controls are deliberately demo-only because production scores come from authenticated caller audio; the Trivia display never accepts answers, and the Chess display never accepts moves. The signed `POST /sms` webhook owns deterministic SMS and WhatsApp commands and immediate replies. Conversation Orchestrator and Twilio Agent Connect (TAC) only enrich Conversation Memory; a separate durable outbox sends proactive station notices through the Twilio Messaging REST API.
+All seven games support a shared display, phone callers, spoken guidance, and reconnectable WebSocket sessions. Karaoke browser controls are deliberately demo-only because production scores come from authenticated caller audio; the Trivia display never accepts answers, and the Chess display never accepts moves. The signed `POST /sms` webhook owns deterministic SMS and WhatsApp commands and immediate replies. Conversation Orchestrator and Twilio Agent Connect (TAC) only enrich Conversation Memory; a separate durable outbox sends proactive station notices through the Twilio Messaging REST API.
 
-In standalone mode, select a game on the home screen and choose the caller count for games that offer multiplayer before opening the display. Racer, Monsters, Fighter, and Chess support one or two callers; Trivia supports one to four; Karaoke has one singer. Each caller uses their own phone while everyone watches the same screen. The display shows each person's name and setup progress, and shared menus wait for the required callers and their current phone prompts before changing phase.
+In standalone mode, select a game on the home screen and choose the caller count for games that offer multiplayer before opening the display. Racer, Monsters, Fighter, and Chess support one or two callers; Trivia supports one to four; Karaoke and Talking Owl each admit one caller. Each caller uses their own phone while everyone watches the same screen. The display shows each person's name and setup progress, and shared menus wait for the required callers and their current phone prompts before changing phase.
 
 Two-caller Racer gives each car a top or bottom chase view and its own place, lap, and power readout. Monsters and Fighter show both players in one arena. Trivia shows one question and named answer or score status for up to four callers; Chess shows one board with the named player whose turn it is. Each caller controls their own choices and actions by phone.
 
@@ -174,7 +175,7 @@ Deepgram bills against the selected project's credits. Review its balance and **
 | The loading screen returns to song selection | Both readiness gates must complete within 30 seconds. Check backing-track requests, the exact HTTPS `PUBLIC_BASE_URL`, signed `wss://.../karaoke-media` upgrades, Twilio Auth Tokens, and reverse-proxy WebSocket support. |
 | A performance ends without a score | Confirm `DEEPGRAM_API_KEY`, project credits/Auto-Load, outbound access to `wss://api.deepgram.com`, and the server's `[karaoke]` media/finalization logs. Production rejects incomplete or failed provider evidence. |
 | Lyrics look early or late | Adjust authored word windows at `/editor?game=karaoke&tool=timing`. Use `KARAOKE_CALIBRATION_OFFSET_MS` only for a measured caller/carrier scoring offset, not browser visual preference. |
-| Karaoke is missing from the launcher or vote | Enable it in operator station settings. With the default six-game standalone order, use the next-page control; station players select or message option `4`. |
+| Karaoke is missing from the launcher or vote | Enable it in operator station settings. With the default seven-game standalone order, use the next-page control; station players select or message option `4`. |
 
 ### Voice Trivia
 
@@ -204,6 +205,12 @@ Voice Chess opens its 3D wizard board as soon as it is selected. Choose one call
 In standalone mode, select Voice Chess on the home page or open <http://localhost:5173/chess.html?display=1&room=4821> for solo play; add `&players=2` for a two-caller match. Keep the display open, and have each caller scan its call QR or use the linked locale-specific Twilio number. Station launches use the separate station join QR. At the opening, say `pawn from E two to E four` as White or `pawn from E seven to E five` as Black. To propose a move immediately, say `move to D6` or give a complete move such as `pawn from D7 to D6`; you can select a piece first. Without an earlier piece selection, a bare square such as `D6` is treated as unfinished: the phone waits silently for you to continue, even through a long pause. The phone repeats the proposed move; say `confirm` to make it or `cancel` to discard it. Keypad `1`, `0`, and `9` also mean confirm, cancel, and help. In a two-caller game, only the person whose turn is shown can move; each phone hears the opponent's move, checks, and the result. A lost call pauses play during its reconnect window, and ending a call forfeits once a match is active. After a standalone result, both callers can say `play again`; the board keeps the result visible until both have opted in and their phone announcements have finished, then starts another match with the same names and calls. Solo callers can also say `play again` or use the display replay control. Station matches hand off to the next round after results.
 
 The display animates captures and plays the user-supplied *The Marble Gambit* music. Drag the board to rotate the camera, right-drag or use two fingers to pan, scroll or pinch to zoom, and double-click to reset the view. Camera gestures do not submit moves. If browser autoplay blocks the track, select **Play music** on the display. Station launches open `/chess.html` with the assigned room and paired display automatically; the station then proceeds to its next round after results.
+
+### Talking Owl
+
+Select **Talking Owl** on the home page or open <http://localhost:5173/talking-owl.html?display=1&room=4821>. Its game card has a looping GIF preview. The display shows the configured Voice number and a `tel:` QR code. After you call, the owl asks for your first name; station callers keep the name they gave when joining the station. Ask a yes or no question, tell it to repeat your words, or request reactions such as `wave`, `laugh`, `dance`, `sing`, `read the newspaper`, `tickle`, `eat a cookie`, or `burp`. Say `go to the lab` and `mix berry and mint` to see a colored potion. The phone speaks the reply while the screen animates the same action.
+
+The server owns the one-caller room, name, action sequence, and call lifecycle. The browser observes `/ws/owl` and cannot submit voice actions. A station session runs for up to two minutes and records the number of reactions; a standalone session ends when the caller says goodbye or hangs up. A dropped Relay WebSocket can reconnect with the same call SID.
 
 ### Current Station Model
 
@@ -253,6 +260,7 @@ The home route changes with the runtime mode. Mode `off` shows the paginated sta
 | Voice Karaoke | <http://localhost:5173/karaoke.html?display=1&room=4821> | One-singer spectator display with backing-track audio preflight |
 | Voice Trivia | <http://localhost:5173/trivia.html?display=1&room=4821> | Phone-answer-only quiz display using the `/trivia` WebSocket |
 | Voice Chess | <http://localhost:5173/chess.html?display=1&room=4821> | Solo computer or `&players=2` human match; spoken moves only |
+| Talking Owl | <http://localhost:5173/talking-owl.html?display=1&room=4821> | One caller; QR and number appear on the display before the call |
 | Editors | <http://localhost:5173/editor> | Choose a game content editor |
 | Karaoke venue editor | <http://localhost:5173/editor?game=karaoke> | Place all five GLBs, set responsive cameras/highway, tune the drum anchor and lights, and save the live venue |
 | Karaoke timing editor | <http://localhost:5173/editor?game=karaoke&tool=timing> | Play, scrub, and persist per-word start/end timing overrides |
@@ -264,11 +272,11 @@ The home route changes with the runtime mode. Mode `off` shows the paginated sta
 | Operator console | <http://localhost:5173/operator> | Private station configuration, monitoring, and recovery using the same Google-or-PIN session as analytics |
 | Challenge portal | <http://localhost:5173/challenge/> | No-store reward portal opened by signed Messaging links; a valid fragment token is required |
 
-The production application is <https://twilio-games.salmontree-f71109fe.centralus.azurecontainerapps.io/>; when this version is deployed, its direct Karaoke, Trivia, and Chess displays are `/karaoke.html`, `/trivia.html`, and `/chess.html` on that origin.
+The production application is <https://twilio-games.salmontree-f71109fe.centralus.azurecontainerapps.io/>; when this version is deployed, its direct Karaoke, Trivia, Chess, and Talking Owl displays are `/karaoke.html`, `/trivia.html`, `/chess.html`, and `/talking-owl.html` on that origin.
 
 The shared screen and operator preview display a visitor QR that opens `/join`. English entry offers configured SMS and WhatsApp buttons; Portuguese entry offers WhatsApp with a prefilled `ENTRAR` command. Lead-capture mode adds browser registration for both locales as a visually secondary fallback, while the server continues to reject Portuguese SMS entry attempts. Every accepted reply states the next required answer. During game selection, ready players vote by game name/number or from `/player`; ties and missing votes use the configured automatic fallback.
 
-In `/operator` → **Setup** → **Games shown on the home screen**, enable or disable Voice Chess with its checkbox and place it anywhere in the six-game display order. That order controls the standalone launcher and serves as the priority order when **Use priority order** selects the next station game. The station vote number remains `6` when Chess is enabled, regardless of card position. Each home game card offers a short muted gameplay preview, including Chess; playback respects reduced-motion and data-saver settings.
+In `/operator` → **Setup** → **Games shown on the home screen**, enable or disable titles and place them anywhere in the seven-game display order. That order controls the standalone launcher and serves as the priority order when **Use priority order** selects the next station game. Fixed station vote numbers remain stable regardless of card position: Chess is `6` and Talking Owl is `7`. Each home card offers a gameplay preview; Talking Owl uses a looping GIF, and previews respect reduced-motion and data-saver settings.
 
 Standalone shared displays start as spectators and do not consume a player slot. For games with local keyboard testing, `P` adds or removes a tester. Supported standalone game menus accept keyboard or touch navigation within the current caller and phase gates; Racer disables shared-room Back and quick Restart during a two-caller match. Trivia and Chess displays do not accept answers or moves. Station-managed displays disable local players and display-driven setup advancement. Admitted callers advance only after completing their individual choices and current phone guidance.
 
@@ -282,6 +290,7 @@ Standalone keyboard controls:
 | Voice Karaoke | `P` toggles the hidden local test singer, `1`-`4` select songs or hit lanes, and `Enter` advances setup |
 | Voice Trivia | Category selector buttons can be tapped; answers come from caller speech or DTMF |
 | Voice Chess | A standalone replay selector can be tapped after a game; moves come from caller speech or DTMF confirmation |
+| Talking Owl | Preview controls can demonstrate reactions without a phone; official display actions come from the caller’s voice or keypad |
 
 To test a browser player instead of a spectator, omit `display=1` and add a name where supported, for example <http://localhost:5173/play.html?room=4821&name=Ada> or <http://localhost:5173/monsters.html?room=4821&name=Ada>. Voice Fighter joins a local player from its shared display with `P`.
 
@@ -333,7 +342,7 @@ The application runs locally without Twilio, OpenAI, or Deepgram credentials. Co
 | `CR_TTS_VOICE_PT_BR` | Optional Brazilian Portuguese ElevenLabs voice ID | Relay's `pt-BR` default voice |
 | `ELEVENLABS_API_KEY` | Optional server-side key for Harry, Ron, and Hermione's Wizard Chess voices on the shared display; separate from Conversation Relay phone audio | Unset; the scene continues with captions and a visible voice retry control |
 | `DEFAULT_LOCALE` | Call locale when no localized game display is connected | `en-US` |
-| `OPENAI_API_KEY` | Enables phase-bound semantic interpretation of conversational commands in all six games | Required by deployment; local runs without it retain deterministic commands |
+| `OPENAI_API_KEY` | Enables phase-bound semantic interpretation for Racer through Chess; Talking Owl uses deterministic conversational reactions | Required by deployment; local runs without it retain deterministic commands |
 | `OPENAI_MODEL` | OpenAI model used by the optional host | Server default |
 | `DEEPGRAM_API_KEY` | Opens the direct Nova-3 streaming lyric recognizer for Voice Karaoke | Optional for local acoustic fallback; required by production startup and deployment |
 | `KARAOKE_CALIBRATION_OFFSET_MS` | Signed measured caller/carrier offset applied to authoritative Media Stream scoring | `0`; integer from `-5000` to `5000` |
@@ -349,8 +358,8 @@ The application runs locally without Twilio, OpenAI, or Deepgram credentials. Co
 | `ARCADE_CONFIG_DIRECTORY` | Persistent Arcade configuration and audit directory | `data/` |
 | `ARCADE_SIGNING_SECRET` | Exactly 64 hexadecimal characters used for station signing and Trivia leaderboard identity anonymization | Not read by station state while mode is `off`; Trivia uses it when configured |
 | `ARCADE_STATE_PATH` | Persistent players, wallets, queue and station state, Messaging identities, receipts, and notification outbox | `data/arcade-state.json` |
-| `ARCADE_DISPLAY_TOKEN` | Server-held kiosk capability used by all six station displays; production requires at least 16 characters | Unset |
-| `ARCADE_STANDALONE_VOICE_ENABLED` | Allows standalone-mode calls to join the game currently open on the shared display | `false` in production; `true` otherwise |
+| `ARCADE_DISPLAY_TOKEN` | Server-held kiosk capability used by all seven station displays; production requires at least 16 characters | Unset |
+| `ARCADE_STANDALONE_VOICE_ENABLED` | Allows standalone-mode calls to join the game currently open on the shared display | Code default is `false` in production; the deployed Container App explicitly sets `true` |
 | `ARCADE_TAC_ENABLED` | Enables the TAC gateway for Orchestrator capture and Conversation Memory enrichment | Enabled unless set to `false`; `dev:arcade:server` disables it |
 | `ARCADE_OUTBOUND_MESSAGING_ENABLED` | Kill switch for durable proactive SMS and WhatsApp notices; valid REST credentials and channel senders are also required | `false` unless exactly `true` |
 | `TWILIO_ACCOUNT_SID`, `TWILIO_API_KEY`, `TWILIO_API_SECRET` | Primary-account credentials for TAC, Conversation Memory, and outbound Messaging REST calls | Required by the production workflow |
@@ -437,7 +446,7 @@ Production uses one Azure Container Apps replica. The image contains the built V
 
 The CI workflow runs on pushes and pull requests and checks LFS pointers, `npm ci`, typechecking, all tests, the client build, and a non-blocking high-severity dependency audit without spending GitHub LFS bandwidth. Separately, pushes to `main` and manual deploy runs execute the deploy workflow's own `typecheck`, test, and build checks, then validate production credentials. The deploy does not consume the reusable CI job.
 
-The deploy workflow validates the Trivia bank, hydrates an immutable private Azure Blob bundle, and verifies every Fighter binary against its committed LFS SHA-256 before building commit-SHA and `latest` image tags in ACR. It then stops the previous writer, snapshots Azure Files, applies a uniquely named revision, and verifies the exact SHA tag. Neither ACR tag is registry-enforced immutable. Before public cutover the workflow requires that revision to be `Provisioned`, `Healthy`, latest-ready, active with one replica, the only running revision, mounted to `appdata`, and configured with the expected startup, readiness, and liveness probes on `/livez`. It then requires HTTP 200 from `/livez`, dependency-aware `/healthz`, `/`, `/instructions`, `/join`, `/player`, `/karaoke.html`, `/trivia.html`, `/chess.html`, and `/analytics`, plus the expected authentication redirect from `/operator`, before assigning traffic and restoring single-revision mode. It does not run live Twilio, Conversation Memory, writable Azure Files, or WebSocket gameplay acceptance tests.
+The deploy workflow validates the Trivia bank, hydrates an immutable private Azure Blob bundle, and verifies every Fighter binary against its committed LFS SHA-256 before building commit-SHA and `latest` image tags in ACR. It then stops the previous writer, snapshots Azure Files, applies a uniquely named revision, and verifies the exact SHA tag. Neither ACR tag is registry-enforced immutable. Before public cutover the workflow requires that revision to be `Provisioned`, `Healthy`, latest-ready, active with one replica, the only running revision, mounted to `appdata`, and configured with the expected startup, readiness, and liveness probes on `/livez`. It then requires HTTP 200 from `/livez`, dependency-aware `/healthz`, `/`, `/instructions`, `/join`, `/player`, `/karaoke.html`, `/trivia.html`, `/chess.html`, `/talking-owl.html`, and `/analytics`, plus the expected authentication redirect from `/operator`, before assigning traffic and restoring single-revision mode. It does not run live Twilio, Conversation Memory, writable Azure Files, or WebSocket gameplay acceptance tests.
 
 The single-replica limit is a correctness requirement because rooms, active matches, call sessions, and WebSocket coordination are in memory. `DATA_MOUNT=/app/appdata` links `/app/data` to the Azure Files share. The persistent set is:
 
@@ -460,7 +469,7 @@ See [Deployment](docs/DEPLOYMENT.md) for pipeline and rollback behavior and [Inf
 
 ## Documentation
 
-- [Voice setup](docs/voice-setup.md): shared Conversation Relay routing for all six games, local public tunnels, controls, and live call testing.
+- [Voice setup](docs/voice-setup.md): shared Conversation Relay routing for all seven games, local public tunnels, controls, and live call testing.
 - [Expo Station plan](docs/ARCADE_EXPO_STATION_PLAN.md): completed historical baseline for one-display phases, ready pool, voting, capacity, launch, and overflow.
 - [Station and TAC plan](docs/TWILIO_ARCADE_PLAN.md): implemented baseline, broader product direction, and remaining roadmap.
 - [Deployment](docs/DEPLOYMENT.md): container runtime, deployment checks, persistence, and rollback.
